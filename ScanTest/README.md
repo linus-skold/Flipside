@@ -4,9 +4,9 @@ ScanTest is a throwaway addon. It tests if the full Auction House scan works on 
 
 ## Install
 1. Copy the `ScanTest` folder to `<WoW Forever folder>\Interface\AddOns\`.
-2. Enable "Load out of date AddOns". The interface number 16001 is calculated, not verified.
+2. You do not need "Load out of date AddOns". The interface number 16001 is confirmed by `GetBuildInfo` (build 70338).
 3. Type `/reload` or start the game.
-4. At login, ScanTest prints one line with the client version, build number, interface number and project id. This line gives the real interface number. Put it in `ScanTest.toc` and `Flipside.toc`.
+4. At login, ScanTest prints one line with the client version, build number, interface number and project id.
 
 ## Test
 1. Go to an auctioneer and open the Auction House.
@@ -41,6 +41,7 @@ ScanTest is a throwaway addon. It tests if the full Auction House scan works on 
 - Processing finishes without a freeze or a disconnect.
 
 ## Not verified
-- The index base of `GetReplicateItemInfo` (ScanTest uses 0 to n-1).
-- The 15-minute cooldown.
-- If the results include commodities.
+- The length of the cooldown (15 minutes is not proven).
+- If the results include commodities (stackable rows are included; "stackable" equals "commodity" is not proven).
+
+The test confirmed that the index base of `GetReplicateItemInfo` starts at 0 (0 to n-1).
