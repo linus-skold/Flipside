@@ -27,6 +27,8 @@ globals = {
     "FlipsideScanDB",
     "ScanTestDB",
     "SlashCmdList",
+    "SLASH_FLIPSIDE1",
+    "SLASH_FLIPSIDE2",
     "SLASH_SCANTEST1",
     "StaticPopupDialogs",
 }
