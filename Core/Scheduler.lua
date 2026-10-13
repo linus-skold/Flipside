@@ -12,6 +12,9 @@ Job.__index = Job
 local DEFAULT_FRAME_BUDGET_MS = 10
 local DEFAULT_UNITS_PER_FRAME = 1000
 
+-- The game may not provide the debug library, so read it safely.
+local defaultTraceback = type(debug) == "table" and debug.traceback or nil
+
 local function removeFromQueue(queue, job)
     for i = 1, #queue do
         if queue[i] == job then
@@ -52,7 +55,14 @@ end
 
 local function afterResume(job, ok, ...)
     if not ok then
-        local message = debug.traceback(job.co, tostring((...)))
+        local message = tostring((...))
+        local traceback = job.scheduler.traceback
+        if traceback then
+            local okTrace, withTrace = pcall(traceback, job.co, message)
+            if okTrace and type(withTrace) == "string" then
+                message = withTrace
+            end
+        end
         reportError(job.scheduler, job, message)
         finish(job, "failed", message)
     elseif coroutine.status(job.co) == "dead" then
@@ -77,6 +87,7 @@ function Scheduler.New(options)
     local self = setmetatable({}, Scheduler)
     self.clock = options.clock
     self.onError = options.onError
+    self.traceback = options.traceback or defaultTraceback
     self.queue = {}
     self.frameStart = 0
     self.unitsUsed = 0

@@ -366,4 +366,63 @@ describe("Scheduler", function()
         assert.are.equal("running", b:GetStatus())
         assert.are.equal(1, sched:GetQueueLength())
     end)
-end)
+
+    it("uses a custom traceback function", function()
+        local gotCo, gotMsg
+        local s = newScheduler({ traceback = function(co, msg)
+            gotCo, gotMsg = co, msg
+            return msg .. " [custom trace]"
+        end })
+        local job = s:Start("bad", function() error("boom", 0) end)
+        local status, msg
+        job:OnDone(function(_, st, m) status, msg = st, m end)
+        s:Tick()
+        assert.are.equal("failed", status)
+        assert.are.equal("boom [custom trace]", msg)
+        assert.are.equal("boom", gotMsg)
+        assert.are.equal("thread", type(gotCo))
+        assert.are.equal("boom [custom trace]", errors[1].msg)
+    end)
+
+    it("uses the plain message when the traceback function fails", function()
+        local s = newScheduler({ traceback = function() error("trace fail") end })
+        local bad = s:Start("bad", function() error("boom", 0) end)
+        local ran = false
+        s:Start("good", function() ran = true end)
+        s:Tick()
+        assert.are.equal("failed", bad:GetStatus())
+        assert.are.equal("boom", errors[1].msg)
+        assert.is_true(ran)
+    end)
+
+    it("uses the plain message when the traceback result is not a string", function()
+        local s = newScheduler({ traceback = function() return 5 end })
+        s:Start("bad", function() error("boom", 0) end)
+        s:Tick()
+        assert.are.equal("boom", errors[1].msg)
+    end)
+
+    describe("without the debug library", function()
+        it("handles a failing job and keeps running", function()
+            local fresh = {}
+            local savedDebug = _G.debug
+            rawset(_G, "debug", nil)
+            local loaded, err = pcall(assert(loadfile("Core/Scheduler.lua")), "Flipside", fresh)
+            rawset(_G, "debug", savedDebug)
+            assert(loaded, err)
+            local s = fresh.Scheduler.New({ clock = function() return now end, onError = function(_, msg)
+                errors[#errors + 1] = { msg = msg }
+            end })
+            local bad = s:Start("bad", function() error("no debug boom", 0) end)
+            local ran = false
+            s:Start("later", function() ran = true end)
+            s:Tick()
+            assert.are.equal("failed", bad:GetStatus())
+            assert.are.equal("no debug boom", errors[1].msg)
+            assert.is_true(ran)
+            local again = false
+            s:Start("third", function() again = true end)
+            s:Tick()
+            assert.is_true(again)
+        end)
+    end)end)
