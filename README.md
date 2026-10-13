@@ -5,7 +5,7 @@ Flipside is an auction house and economy addon for World of Warcraft: Forever. I
 ## Status
 Spike 0. Only the throwaway test addon `ScanTest` exists. It checks if the full Auction House scan works on WoW: Forever. See `ScanTest/README.md`.
 
-The interface number 16001 in the TOC files is calculated from client version 1.60.1. It is not verified.
+The interface number 16001 in the TOC files is confirmed by `GetBuildInfo` in the client (build 70338).
 
 ## Licence
 MIT.

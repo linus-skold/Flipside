@@ -2,7 +2,6 @@
 ## Title: ScanTest
 ## Notes: Throwaway test of the full Auction House scan for Flipside (Spike 0).
 ## SavedVariables: ScanTestDB
-# The interface number 16001 is calculated from client version 1.60.1. It is NOT verified.
-# The login message of ScanTest shows the real number. Then correct this line.
+# The interface number 16001 is confirmed by GetBuildInfo in the client (build 70338, 2026-10-14).
 
 ScanTest.lua
