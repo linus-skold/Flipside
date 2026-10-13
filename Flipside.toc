@@ -1,0 +1,7 @@
+## Interface: 16001
+## Title: Flipside
+## Notes: Auction house and economy addon for WoW: Forever.
+## SavedVariables: FlipsideDB, FlipsideScanDB
+# The interface number 16001 is calculated from client version 1.60.1. It is NOT verified.
+# The Forever source has no interface number. Spike 0 (ScanTest) shows the real number at login.
+# No Lua files are listed yet, because no Flipside code exists.
