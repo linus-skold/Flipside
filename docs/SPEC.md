@@ -417,7 +417,7 @@ The MVP is done when a player on WoW: Forever can scan, see prices in tooltips, 
 
 **Pass:** the event fires, row count is plausible for a busy market, commodities are included, processing finishes without freezing or disconnecting.
 
-**Spike 0 result** (user's test, 2026-10-14, WoW: Forever client 1.60.1, one run)
+**Spike 0 result** (user's test, 2026-10-14, WoW: Forever client 1.60.1, two runs)
 
 - Result: pass. `C_AuctionHouse.ReplicateItems` exists and `REPLICATE_ITEM_LIST_UPDATE` fires.
 - Run 1: result ok; time to first event 11,828 ms; processing 2,420 ms in 73 frames (counting only, slices of 1,000 rows); Lua memory 132,317 KB before and 134,176 KB after (+1,859 KB); 72,968 rows; 3,071 unique items; total quantity 500,441; 72,967 rows with a buyout; 5,534 rows with missing item info; 25,252 rows whose item stacks above 1; 18,039 rows with unknown stack size; 0 empty rows.
@@ -464,7 +464,8 @@ TSM behaviours this spec doesn't cover yet. Change the status as each one gets s
 
 - [ ] Check "Flipside" is free on CurseForge, Wago and GitHub, and that /flip doesn't clash with a popular addon.
 - [x] Does the full scan work on WoW: Forever, how long does it take, and does it include commodities? Answer: it works; the first event came after 11,828 ms and processing took 2,420 ms. Stackable items are included. Not proven: that "stackable" equals "commodity". See the Spike 0 result in §8.
-- [ ] Length of the full-scan cooldown, and whether a failed attempt restarts it. Run 2 got no event; the 15-minute length is not proven.- [ ] Full-scan size limits on the busiest realms — test for disconnects and processing time.
+- [ ] Length of the full-scan cooldown, and whether a failed attempt restarts it. Run 2 got no event; the 15-minute length is not proven.
+- [ ] Full-scan size limits on the busiest realms — test for disconnects and processing time.
 - [ ] Scan DB size at 60+ days of retention — measure before fixing the storage format.
 - [ ] Guild sharing trust rule (§3.5): confirm "received data only fills gaps, never overrides your own scans".
 - [ ] Default thresholds: Great Deals (60% of market, 5 samples, 50g saving — likely too high for Forever's economy) and deposit-aware fallback sale rate (30%).

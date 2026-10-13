@@ -41,6 +41,7 @@ ScanTest is a throwaway addon. It tests if the full Auction House scan works on 
 - Processing finishes without a freeze or a disconnect.
 
 ## Not verified
-- The index base of `GetReplicateItemInfo` (ScanTest uses 0 to n-1).
-- The 15-minute cooldown.
-- If the results include commodities.
+- The length of the cooldown (15 minutes is not proven).
+- If the results include commodities (stackable rows are included; "stackable" equals "commodity" is not proven).
+
+The test confirmed that the index base of `GetReplicateItemInfo` starts at 0 (0 to n-1).
