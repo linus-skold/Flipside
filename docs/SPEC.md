@@ -17,7 +17,7 @@ Start with Spike 0 (§8), then follow the MVP build order. Everything below appl
    - Unit tests with busted and a mocked WoW API, for the pure logic: formula compiler, market-value algorithm, selling decisions, keep-stock maths, deposit-aware maths.
    - Packaging for CurseForge and Wago via a release workflow.
 4. **Libraries.** Decide in the first task whether to use common libraries (e.g. Ace3, LibSerialize, LibDeflate) or write our own; check each licence is compatible with MIT (D12) and list them in the README. The decision is made: see D18.
-5. **Repo CLAUDE.md** containing: the link to this spec; the build order; "Decisions D1–D22 are binding — ask before changing one"; "When something gets scoped, update the Needs scoping table"; the definition of done below.
+5. **Repo CLAUDE.md** containing: the link to this spec; the build order; "Decisions D1–D25 are binding — ask before changing one"; "When something gets scoped, update the Needs scoping table"; the definition of done below.
 6. **Definition of done per feature.** Unit tests pass; luacheck is clean; the feature's in-game checklist passes on WoW: Forever; the spec section is updated if behaviour changed; the Phase dropdown and Needs scoping status reflect reality.
 7. **Open questions** at the end of this tab are not decided. If a task depends on one, stop and ask.
 
@@ -53,7 +53,7 @@ Start with Spike 0 (§8), then follow the MVP build order. Everything below appl
 | D8 | Keep stock overrides selling and other outgoing rules unless the player presses Override stock | Separate keep fields per module | 2026-10-13 |
 | D9 | Last full-scan time is stored account-wide in SavedVariables; every character shows the shared cooldown | — | 2026-10-13 |
 | D10 | Add Great Deals, price history chart, deposit-aware posting, craft profit ranking, presets and undo | Premium Great Deals | 2026-10-13 |
-| D11 | Launch on WoW: Forever; later TBC Anniversary, then Retail | Retail-first | 2026-10-13 |
+| D11 | Launch on WoW: Forever. WoW: TBC Anniversary is ported now, with its own TOC (D23). Retail comes later | Retail-first | 2026-10-13 (changed 2026-10-14) |
 | D12 | Licence: MIT | Proprietary | 2026-10-13 |
 | D13 | No import of TSM group strings | — | 2026-10-13 |
 | D14 | Guild sharing ships, behind an on/off toggle | — | 2026-10-13 |
@@ -65,6 +65,9 @@ Start with Spike 0 (§8), then follow the MVP build order. Everything below appl
 | D20 | Item identity: the item key is built from item link fields: item id, suffix id and bonus ids. Enchants, gems, unique id, link level and specialization are not part of the key. Commodities (stackable items) use the item id only. Granularity (base item or exact variant) is chosen when a group or price source matches, not when data is stored. Keys never contain localised names. Flipside uses its own text form for keys, not TSM's | — | 2026-10-14 |
 | D21 | Battle pets are out of the MVP | — | 2026-10-14 |
 | D22 | Scan data is keyed by region and ruleset (refines D15). The region comes from the client. Each stored record also has a ruleset field that has one fixed value in the MVP; real rulesets (for example hardcore or self-found) can come later without a rewrite of stored data | — | 2026-10-14 |
+| D23 | Flavour separation. Each flavour has its own TOC: `Flipside.toc` for Forever and `Flipside_TBC.toc` for TBC Anniversary. One release zip holds both TOCs. Shared code lives in `Shared/` (`Shared/Core`, `Shared/Services`, `Shared/Features`, `Shared/UI`, `Shared/UI/Kit`, `Shared/UI/Pages`). Flavour code lives in `Core_<Flavour>/` (flavour config `Flavour.lua`, tooltip hook) and `AH_<Flavour>/` (all auction API calls and the AH tab host). Only AuctionClient backends call the auction API. Shared code reads `ns.Flavour` and never checks the flavour name. The TOC selects the flavour folders | One TOC with flavour checks in shared code | 2026-10-14 |
+| D24 | TBC scan data is keyed by region, realm and ruleset. The ruleset value is "tbc-anniversary" (refines D15 and D22). Forever stays region + "standard". The realm part can be removed later if a test shows that TBC auctions are shared across realms | Region and ruleset only | 2026-10-14 |
+| D25 | TBC uses its own SavedVariables names: `FlipsideDB_TBC` and `FlipsideScanDB_TBC`. These are the names in `Flipside.toc` plus `_TBC` | Shared SavedVariables | 2026-10-14 |
 
 ### Improvements over TSM
 
@@ -421,6 +424,44 @@ On Retail the deposit is returned on sale and lost on expiry; the AH keeps a 5% 
 - **Presets:** ready-made operations to start from, e.g. "Safe seller" (never below 80% of market), "Fast undercut", "Material buyer" (max 90% of market, buy up to stock) and "Flipper" (buy below 60%, sell at market). Presets are copied, never linked, so editing one doesn't change others.
 - **Undo:** every change to groups, operations, keep-stock rules and mail lists is recorded per profile. Undo and redo the last 50 changes, plus *Restore snapshot* for a full profile state saved daily (last 7 kept).
 
+## TBC Anniversary port
+
+The TBC Anniversary port follows D11 and D23 to D25. It is a full port, including the AH tab.
+
+### AuctionClient interface
+Each `AH_<Flavour>/` folder has one AuctionClient backend. Shared code calls only this interface:
+
+- Scan start.
+- Scan done event.
+- Row count.
+- Row read.
+- Row link.
+- Name search.
+- Owned auctions.
+- Owned event.
+- AH host (the frame that holds the Flipside tab).
+- Cooldown.
+
+### Flavour config
+Each `Core_<Flavour>/Flavour.lua` sets these fields:
+
+- Bag IDs.
+- Bank IDs. On TBC the list includes container -1.
+- Scan cooldown.
+- Ruleset (D22, D24).
+
+### Rules for TBC
+- Passive capture (ScanCapture) is off on TBC in the first release.
+- The TBC full scan uses the legacy "get all" query. The ScanTest TBC spike (`ScanTest_TBC.toc`, pull request #86) tests its behaviour first.
+
+### Open in-game checks
+- Interface number. 20505 is from memory.
+- `NUM_BAG_SLOTS` and `NUM_BANKBAGSLOTS`.
+- The getAll row count and cooldown.
+- The return values of `GetAuctionItemInfo`.
+- Does `tooltip:GetItem()` work in `OnTooltipSetItem`?
+- Can the addon add a fourth `AuctionFrame` tab without taint?
+- Are auctions shared across connected realms?
 ## Architecture
 
 The whole "outside the game" layer from the reference (§2) is gone: no servers, no desktop app, no AppHelper. Price data enters only through the Auction House API and is stored in its own Scan DB.
@@ -521,7 +562,7 @@ The MVP is done when a player on WoW: Forever can scan, see prices in tooltips, 
 | --- | --- | --- | --- |
 | MVP | Scan → price → buy / sell → profit, one realm | Full scan, groups, operations and formulas, tooltips, inventory tracking, buying, selling with dry run and decision log, vendoring, ledger, Great Deals, export and import of groups and operations | A week of daily use on one realm with no errors, under 5 s of scan processing on a mid-size realm (Flipside processing time; see §3.2 scan engine design) |
 | Phase 2 | Run a multi-character business | Mail lists, keep stock, banking, crafting and queue, sniper, profiles, import/export of mail lists and keep-stock rules, dashboard, price history chart, deposit-aware posting, craft profit ranking, presets and undo | A crafter-and-seller pair of alts restocks and sells through one session without manual moves |
-| Phase 3 | Multi-account and polish | Account sync (incl. scan data), Task List, destroying, guild scan sharing, TBC Anniversary, then Retail | Two accounts on one realm share inventory, ledger and prices |
+| Phase 3 | Multi-account and polish | Account sync (incl. scan data), Task List, destroying, guild scan sharing, then Retail | Two accounts on one realm share inventory, ledger and prices |
 
 **Spike 0: full-scan test (build first).** A throwaway addon, *ScanTest*, that answers whether the full scan works on WoW: Forever before the scan engine is built.
 
@@ -577,7 +618,7 @@ TSM behaviours this spec doesn't cover yet. Change the status as each one gets s
 | Combat lockdown | What is deferred or disabled in combat | §3 | Needs scoping |
 | Localisation | String tables, number and money formats, client languages (decimal separator in formulas decided: dot only) | §10.3 | Needs scoping |
 | Error handling and recovery | Failed posts and buys, disconnects mid-scan, corrupted data | §7.6 | Needs scoping |
-| Later flavours | TBC Anniversary and Retail differences: AH API, professions, banks, commodities | §3 | Needs scoping |
+| Later flavours | Retail differences: AH API, professions, banks, commodities. TBC Anniversary is in scope (D11, D23–D25); its open points are the TBC spike results | §3 | Partly scoped |
 
 ## Open questions
 
