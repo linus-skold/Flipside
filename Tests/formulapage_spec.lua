@@ -190,6 +190,111 @@ describe("FormulaPage", function()
         end)
     end)
 
+    describe("item names", function()
+        local pending, matches, index
+
+        local function build()
+            index = {
+                Resolve = function(_, text)
+                    if text == "item:5" then
+                        return { kind = "item", input = text }
+                    end
+                    if #text < 2 then
+                        return { kind = "error", message = "type at least 2 characters of the name" }
+                    end
+                    return { kind = "name", matches = matches, pendingCount = pending }
+                end,
+            }
+            page = Page.Build(CreateFrame("Frame", nil, UIParent),
+                { formulaRun = run, formulaSources = sources, itemNameIndex = index })
+        end
+
+        local function check(formula, item)
+            page.formulaInput:SetText(formula)
+            page.itemInput:SetText(item)
+            page.checkButton.scripts.OnClick(page.checkButton)
+        end
+
+        local function shown()
+            local out = {}
+            for _, button in ipairs(page.choices) do
+                if button:IsShown() then
+                    table.insert(out, button)
+                end
+            end
+            return out
+        end
+
+        before_each(function()
+            pending = 0
+            matches = {}
+            assert(loadfile("Core/ItemString.lua"))("Flipside", ns)
+            assert(loadfile("Services/ItemNameIndex.lua"))("Flipside", ns)
+            build()
+        end)
+
+        it("evaluates one match by its key", function()
+            matches = { { itemID = 1, name = "Linen", key = "1" } }
+            check("scanmin", "linen")
+            assert.are.same({ { "scanmin", "1" } }, calls.evaluate)
+            assert.are.equal("valid", page.status:GetText())
+        end)
+
+        it("passes an item string for a variant key", function()
+            matches = { { itemID = 1, name = "Sword", key = "1#s-34" } }
+            check("scanmin", "sword")
+            assert.are.equal("1#s-34", ns.ItemString.ToExactKey(calls.evaluate[1][2]))
+        end)
+
+        it("says when no item has the name, with the pending line", function()
+            pending = 3
+            check("scanmin", "nothing")
+            assert.are.same({}, calls.evaluate)
+            assert.are.equal('no item named "nothing" in the scan data\n3 item names are still loading',
+                page.status:GetText())
+        end)
+
+        it("reports a short name", function()
+            check("scanmin", "x")
+            assert.are.equal("type at least 2 characters of the name", page.status:GetText())
+        end)
+
+        it("accepts an item string through the index", function()
+            check("scanmin", "item:5")
+            assert.are.same({ { "scanmin", "item:5" } }, calls.evaluate)
+        end)
+
+        it("lists several matches and evaluates the clicked one", function()
+            matches = {
+                { itemID = 1, name = "Linen", key = "1" },
+                { itemID = 2, name = "Linen Cloth", key = "2" },
+            }
+            pending = 2
+            check("scanmin", "linen")
+            assert.are.same({}, calls.evaluate)
+            local buttons = shown()
+            assert.are.equal(2, #buttons)
+            assert.are.equal("Linen Cloth (2)", buttons[2]:GetText())
+            assert.are.equal("2 items match, pick one\n2 item names are still loading", page.status:GetText())
+            assert.is_false(page.list.frame:IsShown())
+            buttons[2].scripts.OnClick()
+            assert.are.same({ { "scanmin", "2" } }, calls.evaluate)
+            assert.are.equal(0, #shown())
+            assert.is_true(page.list.frame:IsShown())
+            assert.are.equal("invalid: missing scanmin\nnot available yet: avgsell", page.status:GetText())
+        end)
+
+        it("hides the choices on the next check", function()
+            matches = {
+                { itemID = 1, name = "Linen", key = "1" },
+                { itemID = 2, name = "Linen Cloth", key = "2" },
+            }
+            check("scanmin", "linen")
+            check("scanmin", "1")
+            assert.are.equal(0, #shown())
+        end)
+    end)
+
     it("shows the help line", function()
         assert.are.equal(
             "Money: 10g 5s 2c. Functions: min max avg first check ifgt iflt ifeq round. "

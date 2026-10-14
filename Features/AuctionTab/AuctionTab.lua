@@ -10,6 +10,7 @@ local EVENT_FINISHED = "Flipside.ScanFinished"
 local TAB_TEMPLATES = { "AuctionHouseFrameTabTemplate", "PanelTabButtonTemplate" }
 local WIDTH = 740
 local PRICE_SLOTS = 9
+local MAX_CHOICES = 8
 
 local REFUSALS = {
     running = "a scan is already running",
@@ -209,17 +210,83 @@ function Tab:_ShowPriceRows(rows)
     end
 end
 
--- Look up an item link or item id in the scan data and show its prices.
+function Tab:_HideChoices()
+    for _, button in ipairs(self.ui.choices) do
+        button:Hide()
+    end
+end
+
+-- Show the price of one stored key.
+function Tab:ShowKey(key)
+    local deps = self.deps
+    local record = deps.scanStore:Get(key)
+    self:_HideChoices()
+    if not record then
+        self.ui.priceMessage:SetText("no scan data for " .. key)
+        return
+    end
+    self.ui.priceMessage:SetText("")
+    local values = deps.scanSources.Compute(record, deps.serverTime())
+    self:_ShowPriceRows(AuctionTab.DescribePrice(values, key))
+end
+
+function Tab:_ShowChoices(matches)
+    local ui = self.ui
+    ui.priceMessage:SetText(#matches .. " items match, pick one")
+    for index, button in ipairs(ui.choices) do
+        local match = matches[index]
+        if match then
+            button:SetText(ns.ItemNameIndex.Describe(match))
+            button:SetScript("OnClick", function()
+                self:ShowKey(match.key)
+            end)
+            button:Show()
+        else
+            button:Hide()
+        end
+    end
+end
+
+-- Look up a name in the scan data. Returns true if the input was handled.
+function Tab:_LookupName(text)
+    local ui = self.ui
+    local result = self.deps.itemNameIndex:Resolve(text)
+    if result.kind == "item" then
+        return false
+    end
+    if result.kind == "error" then
+        ui.priceMessage:SetText(result.message)
+        return true
+    end
+    local count = result.pendingCount
+    ui.pendingMessage:SetText(count > 0 and (count .. " item names are still loading") or "")
+    if #result.matches == 0 then
+        ui.priceMessage:SetText('no item named "' .. text .. '" in the scan data')
+    elseif #result.matches == 1 then
+        self:ShowKey(result.matches[1].key)
+    else
+        self:_ShowChoices(result.matches)
+    end
+    return true
+end
+
+-- Look up an item link, item id or item name in the scan data and show its prices.
 function Tab:Lookup(input)
     local deps = self.deps
     local text = tostring(input or ""):match("^%s*(.-)%s*$")
     self:_ShowPriceRows(nil)
+    self:_HideChoices()
+    self.ui.pendingMessage:SetText("")
     if text == "" then
-        self.ui.priceMessage:SetText("enter an item link or item id")
+        self.ui.priceMessage:SetText(deps.itemNameIndex and "enter an item name, link or id"
+            or "enter an item link or item id")
         return
     end
     if not (deps.scanStore and deps.formulaLookup and deps.scanSources) then
         self.ui.priceMessage:SetText("scan is not available this session")
+        return
+    end
+    if deps.itemNameIndex and self:_LookupName(text) then
         return
     end
     local record, key, itemID = deps.formulaLookup.Find(deps.scanStore, text)
@@ -361,6 +428,13 @@ function Tab:_BuildContent()
         self:Lookup(ui.input:GetText())
     end), 276, -224)
     ui.priceMessage = leftAligned(place(Kit.Label(content, "", "small"), 0, -252), WIDTH)
+    ui.pendingMessage = leftAligned(place(Kit.Label(content, "", "small"), 376, -228), 360)
+    ui.choices = {}
+    for index = 1, MAX_CHOICES do
+        local button = place(Kit.Button(content, "", 360, nil), 0, -270 - (index - 1) * 24)
+        button:Hide()
+        ui.choices[index] = button
+    end
 
     local step = Kit.Theme.rowHeight - 2
     for index = 1, PRICE_SLOTS do
@@ -465,8 +539,8 @@ end
 local REQUIRED_FUNCTIONS = { "serverTime", "confirmScan", "openMainWindow" }
 
 -- Attach the Flipside tab to the Auction House frame, now or when its addon loads.
--- deps: bus, scanEngine, scanCooldown, scanStore, formulaLookup, scanSources, serverTime, confirmScan,
--- openMainWindow. Returns an object with :Refresh().
+-- deps: bus, scanEngine, scanCooldown, scanStore, formulaLookup, scanSources, itemNameIndex (optional),
+-- serverTime, confirmScan, openMainWindow. Returns an object with :Refresh().
 function AuctionTab.Attach(deps)
     if type(deps) ~= "table" then
         error("deps must be a table", 2)

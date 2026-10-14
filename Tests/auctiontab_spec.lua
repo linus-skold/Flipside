@@ -5,7 +5,7 @@ local LINK = "|cff0070dd|Hitem:123::::::::80:::::::::|h[Thing]|h|r"
 local function loadModules()
     local ns = {}
     for _, name in ipairs({ "Core/EventBus", "Core/ItemString", "Services/ScanClock", "Services/ScanCooldown",
-        "Services/ScanSources", "Services/FormulaLookup", "UI/Kit/Theme", "UI/Kit/Widgets",
+        "Services/ScanSources", "Services/FormulaLookup", "Services/ItemNameIndex", "UI/Kit/Theme", "UI/Kit/Widgets",
         "Features/AuctionTab/AuctionTab" }) do
         assert(loadfile(name .. ".lua"))("Flipside", ns)
     end
@@ -614,6 +614,105 @@ describe("AuctionTab", function()
             ui.input:SetText("hello")
             click(ui.lookup)
             assert.are.equal("not an item: hello", ui.priceMessage:GetText())
+        end)
+
+        describe("by name", function()
+            local pending
+
+            local function useIndex(matches)
+                pending = 0
+                deps.itemNameIndex = {
+                    Resolve = function(_, text)
+                        if text:match("^%d+$") then
+                            return { kind = "item", input = text }
+                        end
+                        if #text < 2 then
+                            return { kind = "error", message = "type at least 2 characters of the name" }
+                        end
+                        return { kind = "name", matches = matches, pendingCount = pending }
+                    end,
+                }
+            end
+
+            local function shownChoices(ui)
+                local out = {}
+                for _, button in ipairs(ui.choices) do
+                    if button:IsShown() then
+                        table.insert(out, button)
+                    end
+                end
+                return out
+            end
+
+            it("shows the price of a single match", function()
+                records["123"] = record(1000)
+                useIndex({ { itemID = 123, name = "Thing", key = "123" } })
+                local _, ui = attach()
+                ui.input:SetText("thing")
+                click(ui.lookup)
+                assert.are.equal(9, #shownRows(ui))
+                assert.are.equal("123", shownRows(ui)[1].value:GetText())
+                assert.are.equal(0, #shownChoices(ui))
+            end)
+
+            it("still accepts an id", function()
+                records["123"] = record(1000)
+                useIndex({})
+                local _, ui = attach()
+                ui.input:SetText("123")
+                click(ui.lookup)
+                assert.are.equal(9, #shownRows(ui))
+            end)
+
+            it("says when no item has the name", function()
+                useIndex({})
+                local _, ui = attach()
+                ui.input:SetText("nothing")
+                click(ui.lookup)
+                assert.are.equal('no item named "nothing" in the scan data', ui.priceMessage:GetText())
+            end)
+
+            it("says when the name is too short", function()
+                useIndex({})
+                local _, ui = attach()
+                ui.input:SetText("x")
+                click(ui.lookup)
+                assert.are.equal("type at least 2 characters of the name", ui.priceMessage:GetText())
+            end)
+
+            it("lists several matches and shows the price of the clicked one", function()
+                records["123"] = record(1000)
+                records["124#s-3"] = record(2000)
+                useIndex({
+                    { itemID = 123, name = "Thing", key = "123" },
+                    { itemID = 124, name = "Thing Two", key = "124#s-3" },
+                })
+                local _, ui = attach()
+                ui.input:SetText("thing")
+                click(ui.lookup)
+                assert.are.equal(0, #shownRows(ui))
+                local choices = shownChoices(ui)
+                assert.are.equal(2, #choices)
+                assert.are.equal("Thing (123)", choices[1]:GetText())
+                assert.are.equal("Thing Two (variant 124#s-3)", choices[2]:GetText())
+                click(choices[2])
+                assert.are.equal("124#s-3", shownRows(ui)[1].value:GetText())
+                assert.are.equal("2000c", shownRows(ui)[2].money:GetText())
+                assert.are.equal(0, #shownChoices(ui))
+            end)
+
+            it("shows the pending names line", function()
+                records["123"] = record(1000)
+                useIndex({ { itemID = 123, name = "Thing", key = "123" } })
+                local _, ui = attach()
+                pending = 4
+                ui.input:SetText("thing")
+                click(ui.lookup)
+                assert.are.equal("4 item names are still loading", ui.pendingMessage:GetText())
+                pending = 0
+                click(ui.lookup)
+                assert.are.equal("", ui.pendingMessage:GetText())
+            end)
         end)
 
         it("clears old rows on a new lookup", function()
