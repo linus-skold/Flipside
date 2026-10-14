@@ -108,4 +108,26 @@ describe("D23 layout", function()
             end
         end
     end)
+
+    it("lists each flavour folder file only in the TOC of its flavour", function()
+        local manifest = dofile("Tests/manifest.lua")
+        local tocs = { Forever = "Flipside.toc", TBC = "Flipside_TBC.toc" }
+        local listedBy = {}
+        for flavour, toc in pairs(tocs) do
+            for _, f in ipairs(manifest.files(toc)) do
+                listedBy[f] = listedBy[f] or {}
+                listedBy[f][flavour] = true
+            end
+        end
+        for _, path in ipairs(addonFiles()) do
+            local flavour = path:match("^Core_(%w+)/") or path:match("^AH_(%w+)/")
+            if flavour then
+                assert.is_not_nil(tocs[flavour], path .. " has no TOC")
+                for other in pairs(tocs) do
+                    assert.are.equal(other == flavour, (listedBy[path] or {})[other] == true,
+                        path .. " in the " .. other .. " TOC")
+                end
+            end
+        end
+    end)
 end)
