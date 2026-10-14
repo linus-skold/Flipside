@@ -10,6 +10,8 @@ local INFO_NAME, INFO_COUNT, INFO_SALE_STATUS, INFO_ITEM_ID = 1, 3, 16, 17
 
 local SCAN_SETTLE_SECONDS = 2
 local DIAG_KEEP = 5
+-- Time that a scan refreshes missing links after the read, by mode.
+local REFRESH_SECONDS = { full = 90, fast = 8 }
 
 -- Counters of the last scan, filled while the engine reads rows.
 local scan = {}
@@ -56,6 +58,15 @@ function Backend.ScanCanStart()
         return false, "get all is on cooldown; the server allows it about every 15 minutes"
     end
     return true
+end
+
+-- The scan modes of this client. Both use the get all query; they differ in the refresh time.
+function Backend.ScanModes()
+    return { "full", "fast" }
+end
+
+function Backend.ScanRefreshSeconds(mode)
+    return REFRESH_SECONDS[mode] or 0
 end
 
 function Backend.StartScan()
@@ -127,6 +138,8 @@ function Backend.ScanDiagnostics(summary)
         firstEventMs = summary.firstEventMs, events = summary.events,
         readSeconds = readSeconds,
         nilLink = scan.nilLink, nilName = scan.nilName, zeroBuyout = scan.zeroBuyout,
+        mode = summary.mode, pending = summary.pendingMissing, failed = summary.failed,
+        keyedWithoutLink = summary.keyedWithoutLink, refreshSeconds = summary.refreshSeconds,
     }
     local flavour = ns.Flavour
     local db = flavour and flavour.savedVariables and _G[flavour.savedVariables.scan]
@@ -140,11 +153,14 @@ function Backend.ScanDiagnostics(summary)
         end
     end
     return string.format(
-        "legacy scan: rows %s, batch %s of %s, first event %s ms, events %s, read %.1f s, nil link %d, "
-            .. "nil name %d, zero buyout %d, items %s",
-        tostring(entry.rows), tostring(entry.batch), tostring(entry.total),
+        "legacy scan: mode %s, rows %s, batch %s of %s, first event %s ms, events %s, read %.1f s, nil link %d, "
+            .. "nil name %d, zero buyout %d, items %s, keys %s, pending %s, failed %s, keyed without link %s, "
+            .. "refresh %.1f s",
+        tostring(entry.mode), tostring(entry.rows), tostring(entry.batch), tostring(entry.total),
         entry.firstEventMs and string.format("%d", entry.firstEventMs) or "-", tostring(entry.events),
-        readSeconds, entry.nilLink or 0, entry.nilName or 0, entry.zeroBuyout or 0, tostring(entry.items))
+        readSeconds, entry.nilLink or 0, entry.nilName or 0, entry.zeroBuyout or 0, tostring(entry.items),
+        tostring(entry.keys), tostring(entry.pending), tostring(entry.failed), tostring(entry.keyedWithoutLink),
+        entry.refreshSeconds or 0)
 end
 
 function Backend.OpenEvent()

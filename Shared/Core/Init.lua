@@ -131,6 +131,23 @@ local function maxStack(itemID)
     return info and info.stackCount or nil
 end
 
+local SUFFIX_CLASSES = { [2] = true, [4] = true } -- weapon and armor can have a random suffix
+
+-- Tells the legacy scan if an item can get its key without a link: true, false (can have a suffix), nil (no info).
+local function canKeyWithoutLink(itemID)
+    local info = ns.itemCache:Get(itemID)
+    if not info then
+        return nil
+    end
+    if SUFFIX_CLASSES[info.classID] then
+        return false
+    end
+    if info.classID == nil and info.equipLoc ~= nil and info.equipLoc ~= "" then
+        return false
+    end
+    return true
+end
+
 -- Read access to the auction client scan calls, in the form that the scan engine needs.
 local function buildScanApi()
     local client = ns.AuctionClient
@@ -160,6 +177,13 @@ local function buildScanApi()
     end
     if client.HasCommodityCheck() then
         api.clientIsCommodity = client.ItemIsCommodity
+    end
+    -- A backend with scan modes (legacy) keys rows without a link and refreshes missing links.
+    local modes = client.ScanModes()
+    if modes then
+        api.modes = modes
+        api.refreshSeconds = client.ScanRefreshSeconds
+        api.canKeyWithoutLink = canKeyWithoutLink
     end
     return api
 end

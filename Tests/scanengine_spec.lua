@@ -50,7 +50,7 @@ local function MakeWorld(options)
         ns = ns, ms = 0, sec = 0, tick = 0, server = FIRST_DAY * DAY + 1000, rows = options.rows or {},
         known = {}, requested = {}, requestCount = {}, neverLoad = {}, stack = {},
         stackOnLoad = {}, errors = {}, reports = {}, finished = {},
-        putTicks = {}, ahOpen = true, apiCost = options.apiCost or 0.001,
+        putTicks = {}, ahOpen = true, apiCost = options.apiCost or 0.001, failLoad = {}, canKey = {},
     }
     w.saved = options.saved or {}
     w.saved.scan = w.saved.scan or {}
@@ -109,6 +109,10 @@ local function MakeWorld(options)
         end,
         getLink = function(index)
             local r = w.rows[index + 1]
+            if r.linkAfter then
+                r.reads = (r.reads or 0) + 1
+                return r.reads > r.linkAfter and r.link or nil
+            end
             if loaded(r) then
                 return r.link
             end
@@ -123,6 +127,14 @@ local function MakeWorld(options)
     if options.unknownStack then
         w.api.clientIsCommodity = nil
         w.api.maxStack = function(id) return w.stack[id] end
+    end
+    if options.legacy then
+        -- Legacy backend: modes, a refresh time and a rule for rows without a link.
+        w.api.clientIsCommodity = nil
+        w.api.maxStack = function(id) return w.stack[id] end
+        w.api.modes = { "full", "fast" }
+        w.api.refreshSeconds = function() return options.refresh or 10 end
+        w.api.canKeyWithoutLink = function(id) return w.canKey[id] end
     end
     if options.noReplicate then
         w.api.replicateItems = nil
@@ -154,7 +166,10 @@ local function Tick(w)
         w.bus:Emit(REPLICATE)
     end
     for id in pairs(w.requested) do
-        if not w.neverLoad[id] then
+        if w.failLoad[id] then
+            w.requested[id] = nil
+            w.cache:OnLoadResult(id, false)
+        elseif not w.neverLoad[id] then
             w.requested[id] = nil
             w.known[id] = true
             w.stack[id] = w.stackOnLoad[id]
@@ -582,3 +597,90 @@ describe("ScanEngine unknown stack size", function()
         assert.are.same({ 3 }, seen)
     end)
 end)
+
+describe("ScanEngine legacy keys and refresh", function()
+    local function plain(id, count, link)
+        return { item = id, count = count or 1, buyout = 1000, link = link }
+    end
+    local function linkOf(id)
+        return "|cffffffff|Hitem:" .. id .. "::::::::60:::::|h[X]|h|r"
+    end
+
+    it("keys an item when the link appears after 2 refresh polls", function()
+        local row = plain(3001, 1, linkOf(3001))
+        row.linkAfter = 2
+        local w = MakeWorld({ rows = { row }, legacy = true })
+        w.canKey[3001] = false
+        local s = Run(w)
+        assert.are.equal("ok", s.result)
+        assert.are.equal(1, s.keys)
+        assert.are.equal(0, s.keyedWithoutLink)
+        assert.are.equal(0, s.pendingMissing)
+        assert.is_true(w.requested[3001] ~= nil or w.requestCount[3001] >= 1)
+        assert.is_true(s.refreshSeconds >= 2 and s.refreshSeconds < 10)
+        assert.are.equal("full", s.mode)
+        assert.is_not_nil(w.store:Get("3001"))
+    end)
+
+    it("keys by item id when no link ever appears and the item has no suffix", function()
+        local w = MakeWorld({ rows = { plain(3002), plain(3002) }, legacy = true })
+        w.canKey[3002] = true
+        local s = Run(w)
+        assert.are.equal("ok", s.result)
+        assert.are.equal(1, s.keys)
+        assert.are.equal(1, s.keyedWithoutLink)
+        assert.is_not_nil(w.store:Get("3002"))
+    end)
+
+    it("uses the item id key when the item info is unknown and no row has a link", function()
+        local w = MakeWorld({ rows = { plain(3003) }, legacy = true, refresh = 3 })
+        local s = Run(w)
+        assert.are.equal(1, s.keys)
+        assert.are.equal(1, s.keyedWithoutLink)
+        assert.is_true(s.refreshSeconds >= 3)
+    end)
+
+    it("keeps a suffix item without any link pending", function()
+        local w = MakeWorld({ rows = { plain(3004), plain(3005, 20) }, legacy = true, refresh = 4 })
+        w.canKey[3004] = false
+        w.stackOnLoad[3005] = 20
+        local s = Run(w)
+        assert.are.equal("partial", s.result)
+        assert.are.equal(1, s.pendingMissing)
+        assert.are.equal(1, s.noKey)
+        assert.are.equal(0, s.keyedWithoutLink)
+        assert.is_nil(w.store:Get("3004"))
+        assert.is_not_nil(w.store:Get("3005"))
+    end)
+
+    it("does not stop the scan when one item load fails", function()
+        local w = MakeWorld({ rows = { plain(3006), plain(3007, 1, linkOf(3007)) }, legacy = true, refresh = 3 })
+        w.canKey[3006] = false
+        w.failLoad[3006] = true
+        local s = Run(w)
+        assert.are.equal("partial", s.result)
+        assert.are.equal(1, s.failed)
+        assert.are.equal(1, s.keys)
+        assert.is_not_nil(w.store:Get("3007"))
+        assert.is_true(s.refreshSeconds >= 3)
+    end)
+
+    it("uses links for the rows of an item when some rows have a link", function()
+        local w = MakeWorld({ rows = { plain(3008, 1, linkOf(3008)), plain(3008) }, legacy = true, refresh = 2 })
+        w.canKey[3008] = false
+        local s = Run(w)
+        assert.are.equal(1, s.keys)
+        assert.are.equal(1, s.noKey)
+        assert.are.equal(0, s.keyedWithoutLink)
+    end)
+
+    it("does not refresh without the legacy options", function()
+        local w = MakeWorld({ rows = { gearRow(1) } })
+        local s = Run(w)
+        assert.are.equal(0, s.refreshSeconds)
+        assert.is_nil(s.mode)
+        assert.are.equal(0, s.keyedWithoutLink)
+    end)
+end)
+
+

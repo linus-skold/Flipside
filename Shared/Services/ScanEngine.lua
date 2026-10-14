@@ -16,6 +16,10 @@ local FRAME_GAP_MS = 1
 
 local RESULT_NO_RESPONSE = "no response (cooldown or blocked)"
 
+-- Legacy (TBC) scan modes. The page mode reads the list page by page and needs no get all call.
+local MODE_PAGE = "page"
+local REFRESH_INTERVAL_SECONDS = 1
+
 local REQUIRED_FUNCTIONS = { "startJob", "serverTime", "seconds", "ms", "isAuctionHouseOpen", "report" }
 local REQUIRED_TABLES = { "bus", "store", "cooldown", "cache", "api" }
 
@@ -40,13 +44,36 @@ function Engine:IsRunning()
     return self.running
 end
 
--- Returns true, or false with a reason and a detail.
-function Engine:CanStart()
+-- Returns the mode to use: nil without api.modes, otherwise the given mode or the first one.
+-- Returns false if the mode is not in api.modes.
+function Engine:_ResolveMode(mode)
+    local modes = self.deps.api.modes
+    if not modes then
+        return nil
+    end
+    if mode == nil then
+        return modes[1]
+    end
+    for _, name in ipairs(modes) do
+        if name == mode then
+            return mode
+        end
+    end
+    return false
+end
+
+-- Returns true, or false with a reason and a detail. The mode is optional; see api.modes.
+function Engine:CanStart(mode)
     local deps = self.deps
+    mode = self:_ResolveMode(mode)
+    if mode == false then
+        return false, "bad-mode"
+    end
     if self.running then
         return false, "running"
     end
-    if deps.api.replicateItems == nil then
+    local isPage = mode == MODE_PAGE
+    if (isPage and deps.api.pageQuery == nil) or (not isPage and deps.api.replicateItems == nil) then
         return false, "api-missing"
     end
     if not deps.isAuctionHouseOpen() then
@@ -55,13 +82,13 @@ function Engine:CanStart()
     if deps.store:IsReadOnly() then
         return false, "read-only"
     end
-    local left = deps.cooldown:Remaining()
+    local left = isPage and 0 or deps.cooldown:Remaining()
     if left > 0 then
         return false, "cooldown", left
     end
-    -- Optional api.canStart() gives true, or false and a text. Only the legacy backend defines it.
+    -- Optional api.canStart(mode) gives true, or false and a text. Only the legacy backend defines it.
     if deps.api.canStart then
-        local okClient, text = deps.api.canStart()
+        local okClient, text = deps.api.canStart(mode)
         if not okClient then
             return false, "client", tostring(text)
         end
@@ -74,10 +101,14 @@ local REFUSALS = {
     ["api-missing"] = "the scan call is not available",
     ["ah-closed"] = "open the Auction House first",
     ["read-only"] = "scan data is read-only",
+    ["bad-mode"] = "unknown scan mode",
 }
 
-function Engine:Start()
-    local ok, reason, detail = self:CanStart()
+-- Starts a scan. The mode is optional; see api.modes.
+function Engine:Start(mode)
+    local ok, reason, detail = self:CanStart(mode)
+    self.mode = self:_ResolveMode(mode) or nil
+    self.label = (self.mode == nil or self.mode == "full") and "full scan" or (self.mode .. " scan")
     if not ok then
         local text = REFUSALS[reason]
         if reason == "cooldown" then
@@ -85,12 +116,12 @@ function Engine:Start()
         elseif reason == "client" then
             text = detail
         end
-        self.deps.report("full scan not started: " .. text)
+        self.deps.report(self.label .. " not started: " .. text)
         return false
     end
     self.running = true
     self.run = nil
-    self.job = self.deps.startJob("full scan", function(job)
+    self.job = self.deps.startJob(self.label, function(job)
         return self:_Run(job)
     end)
     self.job:OnDone(function(_, status, ...)
@@ -98,8 +129,17 @@ function Engine:Start()
             self:_Abort(status, ...)
         end
     end)
-    self.deps.report("full scan started")
+    self.deps.report(self.label .. " started")
     return true
+end
+
+-- Returns the mode, the page and the page total of the running scan. The page values are nil before the first page.
+function Engine:GetProgress()
+    local run = self.run
+    if not (self.running and run) then
+        return nil
+    end
+    return self.mode, run.page, run.pages
 end
 
 function Engine:Cancel()
@@ -113,6 +153,7 @@ local function newSummary()
         result = "ok", rows = 0, kept = 0, items = 0, keys = 0, newItems = 0, changed = 0,
         pendingMissing = 0, noKey = 0, unknownItems = 0, itemsKeyed = 0, itemsPendingMissing = 0,
         itemsNoLink = 0, itemsLinkMismatch = 0, itemsUnknown = 0, itemsLinkFallback = 0,
+        keyedWithoutLink = 0, failed = 0, refreshSeconds = 0,
         timeToEventMs = nil, cpuMs = 0, wallMs = 0, frames = 1,
     }
 end
@@ -147,6 +188,9 @@ local function partialReasons(run, summary)
     if summary.noKey > 0 then
         reasons[#reasons + 1] = summary.noKey .. " rows without a key"
     end
+    if run.stop then
+        reasons[#reasons + 1] = run.stop
+    end
     return table.concat(reasons, ", ")
 end
 
@@ -154,16 +198,17 @@ function Engine:_ReportSummary(summary, run)
     local report = self.deps.report
     if summary.result == "ok" or summary.result == "partial" then
         report(string.format(
-            "full scan %s: %d rows, %d items, %d keys, %d new, %d changed >30%%, cpu %d ms, wall %.1f s",
-            summary.result, summary.rows, summary.items, summary.keys, summary.newItems, summary.changed,
-            math.floor(summary.cpuMs + 0.5), summary.wallMs / 1000))
+            "%s %s: %d rows, %d items, %d keys, %d new, %d changed >30%%, cpu %d ms, "
+                .. "wall %.1f s",
+            summary.label or "full scan", summary.result, summary.rows, summary.items, summary.keys,
+            summary.newItems, summary.changed, math.floor(summary.cpuMs + 0.5), summary.wallMs / 1000))
         if summary.result == "partial" and run then
             report("partial scan, latest values only: " .. partialReasons(run, summary))
         end
     elseif summary.result == "error" then
-        report("full scan failed: " .. tostring(summary.error))
+        report((summary.label or "full scan") .. " failed: " .. tostring(summary.error))
     else
-        report("full scan " .. summary.result)
+        report((summary.label or "full scan") .. " " .. summary.result)
     end
 end
 
@@ -176,6 +221,12 @@ function Engine:_Conclude(summary)
     run.concluded = true
     self:_Unsubscribe()
     self.running = false
+    summary.mode = self.mode
+    summary.label = self.label
+    summary.refreshSeconds = run.refreshSeconds
+    summary.pages = run.page
+    summary.pagesTotal = run.pages
+    summary.failed = count(run.failedSet)
     summary.wallMs = self.deps.ms() - run.startMs
     summary.cpuMs = summary.wallMs - run.suspendedMs
     summary.frames = run.frames
@@ -302,15 +353,36 @@ function Engine:_BuildGroups(jobView, rows)
     local groups, used, noKey = {}, 0, 0
     local items = {
         itemsKeyed = 0, itemsLinkFallback = 0, itemsPendingMissing = 0,
-        itemsNoLink = 0, itemsLinkMismatch = 0, itemsUnknown = 0,
+        itemsNoLink = 0, itemsLinkMismatch = 0, itemsUnknown = 0, keyedWithoutLink = 0,
     }
+    -- With api.canKeyWithoutLink (legacy backend), a row without a link does not block the item.
+    local canKeyWithoutLink = api.canKeyWithoutLink
     for itemID, list in pairs(rows.byItem) do
-        if rows.pending[itemID] then
+        if rows.pending[itemID] and not canKeyWithoutLink then
             items.itemsPendingMissing = items.itemsPendingMissing + 1
         else
             local keyed, fallback, failField = false, false, nil
+            local anyLink, withoutLink, blocked = false, false, false
+            if canKeyWithoutLink then
+                for _, row in ipairs(list) do
+                    if row.link ~= nil then
+                        anyLink = true
+                        break
+                    end
+                end
+            end
             for _, row in ipairs(list) do
                 local key, isCommodity = resolver:KeyFor(itemID, row.link)
+                if not key and canKeyWithoutLink and row.link == nil then
+                    -- true: the item cannot have a suffix. nil: info unknown, use the base key if no row has a link.
+                    local can = canKeyWithoutLink(itemID)
+                    if can == true or (can == nil and not anyLink) then
+                        key, isCommodity = ns.ItemString.ToBaseKey(itemID), false
+                        withoutLink = true
+                    else
+                        blocked = true
+                    end
+                end
                 if key then
                     keyed = true
                     fallback = fallback or isCommodity == nil
@@ -329,6 +401,11 @@ function Engine:_BuildGroups(jobView, rows)
             local field = failField or "itemsUnknown"
             if keyed then
                 field = fallback and "itemsLinkFallback" or "itemsKeyed"
+            elseif blocked then
+                field = "itemsPendingMissing"
+            end
+            if withoutLink then
+                items.keyedWithoutLink = items.keyedWithoutLink + 1
             end
             items[field] = items[field] + 1
             jobView:Checkpoint(1)
@@ -336,6 +413,60 @@ function Engine:_BuildGroups(jobView, rows)
     end
     return groups, used, noKey, resolver, items
 end
+-- Returns the items that still need a link: a row has no link and no key is possible without it.
+function Engine:_NeedLinks(jobView, rows, resolver)
+    local canKeyWithoutLink = self.deps.api.canKeyWithoutLink
+    local need = {}
+    for itemID, list in pairs(rows.byItem) do
+        local missing = false
+        for _, row in ipairs(list) do
+            if row.link == nil then
+                missing = true
+                break
+            end
+        end
+        if missing and resolver:IsCommodity(itemID) ~= true and canKeyWithoutLink(itemID) ~= true then
+            need[#need + 1] = itemID
+        end
+        jobView:Checkpoint(1)
+    end
+    return need
+end
+
+-- Legacy backend: asks for item data and reads the missing links again, until all items are keyed or the time ends.
+-- Returns true, or nil if the job is cancelled.
+function Engine:_Refresh(jobView, rows, seconds, run)
+    local deps, api = self.deps, self.deps.api
+    local resolver = ns.ScanKey.New({ clientIsCommodity = api.clientIsCommodity, maxStack = api.maxStack })
+    local interval = api.refreshInterval or REFRESH_INTERVAL_SECONDS
+    local startAt = deps.seconds()
+    while true do
+        local need = self:_NeedLinks(jobView, rows, resolver)
+        if #need == 0 or deps.seconds() - startAt >= seconds then
+            for _, itemID in ipairs(need) do
+                if deps.cache:GetState(itemID) == "failed" then
+                    run.failedSet[itemID] = true
+                end
+            end
+            run.refreshSeconds = run.refreshSeconds + (deps.seconds() - startAt)
+            return true
+        end
+        deps.cache:ResetFailed()
+        for _, itemID in ipairs(need) do
+            deps.cache:Request(itemID)
+            jobView:Checkpoint(1)
+        end
+        local waitStart = deps.seconds()
+        while deps.seconds() - waitStart < interval do
+            jobView:Yield()
+            if jobView:IsCancelled() then
+                return nil
+            end
+        end
+        ns.ScanRows.RereadLinks(jobView, api, rows, need, true)
+    end
+end
+
 -- Returns the items to load: pending items and items with an unknown commodity status.
 function Engine:_LoadSet(jobView, rows)
     local api = self.deps.api
@@ -382,6 +513,7 @@ function Engine:_Run(job)
     local run = {
         startMs = deps.ms(), suspendedMs = 0, frames = 1, closed = false, eventSeen = false,
         readCut = false, concluded = false, eventCount = 0, lastEventAt = 0,
+        refreshSeconds = 0, failedSet = {},
     }
     self.run = run
     local jobView = clockedJob(job, run, deps.ms)
@@ -421,17 +553,24 @@ function Engine:_Run(job)
     if not rows then
         return
     end
-    local clock = { clock = deps.seconds }
-    local loadSet = self:_LoadSet(jobView, rows)
-    local loaded = ns.ScanItemLoad.Run(jobView, deps.cache, loadSet, clock)
-    if not loaded then
-        return
+    if deps.api.canKeyWithoutLink then
+        local seconds = deps.api.refreshSeconds and deps.api.refreshSeconds(self.mode) or 0
+        if not self:_Refresh(jobView, rows, seconds, run) then
+            return
+        end
+    else
+        local clock = { clock = deps.seconds }
+        local loadSet = self:_LoadSet(jobView, rows)
+        local loaded = ns.ScanItemLoad.Run(jobView, deps.cache, loadSet, clock)
+        if not loaded then
+            return
+        end
+        local loadedList = {}
+        for itemID in pairs(loaded) do
+            loadedList[#loadedList + 1] = itemID
+        end
+        ns.ScanRows.RereadLinks(jobView, deps.api, rows, loadedList)
     end
-    local loadedList = {}
-    for itemID in pairs(loaded) do
-        loadedList[#loadedList + 1] = itemID
-    end
-    ns.ScanRows.RereadLinks(jobView, deps.api, rows, loadedList)
 
     local groups, used, noKey, resolver, itemCounts = self:_BuildGroups(jobView, rows)
     local snaps, keyCount = {}, 0
@@ -445,6 +584,9 @@ function Engine:_Run(job)
     end
 
     local pendingMissing = count(rows.pending)
+    if deps.api.canKeyWithoutLink then
+        pendingMissing = itemCounts.itemsPendingMissing
+    end
     local partial = run.readCut or pendingMissing > 0 or noKey > 0
     summary.noKey = noKey
     summary.unknownItems = itemCounts.itemsUnknown
