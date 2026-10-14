@@ -241,7 +241,7 @@ describe("Init rules", function()
             saveCustom(page, "myprice", "scanmin * 2")
             assert.are.equal("", page.customMessage:GetText())
             slash("formula myprice 2589")
-            assert.are.same({ "Flipside: formula = 200 (0g 2s 0c) for 2589" }, mock.messages)
+            assert.are.same({ "Flipside: formula = 200 (2s) for 2589" }, mock.messages)
         end)
 
         it("lists the source as custom", function()

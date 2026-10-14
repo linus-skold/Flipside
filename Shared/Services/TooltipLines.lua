@@ -29,14 +29,19 @@ local function withSeparators(n)
     return out
 end
 
--- Returns gold and silver as text; copper only below 1 silver.
+-- Returns every non-zero unit as text, such as "12g 40s 7c". Rounds half up to whole copper. "0c" for zero.
 function TooltipLines.FormatMoney(copper)
     copper = math.floor((copper or 0) + 0.5)
-    if copper < 100 then
-        return copper .. "c"
+    if copper == 0 then
+        return "0c"
+    end
+    local sign = ""
+    if copper < 0 then
+        sign, copper = "-", -copper
     end
     local gold = math.floor(copper / 10000)
     local silver = math.floor((copper % 10000) / 100)
+    local rest = copper % 100
     local parts = {}
     if gold > 0 then
         parts[#parts + 1] = withSeparators(gold) .. "g"
@@ -44,7 +49,10 @@ function TooltipLines.FormatMoney(copper)
     if silver > 0 then
         parts[#parts + 1] = silver .. "s"
     end
-    return table.concat(parts, " ")
+    if rest > 0 then
+        parts[#parts + 1] = rest .. "c"
+    end
+    return sign .. table.concat(parts, " ")
 end
 
 function TooltipLines.FormatAge(hours)

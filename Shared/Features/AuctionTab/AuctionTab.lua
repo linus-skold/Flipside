@@ -536,7 +536,7 @@ function Tab:_BuildClassic(content, ui)
         local y = -252 - (index - 1) * step
         local slot = {
             name = leftAligned(place(Kit.Label(content, "", "normal"), 0, y), 110),
-            money = place(Kit.Money(content), 120, y),
+            money = place(Kit.Money(content, ns.TooltipLines and ns.TooltipLines.FormatMoney), 120, y),
             value = leftAligned(place(Kit.Label(content, "", "highlight"), 120, y), 300),
         }
         ui.slots[index] = slot
@@ -606,7 +606,7 @@ function Tab:_BuildCompact(content, ui)
         local y = -140 - (index - 1) * step
         ui.slots[index] = {
             name = leftAligned(place(Kit.Label(content, "", "normal"), 0, y), 110),
-            money = place(Kit.Money(content), 120, y),
+            money = place(Kit.Money(content, ns.TooltipLines and ns.TooltipLines.FormatMoney), 120, y),
             value = leftAligned(place(Kit.Label(content, "", "highlight"), 120, y), 300),
         }
     end

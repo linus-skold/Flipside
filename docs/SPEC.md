@@ -380,7 +380,7 @@ Operations and formulas (§4.2–4.3), tooltips and inventory tracking (referenc
 5. **Tooltip settings.** The tooltip lines are set on a new "Tooltip" tab in the Flipside window. They are stored in the profile.
 6. **Stack total.** Shown while Alt is held. Shift is Blizzard's compare key.
 7. **Data line.** Superseded by point 15. A custom formula line shows "Label 12g 40s", and can add " · 3 h old" and " · 9/14 days" when its age and days settings are on. The days are the days with data in the 14-day window (`ScanSamples`).
-8. **Money.** Gold and silver ("12g 40s"). Copper shows only for values below 1 silver.
+8. **Money (changed 2026-10-14).** Every non-zero unit shows: "12g 40s 7c", "3s 25c", "1g 5c". A zero unit does not show. Zero is "0c". A negative value has a minus sign: "-3s 25c". Values round half up to whole copper, and Flipside never shortens a value to one unit. Gold has thousands separators ("1,234g"). Chat, the AH tab, the Formula page and the Operations page use the same formatter.
 9. **Default lines.** The price table (point 15), group path, selling operation, and counts per character. The formula lines Market, Min and Max are no longer defaults.
 10. **Combat and missing data.** Tooltip lines show in combat too. Items without data show "invalid price".
 11. **Budget.** At most 1 ms per tooltip once the data is loaded. This is measured in game.

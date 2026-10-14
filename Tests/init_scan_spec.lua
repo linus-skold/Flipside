@@ -271,8 +271,8 @@ describe("Init scan", function()
             mock.messages = {}
             slash("price 2001")
             assert.are.same({
-                "Flipside: key 2001: ScanMin 1000 (0g 10s 0c), ScanRecent 1000 (0g 10s 0c)",
-                "Flipside: ScanMarket 1000 (0g 10s 0c), ScanHistorical -",
+                "Flipside: key 2001: ScanMin 1000 (10s), ScanRecent 1000 (10s)",
+                "Flipside: ScanMarket 1000 (10s), ScanHistorical -",
                 "Flipside: ScanQty 15, ScanAge 0.0 h, ScanSamples 1",
             }, mock.messages)
         end)
@@ -281,7 +281,7 @@ describe("Init scan", function()
             runScan()
             mock.messages = {}
             slash("price " .. gearLink(1001, 6001))
-            assert.is_true(hasMessage("Flipside: key 1001#b6001: ScanMin 5010 (0g 50s 10c)"))
+            assert.is_true(hasMessage("Flipside: key 1001#b6001: ScanMin 5010 (50s 10c)"))
             mock.messages = {}
             slash("price " .. commodityLink(2002))
             assert.is_true(hasMessage("Flipside: key 2002: ScanMin 1000"))
@@ -411,7 +411,7 @@ describe("Init scan", function()
             assert.are.same({ "2589" }, ns.scanStore:Keys())
             assert.are.equal(0, #mock.messages)
             slash("price 2589")
-            assert.is_true(hasMessage("Flipside: key 2589: ScanMin 100 (0g 1s 0c)"))
+            assert.is_true(hasMessage("Flipside: key 2589: ScanMin 100 (1s)"))
             assert.is_true(hasMessage("ScanQty 50"))
         end)
 
