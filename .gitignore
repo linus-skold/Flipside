@@ -1,2 +1,5 @@
 lua51/
 .claude/
+.lua/
+.luarocks/
+.release/

@@ -14,3 +14,6 @@ ignore:
   - CLAUDE.md
   - README.md
   - "*.png"
+  - .lua
+  - .luarocks
+  - .release
