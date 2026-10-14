@@ -246,4 +246,77 @@ describe("BuyingPlan", function()
             assert.equal(1, #log:List())
         end)
     end)
-end)
+
+    describe("PriceLevels", function()
+        it("groups rows by unit price, cheapest first", function()
+            local levels = BP.PriceLevels({
+                { unitPrice = 200, quantity = 5, auctionID = 3 },
+                { unitPrice = 100, quantity = 2, auctionID = 1 },
+                { unitPrice = 100, quantity = 3, auctionID = 2 },
+            })
+            assert.are.equal(2, #levels)
+            assert.are.equal(100, levels[1].unitPrice)
+            assert.are.equal(5, levels[1].quantity)
+            assert.are.equal(2, levels[1].listings)
+            assert.is_false(levels[1].own)
+            assert.are.equal(200, levels[2].unitPrice)
+            assert.are.equal(1, levels[2].listings)
+        end)
+
+        it("marks a level that holds an own row", function()
+            local levels = BP.PriceLevels({
+                { unitPrice = 100, quantity = 1 },
+                { unitPrice = 100, quantity = 1, ownerItem = true },
+                { unitPrice = 150, quantity = 1 },
+            })
+            assert.is_true(levels[1].own)
+            assert.is_false(levels[2].own)
+        end)
+
+        it("gives no level for no rows", function()
+            assert.are.same({}, BP.PriceLevels(nil))
+            assert.are.same({}, BP.PriceLevels({}))
+        end)
+    end)
+
+    describe("NextLevel", function()
+        local levels = { { unitPrice = 100 }, { unitPrice = 150 }, { unitPrice = 200 } }
+
+        it("gives the first level when nothing was bought", function()
+            assert.are.equal(100, BP.NextLevel(levels, nil).unitPrice)
+        end)
+
+        it("gives the first higher level after a buy", function()
+            assert.are.equal(150, BP.NextLevel(levels, 100).unitPrice)
+            assert.are.equal(200, BP.NextLevel(levels, 150).unitPrice)
+            assert.is_nil(BP.NextLevel(levels, 200))
+        end)
+
+        it("can keep the same price for an item", function()
+            assert.are.equal(100, BP.NextLevel(levels, 100, true).unitPrice)
+        end)
+    end)
+
+    describe("JumpCheck", function()
+        it("flags a rise of more than the threshold", function()
+            local check = BP.JumpCheck(100, 130, 25)
+            assert.is_true(check.jump)
+            assert.are.equal(30, check.percent)
+        end)
+
+        it("does not flag a rise of 20 percent or exactly the threshold", function()
+            assert.is_false(BP.JumpCheck(100, 120, 25).jump)
+            assert.is_false(BP.JumpCheck(100, 125, 25).jump)
+        end)
+
+        it("handles the examples 100g to 150g and 2g to 8g", function()
+            assert.are.equal(50, BP.JumpCheck(1000000, 1500000, 25).percent)
+            assert.is_true(BP.JumpCheck(20000, 80000, 25).jump)
+            assert.are.equal(300, BP.JumpCheck(20000, 80000, 25).percent)
+        end)
+
+        it("flags nothing for a missing or zero previous price", function()
+            assert.is_false(BP.JumpCheck(nil, 100, 25).jump)
+            assert.is_false(BP.JumpCheck(0, 100, 25).jump)
+        end)
+    end)end)
