@@ -41,6 +41,7 @@ Shared\Services\RulesStore.lua
 Shared\Services\CustomSources.lua
 Shared\Services\AHNameSearch.lua
 Shared\Services\RulesExport.lua
+Shared\Services\BuyingPlan.lua
 Shared\Services\Holdings.lua
 Shared\Services\HoldingsRead.lua
 Shared\Services\TooltipConfig.lua

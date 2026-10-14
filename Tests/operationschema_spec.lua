@@ -46,7 +46,7 @@ describe("OperationSchema", function()
 
     it("lists fields in sequence with safety fields last", function()
         assert.same({ "minPrice", "normalPrice", "maxPrice", "undercut", "duration", "postCap",
-            "keepInBags", "belowMin", "aboveMax", "cancelUndercut", "maxDataAgeHours",
+            "stackSize", "keepInBags", "belowMin", "aboveMax", "cancelUndercut", "maxDataAgeHours",
             "minSamples" }, keys("selling"))
         assert.same({ "maxPrice", "showAboveMax", "maxDataAgeHours", "minSamples" }, keys("buying"))
         assert.same({ "sellToVendor", "keepInBags", "safetyMultiple",
@@ -63,7 +63,7 @@ describe("OperationSchema", function()
     it("gives defaults", function()
         assert.same({
             minPrice = DEFAULT, normalPrice = "scanmarket", maxPrice = "2 * scanmarket", undercut = 1,
-            duration = 24, postCap = 0, keepInBags = 0, belowMin = "skip", aboveMax = "postAtMax",
+            duration = 24, postCap = 0, stackSize = 0, keepInBags = 0, belowMin = "skip", aboveMax = "postAtMax",
             cancelUndercut = true,
             maxDataAgeHours = 72, minSamples = 3,
         }, S.Defaults("selling"))
@@ -125,6 +125,15 @@ describe("OperationSchema", function()
             assert.is_true(field("selling", "postCap", 5000))
             assert.is_false(field("selling", "postCap", 5001))
             assert.is_false(field("selling", "postCap", -1))
+        end)
+
+        it("checks stackSize range and fills old settings", function()
+            assert.is_true(field("selling", "stackSize", 0))
+            assert.is_true(field("selling", "stackSize", 1000))
+            assert.is_false(field("selling", "stackSize", 1001))
+            assert.is_false(field("selling", "stackSize", -1))
+            assert.is_false(field("selling", "stackSize", 2.5))
+            assert.equal(0, S.Normalize("selling", { postCap = 5 }).stackSize)
         end)
 
         it("checks keepInBags range", function()
