@@ -1,13 +1,12 @@
 local _, ns = ...
 
--- The "Flipside" tab in Blizzard's Auction House frame: scan controls, scan status and price lookup.
+-- The Flipside panel of the Auction House: scan controls, scan status and price lookup.
+-- A flavour host file (ns.AuctionTabHost) owns the Blizzard frame, the tab button and the show and hide of the panel.
 local AuctionTab = {}
 ns.AuctionTab = AuctionTab
 
 local OWNER = "Flipside.AuctionTab"
-local ADDON = "Blizzard_AuctionHouseUI"
 local EVENT_FINISHED = "Flipside.ScanFinished"
-local TAB_TEMPLATES = { "AuctionHouseFrameTabTemplate", "PanelTabButtonTemplate" }
 local WIDTH = 740
 local PRICE_SLOTS = 9
 local MAX_CHOICES = 8
@@ -316,69 +315,44 @@ function Tab:_StopTicker()
     end
 end
 
--- Hide the Flipside content; Blizzard's own code or the frame hide takes over.
-function Tab:_Deselect()
+
+function Tab:IsActive()
+    return self.active
+end
+
+-- Hide the Flipside content; the host or Blizzard's own code takes over.
+function Tab:Deselect()
     self.active = false
     self:_StopTicker()
-    self.content:Hide()
-end
-
--- Show or hide the panes that the current display mode lists. Blizzard's state is only read.
-function Tab:_SetPanes(shown)
-    local frame = self.frame
-    local mode = frame:GetDisplayMode()
-    if type(mode) == "table" then
-        for _, name in ipairs(mode) do
-            if frame[name] then
-                frame[name]:SetShown(shown)
-            end
-        end
-    end
-    return mode
-end
-
--- Leave the Flipside tab: show Blizzard's panes again and select the given Blizzard tab.
-function Tab:_Restore(tabIndex)
-    self:_Deselect()
-    self:_SetPanes(true)
-    local index = tabIndex or self.previousTab
-    if index then
-        PanelTemplates_SetTab(self.frame, index)
+    if self.content then
+        self.content:Hide()
     end
 end
 
--- Show the Flipside content in place of Blizzard's panes of the current display mode.
-function Tab:_Select()
-    local frame = self.frame
-    if not self.active then
-        self.previousTab = frame.selectedTab
-    end
-    self.selectedMode = self:_SetPanes(false)
+-- Leave the panel. The host restores Blizzard's panes and tab.
+-- tabIndex is the Blizzard tab, or nil for the previous one.
+function Tab:Leave(tabIndex)
+    self:Deselect()
+    self.api.Leave(tabIndex)
+end
+
+-- Show the panel. The host hides Blizzard's panes and marks its own tab.
+function Tab:Select()
+    self.api.Enter(self.active)
     self.active = true
     self.content:Show()
     self:Refresh()
     self:_StartTicker()
-    PanelTemplates_SetTab(frame, self.index)
-end
-
-local function createTabButton(frame)
-    local button
-    for _, template in ipairs(TAB_TEMPLATES) do
-        local ok, result = pcall(CreateFrame, "Button", nil, frame, template)
-        if ok then
-            button = result
-            break
-        end
-    end
-    return button or CreateFrame("Button", nil, frame, "PanelTabButtonTemplate")
 end
 
 function Tab:_BuildContent()
     local Kit = ns.Kit
     local padding = Kit.Theme.padding
-    local content = CreateFrame("Frame", nil, self.frame)
-    content:SetPoint("TOPLEFT", self.frame, "TOPLEFT", padding, -60)
-    content:SetPoint("BOTTOMRIGHT", self.frame, "BOTTOMRIGHT", -padding, 30)
+    local parent, api = self.parent, self.api
+    local insets = api.insets or {}
+    local content = CreateFrame("Frame", nil, parent)
+    content:SetPoint("TOPLEFT", parent, "TOPLEFT", padding, -(insets.top or 0))
+    content:SetPoint("BOTTOMRIGHT", parent, "BOTTOMRIGHT", -padding, insets.bottom or 0)
     content:Hide()
     content:SetScript("OnShow", function()
         self:Refresh()
@@ -386,7 +360,7 @@ function Tab:_BuildContent()
     end)
     content:SetScript("OnHide", function()
         if self.active then
-            self:_Restore()
+            self:Leave()
         end
         self:_StopTicker()
     end)
@@ -449,58 +423,11 @@ function Tab:_BuildContent()
     self:_ShowPriceRows(nil)
 end
 
-local function indexOf(list, item)
-    for index, value in ipairs(list) do
-        if value == item then
-            return index
-        end
-    end
-    return nil
-end
-
--- Create the tab button after the Blizzard tabs. The tab template can add the button to frame.Tabs itself.
-function Tab:_BuildTab(frame)
-    local tabs = frame.Tabs
-    local blizzardTabs = {}
-    for index, existing in ipairs(tabs) do
-        blizzardTabs[index] = existing
-    end
-    local last = blizzardTabs[#blizzardTabs]
-    local button = createTabButton(frame)
-    self.tab = button
-    if not indexOf(tabs, button) then
-        table.insert(tabs, button)
-    end
-    self.index = indexOf(tabs, button)
-    button:SetID(self.index)
-    button:SetText("Flipside")
-    if last then
-        button:SetPoint("TOPLEFT", last, "TOPRIGHT", 3, 0)
-    end
-    button:SetScript("OnClick", function()
-        self:_Select()
-    end)
-    PanelTemplates_SetNumTabs(frame, #tabs)
-    return blizzardTabs
-end
-
-function Tab:_BuildFrame(frame)
-    self.frame = frame
-    local blizzardTabs = self:_BuildTab(frame)
+-- Build the panel in the parent frame and listen for finished scans. Errors go to the host.
+-- api: Enter(wasActive), Leave(tabIndex), and optional insets { top, bottom } below and above the panel.
+function Tab:Mount(parent, api)
+    self.parent, self.api = parent, api
     self:_BuildContent()
-    for blizzardIndex, blizzardTab in ipairs(blizzardTabs) do
-        blizzardTab:HookScript("OnClick", function()
-            if self.active then
-                self:_Restore(blizzardIndex)
-            end
-        end)
-    end
-    hooksecurefunc(frame, "SetDisplayMode", function()
-        -- Same mode again: Blizzard did nothing, so the tab click hook restores the panes.
-        if self.active and frame:GetDisplayMode() ~= self.selectedMode then
-            self:_Deselect()
-        end
-    end)
     self.deps.bus:Subscribe(EVENT_FINISHED, OWNER, function(_, summary)
         self.summaryLines = AuctionTab.DescribeSummary(summary)
         self:Refresh()
@@ -508,39 +435,22 @@ function Tab:_BuildFrame(frame)
     self:Refresh()
 end
 
--- Undo a failed build: hide the tab, remove it from the frame and keep no half-built state.
-function Tab:_Abandon(frame)
-    local tab = self.tab
-    if tab then
-        tab:Hide()
-        local index = indexOf(frame.Tabs, tab)
-        if index then
-            table.remove(frame.Tabs, index)
-            PanelTemplates_SetNumTabs(frame, #frame.Tabs)
-        end
-    end
+-- Undo a failed Mount: hide the panel and keep no half-built state.
+function Tab:Unmount()
     if self.content then
         self.content:Hide()
     end
-    self.frame, self.tab, self.content, self.ui, self.index = nil, nil, nil, nil, nil
+    self:_StopTicker()
+    self.deps.bus:Unsubscribe(EVENT_FINISHED, OWNER)
+    self.parent, self.api, self.content, self.ui, self.active = nil, nil, nil, nil, false
 end
 
-function Tab:_Build()
-    local frame = AuctionHouseFrame
-    if self.frame or not frame then
-        return
-    end
-    local ok, err = pcall(self._BuildFrame, self, frame)
-    if not ok then
-        self:_Abandon(frame)
-        ns.ReportError("the Auction House tab is not available: " .. tostring(err))
-    end
-end
 local REQUIRED_FUNCTIONS = { "serverTime", "confirmScan", "openMainWindow" }
 
--- Attach the Flipside tab to the Auction House frame, now or when its addon loads.
+-- Attach the Flipside panel to the Auction House through the host, which calls Tab:Mount when its frame is ready.
+-- Host interface: host.Attach(tab) -> state table (optional). The host is deps.host or ns.AuctionTabHost.
 -- deps: bus, scanEngine, scanCooldown, scanStore, formulaLookup, scanSources, itemNameIndex (optional),
--- serverTime, confirmScan, openMainWindow. Returns an object with :Refresh().
+-- serverTime, confirmScan, openMainWindow, host (optional). Returns an object with :Refresh().
 function AuctionTab.Attach(deps)
     if type(deps) ~= "table" then
         error("deps must be a table", 2)
@@ -554,15 +464,9 @@ function AuctionTab.Attach(deps)
         end
     end
     local tab = setmetatable({ deps = deps, summaryLines = {}, active = false }, Tab)
-    if AuctionHouseFrame then
-        tab:_Build()
-    else
-        deps.bus:Subscribe("ADDON_LOADED", OWNER, function(_, name)
-            if name == ADDON then
-                deps.bus:Unsubscribe("ADDON_LOADED", OWNER)
-                tab:_Build()
-            end
-        end)
+    local host = deps.host or ns.AuctionTabHost
+    if type(host) == "table" and type(host.Attach) == "function" then
+        tab.hostState = host.Attach(tab)
     end
     return tab
 end

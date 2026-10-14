@@ -551,10 +551,7 @@ local function openTooltip()
             end,
             now = GetServerTime,
             isAltDown = IsAltKeyDown,
-            itemLinkByGUID = C_Item.GetItemLinkByGUID,
             containerItemInfo = C_Container.GetContainerItemInfo,
-            processor = TooltipDataProcessor,
-            itemType = Enum and Enum.TooltipDataType and Enum.TooltipDataType.Item,
             clock = debugprofilestop,
             report = ns.ReportError,
         }
