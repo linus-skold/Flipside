@@ -59,4 +59,4 @@ Each push to `main` publishes a normal GitHub release named `vX.Y.(Z+1)-alpha.N`
 
 WowUp: add the GitHub repository URL. The Stable channel gets the builds from `main` and the plain release tags. Betas from `v0.1.0-beta.N` tags are pre-releases, so choose the Beta channel to get them.
 
-CurseForge and Wago need no code change. Add the IDs to `Flipside.toc` (`## X-Curse-Project-ID: <id>` and `## X-Wago-ID: <id>`). Add the secrets `CF_API_TOKEN` and `WAGO_API_TOKEN` in the GitHub repository settings. The packager skips a site that has no ID or no token.
+CurseForge and Wago need no code change. Add the IDs to `Flipside.toc` (`## X-Curse-Project-ID: <id>` and `## X-Wago-ID: <id>`). Add the secrets `CF_API_KEY` and `WAGO_API_TOKEN` in the GitHub repository settings. The packager skips a site that has no ID or no token.
