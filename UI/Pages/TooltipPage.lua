@@ -1,0 +1,416 @@
+local _, ns = ...
+
+-- The tooltip page of the Flipside window.
+
+local TooltipPage = {}
+ns.TooltipPage = TooltipPage
+
+local LEFT_WIDTH = 300
+local RIGHT_X = 312
+local RIGHT_WIDTH = 460
+local REMOVE_DIALOG = "FLIPSIDE_REMOVE_TOOLTIP_LINE"
+local RESET_DIALOG = "FLIPSIDE_RESET_TOOLTIP"
+local EDITOR_DIALOG = "FlipsideFormulaEditor"
+local EDITOR_HELP = "Missing prices are invalid, never 0. Functions: min max avg first check ifgt iflt ifeq round."
+local NEW_LABEL, NEW_FORMULA = "New line", "scanmarket"
+local READ_ONLY = "Settings are read-only"
+local ALT_HINT = "Hold Alt over an item to see the value of the whole stack."
+
+local function trim(text)
+    return (tostring(text or ""):match("^%s*(.-)%s*$"))
+end
+
+local function isItem(text)
+    return text:match("^%d+$") or (text:match("^|[cH]") and text:find("|Hitem:", 1, true))
+end
+
+local function setEnabled(widget, enabled)
+    if widget and widget.SetEnabled then
+        widget:SetEnabled(enabled)
+    end
+end
+
+local function findLine(data, id)
+    for _, line in ipairs(data.lines) do
+        if line.id == id then
+            return line
+        end
+    end
+end
+
+-- Build the page in the content frame.
+-- deps: tooltipConfig, formulaRun, itemNameIndex, rules, holdings, getRecord(key), subscribe(fn),
+-- buildPreview(input, config) (the last four are optional). buildPreview gives rows like TooltipLines.Build.
+function TooltipPage.Build(content, deps)
+    local Kit = ns.Kit
+    local tc, run, index = deps.tooltipConfig, deps.formulaRun, deps.itemNameIndex
+    local page = {}
+    local selected, example
+    local refresh
+
+    local function lineOf(id)
+        return id and findLine(tc:Get(), id)
+    end
+
+    -- Left side.
+
+    page.list = Kit.CreateList(content, {
+        inset = true,
+        initRow = function(row, data)
+            row.data = data
+            if not row.nameText then
+                row.nameText = Kit.Label(row, "", "normal")
+                row.nameText:SetPoint("LEFT", row, "LEFT", 4, 0)
+                row.nameText:SetWidth(90)
+                row.nameText:SetJustifyH("LEFT")
+                row.formulaText = Kit.Label(row, "", "disabled")
+                row.formulaText:SetPoint("LEFT", row, "LEFT", 98, 0)
+                row.formulaText:SetWidth(100)
+                row.formulaText:SetJustifyH("LEFT")
+                row.enabledCheck = Kit.Check(row, "", function(checked)
+                    local ok, message = tc:UpdateLine(row.data.id, { enabled = checked })
+                    refresh()
+                    if not ok then
+                        page.status:SetText(tostring(message))
+                    end
+                end)
+                row.enabledCheck:SetSize(22, 22)
+                row.enabledCheck:SetPoint("RIGHT", row, "RIGHT", -28, 0)
+                row.removeButton = Kit.IconButton(row, "close", function()
+                    local line = row.data
+                    local id = line.id
+                    Kit.Confirm(REMOVE_DIALOG, string.format('Remove the line "%s"?', line.label), function()
+                        local ok, message = tc:RemoveLine(id)
+                        refresh()
+                        if not ok then
+                            page.status:SetText(tostring(message))
+                        end
+                    end)
+                end, "Remove line")
+                row.removeButton:SetPoint("RIGHT", row, "RIGHT", -4, 0)
+            end
+            row.nameText:SetText(data.label)
+            row.nameText:SetFontObject(Kit.Font(data.id == selected and "highlight" or "normal"))
+            row.formulaText:SetText(data.formula)
+            row.enabledCheck:SetChecked(data.enabled)
+            local ro = tc:IsReadOnly()
+            setEnabled(row.enabledCheck, not ro)
+            setEnabled(row.removeButton, not ro)
+            row:SetScript("OnClick", function()
+                page.labelMessage:SetText("")
+                page.formulaMessage:SetText("")
+                page.Select(row.data.id)
+            end)
+        end,
+    })
+    page.list.frame:SetPoint("TOPLEFT", content, "TOPLEFT", 0, 0)
+    page.list.frame:SetPoint("BOTTOMRIGHT", content, "BOTTOMLEFT", LEFT_WIDTH, 84)
+
+    page.status = Kit.Label(content, "", "bad")
+    page.status:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", 0, 62)
+    page.status:SetWidth(LEFT_WIDTH)
+    page.status:SetJustifyH("LEFT")
+
+    local function change(fn, ...)
+        local ok, message = fn(tc, ...)
+        refresh()
+        page.status:SetText(ok and "" or tostring(message))
+        return ok
+    end
+
+    page.addButton = Kit.Button(content, "Add line", 96, function()
+        if change(tc.AddLine, NEW_LABEL, NEW_FORMULA) then
+            local lines = tc:Get().lines
+            selected = lines[#lines].id
+            refresh()
+        end
+    end)
+    page.addButton:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", 0, 34)
+    page.upButton = Kit.Button(content, "Move up", 96, function()
+        if selected then
+            change(tc.MoveLine, selected, -1)
+        end
+    end)
+    page.upButton:SetPoint("LEFT", page.addButton, "RIGHT", 4, 0)
+    page.downButton = Kit.Button(content, "Move down", 96, function()
+        if selected then
+            change(tc.MoveLine, selected, 1)
+        end
+    end)
+    page.downButton:SetPoint("LEFT", page.upButton, "RIGHT", 4, 0)
+    page.resetButton = Kit.Button(content, "Reset to defaults", 140, function()
+        Kit.Confirm(RESET_DIALOG, "Reset the tooltip lines to the defaults?", function()
+            change(tc.ResetDefaults)
+        end)
+    end)
+    page.resetButton:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", 0, 8)
+
+    -- Right side.
+
+    local right = CreateFrame("Frame", nil, content)
+    right:SetSize(RIGHT_WIDTH, 380)
+    right:SetPoint("TOPLEFT", content, "TOPLEFT", RIGHT_X, 0)
+    page.right = right
+
+    page.header = Kit.Label(right, "", "title")
+    page.header:SetPoint("TOPLEFT", right, "TOPLEFT", 0, 0)
+    page.readOnly = Kit.Label(right, READ_ONLY, "bad")
+    page.readOnly:SetPoint("TOPRIGHT", right, "TOPRIGHT", 0, -4)
+
+    local function field(labelText, y)
+        local label = Kit.Label(right, labelText, "highlight")
+        label:SetPoint("TOPLEFT", right, "TOPLEFT", 0, y)
+        local message = Kit.Label(right, "", "bad")
+        message:SetPoint("TOPLEFT", right, "TOPLEFT", 120, y)
+        message:SetWidth(RIGHT_WIDTH - 120)
+        message:SetJustifyH("LEFT")
+        return message
+    end
+
+    -- Saves one field. On a refusal the message shows and the box gets the stored value back.
+    local function save(key, value, message)
+        local id = selected
+        if not id then
+            return
+        end
+        local ok, err = tc:UpdateLine(id, { [key] = value })
+        refresh()
+        message:SetText(ok and "" or tostring(err))
+    end
+
+    page.labelMessage = field("Label", -30)
+    page.labelInput = Kit.Input(right, 240, nil, nil, { placeholder = "<line label>" })
+    page.labelInput:SetPoint("TOPLEFT", right, "TOPLEFT", 6, -48)
+    local function saveLabel(text)
+        local line = lineOf(selected)
+        if line and trim(text) ~= line.label then
+            save("label", trim(text), page.labelMessage)
+        end
+    end
+    page.labelInput:SetScript("OnEnterPressed", function(self)
+        saveLabel(self:GetText())
+        self:ClearFocus()
+    end)
+    page.labelInput:SetScript("OnEditFocusLost", function(self)
+        saveLabel(self:GetText())
+    end)
+
+    page.formulaMessage = field("Formula", -78)
+    page.formulaInput = Kit.Input(right, 380, nil, nil)
+    page.formulaInput:SetPoint("TOPLEFT", right, "TOPLEFT", 6, -96)
+    local function saveFormula(text)
+        local line = lineOf(selected)
+        if line and trim(text) ~= line.formula then
+            save("formula", trim(text), page.formulaMessage)
+        end
+    end
+    page.formulaInput:SetScript("OnEnterPressed", function(self)
+        saveFormula(self:GetText())
+        self:ClearFocus()
+    end)
+    page.formulaInput:SetScript("OnEditFocusLost", function(self)
+        saveFormula(self:GetText())
+    end)
+    page.expandButton = Kit.Button(right, "...", 30, function()
+        local line = lineOf(selected)
+        if not line then
+            return
+        end
+        local dialog = Kit.EditorDialog(EDITOR_DIALOG, { help = EDITOR_HELP })
+        dialog:Open(line.label, line.formula, function(text)
+            saveFormula((text:gsub("[\r\n]+", " ")))
+        end)
+    end)
+    page.expandButton:SetPoint("LEFT", page.formulaInput, "RIGHT", 6, 0)
+
+    page.ageCheck = Kit.Check(right, "Show age", function(checked)
+        save("showAge", checked, page.status)
+    end)
+    page.ageCheck:SetPoint("TOPLEFT", right, "TOPLEFT", 0, -124)
+    page.samplesCheck = Kit.Check(right, "Show days with data", function(checked)
+        save("showSamples", checked, page.status)
+    end)
+    page.samplesCheck:SetPoint("TOPLEFT", right, "TOPLEFT", 160, -124)
+
+    -- Preview.
+
+    page.previewLabel = Kit.Label(right, "Preview", "highlight")
+    page.previewLabel:SetPoint("TOPLEFT", right, "TOPLEFT", 0, -164)
+    page.exampleInput = Kit.Input(right, 240, nil, nil, { placeholder = "Item name, link or id" })
+    page.exampleInput:SetPoint("TOPLEFT", right, "TOPLEFT", 6, -182)
+    page.exampleStatus = Kit.Label(right, "", "small")
+    page.exampleStatus:SetPoint("TOPLEFT", right, "TOPLEFT", 0, -206)
+    page.exampleStatus:SetWidth(RIGHT_WIDTH)
+    page.exampleStatus:SetJustifyH("LEFT")
+    page.preview = Kit.Label(right, "", "normal")
+    page.preview:SetPoint("TOPLEFT", right, "TOPLEFT", 0, -226)
+    page.preview:SetWidth(RIGHT_WIDTH)
+    page.preview:SetJustifyH("LEFT")
+
+    -- Sets example from the item box. An unclear item gives no example and a message.
+    local function resolveExample()
+        local text = trim(page.exampleInput:GetText())
+        local message = ""
+        example = nil
+        if text == "" then
+            page.exampleStatus:SetText("")
+            return
+        end
+        if isItem(text) then
+            example = text
+        elseif not index then
+            message = "not an item: " .. text
+        else
+            local result = index:Resolve(text)
+            if result.kind == "error" then
+                message = result.message
+            elseif result.kind == "item" then
+                example = text
+            else
+                local matches = result.matches
+                if #matches == 1 then
+                    example = ns.ItemNameIndex.ToInput(matches[1].key)
+                elseif #matches == 0 then
+                    message = 'no item named "' .. text .. '" in the scan data'
+                else
+                    message = #matches .. " items match, type more of the name"
+                end
+                if result.pendingCount > 0 then
+                    message = message .. (message ~= "" and " - " or "") .. result.pendingCount
+                        .. " item names are still loading"
+                end
+            end
+        end
+        page.exampleStatus:SetText(message)
+    end
+
+    local function onExample()
+        resolveExample()
+        refresh()
+    end
+    page.exampleInput:SetScript("OnEnterPressed", function(self)
+        onExample()
+        self:ClearFocus()
+    end)
+    page.exampleInput:SetScript("OnEditFocusLost", onExample)
+
+    local function rowText(row)
+        return row.left .. (row.right and ("  " .. row.right) or "")
+    end
+
+    -- Returns the preview text of the selected line.
+    local function previewText(line)
+        if not run then
+            return "formulas are not available this session"
+        end
+        if not example then
+            local compiled, err = run:Compile(line.formula)
+            local info = compiled and { kind = "compiled", names = compiled.names, later = compiled.later }
+            return table.concat(ns.FormulaPage.Describe(nil, info, err, line.formula), " - ")
+        end
+        local one = {}
+        for k, v in pairs(line) do
+            one[k] = v
+        end
+        one.enabled = true
+        local config = { lines = { one }, showGroup = false, showOperation = false, showCounts = false }
+        local rows
+        if deps.buildPreview then
+            rows = deps.buildPreview(example, config)
+        else
+            rows = ns.TooltipLines.Build({
+                config = config,
+                input = example,
+                formulaRun = run,
+                rules = deps.rules,
+                holdings = deps.holdings,
+                getRecord = deps.getRecord,
+                now = (_G.GetServerTime or _G.time)(),
+            })
+        end
+        local texts = {}
+        for _, row in ipairs(rows or {}) do
+            texts[#texts + 1] = rowText(row)
+        end
+        return table.concat(texts, "\n")
+    end
+
+    -- Bottom.
+
+    local function flagCheck(text, flag, y)
+        local check = Kit.Check(content, text, function(checked)
+            change(tc.SetFlag, flag, checked)
+        end)
+        check:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", RIGHT_X, y)
+        return check
+    end
+    page.counts = flagCheck("Show counts per character", "showCounts", 28)
+    page.operation = flagCheck("Show operations", "showOperation", 52)
+    page.group = flagCheck("Show group", "showGroup", 76)
+    page.hint = Kit.Label(content, ALT_HINT, "small")
+    page.hint:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", RIGHT_X, 6)
+    page.hint:SetWidth(RIGHT_WIDTH)
+    page.hint:SetJustifyH("LEFT")
+
+    -- Redraws the list and the right side. Messages stay until the next change.
+    refresh = function()
+        local data = tc:Get()
+        local ro = tc:IsReadOnly()
+        if not findLine(data, selected) then
+            selected = data.lines[1] and data.lines[1].id or nil
+        end
+        page.list:SetData(data.lines)
+        local line = findLine(data, selected)
+        page.readOnly:SetShown(ro)
+        page.header:SetText(line and line.label or "No line selected")
+        page.labelInput:SetText(line and line.label or "")
+        page.formulaInput:SetText(line and line.formula or "")
+        page.ageCheck:SetChecked(line and line.showAge)
+        page.samplesCheck:SetChecked(line and line.showSamples)
+        page.preview:SetText(line and previewText(line) or "")
+        local active = line ~= nil and not ro
+        for _, widget in ipairs({ page.labelInput, page.formulaInput, page.expandButton, page.ageCheck,
+            page.samplesCheck }) do
+            setEnabled(widget, active)
+        end
+        setEnabled(page.addButton, not ro)
+        setEnabled(page.upButton, active)
+        setEnabled(page.downButton, active)
+        setEnabled(page.resetButton, not ro)
+        page.group:SetChecked(data.showGroup)
+        page.operation:SetChecked(data.showOperation)
+        page.counts:SetChecked(data.showCounts)
+        for _, widget in ipairs({ page.group, page.operation, page.counts }) do
+            setEnabled(widget, not ro)
+        end
+    end
+
+    -- Public refresh: reads the example item again, then redraws.
+    function page.Refresh()
+        resolveExample()
+        page.status:SetText("")
+        page.labelMessage:SetText("")
+        page.formulaMessage:SetText("")
+        refresh()
+    end
+
+    function page.Select(id)
+        selected = id
+        refresh()
+    end
+
+    if deps.subscribe then
+        deps.subscribe(page.Refresh)
+    end
+
+    local hook, insertLink = _G.hooksecurefunc, _G.ChatEdit_InsertLink
+    if hook and insertLink then
+        hook("ChatEdit_InsertLink", function(link)
+            if type(link) == "string" and page.exampleInput:HasFocus() then
+                page.exampleInput:SetText(link)
+            end
+        end)
+    end
+    refresh()
+    return page
+end
