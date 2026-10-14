@@ -924,13 +924,12 @@ local function scanCommand(argument)
     end)
 end
 
--- Money in copper as "Xg Ys Zc".
+-- Money in copper, shown with the shared formatter.
 local function formatMoney(copper)
     if type(copper) ~= "number" then
         return "-"
     end
-    copper = math.floor(copper + 0.5)
-    return string.format("%dg %ds %dc", math.floor(copper / 10000), math.floor(copper / 100) % 100, copper % 100)
+    return ns.TooltipLines.FormatMoney(copper)
 end
 
 local function priceText(name, copper)

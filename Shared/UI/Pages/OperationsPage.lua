@@ -55,7 +55,7 @@ function OperationsPage.Build(content, deps)
             local copper, info = run:Evaluate(formula, example)
             lines = ns.FormulaPage.Describe(copper, info, nil, formula)
             if copper ~= nil then
-                lines[1] = GetMoneyString(copper)
+                lines[1] = ns.TooltipLines.FormatMoney(copper)
             end
         else
             local compiled, err = run:Compile(formula)
@@ -80,7 +80,7 @@ function OperationsPage.Build(content, deps)
         elseif kind == "money" or kind == "number" then
             part.number:SetNumber(value)
             if kind == "money" then
-                part.moneyText:SetText(GetMoneyString(value or 0))
+                part.moneyText:SetText(ns.TooltipLines.FormatMoney(value or 0))
             end
             setEnabled(part.number, not ro)
         elseif kind == "choice" then
