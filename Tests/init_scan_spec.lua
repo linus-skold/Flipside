@@ -131,20 +131,54 @@ describe("Init scan", function()
             assert.are.equal(0, #mock.messages)
         end)
 
-        it("makes no engine and prints one line without a region name", function()
+        it("uses beta for a test build", function()
+            mock.testBuild = true
+            login()
+            assert.are.equal("beta", ns.scanStore:GetRegion())
+            assert.are.equal(0, #mock.messages)
+        end)
+
+        it("uses the region name of the client", function()
+            mock.region = "US"
+            login()
+            assert.are.equal("US", ns.scanStore:GetRegion())
+            assert.are.equal(0, #mock.messages)
+        end)
+
+        it("maps the region number when the region name is empty", function()
+            mock.region = ""
+            local names = { [1] = "US", [2] = "KR", [3] = "EU", [4] = "TW", [5] = "CN" }
+            for id, name in pairs(names) do
+                mock.regionId = id
+                _G.FlipsideScanDB = nil
+                mock.fire("PLAYER_LOGIN")
+                assert.are.equal(name, ns.scanStore:GetRegion())
+            end
+            assert.are.equal(0, #mock.messages)
+        end)
+
+        it("uses beta and prints one line when the region is unknown", function()
             mock.region = nil
             login()
-            assert.is_nil(ns.scanStore)
-            assert.is_nil(ns.scanEngine)
-            assert.are.equal(1, #mock.messages)
-            assert.is_true(mock.messages[1]:find("^Flipside: ") ~= nil)
-            mock.messages = {}
+            assert.are.equal("beta", ns.scanStore:GetRegion())
+            assert.is_table(ns.scanEngine)
+            assert.are.same({ 'Flipside: region unknown, scan data is stored under "beta"' }, mock.messages)
+            mock.regionId = 77
             mock.region = ""
+            mock.messages = {}
             mock.fire("PLAYER_LOGIN")
-            assert.is_nil(ns.scanEngine)
+            assert.are.equal("beta", ns.scanStore:GetRegion())
             assert.are.equal(1, #mock.messages)
         end)
 
+        it("prints one line when the scan modules are not loaded", function()
+            ns.ScanEngine = nil
+            login()
+            assert.is_nil(ns.scanStore)
+            assert.are.same({
+                "Flipside: scan is not available this session (scan modules not loaded; check the Services folder)",
+            }, mock.messages)
+        end)
         it("makes no engine when the settings DB is not open", function()
             mock.playerName = nil
             login()
@@ -154,7 +188,7 @@ describe("Init scan", function()
         end)
 
         it("prints why /flip scan does nothing when there is no engine", function()
-            mock.region = nil
+            ns.ScanEngine = nil
             login()
             mock.messages = {}
             slash("scan")
@@ -370,7 +404,7 @@ describe("Init scan", function()
                 "Flipside: addon Flipside",
                 "Flipside: profile Default",
                 "Flipside: client 1.60.1, build 70009, interface 16001",
-                "Flipside: scan: 0 items stored, last scan never, cooldown ready",
+                "Flipside: scan (region EU): 0 items stored, last scan never, cooldown ready",
                 "Flipside: commands: scan, scan stop, price <item>, version",
                 "Flipside: No feature exists yet.",
             }, mock.messages)
@@ -382,12 +416,12 @@ describe("Init scan", function()
             mock.advance(300)
             mock.messages = {}
             slash("help")
-            assert.is_true(hasMessage("Flipside: scan: 5 items stored, last scan 0.1 h ago, cooldown "))
+            assert.is_true(hasMessage("Flipside: scan (region EU): 5 items stored, last scan 0.1 h ago, cooldown "))
             assert.is_false(hasMessage("cooldown ready"))
         end)
 
         it("shows no scan line when there is no store", function()
-            mock.region = nil
+            ns.ScanEngine = nil
             login()
             mock.messages = {}
             slash("")

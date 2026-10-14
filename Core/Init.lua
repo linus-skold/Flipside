@@ -181,15 +181,51 @@ local function startRollUp()
     end)
 end
 
+local REGION_BY_ID = { [1] = "US", [2] = "KR", [3] = "EU", [4] = "TW", [5] = "CN", [98] = "beta" }
+local TEST_BUILD_FUNCTIONS = { "IsTestBuild", "IsBetaBuild", "IsPublicTestClient" }
+
+-- Call a global function in pcall; return its result, or nil if it is missing or fails.
+local function safeGlobal(name, ...)
+    local fn = _G[name]
+    if type(fn) ~= "function" then
+        return nil
+    end
+    local ok, value = pcall(fn, ...)
+    if ok then
+        return value
+    end
+    return nil
+end
+
+-- Returns the region and its source: "test-build", "region-name", "region-id" or "fallback".
+local function detectRegion()
+    for _, name in ipairs(TEST_BUILD_FUNCTIONS) do
+        if safeGlobal(name) == true then
+            return "beta", "test-build"
+        end
+    end
+    local name = safeGlobal("GetCurrentRegionName")
+    if type(name) == "string" and name ~= "" then
+        return name, "region-name"
+    end
+    local id = safeGlobal("GetCurrentRegion")
+    if type(id) == "number" and REGION_BY_ID[id] then
+        return REGION_BY_ID[id], "region-id"
+    end
+    return "beta", "fallback"
+end
+
 -- Open the scan store and the scan engine; print one line if that is not possible.
 local function openScan()
     if not (ns.ScanStore and ns.ScanEngine and ns.ScanCooldown and ns.ScanClock) then
+        if not ns.scanModulesOptional then
+            ns.ReportError("scan is not available this session (scan modules not loaded; check the Services folder)")
+        end
         return
     end
-    local region = GetCurrentRegionName and GetCurrentRegionName()
-    if type(region) ~= "string" or region == "" then
-        ns.ReportError("scan is not available this session (no region name)")
-        return
+    local region, source = detectRegion()
+    if source == "fallback" then
+        ns.ReportError('region unknown, scan data is stored under "beta"')
     end
     local meta = {}
     local okRules, standard = pcall(function()
@@ -412,8 +448,8 @@ local function printScanHelp()
     end
     local left = ns.scanCooldown:Remaining()
     local cooldown = left > 0 and ns.ScanCooldown.FormatRemaining(left) or "ready"
-    printLine(string.format("scan: %d items stored, last scan %s, cooldown %s",
-        ns.scanStore:CountItems(), age, cooldown))
+    printLine(string.format("scan (region %s): %d items stored, last scan %s, cooldown %s",
+        ns.scanStore:GetRegion(), ns.scanStore:CountItems(), age, cooldown))
     printLine("commands: scan, scan stop, price <item>, version")
 end
 

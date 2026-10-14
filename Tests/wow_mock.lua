@@ -5,7 +5,7 @@ local M = {}
 local GLOBAL_NAMES = {
     "ACCEPT", "CANCEL", "C_AuctionHouse", "C_Item", "C_Timer", "CreateFrame", "DEFAULT_CHAT_FRAME",
     "C_GameRules", "FlipsideDB", "FlipsideScanDB", "GetBuildInfo", "GetCurrentRegionName", "GetNormalizedRealmName",
-    "GetServerTime", "GetTime",
+    "GetServerTime", "GetTime", "GetCurrentRegion", "IsTestBuild", "IsBetaBuild", "IsPublicTestClient",
     "SLASH_FLIPSIDE1", "SLASH_FLIPSIDE2",
     "SLASH_SCANTEST1", "ScanTestDB", "SlashCmdList",
     "StaticPopupDialogs", "StaticPopup_Show", "UnitName", "WOW_PROJECT_ID", "date", "debugprofilestop", "time",
@@ -56,6 +56,8 @@ function M.reset()
     M.replicateCalls = 0
     M.rows = {} -- each row: itemID, count, buyout, hasAll, link
     M.region = "EU" -- result of GetCurrentRegionName()
+    M.regionId = nil -- result of GetCurrentRegion(); nil removes the function
+    M.testBuild = false -- result of IsTestBuild()
     M.standard = true -- result of C_GameRules.IsStandard()
     M.commodity = {} -- itemID -> isCommodity from GetItemKeyInfo; a missing id gives no info
     M.stackSizes = {} -- itemID -> max stack size
@@ -101,6 +103,18 @@ function M.reset()
     end
     _G.GetCurrentRegionName = function()
         return M.region
+    end
+    _G.IsTestBuild = function()
+        return M.testBuild
+    end
+    _G.IsBetaBuild = function()
+        return false
+    end
+    _G.IsPublicTestClient = function()
+        return false
+    end
+    _G.GetCurrentRegion = function()
+        return M.regionId
     end
     _G.C_GameRules = {
         IsStandard = function()
