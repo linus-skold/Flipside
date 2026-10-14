@@ -18,6 +18,9 @@ local RESULT_NO_RESPONSE = "no response (cooldown or blocked)"
 
 -- Legacy (TBC) scan modes. The page mode reads the list page by page and needs no get all call.
 local MODE_PAGE = "page"
+local PAGE_SIZE = 50
+local PAGE_QUERY_WAIT_SECONDS = 30
+local PAGE_EVENT_WAIT_SECONDS = 20
 local REFRESH_INTERVAL_SECONDS = 1
 
 local REQUIRED_FUNCTIONS = { "startJob", "serverTime", "seconds", "ms", "isAuctionHouseOpen", "report" }
@@ -508,6 +511,112 @@ function Engine:_Commit(snaps, partial)
     return newItems, changed
 end
 
+-- Waits until check() is true. Returns true, false on timeout, or nil if the job is cancelled.
+function Engine:_WaitFor(jobView, check, timeout)
+    local seconds = self.deps.seconds
+    local startTime = seconds()
+    while not check() do
+        if seconds() - startTime >= timeout then
+            return false
+        end
+        jobView:Yield()
+        if jobView:IsCancelled() then
+            return nil
+        end
+    end
+    return true
+end
+
+-- Get all: one call, wait for the event, read all rows.
+function Engine:_CollectAll(jobView, run, summary)
+    local deps = self.deps
+    deps.cooldown:MarkAttempt()
+    local ok, err = pcall(deps.api.replicateItems, self.mode)
+    if not ok then
+        deps.report("call failed: " .. tostring(err))
+        summary.result = "call failed"
+        self:_Conclude(summary)
+        return false
+    end
+    local arrived = self:_WaitForEvent(jobView)
+    if arrived == nil then
+        return nil
+    end
+    if not arrived then
+        summary.result = RESULT_NO_RESPONSE
+        self:_Conclude(summary)
+        return false
+    end
+    return ns.ScanRows.Read(jobView, readApi(deps.api, run))
+end
+
+-- Page mode: one query for each page. Each page is read, its missing links are read again for a short time,
+-- and its rows are added to one result. The caller commits the result once.
+function Engine:_CollectPages(jobView, run, summary)
+    local api = self.deps.api
+    local size = api.pageSize or PAGE_SIZE
+    local merged = ns.ScanRows.NewResult()
+    local readView = setmetatable({ SetProgress = function() end }, { __index = jobView })
+    local page = 0
+    while true do
+        local ready = self:_WaitFor(jobView, api.canQueryPage, PAGE_QUERY_WAIT_SECONDS)
+        if ready == nil then
+            return nil
+        end
+        if run.closed then
+            run.readCut = true
+            break
+        end
+        if not ready then
+            run.stop = "the Auction House did not accept page " .. (page + 1)
+            break
+        end
+        run.eventSeen = false
+        local ok, err = pcall(api.pageQuery, page)
+        if not ok then
+            run.stop = "page " .. (page + 1) .. " failed: " .. tostring(err)
+            break
+        end
+        local arrived = self:_WaitFor(jobView, function()
+            return run.eventSeen or run.closed
+        end, PAGE_EVENT_WAIT_SECONDS)
+        if arrived == nil then
+            return nil
+        end
+        if run.closed then
+            run.readCut = true
+            break
+        end
+        if not arrived then
+            run.stop = "no answer for page " .. (page + 1)
+            break
+        end
+        local total = api.pageTotal and api.pageTotal() or 0
+        run.pages = math.max(1, math.ceil((tonumber(total) or 0) / size))
+        local rows = ns.ScanRows.Read(readView, readApi(api, run))
+        if not rows then
+            return nil
+        end
+        local seconds = api.refreshSeconds and api.refreshSeconds(MODE_PAGE) or 0
+        if api.canKeyWithoutLink and not self:_Refresh(jobView, rows, seconds, run) then
+            return nil
+        end
+        ns.ScanRows.Merge(merged, rows)
+        page = page + 1
+        run.page = page
+        jobView:SetProgress(page, run.pages)
+        if page >= run.pages or rows.stats.rows == 0 then
+            break
+        end
+    end
+    if merged.stats.rows == 0 and run.stop then
+        summary.result = RESULT_NO_RESPONSE
+        self:_Conclude(summary)
+        return false
+    end
+    return merged
+end
+
 function Engine:_Run(job)
     local deps = self.deps
     local run = {
@@ -530,35 +639,26 @@ function Engine:_Run(job)
         run.closed = true
     end)
 
-    deps.cooldown:MarkAttempt()
     deps.cache:ResetFailed()
     run.callMs = deps.ms()
-    local ok, err = pcall(deps.api.replicateItems)
-    if not ok then
-        deps.report("call failed: " .. tostring(err))
-        summary.result = "call failed"
-        return self:_Conclude(summary)
+    local isPage = self.mode == MODE_PAGE
+    -- Both collect calls give the rows, or nil if the job is cancelled, or false if the run is already concluded.
+    local rows
+    if isPage then
+        rows = self:_CollectPages(jobView, run, summary)
+    else
+        rows = self:_CollectAll(jobView, run, summary)
     end
-
-    local arrived = self:_WaitForEvent(jobView)
-    if arrived == nil then
-        return
-    end
-    if not arrived then
-        summary.result = RESULT_NO_RESPONSE
-        return self:_Conclude(summary)
-    end
-
-    local rows = ns.ScanRows.Read(jobView, readApi(deps.api, run))
     if not rows then
         return
     end
-    if deps.api.canKeyWithoutLink then
+    -- Page rows were refreshed one page at a time; their row indexes are no longer valid, so no refresh here.
+    if not isPage and deps.api.canKeyWithoutLink then
         local seconds = deps.api.refreshSeconds and deps.api.refreshSeconds(self.mode) or 0
         if not self:_Refresh(jobView, rows, seconds, run) then
             return
         end
-    else
+    elseif not isPage then
         local clock = { clock = deps.seconds }
         local loadSet = self:_LoadSet(jobView, rows)
         local loaded = ns.ScanItemLoad.Run(jobView, deps.cache, loadSet, clock)
@@ -571,7 +671,6 @@ function Engine:_Run(job)
         end
         ns.ScanRows.RereadLinks(jobView, deps.api, rows, loadedList)
     end
-
     local groups, used, noKey, resolver, itemCounts = self:_BuildGroups(jobView, rows)
     local snaps, keyCount = {}, 0
     for key, auctions in pairs(groups) do
@@ -587,7 +686,7 @@ function Engine:_Run(job)
     if deps.api.canKeyWithoutLink then
         pendingMissing = itemCounts.itemsPendingMissing
     end
-    local partial = run.readCut or pendingMissing > 0 or noKey > 0
+    local partial = run.readCut or run.stop ~= nil or pendingMissing > 0 or noKey > 0
     summary.noKey = noKey
     summary.unknownItems = itemCounts.itemsUnknown
     for field, value in pairs(itemCounts) do
@@ -604,3 +703,6 @@ function Engine:_Run(job)
     summary.newItems, summary.changed = self:_Commit(snaps, partial)
     return self:_Conclude(summary)
 end
+
+
+

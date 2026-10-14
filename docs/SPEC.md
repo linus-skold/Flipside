@@ -454,7 +454,38 @@ Each `Core_<Flavour>/Flavour.lua` sets these fields:
 - Passive capture (ScanCapture) is off on TBC in the first release.
 - The TBC full scan uses the legacy "get all" query. The ScanTest TBC spike (`ScanTest_TBC.toc`, pull request #86) tests its behaviour first.
 
+### TBC scan modes
+The backend lists the scan modes with `ScanModes()`. Forever returns nil and keeps one full scan (ReplicateItems).
+
+| Mode | Slash | Call | Wait after the read |
+|---|---|---|---|
+| Full | `/flip scan` | get all query | Refresh for up to 90 s, until every item has a key. |
+| Fast | `/flip scan fast` | get all query | Refresh for up to 8 s. |
+| Page | `/flip scan page` | browse query, page by page, no get all | Refresh each page for up to 2 s. |
+
+- The refresh window is the backend value `ScanRefreshSeconds(mode)`.
+- In each refresh poll (once each second) the engine asks for item data of the items that still need a link, and reads the missing links again by row index. The list is still valid, because the engine does not leave the list.
+- A failed item load does not stop the scan. The next poll asks again. The diagnostics count the items that are still failed as `failed`.
+- Page scan: wait for `CanSendAuctionQuery()` before each page, query `page` 0, 1, 2 and so on (50 rows for each page), read the page after `AUCTION_ITEM_LIST_UPDATE`, and read its missing links again for a short time. The engine adds all pages to one result and commits once. Progress shows "page N of M"; M is the second `GetNumAuctionItems("list")` value divided by 50. The Stop button works. The page mode needs no get all permission and sets no cooldown.
+- The Flipside tab shows one button for each mode. The get all modes are disabled while get all is on cooldown, and the tab shows the time left. The page button stays enabled.
+
+### TBC key rule for a row without a link
+A row can have an item ID and no link, because the client has no item data yet. D20 says the base key is the item ID, unless a suffix or random property that only the link shows changes it.
+
+1. If the stack size is more than 1, the key is the item ID. No link is necessary.
+2. Otherwise the engine uses the link to make the key. A row without a link waits for the refresh.
+3. After the refresh window, a row still without a link gets the item ID key if the item info says that the item cannot have a random suffix (the item class is not weapon and not armor). The diagnostics count these items as `keyedWithoutLink`.
+4. If the item info is not available and no row of the item has a link, the item ID key is also used and counted in `keyedWithoutLink`.
+5. A weapon or armor item without a link stays pending. Its rows get no key and the scan result is "partial".
+6. If some rows of an item have a link, the rows without a link of a weapon or armor item are not stored.
+
+Risk: rule 4 can put a suffix item without item info under the base key. Rule 3 can also be wrong for an unusual item class. The `keyedWithoutLink` count lets the in-game check find these cases.
+
+### TBC scan diagnostics
+The `legacy scan:` line and the `diag` entries of the scan DB have `mode`, `keys`, `pending`, `failed`, `keyedWithoutLink`, `refreshSeconds` and `pages` (page mode) in addition to the row counts.
+
 ### Open in-game checks
+- Scan modes: Full, Fast and Page scan on TBC Anniversary (see the in-game checklist in the pull request).
 - Interface number. 20505 is from memory.
 - `NUM_BAG_SLOTS` and `NUM_BANKBAGSLOTS`.
 - The getAll row count and cooldown.

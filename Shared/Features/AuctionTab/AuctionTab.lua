@@ -17,7 +17,16 @@ local REFUSALS = {
     ["api-missing"] = "the scan call is not available",
     ["ah-closed"] = "open the Auction House first",
     ["read-only"] = "scan data is read-only",
+    ["bad-mode"] = "unknown scan mode",
 }
+
+-- Button texts of the scan modes.
+local MODE_TEXT = { full = "Full scan", fast = "Fast scan", page = "Page scan" }
+local MODE_PAGE = "page"
+
+local function scanLabel(mode)
+    return (mode == nil or mode == "full") and "full scan" or (mode .. " scan")
+end
 
 local MONEY_ROWS = {
     { "ScanMin", "scanMin" },
@@ -71,16 +80,17 @@ function AuctionTab.DescribeSummary(summary)
     local lines = {}
     if summary.result == "ok" or summary.result == "partial" then
         lines[1] = string.format(
-            "full scan %s: %d rows, %d items, %d keys, %d new, %d changed >30%%, cpu %d ms, wall %.1f s",
-            summary.result, summary.rows, summary.items, summary.keys, summary.newItems, summary.changed,
+            "%s %s: %d rows, %d items, %d keys, %d new, %d changed >30%%, cpu %d ms, wall %.1f s",
+            summary.label or "full scan", summary.result, summary.rows, summary.items, summary.keys,
+            summary.newItems, summary.changed,
             math.floor(summary.cpuMs + 0.5), summary.wallMs / 1000)
         if summary.result == "partial" then
             lines[#lines + 1] = "partial scan, latest values only: " .. summaryReasons(summary)
         end
     elseif summary.result == "error" then
-        lines[1] = "full scan failed: " .. tostring(summary.error)
+        lines[1] = (summary.label or "full scan") .. " failed: " .. tostring(summary.error)
     else
-        lines[1] = "full scan " .. summary.result
+        lines[1] = (summary.label or "full scan") .. " " .. summary.result
     end
     local c = summary.commodityStats
     if c then
@@ -141,17 +151,46 @@ function Tab:Refresh()
     if engine and cooldown then
         local running = engine:IsRunning()
         local left = running and 0 or cooldown:Remaining()
-        ui.scan:SetEnabled(not running and left == 0)
+        local modes = self.deps.scanModes
+        -- The client can refuse get all while the addon cooldown is over (for example after a reload).
+        local clientRefuses = false
+        if modes and not running then
+            local _, reason = engine:CanStart(modes[1])
+            clientRefuses = reason == "client"
+        end
+        local getAllReady = not running and left == 0 and not clientRefuses
+        if ui.modeButtons then
+            for mode, button in pairs(ui.modeButtons) do
+                button:SetEnabled(not running and (mode == MODE_PAGE or getAllReady))
+            end
+        else
+            ui.scan:SetEnabled(getAllReady)
+        end
         ui.stop:SetShown(running)
         ui.reset:SetEnabled(true)
         if running then
-            ui.cooldown:SetText("Scan running")
+            local mode, page, pages
+            if engine.GetProgress then
+                mode, page, pages = engine:GetProgress()
+            end
+            if mode == MODE_PAGE and page then
+                ui.cooldown:SetText("Page scan: page " .. page .. " of " .. pages)
+            elseif mode == MODE_PAGE then
+                ui.cooldown:SetText("Page scan: starting")
+            else
+                ui.cooldown:SetText("Scan running")
+            end
         elseif left > 0 then
             ui.cooldown:SetText("Cooldown: " .. ns.ScanCooldown.FormatRemaining(left))
+        elseif clientRefuses then
+            ui.cooldown:SetText("Get all not ready")
         else
             ui.cooldown:SetText("Cooldown: ready")
         end
     else
+        for _, button in pairs(ui.modeButtons or { ui.scan }) do
+            button:SetEnabled(false)
+        end
         ui.scan:SetEnabled(false)
         ui.stop:SetShown(false)
         ui.reset:SetEnabled(false)
@@ -160,24 +199,30 @@ function Tab:Refresh()
     ui.status:SetText(self:_StatusText())
 end
 
-function Tab:_ScanClicked()
+-- Start a scan. The mode is nil without scan modes. The page mode needs no warning.
+function Tab:_ScanClicked(mode)
     local engine = self.deps.scanEngine
-    local ok, reason, detail = engine:CanStart()
+    local ok, reason, detail = engine:CanStart(mode)
     if not ok then
-        self:_Say("full scan not started: " .. refusalText(reason, detail))
+        self:_Say(scanLabel(mode) .. " not started: " .. refusalText(reason, detail))
         self:Refresh()
         return
     end
     self:_Say("")
-    self.deps.confirmScan(function()
-        local canStart, why, more = engine:CanStart()
+    local function start()
+        local canStart, why, more = engine:CanStart(mode)
         if canStart then
-            engine:Start()
+            engine:Start(mode)
         else
-            self:_Say("full scan not started: " .. refusalText(why, more))
+            self:_Say(scanLabel(mode) .. " not started: " .. refusalText(why, more))
         end
         self:Refresh()
-    end)
+    end
+    if mode == MODE_PAGE then
+        start()
+    else
+        self.deps.confirmScan(start)
+    end
 end
 
 function Tab:_ResetClicked()
@@ -444,17 +489,32 @@ function Tab:_BuildCompact(content, ui)
 
     local title = Kit.Label(content, "Flipside", "normal")
     title:SetPoint("TOP", self.parent, "TOP", 0, -18)
-    ui.scan = place(Kit.Button(content, "Full scan", 90, function()
-        self:_ScanClicked()
-    end), 0, 0)
+    -- One button for each scan mode, or one Full scan button without modes.
+    local modes = self.deps.scanModes
+    local x = 0
+    if modes then
+        ui.modeButtons = {}
+        for _, mode in ipairs(modes) do
+            ui.modeButtons[mode] = place(Kit.Button(content, MODE_TEXT[mode] or mode, 90, function()
+                self:_ScanClicked(mode)
+            end), x, 0)
+            x = x + 96
+        end
+        ui.scan = ui.modeButtons[modes[1]]
+    else
+        ui.scan = place(Kit.Button(content, "Full scan", 90, function()
+            self:_ScanClicked()
+        end), 0, 0)
+        x = 96
+    end
     ui.stop = place(Kit.Button(content, "Stop", 60, function()
         self.deps.scanEngine:Cancel()
         self:Refresh()
-    end), 96, 0)
+    end), x, 0)
     ui.reset = place(Kit.Button(content, "Reset cooldown", 110, function()
         self:_ResetClicked()
-    end), 162, 0)
-    ui.cooldown = leftAligned(place(Kit.Label(content, "", "highlight"), 280, -4))
+    end), x + 66, 0)
+    ui.cooldown = leftAligned(place(Kit.Label(content, "", "highlight"), x + 184, -4))
     ui.openMain = Kit.Button(content, "Open Flipside", 110, function()
         self.deps.openMainWindow()
     end)
@@ -517,7 +577,8 @@ local REQUIRED_FUNCTIONS = { "serverTime", "confirmScan", "openMainWindow" }
 
 -- Attach the Flipside panel to the Auction House through the host, which calls Tab:Mount when its frame is ready.
 -- Host interface: host.Attach(tab) -> state table (optional). The host is deps.host or ns.AuctionTabHost.
--- deps: bus, scanEngine, scanCooldown, scanStore, formulaLookup, scanSources, itemNameIndex (optional),
+-- deps: bus, scanEngine, scanModes (optional list of scan mode names), scanCooldown, scanStore, formulaLookup,
+-- scanSources, itemNameIndex (optional),
 -- serverTime, confirmScan, openMainWindow, host (optional). Returns an object with :Refresh().
 function AuctionTab.Attach(deps)
     if type(deps) ~= "table" then

@@ -71,6 +71,11 @@ query("ScanCanStart", true)
 -- time that the engine refreshes missing links after the read.
 query("ScanModes")
 query("ScanRefreshSeconds")
+-- Page scan: ScanPageQuery(page) sends one page query, CanQueryPage() tells if the client takes it, ScanTotal() gives
+-- the number of auctions in the list.
+query("ScanPageQuery")
+query("CanQueryPage", false)
+query("ScanTotal")
 
 -- Search capture: nil means capture is off.
 query("Capture")

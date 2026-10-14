@@ -247,4 +247,29 @@ describe("ScanRows", function()
             assert.is_truthy(result.stats.firstError:find("again", 1, true))
         end)
     end)
+
+    it("merges page results and counts the items", function()
+        local into = ScanRows.NewResult()
+        local one = { byItem = { [1] = { { index = 0 } } }, pending = { [1] = true },
+            stats = { rows = 2, kept = 1, empty = 1, bidOnly = 0, pet = 0, badCount = 0, items = 1, pendingItems = 1 } }
+        local two = { byItem = { [1] = { { index = 0 } }, [2] = { { index = 1 } } }, pending = {},
+            stats = { rows = 3, kept = 2, empty = 1, bidOnly = 0, pet = 0, badCount = 0, items = 2, pendingItems = 0 } }
+        ScanRows.Merge(into, one)
+        ScanRows.Merge(into, two)
+        assert.are.equal(5, into.stats.rows)
+        assert.are.equal(3, into.stats.kept)
+        assert.are.equal(2, #into.byItem[1])
+        assert.are.equal(2, into.stats.items)
+        assert.are.equal(1, into.stats.pendingItems)
+    end)
+
+    it("reads only rows without a link when onlyMissing is set", function()
+        local calls = {}
+        local api = { getLink = function(i) calls[#calls + 1] = i return ITEM end }
+        local result = { byItem = { [100] = { { index = 0, link = ITEM }, { index = 1 } } }, pending = { [100] = true },
+            stats = { kept = 2, pet = 0, items = 1, pendingItems = 1 } }
+        ScanRows.RereadLinks(newJob(), api, result, { 100 }, true)
+        assert.are.same({ 1 }, calls)
+        assert.is_nil(result.pending[100])
+    end)
 end)

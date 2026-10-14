@@ -683,4 +683,113 @@ describe("ScanEngine legacy keys and refresh", function()
     end)
 end)
 
+describe("ScanEngine page mode", function()
+    local function linkOf(id)
+        return "|cffffffff|Hitem:" .. id .. "::::::::60:::::|h[X]|h|r"
+    end
+
+    -- Six rows on three pages of two. The row of item 4003 gets its link on the second re-read.
+    local function PageWorld()
+        local pages = {}
+        for p = 1, 3 do
+            pages[p] = {}
+            for r = 1, 2 do
+                local id = 4000 + (p - 1) * 2 + r
+                pages[p][r] = { item = id, count = 1, buyout = 1000 * r, link = linkOf(id) }
+            end
+        end
+        pages[2][1].linkAfter = 2
+        local w = MakeWorld({ rows = {}, legacy = true, refresh = 2 })
+        w.api.modes = { "full", "fast", "page" }
+        w.api.pageSize = 2
+        w.api.canKeyWithoutLink = function() return false end
+        w.queries, w.canCalls = {}, 0
+        w.api.canQueryPage = function()
+            w.canCalls = w.canCalls + 1
+            return w.canCalls % 2 == 0
+        end
+        w.api.pageTotal = function() return 6 end
+        w.api.pageQuery = function(page)
+            w.queries[#w.queries + 1] = page
+            w.rows = pages[page + 1]
+            w.fireAt = w.tick + 1
+        end
+        return w
+    end
+
+    it("reads 3 pages, fills a nil row on re-read and commits once", function()
+        local w = PageWorld()
+        assert.is_true(w.engine:Start("page"))
+        local seen
+        for _ = 1, 400 do
+            if not w.engine:IsRunning() then break end
+            Tick(w)
+            local _, page, total = w.engine:GetProgress()
+            if page then seen = { page, total } end
+        end
+        assert.are.same({}, w.errors)
+        local s = w.finished[#w.finished]
+        assert.are.same({ 0, 1, 2 }, w.queries)
+        assert.are.equal("ok", s.result, Joined(w))
+        assert.are.equal("page", s.mode)
+        assert.are.equal(3, s.pages)
+        assert.are.equal(3, s.pagesTotal)
+        assert.are.equal(6, s.rows)
+        assert.are.equal(6, s.keys)
+        assert.are.equal(0, s.pendingMissing)
+        assert.is_not_nil(w.store:Get("4003"))
+        assert.is_truthy(seen)
+        assert.is_truthy(Joined(w):find("page scan ok:", 1, true))
+        -- One commit: every key written once.
+        assert.are.equal(6, #w.putTicks)
+        assert.is_nil(w.cooldown:GetLastAttempt())
+        assert.is_not_nil(w.cooldown:GetLastSuccess())
+    end)
+
+    it("runs while get all is on cooldown", function()
+        local w = PageWorld()
+        w.cooldown:MarkAttempt()
+        assert.are.equal("cooldown", select(2, w.engine:CanStart("full")))
+        assert.are.equal("cooldown", select(2, w.engine:CanStart("fast")))
+        assert.is_true(w.engine:CanStart("page"))
+        assert.are.equal("bad-mode", select(2, w.engine:CanStart("slow")))
+    end)
+
+    it("stops when the player cancels and stores nothing", function()
+        local w = PageWorld()
+        assert.is_true(w.engine:Start("page"))
+        for _ = 1, 5 do
+            Tick(w)
+        end
+        w.engine:Cancel()
+        Pump(w)
+        assert.are.equal("cancelled", w.finished[#w.finished].result)
+        assert.are.equal(0, #w.store:Keys())
+        assert.is_false(w.bus:HasSubscribers(REPLICATE))
+    end)
+
+    it("ends partial when a page gets no answer", function()
+        local w = PageWorld()
+        local realQuery = w.api.pageQuery
+        w.api.pageQuery = function(page)
+            realQuery(page)
+            if page == 1 then
+                w.fireAt = nil
+            end
+        end
+        assert.is_true(w.engine:Start("page"))
+        Pump(w, 600)
+        local s = w.finished[#w.finished]
+        assert.are.equal("partial", s.result, Joined(w))
+        assert.are.equal(1, s.pages)
+        assert.are.equal(2, #w.store:Keys())
+        assert.is_truthy(Joined(w):find("no answer for page 2", 1, true))
+    end)
+end)
+
+
+
+
+
+
 
