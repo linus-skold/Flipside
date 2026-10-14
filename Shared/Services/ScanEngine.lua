@@ -9,7 +9,7 @@ Engine.__index = Engine
 
 -- The scan done event comes from deps.api.doneEvent; this default is the Forever event name.
 local EVENT_REPLICATE = "REPLICATE_ITEM_LIST_UPDATE"
-local EVENT_CLOSED = "AUCTION_HOUSE_CLOSED"
+local EVENT_CLOSED = "AUCTION_HOUSE_CLOSED" -- default; deps.api.closeEvent overrides it
 local EVENT_FINISHED = "Flipside.ScanFinished"
 local CHANGED_RATIO = 0.30
 local FRAME_GAP_MS = 1
@@ -118,7 +118,7 @@ end
 
 function Engine:_Unsubscribe()
     self.deps.bus:Unsubscribe(self.deps.api.doneEvent or EVENT_REPLICATE, self)
-    self.deps.bus:Unsubscribe(EVENT_CLOSED, self)
+    self.deps.bus:Unsubscribe(self.deps.api.closeEvent or EVENT_CLOSED, self)
 end
 
 local function partialReasons(run, summary)
@@ -364,7 +364,7 @@ function Engine:_Run(job)
         run.eventSeen = true
         run.eventMs = deps.ms()
     end)
-    deps.bus:Subscribe(EVENT_CLOSED, self, function()
+    deps.bus:Subscribe(deps.api.closeEvent or EVENT_CLOSED, self, function()
         run.closed = true
     end)
 

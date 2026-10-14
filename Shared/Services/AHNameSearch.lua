@@ -3,6 +3,7 @@ local _, ns = ...
 -- Finds items by name with an Auction House browse query.
 -- deps: bus, api, isAuctionHouseOpen, clock, and the optional after(seconds, fn).
 -- api: sendBrowseQuery(query), getBrowseResults(), getItemKeyInfo(itemKey).
+-- deps.event is the results event; the default is the Forever event name.
 -- Timeout: after() fires the timeout. Without after(), clock() ends a stale search on the next call or event.
 local AHNameSearch = {}
 ns.AHNameSearch = AHNameSearch
@@ -25,6 +26,7 @@ function AHNameSearch.New(deps)
         isOpen = deps.isAuctionHouseOpen,
         clock = deps.clock,
         after = deps.after,
+        event = deps.event or EVENT,
         pending = nil,
     }, Search)
 end
@@ -35,7 +37,7 @@ function Search:_Finish(pending, results, err)
         return
     end
     self.pending = nil
-    self.bus:Unsubscribe(EVENT, self)
+    self.bus:Unsubscribe(self.event, self)
     pending.callback(results, err)
 end
 
@@ -119,7 +121,7 @@ function Search:Find(name, callback, options)
         startedAt = self.clock(),
     }
     self.pending = pending
-    self.bus:Subscribe(EVENT, self, function()
+    self.bus:Subscribe(self.event, self, function()
         self:_OnResults()
     end)
     local okSend, err = pcall(self.api.sendBrowseQuery, { searchString = pending.name, sorts = {} })

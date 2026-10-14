@@ -8,7 +8,7 @@ ns.InventoryCapture = InventoryCapture
 local DEBOUNCE_SECONDS = 0.5
 local OWNER = "Flipside.InventoryCapture"
 
--- deps: bus, holdings, holdingsRead, api, resolver, after, report.
+-- deps: bus, holdings, holdingsRead, api, resolver, after, report, and the optional ownedEvent (default: Forever name).
 -- api: { container = { numSlots, itemInfo }, mail = { numItems, itemLink, itemInfo }, auctions = { owned } }.
 function InventoryCapture.Attach(deps)
     local capture = { bankOpen = false }
@@ -102,7 +102,7 @@ function InventoryCapture.Attach(deps)
             capture.ReadMail()
         end)
     end)
-    deps.bus:Subscribe("OWNED_AUCTIONS_UPDATED", OWNER, function()
+    deps.bus:Subscribe(deps.ownedEvent or "OWNED_AUCTIONS_UPDATED", OWNER, function()
         schedule("auctions", function()
             capture.ReadAuctions()
         end)

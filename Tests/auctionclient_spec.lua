@@ -142,4 +142,50 @@ describe("AuctionClient", function()
             assert.are.equal(2, viaClient.stats.kept)
         end)
     end)
+
+    describe("Forever backend name search, capture and owned auctions", function()
+        before_each(function()
+            assert(loadfile(manifest.path("ForeverBackend")))("Flipside", ns)
+        end)
+
+        it("sends a browse query and reads the results", function()
+            mock.browseRows = { { itemKey = { itemID = 5 } } }
+            mock.itemNames[5] = "Bolt"
+            ns.AuctionClient.NameSearch("bol")
+            assert.are.equal("bol", mock.browseQueries[1].searchString)
+            assert.are.same({}, mock.browseQueries[1].sorts)
+            assert.are.equal("AUCTION_HOUSE_BROWSE_RESULTS_UPDATED", ns.AuctionClient.NameResultEvent())
+            assert.are.equal(mock.browseRows, ns.AuctionClient.NameResults())
+            assert.are.equal("Bolt", ns.AuctionClient.NameItemKeyInfo({ itemID = 5 }).itemName)
+        end)
+
+        it("raises a clear error when a name search function is missing", function()
+            _G.C_AuctionHouse.SendBrowseQuery = nil
+            assert.has_error(function()
+                ns.AuctionClient.NameSearch("x")
+            end, "C_AuctionHouse.SendBrowseQuery is not available")
+        end)
+
+        it("gives the capture reads and events", function()
+            local capture = ns.AuctionClient.Capture()
+            assert.are.equal(_G.C_AuctionHouse.GetNumCommoditySearchResults, capture.api.commodityNum)
+            assert.are.equal(_G.C_AuctionHouse.HasFullItemSearchResults, capture.api.itemFull)
+            assert.are.equal("COMMODITY_SEARCH_RESULTS_UPDATED", capture.commodityEvent)
+            assert.are.equal("ITEM_SEARCH_RESULTS_UPDATED", capture.itemEvent)
+        end)
+
+        it("reads the owned auctions", function()
+            mock.ownedAuctions = { { itemID = 1 } }
+            assert.is_true(ns.AuctionClient.CanReadOwned())
+            assert.are.equal(mock.ownedAuctions, ns.AuctionClient.OwnedAuctions())
+            assert.are.equal("OWNED_AUCTIONS_UPDATED", ns.AuctionClient.OwnedEvent())
+            _G.C_AuctionHouse.GetOwnedAuctions = nil
+            assert.is_false(ns.AuctionClient.CanReadOwned())
+        end)
+
+        it("gives the open and close events", function()
+            assert.are.equal("AUCTION_HOUSE_SHOW", ns.AuctionClient.OpenEvent())
+            assert.are.equal("AUCTION_HOUSE_CLOSED", ns.AuctionClient.CloseEvent())
+        end)
+    end)
 end)

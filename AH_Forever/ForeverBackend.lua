@@ -67,4 +67,61 @@ function Backend.ItemIsCommodity(itemID)
     return nil
 end
 
+-- Name search: a browse query. The results event comes after the query.
+function Backend.NameSearch(text)
+    return call("SendBrowseQuery", { searchString = tostring(text or ""), sorts = {} })
+end
+
+function Backend.NameResultEvent()
+    return "AUCTION_HOUSE_BROWSE_RESULTS_UPDATED"
+end
+
+function Backend.NameResults()
+    return call("GetBrowseResults")
+end
+
+function Backend.NameItemKeyInfo(itemKey)
+    return call("GetItemKeyInfo", itemKey)
+end
+
+-- Search result reads and events for the capture.
+function Backend.Capture()
+    local api = ah()
+    if not api then
+        return nil
+    end
+    return {
+        api = {
+            commodityNum = api.GetNumCommoditySearchResults,
+            commodityInfo = api.GetCommoditySearchResultInfo,
+            commodityFull = api.HasFullCommoditySearchResults,
+            itemNum = api.GetNumItemSearchResults,
+            itemInfo = api.GetItemSearchResultInfo,
+            itemFull = api.HasFullItemSearchResults,
+        },
+        commodityEvent = "COMMODITY_SEARCH_RESULTS_UPDATED",
+        itemEvent = "ITEM_SEARCH_RESULTS_UPDATED",
+    }
+end
+
+function Backend.CanReadOwned()
+    return has("GetOwnedAuctions")
+end
+
+function Backend.OwnedAuctions()
+    return call("GetOwnedAuctions")
+end
+
+function Backend.OwnedEvent()
+    return "OWNED_AUCTIONS_UPDATED"
+end
+
+function Backend.OpenEvent()
+    return "AUCTION_HOUSE_SHOW"
+end
+
+function Backend.CloseEvent()
+    return "AUCTION_HOUSE_CLOSED"
+end
+
 ns.AuctionClient.Use(Backend)
