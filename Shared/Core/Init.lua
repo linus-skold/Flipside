@@ -208,11 +208,15 @@ local function buildScanApi()
     if client.HasCommodityCheck() then
         api.clientIsCommodity = client.ItemIsCommodity
     end
-    -- A backend with scan modes (legacy) keys rows without a link and refreshes missing links.
+    -- A backend with scan modes (legacy) also keys rows without a link.
+    -- A backend with ScanRefreshSeconds (Forever too) makes the engine retry item loads and missing links.
+    local refreshBackend = client.Backend()
+    if refreshBackend and refreshBackend.ScanRefreshSeconds then
+        api.refreshSeconds = client.ScanRefreshSeconds
+    end
     local modes = client.ScanModes()
     if modes then
         api.modes = modes
-        api.refreshSeconds = client.ScanRefreshSeconds
         api.canKeyWithoutLink = canKeyWithoutLink
         local backend = client.Backend()
         if client.CanScan() and backend and backend.ScanPageQuery then
@@ -854,6 +858,13 @@ openUI = function()
         requestPriceRefresh = ns.RequestPriceRefresh,
         confirmScan = confirmScan,
         openMainWindow = ns.OpenMainWindow,
+        -- Profile setting ui.startPageScanBar: the scan bar on the start page of the Auction House. Default on.
+        startPageEnabled = function()
+            return not ns.db or ns.db:Get("profile", "ui.startPageScanBar") ~= false
+        end,
+        setStartPageEnabled = function(on)
+            return ns.db ~= nil and ns.db:Set("profile", "ui.startPageScanBar", on and true or false)
+        end,
     })
     if ok then
         ns.auctionTab = result
@@ -866,6 +877,7 @@ openUI = function()
             rules = ns.rules,
             formulaRun = ns.formulaRun,
             after = C_Timer.After,
+            db = ns.db,
             readBags = ns.readBagStacks,
             getRecord = function(key)
                 return ns.scanStore and ns.scanStore:Get(key) or nil
@@ -923,13 +935,12 @@ local function scanCommand(argument)
     end)
 end
 
--- Money in copper as "Xg Ys Zc".
+-- Money in copper, shown with the shared formatter.
 local function formatMoney(copper)
     if type(copper) ~= "number" then
         return "-"
     end
-    copper = math.floor(copper + 0.5)
-    return string.format("%dg %ds %dc", math.floor(copper / 10000), math.floor(copper / 100) % 100, copper % 100)
+    return ns.TooltipLines.FormatMoney(copper)
 end
 
 local function priceText(name, copper)

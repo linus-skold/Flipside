@@ -35,6 +35,41 @@ function Backend.ScanDoneEvent()
     return "REPLICATE_ITEM_LIST_UPDATE"
 end
 
+-- The engine asks again for item data and reads rows without a link or item info again, for up to this long.
+local REFRESH_SECONDS = 30
+local DIAG_KEEP = 5
+
+function Backend.ScanRefreshSeconds()
+    return REFRESH_SECONDS
+end
+
+-- Builds the diagnostics line of the finished scan and keeps the last 5 runs in the scan DB.
+function Backend.ScanDiagnostics(summary)
+    summary = summary or {}
+    local entry = {
+        time = type(GetServerTime) == "function" and GetServerTime() or 0,
+        result = summary.result,
+        rows = summary.rows, items = summary.items, keys = summary.keys,
+        pending = summary.pending, failed = summary.failed, nilLink = summary.nilLink,
+        notAllInfo = summary.notAllInfo, retried = summary.retried, refreshSeconds = summary.refreshSeconds,
+    }
+    local flavour = ns.Flavour
+    local db = flavour and flavour.savedVariables and _G[flavour.savedVariables.scan]
+    if type(db) == "table" then
+        if type(db.diag) ~= "table" then
+            db.diag = {}
+        end
+        db.diag[#db.diag + 1] = entry
+        while #db.diag > DIAG_KEEP do
+            table.remove(db.diag, 1)
+        end
+    end
+    return string.format(
+        "pending %s, failed %s (load failed), nilLink %s, notAllInfo %s, retried %s, refresh %.1f s",
+        tostring(entry.pending), tostring(entry.failed), tostring(entry.nilLink), tostring(entry.notAllInfo),
+        tostring(entry.retried), entry.refreshSeconds or 0)
+end
+
 function Backend.RowCount()
     return call("GetNumReplicateItems")
 end
@@ -175,7 +210,7 @@ function Backend.LiveRows(itemID)
             local buyout, quantity = r and r.buyoutAmount, r and r.quantity
             if buyout and buyout > 0 and quantity and quantity > 0 then
                 rows[#rows + 1] = {
-                    auctionID = r.auctionID, unitPrice = buyout / quantity, quantity = quantity,
+                    auctionID = r.auctionID, unitPrice = buyout / quantity, quantity = quantity, buyout = buyout,
                     isCommodity = false, ownerItem = r.containsOwnerItem == true,
                     timeLeft = r.timeLeftSeconds or r.timeLeft, itemLink = r.itemLink,
                 }
@@ -220,6 +255,49 @@ function Backend.CloseEvent()
     return "AUCTION_HOUSE_CLOSED"
 end
 
+-- Buy block (Buying tab). Doc: AuctionHouseDocumentation.lua.
+-- Start, Confirm and BuyItem are protected: the caller runs them in a click. Cancel is not protected.
+function Backend.CanBuy()
+    return has("StartCommoditiesPurchase") and has("ConfirmCommoditiesPurchase") and has("PlaceBid")
+end
+
+-- Ask for a quote (doc 1063-1073). COMMODITY_PRICE_UPDATED(unitPrice, totalPrice) follows (doc 1346-1356).
+function Backend.StartCommodityPurchase(itemID, quantity)
+    return call("StartCommoditiesPurchase", itemID, quantity)
+end
+
+-- Buy at the quote (doc 83-92). COMMODITY_PURCHASE_SUCCEEDED or COMMODITY_PURCHASE_FAILED follows (doc 1357-1368).
+function Backend.ConfirmCommodityPurchase(itemID, quantity)
+    return call("ConfirmCommoditiesPurchase", itemID, quantity)
+end
+
+-- Drop the quote (doc 71-73).
+function Backend.CancelCommodityPurchase()
+    return call("CancelCommoditiesPurchase")
+end
+
+-- Seconds left of the quote (doc 584-591); 0 means the quote ended.
+function Backend.QuoteSecondsLeft()
+    return call("GetQuoteDurationRemaining")
+end
+
+-- Buy one item auction at the buyout price (doc 836-846). Blizzard's own call is the same, after its pop-up
+-- BUYOUT_AUCTION (Blizzard_AuctionHouseFrame.lua 10-12). AUCTION_HOUSE_PURCHASE_COMPLETED(auctionID) (doc 1203-1211)
+-- or AUCTION_HOUSE_SHOW_ERROR(error) (doc 1236-1244) follows.
+function Backend.BuyItemAuction(auctionID, buyout)
+    return call("PlaceBid", auctionID, buyout)
+end
+
+function Backend.BuyEvents()
+    return {
+        priceUpdated = "COMMODITY_PRICE_UPDATED",
+        priceUnavailable = "COMMODITY_PRICE_UNAVAILABLE",
+        commoditySucceeded = "COMMODITY_PURCHASE_SUCCEEDED",
+        commodityFailed = "COMMODITY_PURCHASE_FAILED",
+        itemCompleted = "AUCTION_HOUSE_PURCHASE_COMPLETED",
+        itemError = "AUCTION_HOUSE_SHOW_ERROR",
+    }
+end
 -- Posting (Selling tab). Doc: AuctionHouseDocumentation.lua. PostItem and PostCommodity are protected.
 -- The duration argument is a luaIndex. The SellFrame menu lists AUCTION_DURATION_ONE, TWO and THREE as index 1, 2, 3.
 -- The mapping 12 h = 1, 24 h = 2, 48 h = 3 is NOT verified: the hour text of those strings is not in the source.

@@ -13,35 +13,12 @@ local COMPACT_WIDTH = 760
 local PRICE_SLOTS = 9
 local MAX_CHOICES = 8
 
-local REFUSALS = {
-    running = "a scan is already running",
-    ["api-missing"] = "the scan call is not available",
-    ["ah-closed"] = "open the Auction House first",
-    ["read-only"] = "scan data is read-only",
-    ["bad-mode"] = "unknown scan mode",
-}
-
--- Button texts of the scan modes.
-local MODE_TEXT = { full = "Full scan", fast = "Fast scan", page = "Page scan" }
-local MODE_PAGE = "page"
-
-local function scanLabel(mode)
-    return (mode == nil or mode == "full") and "full scan" or (mode .. " scan")
-end
-
 local MONEY_ROWS = {
     { "ScanMin", "scanMin" },
     { "ScanRecent", "scanRecent" },
     { "ScanMarket", "scanMarket" },
     { "ScanHistorical", "scanHistorical" },
 }
-
-local function refusalText(reason, detail)
-    if reason == "cooldown" then
-        return "scan on cooldown, " .. ns.ScanCooldown.FormatRemaining(detail) .. " left"
-    end
-    return REFUSALS[reason] or tostring(reason)
-end
 
 -- Build the price rows of one item. A money row has money = true and a copper value.
 function AuctionTab.DescribePrice(values, key)
@@ -149,81 +126,25 @@ function Tab:Refresh()
         return
     end
     local engine, cooldown = self.deps.scanEngine, self.deps.scanCooldown
-    if engine and cooldown then
-        local running = engine:IsRunning()
-        local left = running and 0 or cooldown:Remaining()
-        local modes = self.deps.scanModes
-        -- The client can refuse get all while the addon cooldown is over (for example after a reload).
-        local clientRefuses = false
-        if modes and not running then
-            local _, reason = engine:CanStart(modes[1])
-            clientRefuses = reason == "client"
-        end
-        local getAllReady = not running and left == 0 and not clientRefuses
-        if ui.modeButtons then
-            for mode, button in pairs(ui.modeButtons) do
-                button:SetEnabled(not running and (mode == MODE_PAGE or getAllReady))
-            end
-        else
-            ui.scan:SetEnabled(getAllReady)
-        end
-        ui.stop:SetShown(running)
-        ui.reset:SetEnabled(true)
-        if running then
-            local mode, page, pages
-            if engine.GetProgress then
-                mode, page, pages = engine:GetProgress()
-            end
-            if mode == MODE_PAGE and page then
-                ui.cooldown:SetText("Page scan: page " .. page .. " of " .. pages)
-            elseif mode == MODE_PAGE then
-                ui.cooldown:SetText("Page scan: starting")
-            else
-                ui.cooldown:SetText("Scan running")
-            end
-        elseif left > 0 then
-            ui.cooldown:SetText("Cooldown: " .. ns.ScanCooldown.FormatRemaining(left))
-        elseif clientRefuses then
-            ui.cooldown:SetText("Get all not ready")
-        else
-            ui.cooldown:SetText("Cooldown: ready")
-        end
-    else
-        for _, button in pairs(ui.modeButtons or { ui.scan }) do
-            button:SetEnabled(false)
-        end
-        ui.scan:SetEnabled(false)
-        ui.stop:SetShown(false)
-        ui.reset:SetEnabled(false)
-        ui.cooldown:SetText("scan is not available this session")
+    self.bar:Refresh()
+    ui.reset:SetEnabled(engine ~= nil and cooldown ~= nil)
+    if ui.startCheck then
+        local get = self.deps.startPageEnabled
+        ui.startCheck:SetChecked(not get or get() ~= false)
     end
     ui.status:SetText(self:_StatusText())
 end
 
--- Start a scan. The mode is nil without scan modes. The page mode needs no warning.
-function Tab:_ScanClicked(mode)
-    local engine = self.deps.scanEngine
-    local ok, reason, detail = engine:CanStart(mode)
-    if not ok then
-        self:_Say(scanLabel(mode) .. " not started: " .. refusalText(reason, detail))
-        self:Refresh()
-        return
+-- The check box of the start page scan bar: save the setting and show or hide the bar.
+function Tab:_StartPageToggled(checked)
+    local set = self.deps.setStartPageEnabled
+    if not (set and set(checked)) then
+        self:_Say("settings are read-only; the start page scan bar setting was not saved")
     end
-    self:_Say("")
-    local function start()
-        local canStart, why, more = engine:CanStart(mode)
-        if canStart then
-            engine:Start(mode)
-        else
-            self:_Say(scanLabel(mode) .. " not started: " .. refusalText(why, more))
-        end
-        self:Refresh()
+    if self.startPage then
+        self.startPage:Update()
     end
-    if mode == MODE_PAGE then
-        start()
-    else
-        self.deps.confirmScan(start)
-    end
+    self:Refresh()
 end
 
 function Tab:_ResetClicked()
@@ -486,6 +407,31 @@ function Tab:_BuildContent()
     self:_ShowPriceRows(nil)
 end
 
+-- Build the shared scan controls and keep the old field names of the panel.
+function Tab:_BuildScanBar(content, ui, opts)
+    opts.say = function(text)
+        self:_Say(text)
+    end
+    opts.onChange = function()
+        self:Refresh()
+    end
+    local bar = ns.ScanBar.New(content, self.deps, opts)
+    self.bar = bar
+    ui.scan, ui.stop, ui.cooldown, ui.modeButtons = bar.scan, bar.stop, bar.status, bar.buttons
+end
+
+-- The check box that shows or hides the scan bar on the Blizzard start page. It sits at the right edge.
+function Tab:_BuildStartPageCheck(content, ui, y)
+    local check = ns.Kit.Check(content, "Scan bar on the start page", function(checked)
+        self:_StartPageToggled(checked)
+    end)
+    check:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, y)
+    if check.Text then
+        check.Text:ClearAllPoints()
+        check.Text:SetPoint("RIGHT", check, "LEFT", -2, 0)
+    end
+    ui.startCheck = check
+end
 -- The default layout: large headings, scan block, status block and price lookup in one column.
 function Tab:_BuildClassic(content, ui)
     local Kit = ns.Kit
@@ -495,17 +441,13 @@ function Tab:_BuildClassic(content, ui)
     end
 
     place(Kit.Label(content, "Full scan", "title"), 0, 0)
-    ui.scan = place(Kit.Button(content, "Full scan", 120, function()
-        self:_ScanClicked()
-    end), 0, -24)
-    ui.stop = place(Kit.Button(content, "Stop", 70, function()
-        self.deps.scanEngine:Cancel()
-        self:Refresh()
-    end), 128, -24)
+    self:_BuildScanBar(content, ui, {
+        y = -24, buttonWidth = 120, step = 128, stopWidth = 70, labelDx = 202, labelDy = -4,
+    })
     ui.reset = place(Kit.Button(content, "Reset cooldown", 110, function()
         self:_ResetClicked()
-    end), 206, -24)
-    ui.cooldown = leftAligned(place(Kit.Label(content, "", "highlight"), 330, -28))
+    end), self.bar.stopX + 78, -24)
+    self:_BuildStartPageCheck(content, ui, -26)
     ui.openMain = Kit.Button(content, "Open Flipside", 110, function()
         self.deps.openMainWindow()
     end)
@@ -536,7 +478,7 @@ function Tab:_BuildClassic(content, ui)
         local y = -252 - (index - 1) * step
         local slot = {
             name = leftAligned(place(Kit.Label(content, "", "normal"), 0, y), 110),
-            money = place(Kit.Money(content), 120, y),
+            money = place(Kit.Money(content, ns.TooltipLines and ns.TooltipLines.FormatMoney), 120, y),
             value = leftAligned(place(Kit.Label(content, "", "highlight"), 120, y), 300),
         }
         ui.slots[index] = slot
@@ -554,31 +496,11 @@ function Tab:_BuildCompact(content, ui)
     local title = Kit.Label(content, "Flipside", "normal")
     title:SetPoint("TOP", self.parent, "TOP", 0, -18)
     -- One button for each scan mode, or one Full scan button without modes.
-    local modes = self.deps.scanModes
-    local x = 0
-    if modes then
-        ui.modeButtons = {}
-        for _, mode in ipairs(modes) do
-            ui.modeButtons[mode] = place(Kit.Button(content, MODE_TEXT[mode] or mode, 90, function()
-                self:_ScanClicked(mode)
-            end), x, 0)
-            x = x + 96
-        end
-        ui.scan = ui.modeButtons[modes[1]]
-    else
-        ui.scan = place(Kit.Button(content, "Full scan", 90, function()
-            self:_ScanClicked()
-        end), 0, 0)
-        x = 96
-    end
-    ui.stop = place(Kit.Button(content, "Stop", 60, function()
-        self.deps.scanEngine:Cancel()
-        self:Refresh()
-    end), x, 0)
+    self:_BuildScanBar(content, ui, { buttonWidth = 90, step = 96, stopWidth = 60, labelDx = 184, labelDy = -4 })
     ui.reset = place(Kit.Button(content, "Reset cooldown", 110, function()
         self:_ResetClicked()
-    end), x + 66, 0)
-    ui.cooldown = leftAligned(place(Kit.Label(content, "", "highlight"), x + 184, -4))
+    end), self.bar.stopX + 66, 0)
+    self:_BuildStartPageCheck(content, ui, -26)
     ui.openMain = Kit.Button(content, "Open Flipside", 110, function()
         self.deps.openMainWindow()
     end)
@@ -606,7 +528,7 @@ function Tab:_BuildCompact(content, ui)
         local y = -140 - (index - 1) * step
         ui.slots[index] = {
             name = leftAligned(place(Kit.Label(content, "", "normal"), 0, y), 110),
-            money = place(Kit.Money(content), 120, y),
+            money = place(Kit.Money(content, ns.TooltipLines and ns.TooltipLines.FormatMoney), 120, y),
             value = leftAligned(place(Kit.Label(content, "", "highlight"), 120, y), 300),
         }
     end
@@ -617,9 +539,12 @@ end
 -- insets { left, right, top, bottom } set the distance to the parent.
 -- The default is the Kit padding left and right, and 0 above and below.
 -- layout = "compact" selects the compact panel. Without it the default layout is used.
+-- startPage = { parent, page, anchor(frame), width, buttonWidth, stopWidth } places the scan bar
+-- on the Blizzard start page.
 function Tab:Mount(parent, api)
     self.parent, self.api = parent, api
     self:_BuildContent()
+    self:_MountStartPage()
     self.deps.bus:Subscribe(EVENT_FINISHED, OWNER, function(_, summary)
         self.summaryLines = AuctionTab.DescribeSummary(summary)
         self:Refresh()
@@ -630,8 +555,26 @@ function Tab:Mount(parent, api)
     self:Refresh()
 end
 
+-- Add the scan bar to the Blizzard start page. The host gives the place in api.startPage.
+function Tab:_MountStartPage()
+    local placement = self.api.startPage
+    if not (placement and self.deps.scanEngine and self.deps.scanCooldown) then
+        return
+    end
+    local ok, result = pcall(ns.ScanBar.MountStartPage, self.deps, placement)
+    if ok then
+        self.startPage = result
+    elseif ns.ReportError then
+        ns.ReportError("the scan bar on the start page is not available: " .. tostring(result))
+    end
+end
+
 -- Undo a failed Mount: hide the panel and keep no half-built state.
 function Tab:Unmount()
+    if self.startPage then
+        self.startPage:Destroy()
+        self.startPage = nil
+    end
     if self.content then
         self.content:Hide()
     end
@@ -647,7 +590,8 @@ local REQUIRED_FUNCTIONS = { "serverTime", "confirmScan", "openMainWindow" }
 -- Host interface: host.Attach(tab) -> state table (optional). The host is deps.host or ns.AuctionTabHost.
 -- deps: bus, scanEngine, scanModes (optional list of scan mode names), scanCooldown, scanStore, formulaLookup,
 -- scanSources, itemNameIndex (optional), requestPriceRefresh(itemID, name) -> ok, text (optional),
--- serverTime, confirmScan, openMainWindow, host (optional). Returns an object with :Refresh().
+-- serverTime, confirmScan, openMainWindow, startPageEnabled() and setStartPageEnabled(on) -> ok (optional),
+-- host (optional). Returns an object with :Refresh().
 function AuctionTab.Attach(deps)
     if type(deps) ~= "table" then
         error("deps must be a table", 2)

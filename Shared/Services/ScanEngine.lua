@@ -154,9 +154,9 @@ end
 local function newSummary()
     return {
         result = "ok", rows = 0, kept = 0, items = 0, keys = 0, newItems = 0, changed = 0,
-        pendingMissing = 0, noKey = 0, unknownItems = 0, itemsKeyed = 0, itemsPendingMissing = 0,
+        pendingMissing = 0, pending = 0, noKey = 0, unknownItems = 0, itemsKeyed = 0, itemsPendingMissing = 0,
         itemsNoLink = 0, itemsLinkMismatch = 0, itemsUnknown = 0, itemsLinkFallback = 0,
-        keyedWithoutLink = 0, failed = 0, refreshSeconds = 0,
+        keyedWithoutLink = 0, failed = 0, refreshSeconds = 0, retried = 0, nilLink = 0, notAllInfo = 0,
         timeToEventMs = nil, cpuMs = 0, wallMs = 0, frames = 1,
     }
 end
@@ -179,17 +179,8 @@ local function partialReasons(run, summary)
     if run.readCut then
         reasons[#reasons + 1] = "the Auction House closed during the read"
     end
-    if summary.itemsPendingMissing > 0 then
-        reasons[#reasons + 1] = summary.itemsPendingMissing .. " items without data"
-    end
-    if summary.itemsUnknown > 0 then
-        reasons[#reasons + 1] = summary.itemsUnknown .. " items with unknown stack size"
-    end
-    if summary.itemsNoLink + summary.itemsLinkMismatch > 0 then
-        reasons[#reasons + 1] = (summary.itemsNoLink + summary.itemsLinkMismatch) .. " items with a bad link"
-    end
-    if summary.noKey > 0 then
-        reasons[#reasons + 1] = summary.noKey .. " rows without a key"
+    if summary.pending > 0 then
+        reasons[#reasons + 1] = summary.pending .. " items pending"
     end
     if run.stop then
         reasons[#reasons + 1] = run.stop
@@ -200,13 +191,19 @@ end
 function Engine:_ReportSummary(summary, run)
     local report = self.deps.report
     if summary.result == "ok" or summary.result == "partial" then
+        local word = summary.result
+        if word == "ok" and summary.pending > 0 then
+            word = "complete with " .. summary.pending .. " pending"
+        end
         report(string.format(
             "%s %s: %d rows, %d items, %d keys, %d new, %d changed >30%%, cpu %d ms, "
                 .. "wall %.1f s",
-            summary.label or "full scan", summary.result, summary.rows, summary.items, summary.keys,
+            summary.label or "full scan", word, summary.rows, summary.items, summary.keys,
             summary.newItems, summary.changed, math.floor(summary.cpuMs + 0.5), summary.wallMs / 1000))
         if summary.result == "partial" and run then
             report("partial scan, latest values only: " .. partialReasons(run, summary))
+        elseif summary.pending > 0 then
+            report(summary.pending .. " items without a key kept their old data")
         end
     elseif summary.result == "error" then
         report((summary.label or "full scan") .. " failed: " .. tostring(summary.error))
@@ -230,6 +227,9 @@ function Engine:_Conclude(summary)
     summary.pages = run.page
     summary.pagesTotal = run.pages
     summary.failed = count(run.failedSet)
+    summary.retried = count(run.retriedSet)
+    summary.nilLink = run.nilLinkItems
+    summary.notAllInfo = run.notAllInfoItems
     summary.wallMs = self.deps.ms() - run.startMs
     summary.cpuMs = summary.wallMs - run.suspendedMs
     summary.frames = run.frames
@@ -353,7 +353,7 @@ local REASON_FIELDS = { ["no-link"] = "itemsNoLink", ["link-mismatch"] = "itemsL
 function Engine:_BuildGroups(jobView, rows)
     local api = self.deps.api
     local resolver = ns.ScanKey.New({ clientIsCommodity = api.clientIsCommodity, maxStack = api.maxStack })
-    local groups, used, noKey = {}, 0, 0
+    local groups, used, noKey, partialKeys = {}, 0, 0, {}
     local items = {
         itemsKeyed = 0, itemsLinkFallback = 0, itemsPendingMissing = 0,
         itemsNoLink = 0, itemsLinkMismatch = 0, itemsUnknown = 0, keyedWithoutLink = 0,
@@ -366,6 +366,7 @@ function Engine:_BuildGroups(jobView, rows)
         else
             local keyed, fallback, failField = false, false, nil
             local anyLink, withoutLink, blocked = false, false, false
+            local itemKeys, unkeyedRows = {}, 0
             if canKeyWithoutLink then
                 for _, row in ipairs(list) do
                     if row.link ~= nil then
@@ -395,10 +396,18 @@ function Engine:_BuildGroups(jobView, rows)
                         groups[key] = auctions
                     end
                     auctions[#auctions + 1] = { unitPrice = row.unitPrice, count = row.count }
+                    itemKeys[key] = true
                     used = used + 1
                 else
                     failField = failField or REASON_FIELDS[isCommodity]
                     noKey = noKey + 1
+                    unkeyedRows = unkeyedRows + 1
+                end
+            end
+            -- An item with a row that has no key gives an incomplete price: its keys get latest values only.
+            if unkeyedRows > 0 then
+                for key in pairs(itemKeys) do
+                    partialKeys[key] = true
                 end
             end
             local field = failField or "itemsUnknown"
@@ -414,12 +423,50 @@ function Engine:_BuildGroups(jobView, rows)
             jobView:Checkpoint(1)
         end
     end
-    return groups, used, noKey, resolver, items
+    return groups, used, noKey, resolver, items, partialKeys
 end
+
+-- Forever: counts the pending items by reason (no link, not all item info) for the diagnostics.
+local function countPending(rows, run)
+    for itemID in pairs(rows.pending) do
+        local noLink, noInfo = false, false
+        for _, row in ipairs(rows.byItem[itemID] or {}) do
+            noLink = noLink or row.link == nil
+            noInfo = noInfo or row.allInfo == false
+        end
+        run.nilLinkItems = run.nilLinkItems + (noLink and 1 or 0)
+        run.notAllInfoItems = run.notAllInfoItems + (noInfo and 1 or 0)
+    end
+end
+-- Forever: returns the items to load again. A pending item that is a commodity needs no link (its key is the base
+-- key), so it leaves pending. Other pending items and items with an unknown commodity status need a load.
+local function needItems(jobView, rows, resolver)
+    local need = {}
+    for itemID in pairs(rows.pending) do
+        if resolver:IsCommodity(itemID) == true then
+            rows.pending[itemID] = nil
+        else
+            need[#need + 1] = itemID
+        end
+        jobView:Checkpoint(1)
+    end
+    for itemID in pairs(rows.byItem) do
+        if not rows.pending[itemID] and resolver:IsCommodity(itemID) == nil then
+            need[#need + 1] = itemID
+        end
+        jobView:Checkpoint(1)
+    end
+    rows.stats.pendingItems = count(rows.pending)
+    return need
+end
+
 -- Returns the items that still need a link: a row has no link and no key is possible without it.
 function Engine:_NeedLinks(jobView, rows, resolver)
     local canKeyWithoutLink = self.deps.api.canKeyWithoutLink
     local need = {}
+    if not canKeyWithoutLink then
+        return needItems(jobView, rows, resolver)
+    end
     for itemID, list in pairs(rows.byItem) do
         local missing = false
         for _, row in ipairs(list) do
@@ -443,20 +490,29 @@ function Engine:_Refresh(jobView, rows, seconds, run)
     local resolver = ns.ScanKey.New({ clientIsCommodity = api.clientIsCommodity, maxStack = api.maxStack })
     local interval = api.refreshInterval or REFRESH_INTERVAL_SECONDS
     local startAt = deps.seconds()
+    local poll = 0
     while true do
         local need = self:_NeedLinks(jobView, rows, resolver)
-        if #need == 0 or deps.seconds() - startAt >= seconds then
+        if #need == 0 or deps.seconds() - startAt >= seconds
+            or (run.closed and not api.canKeyWithoutLink) then
             for _, itemID in ipairs(need) do
                 if deps.cache:GetState(itemID) == "failed" then
                     run.failedSet[itemID] = true
                 end
             end
+            if not api.canKeyWithoutLink then
+                countPending(rows, run)
+            end
             run.refreshSeconds = run.refreshSeconds + (deps.seconds() - startAt)
             return true
         end
+        poll = poll + 1
         deps.cache:ResetFailed()
         for _, itemID in ipairs(need) do
             deps.cache:Request(itemID)
+            if poll > 1 then
+                run.retriedSet[itemID] = true
+            end
             jobView:Checkpoint(1)
         end
         local waitStart = deps.seconds()
@@ -466,9 +522,14 @@ function Engine:_Refresh(jobView, rows, seconds, run)
                 return nil
             end
         end
-        ns.ScanRows.RereadLinks(jobView, api, rows, need, true)
+        if api.canKeyWithoutLink then
+            ns.ScanRows.RereadLinks(jobView, api, rows, need, true)
+        else
+            ns.ScanRows.RereadRows(jobView, api, rows, need)
+        end
     end
 end
+
 
 -- Returns the items to load: pending items and items with an unknown commodity status.
 function Engine:_LoadSet(jobView, rows)
@@ -487,8 +548,9 @@ function Engine:_LoadSet(jobView, rows)
     return set
 end
 
--- Writes all snapshots in one frame. Returns the number of new keys and of changed keys.
-function Engine:_Commit(snaps, partial)
+-- Writes all snapshots in one frame. partial marks the whole read as incomplete; partialKeys marks single keys.
+-- Returns the number of new keys and of changed keys.
+function Engine:_Commit(snaps, partial, partialKeys)
     local store = self.deps.store
     local now = self.deps.serverTime()
     local newItems, changed = 0, 0
@@ -504,7 +566,7 @@ function Engine:_Commit(snaps, partial)
         if old and old > 0 and math.abs(snap.market - old) / old > CHANGED_RATIO then
             changed = changed + 1
         end
-        ns.ScanBucket.Apply(record, snap, now, partial)
+        ns.ScanBucket.Apply(record, snap, now, partial or (partialKeys and partialKeys[key]) or false)
         store:Put(key, record)
     end
     self.deps.cooldown:MarkSuccess()
@@ -622,7 +684,7 @@ function Engine:_Run(job)
     local run = {
         startMs = deps.ms(), suspendedMs = 0, frames = 1, closed = false, eventSeen = false,
         readCut = false, concluded = false, eventCount = 0, lastEventAt = 0,
-        refreshSeconds = 0, failedSet = {},
+        refreshSeconds = 0, failedSet = {}, retriedSet = {}, nilLinkItems = 0, notAllInfoItems = 0,
     }
     self.run = run
     local jobView = clockedJob(job, run, deps.ms)
@@ -653,7 +715,7 @@ function Engine:_Run(job)
         return
     end
     -- Page rows were refreshed one page at a time; their row indexes are no longer valid, so no refresh here.
-    if not isPage and deps.api.canKeyWithoutLink then
+    if not isPage and (deps.api.canKeyWithoutLink or deps.api.refreshSeconds) then
         local seconds = deps.api.refreshSeconds and deps.api.refreshSeconds(self.mode) or 0
         if not self:_Refresh(jobView, rows, seconds, run) then
             return
@@ -671,7 +733,7 @@ function Engine:_Run(job)
         end
         ns.ScanRows.RereadLinks(jobView, deps.api, rows, loadedList)
     end
-    local groups, used, noKey, resolver, itemCounts = self:_BuildGroups(jobView, rows)
+    local groups, used, noKey, resolver, itemCounts, partialKeys = self:_BuildGroups(jobView, rows)
     local snaps, keyCount = {}, 0
     for key, auctions in pairs(groups) do
         jobView:Checkpoint(1)
@@ -682,12 +744,12 @@ function Engine:_Run(job)
         end
     end
 
-    local pendingMissing = count(rows.pending)
-    if deps.api.canKeyWithoutLink then
-        pendingMissing = itemCounts.itemsPendingMissing
-    end
-    local partial = run.readCut or run.stop ~= nil or pendingMissing > 0 or noKey > 0
+    -- Only an incomplete read makes the scan partial. An item without a key keeps its old data (no write).
+    local pendingMissing = itemCounts.itemsPendingMissing
+    local partial = run.readCut or run.stop ~= nil
     summary.noKey = noKey
+    summary.pending = pendingMissing + itemCounts.itemsNoLink + itemCounts.itemsLinkMismatch
+        + itemCounts.itemsUnknown
     summary.unknownItems = itemCounts.itemsUnknown
     for field, value in pairs(itemCounts) do
         summary[field] = value
@@ -700,7 +762,7 @@ function Engine:_Run(job)
     summary.commodityStats = resolver:GetStats()
     summary.rowStats = rows.stats
     summary.result = partial and "partial" or "ok"
-    summary.newItems, summary.changed = self:_Commit(snaps, partial)
+    summary.newItems, summary.changed = self:_Commit(snaps, partial, partialKeys)
     return self:_Conclude(summary)
 end
 

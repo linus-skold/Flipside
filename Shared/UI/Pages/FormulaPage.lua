@@ -236,7 +236,7 @@ function FormulaPage.Build(content, deps)
     local formulaLabel = Kit.Label(content, "Formula", "highlight")
     formulaLabel:SetPoint("TOPLEFT", content, "TOPLEFT", 0, 0)
     local itemLabel = Kit.Label(content, index and "Item (name, link or id)" or "Item (link or id)", "highlight")
-    local money = Kit.Money(content)
+    local money = Kit.Money(content, ns.TooltipLines and ns.TooltipLines.FormatMoney)
     local status = Kit.Label(content, "", "normal")
     local check
 

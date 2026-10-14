@@ -295,4 +295,55 @@ describe("AuctionClient", function()
             assert.is_false(ns.AuctionClient.CanLiveSearch())
         end)
     end)
-end)
+
+    describe("Forever backend buy block", function()
+        local calls
+
+        before_each(function()
+            assert(loadfile(manifest.path("ForeverBackend")))("Flipside", ns)
+            calls = {}
+            local api = _G.C_AuctionHouse
+            api.StartCommoditiesPurchase = function(...) calls[#calls + 1] = { "start", ... } end
+            api.ConfirmCommoditiesPurchase = function(...) calls[#calls + 1] = { "confirm", ... } end
+            api.CancelCommoditiesPurchase = function(...) calls[#calls + 1] = { "cancel", ... } end
+            api.GetQuoteDurationRemaining = function() return 42 end
+            api.PlaceBid = function(...) calls[#calls + 1] = { "bid", ... } end
+        end)
+
+        it("is on when the calls exist and off when one is missing", function()
+            assert.is_true(ns.AuctionClient.CanBuy())
+            _G.C_AuctionHouse.PlaceBid = nil
+            assert.is_false(ns.AuctionClient.CanBuy())
+        end)
+
+        it("forwards the commodity calls and the quote time", function()
+            ns.AuctionClient.StartCommodityPurchase(5, 20)
+            ns.AuctionClient.ConfirmCommodityPurchase(5, 20)
+            ns.AuctionClient.CancelCommodityPurchase()
+            assert.are.same({ { "start", 5, 20 }, { "confirm", 5, 20 }, { "cancel" } }, calls)
+            assert.are.equal(42, ns.AuctionClient.QuoteSecondsLeft())
+        end)
+
+        it("buys an item auction with PlaceBid at the buyout", function()
+            ns.AuctionClient.BuyItemAuction(77, 9000)
+            assert.are.same({ { "bid", 77, 9000 } }, calls)
+        end)
+
+        it("gives the buy event names", function()
+            local events = ns.AuctionClient.BuyEvents()
+            assert.are.equal("COMMODITY_PRICE_UPDATED", events.priceUpdated)
+            assert.are.equal("COMMODITY_PURCHASE_SUCCEEDED", events.commoditySucceeded)
+            assert.are.equal("COMMODITY_PURCHASE_FAILED", events.commodityFailed)
+            assert.are.equal("AUCTION_HOUSE_PURCHASE_COMPLETED", events.itemCompleted)
+            assert.are.equal("AUCTION_HOUSE_SHOW_ERROR", events.itemError)
+        end)
+
+        it("is off without a backend", function()
+            ns.AuctionClient.Use({})
+            assert.is_false(ns.AuctionClient.CanBuy())
+            assert.is_nil(ns.AuctionClient.BuyEvents())
+            assert.has_error(function()
+                ns.AuctionClient.BuyItemAuction(1, 1)
+            end, "auction backend has no BuyItemAuction")
+        end)
+    end)end)

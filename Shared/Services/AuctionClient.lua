@@ -4,7 +4,8 @@ local _, ns = ...
 -- Backend functions: StartScan, ScanDoneEvent, RowCount, ReadRow, RowLink, RowIsPet, ItemIsCommodity,
 -- HasCommodityCheck, NameSearch, TargetedSearch, NameResultEvent, NameResults, NameItemKeyInfo, Capture, OwnedAuctions,
 -- CanReadOwned, OwnedEvent, OpenEvent, CloseEvent, CanScan, CanLiveSearch, LiveSearch, LiveResultEvents, LiveRows,
--- IsReady, ReadyEvent, RefreshOwned, CanPost, PostItem, PostCommodity, ConfirmPostItem, ConfirmPostCommodity,
+-- IsReady, ReadyEvent, RefreshOwned, CanBuy, StartCommodityPurchase, ConfirmCommodityPurchase, CancelCommodityPurchase,
+-- QuoteSecondsLeft, BuyItemAuction, BuyEvents, CanPost, PostItem, PostCommodity, ConfirmPostItem, ConfirmPostCommodity,
 -- Deposit, AvailablePostCount, IsSellItemValid, PostedEvent. A backend leaves out what its client cannot do.
 local AuctionClient = {}
 ns.AuctionClient = AuctionClient
@@ -91,6 +92,23 @@ query("LiveResultEvents")
 query("LiveRows", {})
 query("IsReady", true)
 query("RefreshOwned")
+
+-- Buy block. CanBuy() tells if the client can buy.
+-- StartCommodityPurchase, ConfirmCommodityPurchase and BuyItemAuction are protected: call them only from a click.
+-- CancelCommodityPurchase is not protected.
+-- StartCommodityPurchase(itemID, quantity) asks for a quote; the quote event follows.
+-- ConfirmCommodityPurchase(itemID, quantity) buys at the quote.
+-- CancelCommodityPurchase() drops the quote. QuoteSecondsLeft() gives the time left of the quote.
+-- BuyItemAuction(auctionID, buyout) buys one item auction at its buyout price.
+-- BuyEvents() gives { priceUpdated, priceUnavailable, commoditySucceeded, commodityFailed,
+-- itemCompleted, itemError }.
+query("CanBuy", false)
+query("QuoteSecondsLeft")
+query("BuyEvents")
+action("StartCommodityPurchase")
+action("ConfirmCommodityPurchase")
+action("CancelCommodityPurchase")
+action("BuyItemAuction")
 
 -- Posting (optional; Forever only). The item is a bag slot. duration is in hours: 12, 24 or 48.
 -- PostItem(bag, slot, duration, quantity, bid, buyout) and PostCommodity(bag, slot, duration, quantity, unitPrice)
