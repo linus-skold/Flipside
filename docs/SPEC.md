@@ -105,7 +105,7 @@ Nine features come from your list, twelve are ones TSM users rely on that are ea
 | Sniper | Repeat searches to catch underpriced new listings | Same as Sniper; uses local scan prices for thresholds | You | Phase 2 |
 | Operations and price formulas | Reusable rules with a formula language | Same language; new local price sources; live formula preview | Added | MVP |
 | Tooltips | Prices, counts and history on every item (the history chart is Phase 2) | Adds data age and days with data (samples) to price lines | Added | MVP |
-| Inventory tracking | Counts per character, bank, mail, AH, guild | Same | Added | MVP |
+| Inventory tracking | Counts per character, bank, mail, AH, guild (guild bank later; equipped items later) | Same | Added | MVP |
 | Decision log and dry run | Shows why each item was posted, skipped or cancelled | New | Added | MVP |
 | Crafting and queue | Profit per recipe, restock queue, craft next | Same | Added | Phase 2 |
 | Banking | Move groups between bags, bank and warband bank | Folded into Keep stock rules | Added | Phase 2 |
@@ -365,7 +365,7 @@ How features use it: Banking moves to and from the bank; Mail lists send shortfa
 
 ### 5.10 Others carried over
 
-Operations and formulas (§4.2–4.3), tooltips and inventory tracking (§5.11), crafting and queue (§5.3), dashboard (§5.8), destroying (§5.9) and the Task List (§5.10) behave as in the reference, using scan sources in place of AuctionDB.
+Operations and formulas (§4.2–4.3), tooltips and inventory tracking (reference §5.11; for Flipside, see the "Tooltips and inventory design" block below), crafting and queue (§5.3), dashboard (§5.8), destroying (§5.9) and the Task List (§5.10) behave as in the reference, using scan sources in place of AuctionDB.
 
 **Tooltips and inventory design (decided 2026-10-14)**
 
