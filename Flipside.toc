@@ -4,4 +4,8 @@
 ## SavedVariables: FlipsideDB, FlipsideScanDB
 # The interface number 16001 is confirmed by GetBuildInfo in the client (build 70338, 2026-10-14).
 # The Forever source has no interface number.
-# No Lua files are listed yet, because no Flipside code exists.
+
+Core\EventBus.lua
+Core\Scheduler.lua
+Core\ItemString.lua
+Core\Init.lua

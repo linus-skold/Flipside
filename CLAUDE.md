@@ -30,6 +30,7 @@ Unit tests pass; luacheck is clean; the feature's in-game checklist passes on Wo
 `Core/` framework, `Services/`, `Features/<Name>/`, `UI/`, `UI/Kit/`, `Libs/` (empty, no third-party library), `Locales/`, `Tests/` (busted specs and `wow_mock.lua`), `ScanTest/` (throwaway Spike 0 addon).
 - `UI/Kit/`: reusable style kit, no Flipside logic (D19).
 - No third-party library is used (D18).
+- Core modules: `EventBus`, `Scheduler`, `ItemString`, `SettingsDB`, `ItemInfoCache`, `Init`. Core files start with `local _, ns = ...` and write no globals (`Init` also reads the addon name and sets the slash globals).
 - Item keys follow D20; no battle pets in the MVP (D21); scan data is keyed by region and ruleset (D22).
 
 ## Commands

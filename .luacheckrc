@@ -1,6 +1,6 @@
 std = "lua51"
 max_line_length = 120
-exclude_files = { "Libs/" }
+exclude_files = { "Libs/", "lua51/", ".claude/" }
 
 -- WoW API that the code reads.
 read_globals = {
@@ -27,6 +27,8 @@ globals = {
     "FlipsideScanDB",
     "ScanTestDB",
     "SlashCmdList",
+    "SLASH_FLIPSIDE1",
+    "SLASH_FLIPSIDE2",
     "SLASH_SCANTEST1",
     "StaticPopupDialogs",
 }
