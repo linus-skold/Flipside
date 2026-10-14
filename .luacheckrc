@@ -27,6 +27,7 @@ read_globals = {
     "GetInboxItemLink",
     "GetInboxNumItems",
     "IsAltKeyDown",
+    "ItemLocation",
     "TooltipDataProcessor",
     "GameTooltip",
     "GetBuildInfo",
