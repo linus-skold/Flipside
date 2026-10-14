@@ -259,6 +259,8 @@ describe("Init scan", function()
             runScan()
             assert.is_true(hasMessage("Flipside: commodity check: client 5, stack 0, unknown 0, mismatch 0"))
             assert.is_true(hasMessage("Flipside: rows skipped: empty 0, bid-only 0, pet 0, bad count 0"))
+            assert.is_true(hasMessage(
+                "Flipside: items 5: keyed 5, link fallback 0, pending 0, no link 0, link mismatch 0, unknown 0"))
         end)
 
         it("uses the stack size of the item cache when the client gives none", function()

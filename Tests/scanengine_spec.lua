@@ -503,21 +503,62 @@ describe("ScanEngine unknown stack size", function()
         assert.are.equal(1, w.requestCount[1001])
     end)
 
-    it("leaves out an item that never loads and marks the scan partial", function()
+    it("uses the exact key of the link for an item that never loads", function()
         local w = MakeWorld({ rows = rowsWithUnknown(), unknownStack = true })
         w.stackOnLoad[1001] = 1
         w.stackOnLoad[1002] = 1
         w.neverLoad[3001] = true
         local summary = Run(w)
-        assert.are.equal("partial", summary.result)
-        assert.are.equal(1, summary.unknownItems)
-        assert.are.equal(2, summary.noKey)
-        assert.is_nil(w.store:Get("3001"))
-        assert.is_not_nil(w.store:Get("1001#b6001"))
-        assert.is_true(w.store:Get("1001#b6001").latest.partial)
-        assert.is_truthy(Joined(w):find("1 items with unknown stack size", 1, true))
+        assert.are.equal("ok", summary.result)
+        assert.are.equal(1, summary.itemsLinkFallback)
+        assert.are.equal(1, summary.commodityStats.linkFallback)
+        assert.are.equal(0, summary.noKey)
+        assert.are.equal(10, w.store:Get("3001").latest.qty)
+        assert.is_false(w.store:Get("3001").latest.partial)
     end)
 
+    it("leaves out rows with a link of another item and marks the scan partial", function()
+        local rows = rowsWithUnknown()
+        rows[2].link = commodityRow(3999).link
+        rows[3].link = commodityRow(3999).link
+        local w = MakeWorld({ rows = rows, unknownStack = true })
+        w.neverLoad[3001] = true
+        local summary = Run(w)
+        assert.are.equal("partial", summary.result)
+        assert.are.equal(1, summary.itemsLinkMismatch)
+        assert.are.equal(2, summary.noKey)
+        assert.is_nil(w.store:Get("3001"))
+        assert.is_truthy(Joined(w):find("1 items with a bad link", 1, true))
+    end)
+
+    it("counts every item in one group", function()
+        local rows = {
+            gearRow(1), gearRow(2), gearRow(3), gearRow(4), gearRow(5), gearRow(6),
+        }
+        rows[3].late = true
+        rows[4].link = "garbage"
+        rows[5].link = commodityRow(3999).link
+        rows[6].link = "garbage"
+        local w = MakeWorld({ rows = rows, unknownStack = true })
+        w.stackOnLoad[1001] = 1
+        w.stackOnLoad[1004] = 1
+        w.stackOnLoad[1005] = 1
+        w.neverLoad[1002] = true
+        w.neverLoad[1003] = true
+        w.neverLoad[1006] = true
+        local s = Run(w)
+        assert.are.equal("partial", s.result)
+        assert.are.equal(6, s.items)
+        assert.are.equal(1, s.itemsKeyed)
+        assert.are.equal(1, s.itemsLinkFallback)
+        assert.are.equal(1, s.itemsPendingMissing)
+        assert.are.equal(1, s.itemsNoLink)
+        assert.are.equal(1, s.itemsLinkMismatch)
+        assert.are.equal(1, s.itemsUnknown)
+        assert.are.equal(s.items, s.itemsKeyed + s.itemsLinkFallback + s.itemsPendingMissing + s.itemsNoLink
+            + s.itemsLinkMismatch + s.itemsUnknown)
+        assert.is_truthy(Joined(w):find("1 items without data", 1, true))
+    end)
     it("makes one load set for pending and unknown items", function()
         local rows = rowsWithUnknown()
         rows[1].late = true

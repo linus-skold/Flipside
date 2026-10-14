@@ -25,7 +25,9 @@ function ScanKey.New(lookups)
         clientIsCommodity = lookups.clientIsCommodity,
         maxStack = lookups.maxStack,
         cache = {},
-        stats = { client = 0, stack = 0, unknown = 0, mismatch = 0 },
+        stats = { client = 0, stack = 0, unknown = 0, mismatch = 0, linkFallback = 0 },
+        unknownSeen = {},
+        fallbackSeen = {},
     }, Resolver)
 end
 
@@ -55,21 +57,41 @@ function Resolver:IsCommodity(itemID)
     elseif fromStack ~= nil then
         isCommodity, source = fromStack, "stack"
     else
-        self.stats.unknown = self.stats.unknown + 1
+        if not self.unknownSeen[itemID] then
+            self.unknownSeen[itemID] = true
+            self.stats.unknown = self.stats.unknown + 1
+        end
         return nil, "unknown"
     end
 
+    if self.unknownSeen[itemID] then
+        self.unknownSeen[itemID] = nil
+        self.stats.unknown = self.stats.unknown - 1
+    end
     self.stats[source] = self.stats[source] + 1
     self.cache[itemID] = { isCommodity = isCommodity, source = source }
     return isCommodity, source
 end
 
 -- Returns key, isCommodity or nil and a reason: "unknown", "no-link" or "link-mismatch".
+-- If the commodity status is unknown, the exact key of the link is used and isCommodity is nil.
 function Resolver:KeyFor(itemID, link)
     local ItemString = ns.ItemString
     local isCommodity = self:IsCommodity(itemID)
     if isCommodity == nil then
-        return nil, "unknown"
+        local key = link ~= nil and ItemString.ToExactKey(link) or nil
+        if not key then
+            return nil, "unknown"
+        end
+        local parsed = ItemString.ParseLink(link)
+        if not parsed or parsed.itemID ~= itemID then
+            return nil, "link-mismatch"
+        end
+        if not self.fallbackSeen[itemID] then
+            self.fallbackSeen[itemID] = true
+            self.stats.linkFallback = self.stats.linkFallback + 1
+        end
+        return key, nil
     end
     if isCommodity then
         local key = ItemString.ToBaseKey(itemID)
@@ -92,7 +114,10 @@ end
 -- Returns a new table with the decision counts.
 function Resolver:GetStats()
     local stats = self.stats
-    return { client = stats.client, stack = stats.stack, unknown = stats.unknown, mismatch = stats.mismatch }
+    return {
+        client = stats.client, stack = stats.stack, unknown = stats.unknown, mismatch = stats.mismatch,
+        linkFallback = stats.linkFallback,
+    }
 end
 
 -- Returns true if the text holds a battle pet link.
