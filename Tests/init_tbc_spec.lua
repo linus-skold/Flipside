@@ -199,6 +199,79 @@ describe("Init on TBC", function()
                 assert.are.equal(20, total)
             end)
         end)
+        describe("legacy scan", function()
+            local rows, batchOverride, canMass, queries
+            local names = { "CanSendAuctionQuery", "QueryAuctionItems", "GetNumAuctionItems", "GetAuctionItemInfo",
+                "GetAuctionItemLink" }
+            local LINK = "|cffffffff|Hitem:2589::::::::60:::::|h[Linen Cloth]|h|r"
+
+            local function pump(frames)
+                for _ = 1, frames do
+                    mock.update()
+                    mock.advance(1)
+                end
+            end
+
+            before_each(function()
+                rows, batchOverride, canMass, queries = {}, nil, true, {}
+                mock.stackSizes[2589] = 200
+                _G.CanSendAuctionQuery = function() return true, canMass end
+                _G.QueryAuctionItems = function(...) queries[#queries + 1] = { n = select("#", ...), ... } end
+                _G.GetNumAuctionItems = function() return batchOverride or #rows, #rows end
+                _G.GetAuctionItemInfo = function(_, i)
+                    local r = rows[i]
+                    return "Linen Cloth", 1, r.count, 1, true, 1, 0, 0, 0, r.buyout, 0, false, "", "o", "", 0,
+                        2589, true
+                end
+                _G.GetAuctionItemLink = function(_, i) return rows[i].link end
+                login()
+                mock.fire("AUCTION_HOUSE_SHOW")
+            end)
+
+            after_each(function()
+                for _, name in ipairs(names) do
+                    _G[name] = nil
+                end
+            end)
+
+            it("refuses with the get-all cooldown text", function()
+                canMass = false
+                slash("scan")
+                assert.are.equal(1, count("get all is on cooldown"))
+                assert.is_nil(mock.popup)
+                assert.is_false(ns.scanEngine:IsRunning())
+            end)
+
+            it("runs a getAll scan, waits for the full batch and stores per-item prices", function()
+                slash("scan")
+                mock.acceptPopup()
+                pump(2)
+                assert.are.equal(1, #queries)
+                assert.are.equal(true, queries[1][7])
+                rows[1] = { count = 20, buyout = 2000, link = LINK }
+                rows[2] = { count = 10, buyout = 2000, link = LINK }
+                batchOverride = 1
+                mock.fire("AUCTION_ITEM_LIST_UPDATE")
+                pump(1)
+                assert.is_true(ns.scanEngine:IsRunning())
+                batchOverride = nil
+                mock.fire("AUCTION_ITEM_LIST_UPDATE")
+                for _ = 1, 300 do
+                    if not ns.scanEngine:IsRunning() then break end
+                    pump(1)
+                end
+                assert.is_false(ns.scanEngine:IsRunning())
+                assert.are.equal(1, ns.scanStore:CountItems())
+                assert.are.equal("EU", ns.scanStore:GetRegion())
+                assert.are.equal("tbc-anniversary", ns.scanStore:GetRuleset())
+                local record = ns.scanStore:Get(ns.scanStore:Keys()[1])
+                assert.are.equal(100, record.latest.market)                local diag = _G.FlipsideScanDB_TBC.diag
+                assert.are.equal(1, #diag)
+                assert.are.equal(2, diag[1].events)
+                assert.are.equal(2, diag[1].rows)
+                assert.are.equal(1, count("legacy scan: rows 2, batch 2 of 2"))
+            end)
+        end)
         it("uses the TBC SavedVariables names", function()
             login()
             assert.is_table(_G.FlipsideDB_TBC)
