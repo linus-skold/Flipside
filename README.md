@@ -13,13 +13,19 @@ MIT.
 ## Development setup
 The tools are Lua 5.1, luarocks, luacheck and busted. Code must run on Lua 5.1.
 
-1. Install Lua 5.1 and luarocks for Windows. One way is the `hererocks` tool (needs Python and a C compiler):
-   `pip install hererocks`, then `hererocks lua51 -l 5.1 -r latest`.
-2. Activate the environment: `lua51\bin\activate.ps1` (PowerShell).
-3. Install the tools: `luarocks install luacheck`, then `luarocks install busted`.
-4. Run the lint from the repository root: `luacheck .`
-5. Run the tests from the repository root: `busted`
+Use the "x64 Native Tools Command Prompt for VS 2022". The C compiler needs its `INCLUDE` and `LIB` variables. Without them the build fails with `assert.h: no include path set`. Do all install steps in this prompt.
 
+`mise` cannot build Lua on Windows. Do not use it.
+
+1. Install `hererocks`: `pip install hererocks`.
+2. Add `.` to PATH for this prompt: `set PATH=.;%PATH%`. Python 3.12 and later does not find `install.bat` in the current folder. Without this step the luarocks install fails with `couldn't run install.bat /?`.
+3. Install Lua 5.1 and luarocks in the repository root: `hererocks lua51 -l 5.1 -r https://github.com/luarocks/luarocks@v3.11.1`. The `-r latest` option gives luarocks 3.8.0, which fails.
+4. Put the tools in PATH: `set PATH=%CD%\lua51\bin;%PATH%`. In PowerShell use `$env:PATH = "$PWD\lua51\bin;$env:PATH"`.
+5. Install the tools in the same prompt: `luarocks install luacheck`, then `luarocks install busted`. The `lua-term` and `luafilesystem` rocks need the C compiler.
+6. Run the lint from the repository root: `luacheck .`
+7. Run the tests from the repository root: `busted`
+
+After step 5, the tools run in any shell that has `lua51\bin` in PATH. The `lua51` folder is not in git.
 ## Libraries
 No third-party library is used at this time. The `Libs/` folder is empty.
 
