@@ -9,6 +9,9 @@ local GLOBAL_NAMES = {
     "SLASH_FLIPSIDE1", "SLASH_FLIPSIDE2",
     "SLASH_SCANTEST1", "ScanTestDB", "SlashCmdList",
     "StaticPopupDialogs", "StaticPopup_Show", "UnitName", "WOW_PROJECT_ID", "date", "debugprofilestop", "time",
+    "UISpecialFrames", "UIParent", "GameTooltip", "GetMoneyString", "PanelTemplates_SetNumTabs",
+    "PanelTemplates_SetTab", "InCombatLockdown", "ScrollUtil", "CreateDataProvider",
+    "CreateScrollBoxListLinearView",
 }
 
 local frameMethods = {}
@@ -45,6 +48,151 @@ function frameMethods:GetScript(name)
     return self.scripts[name]
 end
 
+function frameMethods:GetName()
+    return self.name
+end
+
+function frameMethods:GetParent()
+    return self.parent
+end
+
+function frameMethods:SetShown(shown)
+    self.shown = shown and true or false
+end
+
+function frameMethods:HookScript(name, fn)
+    local old = self.scripts[name]
+    self.scripts[name] = old and function(...)
+        old(...)
+        fn(...)
+    end or fn
+end
+
+function frameMethods:SetSize(w, h)
+    self.width, self.height = w, h
+end
+
+function frameMethods:SetWidth(w)
+    self.width = w
+end
+
+function frameMethods:SetHeight(h)
+    self.height = h
+end
+
+function frameMethods:SetPoint(...)
+    table.insert(self.points, { ... })
+end
+
+function frameMethods:ClearAllPoints()
+    self.points = {}
+end
+
+function frameMethods:SetText(text)
+    self.text = text
+end
+
+function frameMethods:GetText()
+    return self.text
+end
+
+function frameMethods:SetID(id)
+    self.id = id
+end
+
+function frameMethods:GetID()
+    return self.id
+end
+
+function frameMethods:SetEnabled(enabled)
+    self.enabled = enabled and true or false
+end
+
+function frameMethods:Enable()
+    self.enabled = true
+end
+
+function frameMethods:Disable()
+    self.enabled = false
+end
+
+function frameMethods:SetChecked(checked)
+    self.checked = checked and true or false
+end
+
+function frameMethods:GetChecked()
+    return self.checked
+end
+
+function frameMethods:SetMovable(movable)
+    self.movable = movable
+end
+
+function frameMethods:EnableMouse(enabled)
+    self.mouse = enabled
+end
+
+function frameMethods:RegisterForDrag(...)
+    self.dragButtons = { ... }
+end
+
+function frameMethods:StartMoving()
+    self.moving = true
+end
+
+function frameMethods:StopMovingOrSizing()
+    self.moving = false
+end
+
+function frameMethods:SetClampedToScreen(clamped)
+    self.clamped = clamped
+end
+
+function frameMethods:SetAutoFocus(autoFocus)
+    self.autoFocus = autoFocus
+end
+
+function frameMethods:ClearFocus()
+    self.focusCleared = (self.focusCleared or 0) + 1
+end
+
+function frameMethods:SetFontObject(font)
+    self.fontObject = font
+end
+
+function frameMethods:SetTexture(texture)
+    self.texture = texture
+end
+
+function frameMethods:SetAtlas(atlas)
+    self.atlas = atlas
+end
+
+function frameMethods:SetHighlightTexture(texture, mode)
+    self.highlightTexture, self.highlightMode = texture, mode
+end
+
+function frameMethods:SetDataProvider(provider)
+    self.dataProvider = provider
+end
+
+local function newObject(kind, name, parent, template)
+    local f = setmetatable({
+        events = {}, scripts = {}, shown = true, points = {},
+        kind = kind, name = name, parent = parent, template = template,
+    }, frameMethods)
+    f.CreateFontString = function(self, fsName, layer, font)
+        local fs = newObject("FontString", fsName, self)
+        fs.layer, fs.fontObject = layer, font
+        return fs
+    end
+    f.CreateTexture = function(self, texName, layer)
+        local tex = newObject("Texture", texName, self)
+        tex.layer = layer
+        return tex
+    end
+    return f
+end
 function M.reset()
     M.clock = 0 -- seconds since reset
     M.serverBase = 1000000
@@ -83,11 +231,84 @@ function M.reset()
     _G.SlashCmdList = {}
     _G.StaticPopupDialogs = {}
 
-    _G.CreateFrame = function()
-        local f = setmetatable({ events = {}, scripts = {}, shown = true }, frameMethods)
+    _G.CreateFrame = function(kind, name, parent, template)
+        if template and M.missingTemplates[template] then
+            error("CreateFrame: unknown template " .. template, 2)
+        end
+        local f = newObject(kind, name, parent, template)
+        if template == "PortraitFrameTemplate" or template == "ButtonFrameTemplate" then
+            f.TitleContainer = newObject("Frame", nil, f)
+            f.SetTitle = function(self, title)
+                self.title = title
+            end
+            f.SetPortraitTextureRaw = function(self, texture)
+                self.portrait = texture
+            end
+            f.SetPortraitShown = function(self, shown)
+                self.portraitShown = shown
+            end
+        elseif template == "UICheckButtonTemplate" then
+            f.Text = newObject("FontString", nil, f)
+        end
         table.insert(M.frames, f)
         return f
     end
+
+    M.missingTemplates = {} -- template names that CreateFrame rejects
+    M.inCombat = false -- result of InCombatLockdown()
+    M.tabCalls = {} -- PanelTemplates_SetNumTabs and PanelTemplates_SetTab calls
+    M.tooltip = { shown = false, title = nil, lines = {} }
+    M.scrollInit = nil -- last ScrollUtil.InitScrollBoxListWithScrollBar call
+
+    _G.UISpecialFrames = {}
+    _G.UIParent = newObject("Frame", "UIParent")
+    _G.InCombatLockdown = function()
+        return M.inCombat
+    end
+    _G.GetMoneyString = function(copper)
+        return copper .. "c"
+    end
+    _G.PanelTemplates_SetNumTabs = function(frame, num)
+        table.insert(M.tabCalls, { "num", frame, num })
+    end
+    _G.PanelTemplates_SetTab = function(frame, id)
+        table.insert(M.tabCalls, { "tab", frame, id })
+    end
+    _G.GameTooltip = {
+        SetOwner = function(_, owner)
+            M.tooltip.owner = owner
+        end,
+        SetText = function(_, text)
+            M.tooltip.title = text
+        end,
+        AddLine = function(_, text)
+            table.insert(M.tooltip.lines, text)
+        end,
+        Show = function()
+            M.tooltip.shown = true
+        end,
+        Hide = function()
+            M.tooltip.shown = false
+        end,
+    }
+    _G.CreateDataProvider = function(tbl)
+        return { data = tbl }
+    end
+    _G.CreateScrollBoxListLinearView = function()
+        local view = {}
+        function view:SetElementExtent(extent)
+            self.extent = extent
+        end
+        function view:SetElementInitializer(template, fn)
+            self.template, self.initializer = template, fn
+        end
+        return view
+    end
+    _G.ScrollUtil = {
+        InitScrollBoxListWithScrollBar = function(box, bar, view)
+            M.scrollInit = { box = box, bar = bar, view = view }
+        end,
+    }
 
     _G.DEFAULT_CHAT_FRAME = {
         AddMessage = function(_, msg)
