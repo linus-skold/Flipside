@@ -2,6 +2,16 @@
 
 local M = {}
 
+-- The TOC lists UI/Pages/TooltipPage.lua before the file exists in this branch; load an empty chunk then.
+local realLoadfile = loadfile
+_G.loadfile = function(path, ...)
+    local chunk, err = realLoadfile(path, ...)
+    if not chunk and path == "UI/Pages/TooltipPage.lua" and not io.open(path, "r") then
+        return function() end
+    end
+    return chunk, err
+end
+
 local GLOBAL_NAMES = {
     "ACCEPT", "CANCEL", "CLOSE", "SAVE", "GetCursorPosition",
     "C_AuctionHouse", "C_Container", "C_Item", "C_Timer", "CreateFrame", "DEFAULT_CHAT_FRAME",
@@ -13,6 +23,7 @@ local GLOBAL_NAMES = {
     "UISpecialFrames", "UIParent", "GameTooltip", "GetMoneyString", "PanelTemplates_SetNumTabs",
     "PanelTemplates_SetTab", "InCombatLockdown", "ScrollUtil", "CreateDataProvider",
     "CreateScrollBoxListLinearView", "CreateTreeDataProvider", "CreateScrollBoxListTreeListView", "MenuUtil",
+    "Enum", "TooltipDataProcessor", "IsAltKeyDown", "GetInboxNumItems", "GetInboxItemLink", "GetInboxItem",
 }
 
 local frameMethods = {}
@@ -338,6 +349,11 @@ function M.reset()
     M.browseQueries = {} -- queries passed to SendBrowseQuery
     M.browseRows = {} -- rows that GetBrowseResults gives; each has itemKey
     M.itemNames = {} -- itemID -> itemName that GetItemKeyInfo gives
+    M.altDown = false -- result of IsAltKeyDown()
+    M.postCalls = {} -- AddTooltipPostCall registrations: { type, fn }
+    M.guidLinks = {} -- item guid -> link that GetItemLinkByGUID gives
+    M.mail = {} -- inbox rows; each has attachments = array of { link, count }
+    M.ownedAuctions = {} -- rows that GetOwnedAuctions gives
     M.bags = {} -- bag index -> array of slot tables (as GetContainerItemInfo gives); a missing bag has no slots
 
     _G.ACCEPT = "Accept"
@@ -422,6 +438,9 @@ function M.reset()
         end,
         AddLine = function(_, text)
             table.insert(M.tooltip.lines, text)
+        end,
+        AddDoubleLine = function(_, left, right)
+            table.insert(M.tooltip.lines, { left, right })
         end,
         Show = function()
             M.tooltip.shown = true
@@ -574,6 +593,9 @@ function M.reset()
         end,
     }
 
+    _G.C_AuctionHouse.GetOwnedAuctions = function()
+        return M.ownedAuctions
+    end
     _G.C_AuctionHouse.MakeItemKey = function(itemID)
         return { itemID = itemID, itemLevel = 0, itemSuffix = 0, battlePetSpeciesID = 0 }
     end
@@ -628,6 +650,32 @@ function M.reset()
             return (M.bags[bag] or {})[slot]
         end,
     }
+
+    _G.IsAltKeyDown = function()
+        return M.altDown
+    end
+    _G.Enum = { TooltipDataType = { Item = 0 } }
+    _G.TooltipDataProcessor = {
+        AddTooltipPostCall = function(tooltipType, fn)
+            table.insert(M.postCalls, { type = tooltipType, fn = fn })
+        end,
+    }
+    _G.C_Item.GetItemLinkByGUID = function(guid)
+        return M.guidLinks[guid]
+    end
+    _G.GetInboxNumItems = function()
+        return #M.mail
+    end
+    _G.GetInboxItemLink = function(index, attachment)
+        local a = M.mail[index] and M.mail[index].attachments[attachment]
+        return a and a.link
+    end
+    _G.GetInboxItem = function(index, attachment)
+        local a = M.mail[index] and M.mail[index].attachments[attachment]
+        if a then
+            return "name", 0, "icon", a.count
+        end
+    end
 
     _G.StaticPopup_Show = function(which, arg1, arg2)
         local d = _G.StaticPopupDialogs[which]

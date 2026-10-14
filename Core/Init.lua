@@ -484,6 +484,91 @@ local function openRules()
     end
 end
 
+-- Client read functions for the inventory capture; mail is left out if the client has no mail functions.
+local function buildInventoryApi()
+    local api = {
+        container = {
+            numSlots = C_Container.GetContainerNumSlots,
+            itemInfo = C_Container.GetContainerItemInfo,
+        },
+    }
+    if type(GetInboxNumItems) == "function" and type(GetInboxItemLink) == "function"
+        and type(GetInboxItem) == "function" then
+        api.mail = { numItems = GetInboxNumItems, itemLink = GetInboxItemLink, itemInfo = GetInboxItem }
+    end
+    if type(C_AuctionHouse.GetOwnedAuctions) == "function" then
+        api.auctions = { owned = C_AuctionHouse.GetOwnedAuctions }
+    end
+    return api
+end
+
+-- Create the holdings and attach the inventory capture; they need the settings DB.
+local function openInventory()
+    if not (ns.db and ns.Holdings and ns.HoldingsRead and ns.InventoryCapture) then
+        return
+    end
+    local ok, err = pcall(function()
+        ns.holdings = ns.Holdings.New(ns.db, { character = characterKey(), clock = GetServerTime })
+        ns.inventoryCapture = ns.InventoryCapture.Attach({
+            bus = ns.bus,
+            holdings = ns.holdings,
+            holdingsRead = ns.HoldingsRead,
+            api = buildInventoryApi(),
+            resolver = buildKeyResolver(),
+            after = C_Timer.After,
+            report = ns.ReportError,
+        })
+    end)
+    if not ok then
+        ns.holdings = nil
+        ns.ReportError("inventory tracking is not available this session: " .. tostring(err))
+    end
+end
+
+-- Create the tooltip settings and attach the tooltip lines; they need the settings DB.
+local function openTooltip()
+    if not (ns.db and ns.TooltipConfig and ns.Tooltip and ns.TooltipLines) then
+        return
+    end
+    local ok, err = pcall(function()
+        ns.tooltipConfig = ns.TooltipConfig.New(ns.db, {
+            compile = function(text)
+                if not ns.formulaRun then
+                    return nil, { message = "formulas are not available" }
+                end
+                return ns.formulaRun:Compile(text)
+            end,
+            onChange = notifyRules,
+            onWarning = ns.ReportError,
+        })
+        local tooltipDeps = {
+            tooltipConfig = ns.tooltipConfig,
+            formulaRun = ns.formulaRun,
+            rules = ns.rules,
+            holdings = ns.holdings,
+            getRecord = function(key)
+                return ns.scanStore and ns.scanStore:Get(key) or nil
+            end,
+            now = GetServerTime,
+            isAltDown = IsAltKeyDown,
+            itemLinkByGUID = C_Item.GetItemLinkByGUID,
+            containerItemInfo = C_Container.GetContainerItemInfo,
+            processor = TooltipDataProcessor,
+            itemType = Enum and Enum.TooltipDataType and Enum.TooltipDataType.Item,
+            clock = debugprofilestop,
+            report = ns.ReportError,
+        }
+        ns.BuildTooltipPreview = function(input)
+            return ns.Tooltip.Rows(tooltipDeps, input, false, nil)
+        end
+        ns.Tooltip.Attach(tooltipDeps)
+    end)
+    if not ok then
+        ns.tooltipConfig = nil
+        ns.ReportError("tooltip lines are not available this session: " .. tostring(err))
+    end
+end
+
 -- Set later in this file: attach the Auction House tab.
 local openUI
 
@@ -500,6 +585,8 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
         openAHSearch()
         openFormula()
         openRules()
+        openInventory()
+        openTooltip()
         openUI()
         ns.bus:Emit("Flipside.Login")
     end
@@ -615,6 +702,12 @@ function ns.OpenMainWindow()
             readBags = ns.readBags,
             keyFor = ns.keyFor,
             subscribe = ns.SubscribeRules,
+            tooltipConfig = ns.tooltipConfig,
+            holdings = ns.holdings,
+            getRecord = function(key)
+                return ns.scanStore and ns.scanStore:Get(key) or nil
+            end,
+            buildPreview = ns.BuildTooltipPreview,
             getVersionLine = ns.VersionLine,
         })
         window:Toggle()
