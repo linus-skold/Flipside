@@ -33,3 +33,28 @@ No third-party library is used at this time. The `Libs/` folder is empty.
 - `docs/SPEC.md`: the specification.
 - `docs/TSM_REFERENCE.md`: background only.
 - `ScanTest/README.md`: how to run Spike 0.
+
+## Releases
+
+GitHub Actions packages the addon with the BigWigs packager. The zip goes to GitHub releases.
+
+The tag name sets the channel:
+
+| Tag | Channel | GitHub release |
+|---|---|---|
+| `v0.1.0` | release | release |
+| `v0.1.0-beta.1` | beta | pre-release |
+| `v0.1.0-alpha.1` | alpha | pre-release |
+
+Cut a release:
+
+```text
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+Use `v0.1.0-beta.1` for a beta and `v0.1.0-alpha.1` for an alpha.
+
+Each push to `main` builds an alpha zip. It is not a release. Download it from the workflow run, in the artifact `Flipside-alpha-<short sha>`. It stays for 30 days.
+
+CurseForge and Wago need no code change. Add the IDs to `Flipside.toc` (`## X-Curse-Project-ID: <id>` and `## X-Wago-ID: <id>`). Add the secrets `CF_API_TOKEN` and `WAGO_API_TOKEN` in the GitHub repository settings. The packager skips a site that has no ID or no token.

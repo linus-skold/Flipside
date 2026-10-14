@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+  workflow_call:
+
+jobs:
+  lint-and-test:
+    name: Lint and test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone project
+        uses: actions/checkout@v7
+      - name: Install Lua 5.1
+        uses: leafo/gh-actions-lua@v13
+        with:
+          luaVersion: "5.1"
+      - name: Install luarocks
+        uses: leafo/gh-actions-luarocks@v6
+      - name: Install luacheck and busted
+        run: |
+          luarocks install luacheck
+          luarocks install busted
+      - name: Lint
+        run: luacheck .
+      - name: Test
+        run: busted

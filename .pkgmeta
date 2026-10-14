@@ -1,0 +1,19 @@
+package-as: Flipside
+
+ignore:
+  - Tests
+  - docs
+  - ScanTest
+  - ScanTest.lua*
+  - lua51
+  - .claude
+  - .github
+  - .busted
+  - .luacheckrc
+  - .gitignore
+  - CLAUDE.md
+  - README.md
+  - "*.png"
+  - .lua
+  - .luarocks
+  - .release

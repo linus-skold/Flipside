@@ -1,6 +1,9 @@
 ## Interface: 16001
 ## Title: Flipside
 ## Notes: Auction house and economy addon for WoW: Forever.
+## Author: linus-skold
+## Version: @project-version@
+## IconTexture: Interface\Icons\INV_Misc_Coin_02
 ## SavedVariables: FlipsideDB, FlipsideScanDB
 # The interface number 16001 is confirmed by GetBuildInfo in the client (build 70338, 2026-10-14).
 # The Forever source has no interface number.
