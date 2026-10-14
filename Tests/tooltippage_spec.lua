@@ -14,6 +14,8 @@ local function load()
     assert(loadfile(manifest.path("TooltipConfig")))("Flipside", ns)
     assert(loadfile(manifest.path("TooltipLines")))("Flipside", ns)
     assert(loadfile(manifest.path("FormulaPage")))("Flipside", ns)
+    assert(loadfile(manifest.path("ScanClock")))("Flipside", ns)
+    assert(loadfile(manifest.path("TooltipTable")))("Flipside", ns)
     assert(loadfile(manifest.path("TooltipPage")))("Flipside", ns)
     return ns
 end
@@ -106,6 +108,18 @@ describe("TooltipPage", function()
             end,
         }
         db = newDB({})
+        -- Formula lines (the old defaults), so that the specs have lines to edit. The price table has own specs.
+        db:Set("profile", "tooltip", {
+            version = 2, nextID = 4, showGroup = true, showOperation = true, showCounts = true,
+            lines = {
+                {
+                    id = 1, label = "Market", formula = "scanmarket", showAge = true, showSamples = true,
+                    enabled = true,
+                },
+                { id = 2, label = "Min", formula = "scanlow", showAge = true, showSamples = false, enabled = true },
+                { id = 3, label = "Max", formula = "scanhigh", showAge = false, showSamples = false, enabled = true },
+            },
+        })
         tc = ns.TooltipConfig.New(db, {
             compile = function(text)
                 return run:Compile(text)
@@ -271,7 +285,7 @@ describe("TooltipPage", function()
             click(page.resetButton)
             assert.are.equal(4, #stored().lines)
             mock.acceptPopup()
-            assert.are.same({ "Market", "Min", "Max" }, labels())
+            assert.are.same({ "Price table" }, labels())
         end)
     end)
 
@@ -300,7 +314,7 @@ describe("TooltipPage", function()
             tc = ns.TooltipConfig.New(newDB({}))
             tc:AddLine("Broken", "bad(")
             build()
-            selectLine(4)
+            selectLine(2)
             assert.are.equal("error at 4: unexpected symbol - near \"bad(\"", page.preview:GetText())
         end)
 
@@ -417,6 +431,71 @@ describe("TooltipPage", function()
         it("shows the refusal text when a change is tried", function()
             click(page.addButton)
             assert.are.equal("settings are read-only", page.status:GetText())
+        end)
+    end)
+
+    describe("price table", function()
+        local model = {
+            kind = "table",
+            header = "Flipside (updated 2 h ago)",
+            columns = { "Min", "Avg", "Max", "Market" },
+            rows = {
+                { label = "1d", cells = { "1g", "2g", "3g", "4g" } },
+                { label = "14d", cells = { "-", "-", "-", "-" } },
+                { label = "30d", cells = { "1s", "2s", "3s", "4s" } },
+                { label = "60d", cells = { "1c", "2c", "3c", "4c" } },
+            },
+        }
+
+        before_each(function()
+            db = newDB({})
+            tc = ns.TooltipConfig.New(db, { compile = function(text) return run:Compile(text) end })
+            extra = {
+                buildPreview = function(_, config)
+                    return config.lines[1].kind == "table" and { model } or { { left = "Mine", right = "1g" } }
+                end,
+            }
+            build()
+        end)
+
+        it("lists the price table first and selects it", function()
+            assert.are.same({ "Price table" }, labels())
+            assert.are.equal("Min Avg Max Market", page.list.rows[1].formulaText:GetText())
+            assert.are.equal("Price table", page.header:GetText())
+        end)
+
+        it("turns the edit boxes and the remove button off for the table", function()
+            assert.is_false(page.labelInput.enabled)
+            assert.is_false(page.formulaInput.enabled)
+            assert.is_false(page.ageCheck.enabled)
+            assert.is_false(page.list.rows[1].removeButton.enabled)
+            assert.is_true(page.upButton.enabled)
+        end)
+
+        it("asks for an item before it draws the table", function()
+            assert.are.equal("Enter an item above to preview the price table.", page.preview:GetText())
+            assert.is_false(page.tableView.frame:IsShown())
+        end)
+
+        it("draws the model with the header over five rows", function()
+            enter(page.exampleInput, "1")
+            assert.are.equal("Flipside (updated 2 h ago)", page.preview:GetText())
+            assert.is_true(page.tableView.frame:IsShown())
+            local rows = page.tableView.rows
+            assert.are.equal("", rows[1].label:GetText())
+            assert.are.equal("Min", rows[1].cells[1]:GetText())
+            assert.are.equal("Market", rows[1].cells[4]:GetText())
+            assert.are.equal("14d", rows[3].label:GetText())
+            assert.are.equal("-", rows[3].cells[2]:GetText())
+            assert.are.equal("4c", rows[5].cells[4]:GetText())
+        end)
+
+        it("hides the table when a formula line is selected", function()
+            enter(page.exampleInput, "1")
+            tc:AddLine("Mine", "scanmarket")
+            subscribed()
+            selectLine(2)
+            assert.is_false(page.tableView.frame:IsShown())
         end)
     end)
 end)

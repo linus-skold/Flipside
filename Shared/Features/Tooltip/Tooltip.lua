@@ -23,14 +23,69 @@ local function stackCountOf(deps, tooltip)
     return type(info) == "table" and type(info.stackCount) == "number" and info.stackCount or nil
 end
 
+-- Returns the left text line of a tooltip by index, or nil.
+local function leftLine(tooltip, index)
+    if tooltip.GetLeftLine then
+        return tooltip:GetLeftLine(index)
+    end
+    local name = tooltip.GetName and tooltip:GetName()
+    return name and _G[name .. "TextLeft" .. index] or nil
+end
+
+-- Adds a blank tooltip line for each table row and draws the table over them. Returns false if it cannot.
+local function addDrawnTable(tooltip, model)
+    local TT = ns.TooltipTable
+    local state = TT and tooltip.NumLines and tooltip.SetMinimumWidth and TT.For(tooltip)
+    if not state then
+        return false
+    end
+    local first = tooltip:NumLines() + 1
+    local width = state.view:Set(model)
+    for _ = 1, #model.rows + 1 do
+        tooltip:AddLine(" ")
+    end
+    local lines = {}
+    for i = 1, #model.rows + 1 do
+        lines[i] = leftLine(tooltip, first + i - 1)
+        if not lines[i] then
+            return true
+        end
+    end
+    state.view:Place(function(index)
+        return lines[index], 0
+    end)
+    tooltip:SetMinimumWidth(TT.TooltipWidth(width), false)
+    state.minWidth = true
+    return true
+end
+
+local function addTable(tooltip, model)
+    if addDrawnTable(tooltip, model) then
+        return
+    end
+    tooltip:AddDoubleLine("", table.concat(model.columns, "  "))
+    for _, row in ipairs(model.rows) do
+        tooltip:AddDoubleLine(row.label, table.concat(row.cells, "  "))
+    end
+end
+
 local function addRows(tooltip, rows)
     if #rows == 0 then
         return
     end
-    tooltip:AddLine(" ")
-    tooltip:AddLine("Flipside", HEADER_COLOR[1], HEADER_COLOR[2], HEADER_COLOR[3])
+    local title = "Flipside"
     for _, row in ipairs(rows) do
-        if row.color == "dim" then
+        if row.kind == "table" then
+            title = row.header
+            break
+        end
+    end
+    tooltip:AddLine(" ")
+    tooltip:AddLine(title, HEADER_COLOR[1], HEADER_COLOR[2], HEADER_COLOR[3])
+    for _, row in ipairs(rows) do
+        if row.kind == "table" then
+            addTable(tooltip, row)
+        elseif row.color == "dim" then
             tooltip:AddDoubleLine(row.left or "", row.right or "", DIM_COLOR[1], DIM_COLOR[2], DIM_COLOR[3],
                 DIM_COLOR[1], DIM_COLOR[2], DIM_COLOR[3])
         else
@@ -38,7 +93,6 @@ local function addRows(tooltip, rows)
         end
     end
 end
-
 -- Returns the rows of one item with the current settings, or with the given config.
 function Tooltip.Rows(deps, input, stackMode, stackCount, config)
     return ns.TooltipLines.Build({
@@ -70,6 +124,9 @@ function Tooltip.Attach(deps)
     end
 
     local function build(tooltip, link, stackCount)
+        if ns.TooltipTable then
+            ns.TooltipTable.Release(tooltip)
+        end
         if not link then
             return
         end

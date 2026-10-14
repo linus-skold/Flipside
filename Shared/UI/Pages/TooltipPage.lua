@@ -91,11 +91,11 @@ function TooltipPage.Build(content, deps)
             end
             row.nameText:SetText(data.label)
             row.nameText:SetFontObject(Kit.Font(data.id == selected and "highlight" or "normal"))
-            row.formulaText:SetText(data.formula)
+            row.formulaText:SetText(data.kind == "table" and "Min Avg Max Market" or data.formula)
             row.enabledCheck:SetChecked(data.enabled)
             local ro = tc:IsReadOnly()
             setEnabled(row.enabledCheck, not ro)
-            setEnabled(row.removeButton, not ro)
+            setEnabled(row.removeButton, not ro and data.kind ~= "table")
             row:SetScript("OnClick", function()
                 page.labelMessage:SetText("")
                 page.formulaMessage:SetText("")
@@ -247,6 +247,10 @@ function TooltipPage.Build(content, deps)
     page.preview:SetWidth(RIGHT_WIDTH)
     page.preview:SetJustifyH("LEFT")
 
+    -- The table preview draws the same model as the tooltip, under the preview text.
+    page.tableView = ns.TooltipTable and ns.TooltipTable.New(right)
+    local TABLE_ROW_HEIGHT = 16
+
     -- Sets example from the item box. An unclear item gives no example and a message.
     local function resolveExample()
         local text = trim(page.exampleInput:GetText())
@@ -295,13 +299,39 @@ function TooltipPage.Build(content, deps)
     page.exampleInput:SetScript("OnEditFocusLost", onExample)
 
     local function rowText(row)
+        if row.kind == "table" then
+            local texts = { row.header, "  " .. table.concat(row.columns, "  ") }
+            for _, tableRow in ipairs(row.rows) do
+                texts[#texts + 1] = "  " .. tableRow.label .. "  " .. table.concat(tableRow.cells, "  ")
+            end
+            return table.concat(texts, "\n")
+        end
         return row.left .. (row.right and ("  " .. row.right) or "")
+    end
+
+    -- Draws the table of the rows under the preview text, or hides the table.
+    local function drawTable(rows)
+        local model = rows and rows[1]
+        if not page.tableView or not model or model.kind ~= "table" then
+            if page.tableView then
+                page.tableView:Clear()
+            end
+            return false
+        end
+        page.tableView:Set(model)
+        page.tableView:Place(function(row)
+            return page.preview, -18 - (row - 1) * TABLE_ROW_HEIGHT
+        end)
+        return model.header
     end
 
     -- Returns the preview text of the selected line.
     local function previewText(line)
         if not run then
             return "formulas are not available this session"
+        end
+        if line.kind == "table" and not example then
+            return "Enter an item above to preview the price table."
         end
         if not example then
             local compiled, err = run:Compile(line.formula)
@@ -327,6 +357,10 @@ function TooltipPage.Build(content, deps)
                 getRecord = deps.getRecord,
                 now = (_G.GetServerTime or _G.time)(),
             })
+        end
+        local header = drawTable(rows)
+        if header then
+            return header
         end
         local texts = {}
         for _, row in ipairs(rows or {}) do
@@ -367,15 +401,20 @@ function TooltipPage.Build(content, deps)
         page.formulaInput:SetText(line and line.formula or "")
         page.ageCheck:SetChecked(line and line.showAge)
         page.samplesCheck:SetChecked(line and line.showSamples)
+        if page.tableView then
+            page.tableView:Clear()
+        end
         page.preview:SetText(line and previewText(line) or "")
-        local active = line ~= nil and not ro
+        local isTable = line ~= nil and line.kind == "table"
+        local active = line ~= nil and not ro and not isTable
+        local moveable = line ~= nil and not ro
         for _, widget in ipairs({ page.labelInput, page.formulaInput, page.expandButton, page.ageCheck,
             page.samplesCheck }) do
             setEnabled(widget, active)
         end
         setEnabled(page.addButton, not ro)
-        setEnabled(page.upButton, active)
-        setEnabled(page.downButton, active)
+        setEnabled(page.upButton, moveable)
+        setEnabled(page.downButton, moveable)
         setEnabled(page.resetButton, not ro)
         page.group:SetChecked(data.showGroup)
         page.operation:SetChecked(data.showOperation)

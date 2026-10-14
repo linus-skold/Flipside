@@ -7,6 +7,8 @@ local KEY = "tooltip"
 local READ_ONLY = "settings are read-only"
 local MAX_LABEL = 30
 local MAX_LINES = 12
+local TABLE_LABEL = "Price table"
+local VERSION = 2
 local FLAGS = { showGroup = true, showOperation = true, showCounts = true }
 local FIELDS = { label = true, formula = true, showAge = true, showSamples = true, enabled = true }
 local BOOL_FIELDS = { showAge = true, showSamples = true, enabled = true }
@@ -29,19 +31,72 @@ local function IsID(value)
     return type(value) == "number" and value >= 1 and value % 1 == 0 and value ~= math.huge
 end
 
+-- The price table is a line with kind "table": it shows the Min/Avg/Max/Market table of the windows.
+local function NewTableLine(id)
+    return {
+        id = id,
+        kind = "table",
+        label = TABLE_LABEL,
+        formula = "",
+        showAge = false,
+        showSamples = false,
+        enabled = true,
+    }
+end
+
 local function NewDefaults()
     return {
-        version = 1,
-        nextID = 4,
+        version = VERSION,
+        nextID = 2,
         showGroup = true,
         showOperation = true,
         showCounts = true,
-        lines = {
-            { id = 1, label = "Market", formula = "scanmarket", showAge = true, showSamples = true, enabled = true },
-            { id = 2, label = "Min", formula = "scanlow", showAge = true, showSamples = false, enabled = true },
-            { id = 3, label = "Max", formula = "scanhigh", showAge = false, showSamples = false, enabled = true },
-        },
+        lines = { NewTableLine(1) },
     }
+end
+
+-- The version 1 default lines. A stored line that still equals one of them is replaced by the price table.
+local LEGACY_DEFAULTS = {
+    [1] = { label = "Market", formula = "scanmarket", showAge = true, showSamples = true, enabled = true },
+    [2] = { label = "Min", formula = "scanlow", showAge = true, showSamples = false, enabled = true },
+    [3] = { label = "Max", formula = "scanhigh", showAge = false, showSamples = false, enabled = true },
+}
+
+local function IsLegacyDefault(line)
+    local default = LEGACY_DEFAULTS[line.id]
+    if not default or line.kind ~= nil then
+        return false
+    end
+    for field, value in pairs(default) do
+        if line[field] ~= value then
+            return false
+        end
+    end
+    return true
+end
+
+local function CountCustom(lines)
+    local count = 0
+    for _, line in ipairs(lines) do
+        if line.kind ~= "table" then
+            count = count + 1
+        end
+    end
+    return count
+end
+
+-- Returns version 2 data from valid version 1 data: untouched default lines go, the price table comes first.
+local function Migrate(old)
+    local data = DeepCopy(old)
+    data.version = VERSION
+    data.lines = { NewTableLine(old.nextID) }
+    data.nextID = old.nextID + 1
+    for _, line in ipairs(old.lines) do
+        if not IsLegacyDefault(line) then
+            data.lines[#data.lines + 1] = DeepCopy(line)
+        end
+    end
+    return data
 end
 
 -- Returns the trimmed label, or nil and a message.
@@ -56,11 +111,11 @@ local function CleanLabel(label)
     return trimmed
 end
 
-local function Validate(data)
-    if type(data) ~= "table" or data.version ~= 1 then
+local function Validate(data, version)
+    if type(data) ~= "table" or data.version ~= version then
         return false, "tooltip data has an unknown version"
     end
-    if not IsID(data.nextID) or type(data.lines) ~= "table" or #data.lines > MAX_LINES then
+    if not IsID(data.nextID) or type(data.lines) ~= "table" or CountCustom(data.lines) > MAX_LINES then
         return false, "tooltip data is malformed"
     end
     for flag in pairs(FLAGS) do
@@ -68,13 +123,19 @@ local function Validate(data)
             return false, "tooltip data is malformed"
         end
     end
-    local seen = {}
+    local seen, tableSeen = {}, false
     for i, line in ipairs(data.lines) do
         if type(line) ~= "table" or not IsID(line.id) or line.id >= data.nextID or seen[line.id] then
             return false, "tooltip data has an invalid line"
         end
         seen[line.id] = true
-        if CleanLabel(line.label) ~= line.label or type(line.formula) ~= "string" or line.formula:match("^%s*$") then
+        if line.kind == "table" then
+            if version ~= VERSION or tableSeen or line.label ~= TABLE_LABEL or line.formula ~= "" then
+                return false, "tooltip data has an invalid line"
+            end
+            tableSeen = true
+        elseif line.kind ~= nil or CleanLabel(line.label) ~= line.label or type(line.formula) ~= "string"
+            or line.formula:match("^%s*$") then
             return false, "tooltip data has an invalid line"
         end
         for field in pairs(BOOL_FIELDS) do
@@ -113,7 +174,11 @@ function Config:_Load()
         self._data = NewDefaults()
         return
     end
-    local ok, message = Validate(stored)
+    local ok, message = Validate(stored, stored.version == 1 and 1 or VERSION)
+    if ok and stored.version == 1 then
+        self._data = Migrate(stored)
+        return
+    end
     if not ok then
         self._loadFailed = true
         self._data = NewDefaults()
@@ -170,7 +235,7 @@ function Config:AddLine(label, formula)
         if not clean then
             return nil, message
         end
-        if #data.lines >= MAX_LINES then
+        if CountCustom(data.lines) >= MAX_LINES then
             return nil, "a tooltip can have 12 lines at most"
         end
         local ok, err = CheckFormula(self._compile, formula)
@@ -204,6 +269,9 @@ function Config:UpdateLine(id, fields)
             if not FIELDS[field] then
                 return nil, "unknown field " .. tostring(field)
             end
+            if line.kind == "table" and field ~= "enabled" then
+                return nil, "the price table has only an on/off setting"
+            end
             if BOOL_FIELDS[field] then
                 if type(value) ~= "boolean" then
                     return nil, field .. " must be true or false"
@@ -232,6 +300,9 @@ function Config:RemoveLine(id)
         local index = IndexOf(data, id)
         if not index then
             return nil, "line does not exist"
+        end
+        if data.lines[index].kind == "table" then
+            return nil, "the price table cannot be removed; turn it off"
         end
         table.remove(data.lines, index)
         return true

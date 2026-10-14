@@ -14,6 +14,40 @@ local function compile(text)
     return { text = text }
 end
 
+-- Version 2 data with the three formula lines of the old defaults and no price table.
+local function formulaData()
+    return {
+        version = 2,
+        nextID = 4,
+        showGroup = true,
+        showOperation = true,
+        showCounts = true,
+        lines = {
+            { id = 1, label = "Market", formula = "scanmarket", showAge = true, showSamples = true, enabled = true },
+            { id = 2, label = "Min", formula = "scanlow", showAge = true, showSamples = false, enabled = true },
+            { id = 3, label = "Max", formula = "scanhigh", showAge = false, showSamples = false, enabled = true },
+        },
+    }
+end
+
+local function customLine(id, label)
+    return { id = id, label = label, formula = "scanmarket", showAge = false, showSamples = false, enabled = true }
+end
+
+local function tableLine(id)
+    return {
+        id = id, kind = "table", label = "Price table", formula = "", showAge = false, showSamples = false,
+        enabled = true,
+    }
+end
+
+-- Version 1 data as the old build stored it; lines are the three old defaults.
+local function v1Data()
+    local data = formulaData()
+    data.version = 1
+    return data
+end
+
 describe("TooltipConfig", function()
     local saved, db, tc, changes, warnings
 
@@ -33,19 +67,20 @@ describe("TooltipConfig", function()
         saved = {}
         db = open(saved)
         changes, warnings = 0, {}
+        saved["p/Default/tooltip"] = formulaData()
         make()
     end)
 
     it("returns defaults and does not save them", function()
+        saved["p/Default/tooltip"] = nil
+        make()
         local data = tc:Get()
-        assert.are.equal(3, #data.lines)
-        assert.are.equal("Market", data.lines[1].label)
-        assert.are.equal("scanmarket", data.lines[1].formula)
-        assert.is_true(data.lines[1].showAge)
-        assert.is_true(data.lines[1].showSamples)
-        assert.are.equal("scanlow", data.lines[2].formula)
-        assert.is_true(data.lines[2].showAge)
-        assert.are.equal("scanhigh", data.lines[3].formula)
+        assert.are.equal(2, data.version)
+        assert.are.equal(1, #data.lines)
+        assert.are.equal("table", data.lines[1].kind)
+        assert.are.equal("Price table", data.lines[1].label)
+        assert.is_true(data.lines[1].enabled)
+        assert.are.equal(2, data.nextID)
         assert.is_true(data.showGroup and data.showOperation and data.showCounts)
         assert.is_nil(db:Get("profile", "tooltip"))
         assert.are.equal(0, changes)
@@ -141,8 +176,9 @@ describe("TooltipConfig", function()
         tc:SetFlag("showCounts", false)
         assert.is_true(tc:ResetDefaults())
         local data = tc:Get()
-        assert.are.equal(3, #data.lines)
-        assert.are.equal(4, data.nextID)
+        assert.are.equal(1, #data.lines)
+        assert.are.equal("table", data.lines[1].kind)
+        assert.are.equal(2, data.nextID)
         assert.is_true(data.showCounts)
     end)
 
@@ -152,17 +188,17 @@ describe("TooltipConfig", function()
         local ok, msg = store:AddLine("X", "scanmarket")
         assert.is_nil(ok)
         assert.are.equal("settings are read-only", msg)
-        assert.are.equal(3, #store:Get().lines)
+        assert.are.equal(1, #store:Get().lines)
     end)
 
     it("loads invalid stored data read-only with one warning", function()
-        saved["p/Default/tooltip"] = { version = 1, nextID = 1, lines = "x" }
+        saved["p/Default/tooltip"] = { version = 2, nextID = 1, lines = "x" }
         make()
         assert.are.equal(1, #warnings)
         local ok, msg = tc:SetFlag("showGroup", false)
         assert.is_nil(ok)
         assert.are.equal("settings are read-only", msg)
-        assert.are.equal(3, #tc:Get().lines)
+        assert.are.equal(1, #tc:Get().lines)
         assert.are.equal(1, #warnings)
     end)
 
@@ -185,5 +221,103 @@ describe("TooltipConfig", function()
         assert.are.equal("Market", tc:Get().lines[1].label)
         assert.are.equal("Market", saved["p/Default/tooltip"].lines[1].label)
         assert.is_true(saved["p/Default/tooltip"].showGroup)
+    end)
+
+    describe("price table line", function()
+        it("can be turned off and moved but not edited or removed", function()
+            saved["p/Default/tooltip"] = nil
+            make()
+            local id = tc:Get().lines[1].id
+            assert.is_true(tc:UpdateLine(id, { enabled = false }))
+            assert.is_false(tc:Get().lines[1].enabled)
+            local ok, msg = tc:UpdateLine(id, { formula = "scanlow" })
+            assert.is_nil(ok)
+            assert.are.equal("the price table has only an on/off setting", msg)
+            assert.is_nil((tc:UpdateLine(id, { label = "X" })))
+            ok, msg = tc:RemoveLine(id)
+            assert.is_nil(ok)
+            assert.are.equal("the price table cannot be removed; turn it off", msg)
+            assert.is_true(tc:AddLine("Avg", "scanmarket"))
+            assert.is_true(tc:MoveLine(id, 1))
+            assert.are.equal("Avg", tc:Get().lines[1].label)
+            assert.are.equal("table", tc:Get().lines[2].kind)
+        end)
+
+        it("does not count against the 12 custom lines", function()
+            saved["p/Default/tooltip"] = nil
+            make()
+            for i = 1, 12 do
+                assert.is_true(tc:AddLine("L" .. i, "scanmarket"))
+            end
+            assert.are.equal(13, #tc:Get().lines)
+            assert.is_nil((tc:AddLine("Extra", "scanmarket")))
+        end)
+
+        it("is rejected twice in stored data", function()
+            local data = formulaData()
+            data.lines = {
+                tableLine(1),
+                tableLine(2),
+            }
+            saved["p/Default/tooltip"] = data
+            make()
+            assert.are.equal(1, #warnings)
+            assert.is_true(tc:IsReadOnly())
+        end)
+    end)
+
+    describe("migration from version 1", function()
+        it("replaces the untouched default lines by the price table", function()
+            saved["p/Default/tooltip"] = v1Data()
+            make()
+            local data = tc:Get()
+            assert.are.equal(2, data.version)
+            assert.are.equal(1, #data.lines)
+            assert.are.equal("table", data.lines[1].kind)
+            assert.are.equal(4, data.lines[1].id)
+            assert.are.equal(5, data.nextID)
+            assert.are.equal(0, #warnings)
+            assert.are.equal(1, saved["p/Default/tooltip"].version)
+            assert.are.equal(0, changes)
+        end)
+
+        it("keeps custom, changed and turned-off lines below the table", function()
+            local data = v1Data()
+            data.lines[2].formula = "scanlow * 2"
+            data.lines[3].enabled = false
+            data.lines[#data.lines + 1] = customLine(4, "Mine")
+            data.nextID = 5
+            saved["p/Default/tooltip"] = data
+            make()
+            local lines = tc:Get().lines
+            assert.are.equal("table", lines[1].kind)
+            assert.are.equal("Min", lines[2].label)
+            assert.are.equal("Max", lines[3].label)
+            assert.is_false(lines[3].enabled)
+            assert.are.equal("Mine", lines[4].label)
+            assert.are.equal(4, #lines)
+            assert.are.equal(6, tc:Get().nextID)
+        end)
+
+        it("saves the new version on the next change", function()
+            saved["p/Default/tooltip"] = v1Data()
+            make()
+            assert.is_true(tc:SetFlag("showGroup", false))
+            assert.are.equal(2, saved["p/Default/tooltip"].version)
+            assert.are.equal("table", saved["p/Default/tooltip"].lines[1].kind)
+        end)
+
+        it("accepts 12 custom lines next to the table", function()
+            local data = v1Data()
+            data.lines = {}
+            for i = 1, 12 do
+                data.lines[i] = customLine(i, "L" .. i)
+            end
+            data.nextID = 13
+            saved["p/Default/tooltip"] = data
+            make()
+            assert.are.equal(13, #tc:Get().lines)
+            assert.are.equal(0, #warnings)
+        end)
     end)
 end)

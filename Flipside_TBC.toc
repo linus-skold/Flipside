@@ -55,6 +55,7 @@ Shared\UI\Kit\Combat.lua
 Shared\UI\Pages\FormulaPage.lua
 Shared\UI\Pages\GroupsPage.lua
 Shared\UI\Pages\OperationsPage.lua
+Shared\UI\TooltipTable.lua
 Shared\UI\Pages\TooltipPage.lua
 Shared\UI\MainWindow.lua
 Shared\Features\AuctionTab\AuctionTab.lua
