@@ -151,6 +151,12 @@ local function buildScanApi()
     }
     if client.CanScan() then
         api.replicateItems = client.StartScan
+        api.settleSeconds = client.ScanSettleSeconds()
+        api.isComplete = client.ScanComplete
+        local backend = client.Backend()
+        if backend and backend.ScanCanStart then
+            api.canStart = client.ScanCanStart
+        end
     end
     if client.HasCommodityCheck() then
         api.clientIsCommodity = client.ItemIsCommodity
@@ -168,6 +174,10 @@ local function reportScanDetails(summary)
             "items %d: keyed %d, link fallback %d, pending %d, no link %d, link mismatch %d, unknown %d",
             summary.items, summary.itemsKeyed, summary.itemsLinkFallback, summary.itemsPendingMissing,
             summary.itemsNoLink, summary.itemsLinkMismatch, summary.itemsUnknown))
+    end
+    local line = ns.AuctionClient.ScanDiagnostics(summary)
+    if line then
+        printLine(line)
     end
     if r then
         printLine(string.format("rows skipped: empty %d, bid-only %d, pet %d, bad count %d",
@@ -632,6 +642,8 @@ local function printRefusal(reason, detail)
     local text = REFUSALS[reason] or tostring(reason)
     if reason == "cooldown" then
         text = "scan on cooldown, " .. ns.ScanCooldown.FormatRemaining(detail) .. " left"
+    elseif reason == "client" then
+        text = detail
     end
     printLine("full scan not started: " .. text)
 end

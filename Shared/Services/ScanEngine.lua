@@ -59,6 +59,13 @@ function Engine:CanStart()
     if left > 0 then
         return false, "cooldown", left
     end
+    -- Optional api.canStart() gives true, or false and a text. Only the legacy backend defines it.
+    if deps.api.canStart then
+        local okClient, text = deps.api.canStart()
+        if not okClient then
+            return false, "client", tostring(text)
+        end
+    end
     return true
 end
 
@@ -75,6 +82,8 @@ function Engine:Start()
         local text = REFUSALS[reason]
         if reason == "cooldown" then
             text = "scan on cooldown, " .. ns.ScanCooldown.FormatRemaining(detail) .. " left"
+        elseif reason == "client" then
+            text = detail
         end
         self.deps.report("full scan not started: " .. text)
         return false
@@ -173,6 +182,10 @@ function Engine:_Conclude(summary)
     if run.eventMs then
         summary.timeToEventMs = run.eventMs - run.callMs
     end
+    summary.events = run.eventCount
+    if run.firstEventMs then
+        summary.firstEventMs = run.firstEventMs - run.callMs
+    end
     self:_ReportSummary(summary, run)
     if self.deps.onFinished then
         pcall(self.deps.onFinished, summary)
@@ -256,6 +269,20 @@ function Engine:_WaitForEvent(jobView)
     while not run.eventSeen do
         if seconds() - startTime >= ns.ScanClock.EVENT_TIMEOUT_SECONDS then
             return false
+        end
+        jobView:Yield()
+        if jobView:IsCancelled() then
+            return nil
+        end
+    end
+    -- Optional api.settleSeconds: after the first event, wait until api.isComplete() or no event for that long.
+    local api = self.deps.api
+    while api.settleSeconds do
+        if api.isComplete and api.isComplete() then
+            break
+        end
+        if seconds() - run.lastEventAt >= api.settleSeconds then
+            break
         end
         jobView:Yield()
         if jobView:IsCancelled() then
@@ -354,7 +381,7 @@ function Engine:_Run(job)
     local deps = self.deps
     local run = {
         startMs = deps.ms(), suspendedMs = 0, frames = 1, closed = false, eventSeen = false,
-        readCut = false, concluded = false,
+        readCut = false, concluded = false, eventCount = 0, lastEventAt = 0,
     }
     self.run = run
     local jobView = clockedJob(job, run, deps.ms)
@@ -362,7 +389,10 @@ function Engine:_Run(job)
 
     deps.bus:Subscribe(deps.api.doneEvent or EVENT_REPLICATE, self, function()
         run.eventSeen = true
+        run.eventCount = run.eventCount + 1
+        run.lastEventAt = deps.seconds()
         run.eventMs = deps.ms()
+        run.firstEventMs = run.firstEventMs or run.eventMs
     end)
     deps.bus:Subscribe(deps.api.closeEvent or EVENT_CLOSED, self, function()
         run.closed = true
