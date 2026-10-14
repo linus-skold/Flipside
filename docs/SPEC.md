@@ -220,7 +220,32 @@ check(
 )
 ```
 
-**Staleness is part of the language.** Because `ScanAge` and `ScanSamples` are ordinary value sources, a rule like `ifgt(scanage, 72, 0, scanmarket)` (treat prices older than 3 days as invalid) needs no new syntax.
+**Staleness is part of the language.** Because `ScanAge` and `ScanSamples` are ordinary value sources, a rule like `ifgt(scanage, 72, invalid, scanmarket)` (treat prices older than 3 days as invalid) needs no new syntax.
+
+### Formula language design (decided 2026-10-14)
+
+1. A missing source value makes the whole formula invalid (no price). The item is skipped with the reason "invalid price". A missing value never counts as 0.
+2. The word `invalid` is a value that means "no price".
+3. A number without a unit is copper. Money literals work: `10g`, `5s`, `12s70c`. Results are whole copper.
+4. The end result is rounded half up to whole copper. Division by zero gives invalid.
+5. The decimal separator is a dot only (`0.25`). The comma separates function arguments.
+6. Source and function names ignore upper and lower case.
+7. Live preview: the chat command `/flip formula <formula> <item link>` now. A window comes with the UI (MVP build step 4).
+8. The preview uses the item link given in the command.
+9. A formula reads the exact variant record of the item first, then the base item record (same order as `/flip price`).
+10. Functions in version one: `min`, `max`, `avg`, `first`, `check`, `ifgt`, `iflt`, `ifeq`, `round`.
+    - `min`, `max`, `avg` and `first` skip invalid arguments.
+    - `check(a, b)` returns b only if a is valid and above 0.
+    - `ifgt(value, limit, then, else)`. `iflt` and `ifeq` use the same argument order.
+    - `round(x)` rounds to whole copper.
+11. A known source that is not built yet (for example `crafting`) is accepted in a formula and counts as missing for now. The preview says "not available yet".
+12. Limits: 500 characters and 16 bracket levels.
+13. Custom sources (step 4): a loop between custom sources is refused when saved, and gives invalid at run time.
+14. Not in version one: a source for another item (item arguments) and `convert()`. They come with crafting (Phase 2).
+15. No TSM source names as aliases (for example no `dbmarket`), in line with D13.
+16. The MVP vendoring safety check uses `ScanMarket` only. `Destroy` comes in Phase 3.
+17. The default selling minimum ships as written. `first` and `avg` skip the missing crafting value.
+18. A vendor sell price of 0 means the vendor does not buy the item. `vendorsell` is then invalid.
 
 ## Feature specs
 
@@ -248,7 +273,7 @@ A *Full Scan* button sits in the AH frame header with a cooldown countdown (§3.
 
 - Same min / max / normal model, below-min and above-max actions, undercut and cancel rules.
 - **Dry run:** runs the post and cancel logic without touching the AH and shows the queue with prices and reasons.
-- **Decision log:** every item gets one reason code (posting at undercut, at normal, below min, stale price, keep-in-bags reached, post cap reached).
+- **Decision log:** every item gets one reason code (posting at undercut, at normal, below min, stale price, invalid price, keep-in-bags reached, post cap reached).
 - Blacklist of sellers works only from targeted searches (full scans carry no seller names).
 
 ### 5.5 Mail lists (reference §5.4 Mailing)
@@ -278,7 +303,7 @@ How features use it: Banking moves to and from the bank; Mail lists send shortfa
 ### 5.7 Vendoring (reference §5.5)
 
 - Sell junk and groups marked for vendor; buy vendor reagents up to Keep stock targets.
-- **Safety:** never auto-vendor an item whose `ScanMarket` or `Destroy` value is more than a set multiple of its vendor price (default 2×); such items are listed for review instead.
+- **Safety:** never auto-vendor an item whose `ScanMarket` or `Destroy` value (MVP: ScanMarket only; Destroy from Phase 3) is more than a set multiple of its vendor price (default 2×); such items are listed for review instead.
 - Buyback tab with one-click undo of the last sale batch.
 
 ### 5.8 Ledger (reference §5.7)
@@ -488,7 +513,7 @@ TSM behaviours this spec doesn't cover yet. Change the status as each one gets s
 | Smaller settings | Forget character, ignore guilds, sale and purchase sounds, chat output, slash commands | §5.11, §8.3 | Needs scoping |
 | Performance budgets | Memory, SavedVariables size, login time, tooltip speed, scan processing | §10.3 | Needs scoping |
 | Combat lockdown | What is deferred or disabled in combat | §3 | Needs scoping |
-| Localisation | String tables, number and money formats, client languages | §10.3 | Needs scoping |
+| Localisation | String tables, number and money formats, client languages (decimal separator in formulas decided: dot only) | §10.3 | Needs scoping |
 | Error handling and recovery | Failed posts and buys, disconnects mid-scan, corrupted data | §7.6 | Needs scoping |
 | Later flavours | TBC Anniversary and Retail differences: AH API, professions, banks, commodities | §3 | Needs scoping |
 
