@@ -8,8 +8,10 @@ ns.OperationsPage = OperationsPage
 local LEFT_WIDTH = 250
 local RIGHT_X = 260
 local RIGHT_WIDTH = 510
-local FIELD_ROW = 56
+local FIELD_ROW = 72
 local DELETE_DIALOG = "FLIPSIDE_DELETE_OPERATION"
+local EDITOR_DIALOG = "FlipsideFormulaEditor"
+local EDITOR_HELP = "Missing prices are invalid, never 0. Functions: min max avg first check ifgt iflt ifeq round."
 
 local function trim(text)
     return (tostring(text or ""):match("^%s*(.-)%s*$"))
@@ -74,6 +76,7 @@ function OperationsPage.Build(content, deps)
             part.input:SetText(value or "")
             part.preview:SetText(previewText(value or ""))
             setEnabled(part.input, not ro)
+            setEnabled(part.expand, not ro)
         elseif kind == "money" or kind == "number" then
             part.number:SetNumber(value)
             if kind == "money" then
@@ -115,6 +118,13 @@ function OperationsPage.Build(content, deps)
             end
             part.input = tipOn(add(Kit.Input(row, 440, save, save)))
             part.input:SetPoint("TOPLEFT", row, "TOPLEFT", 8, -18)
+            part.expand = add(Kit.Button(row, "...", 30, function()
+                local dialog = Kit.EditorDialog(EDITOR_DIALOG, { help = EDITOR_HELP })
+                dialog:Open(field.label, stored(field.key) or "", function(text)
+                    save((text:gsub("[\r\n]+", " ")))
+                end)
+            end))
+            part.expand:SetPoint("TOPLEFT", row, "TOPLEFT", 454, -18)
             part.preview = add(Kit.Label(row, "", "small"))
             part.preview:SetPoint("TOPLEFT", row, "TOPLEFT", 4, -40)
             part.preview:SetWidth(RIGHT_WIDTH - 40)

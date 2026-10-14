@@ -578,6 +578,82 @@ describe("OperationsPage", function()
         end)
     end)
 
+    describe("formula editor", function()
+        local part, dialog
+
+        local function open(key)
+            part = page.FieldPart(key or "normalPrice")
+            click(part.expand)
+            dialog = ns.Kit.EditorDialog("FlipsideFormulaEditor")
+        end
+
+        local function save(text)
+            dialog.input.EditBox:SetText(text)
+            click(dialog.saveButton)
+        end
+
+        before_each(function()
+            typeName("Main")
+            click(page.newButton)
+        end)
+
+        it("has an expand button on formula fields only", function()
+            assert.is_table(page.FieldPart("normalPrice").expand)
+            assert.is_nil(page.FieldPart("undercut").expand)
+            assert.is_nil(page.FieldPart("duration").expand)
+            assert.is_nil(page.FieldPart("cancelUndercut").expand)
+        end)
+
+        it("opens with the field label and the current formula", function()
+            open()
+            assert.is_true(dialog:IsShown())
+            assert.are.equal("Normal price", dialog.title)
+            assert.are.equal("scanmarket", dialog.input:GetText())
+        end)
+
+        it("saves the formula with line breaks as spaces and shows the preview", function()
+            local id = rules:ListOperations()[1].id
+            open()
+            save("2 *\nscanmarket\r\n+ 1")
+            assert.are.equal("2 * scanmarket + 1", rules:GetOperation(id).settings.normalPrice)
+            part = page.FieldPart("normalPrice")
+            assert.are.equal("2 * scanmarket + 1", part.input:GetText())
+            assert.are.equal("formula ok (sources: scanmarket)", part.preview:GetText())
+            assert.is_false(dialog:IsShown())
+        end)
+
+        it("shows the error next to the field and keeps the old value", function()
+            local id = rules:ListOperations()[1].id
+            open()
+            save("bad(")
+            assert.are.equal("unexpected symbol (at position 4)", part.message:GetText())
+            assert.are.equal("scanmarket", rules:GetOperation(id).settings.normalPrice)
+            assert.are.equal("scanmarket", part.input:GetText())
+        end)
+
+        it("changes nothing on Cancel", function()
+            local id = rules:ListOperations()[1].id
+            open()
+            dialog.input.EditBox:SetText("other")
+            click(dialog.cancelButton)
+            assert.are.equal("scanmarket", rules:GetOperation(id).settings.normalPrice)
+            assert.are.equal("", part.message:GetText())
+            assert.is_false(dialog:IsShown())
+        end)
+
+        it("gives each row room for two preview lines", function()
+            local row = page.fieldList.rows[1]
+            assert.is_true(row.height >= 40 + 2 * 12 + 8)
+        end)
+
+        it("disables the expand button for a read-only store", function()
+            local id = rules:ListOperations()[1].id
+            rules._loadFailed = true
+            page.Select(id)
+            assert.is_false(page.FieldPart("normalPrice").expand.enabled)
+        end)
+    end)
+
     describe("footer", function()
         it("lists the group paths that use the operation", function()
             typeName("Main")
