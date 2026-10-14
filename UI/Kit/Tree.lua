@@ -156,7 +156,16 @@ local function renderRow(tree, row, data, depth, isCollapsed, hasChildren, inden
     prepareRow(row)
     row.kitId = data.id
     row.dropMark:SetShown(tree.dropTarget ~= nil and tree.dropTarget == data.id)
-    row:SetScript("OnClick", function()
+    if tree.options.onRightClick then
+        row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    end
+    row:SetScript("OnClick", function(self, button)
+        if button == "RightButton" then
+            if tree.options.onRightClick then
+                tree.options.onRightClick(data.id, self)
+            end
+            return
+        end
         tree:Select(data.id)
     end)
     if tree.options.onDrop then
@@ -176,7 +185,7 @@ local function renderRow(tree, row, data, depth, isCollapsed, hasChildren, inden
 end
 
 -- Create a tree. options: rowHeight, initRow(row, node, depth, isCollapsed, hasChildren), onSelect(node),
--- onDrop(draggedId, targetId or nil), canDrag(id).
+-- onDrop(draggedId, targetId or nil), canDrag(id), onRightClick(id, rowFrame), inset (client inset background).
 -- Drag a row with the left button. A drop on a row gives its id. A drop on the empty tree gives nil.
 -- A drop on the dragged row itself, or outside the tree, calls nothing. canDrag(id) false blocks the drag.
 -- A node is { id, text, children }. Use tree.frame to place the tree.
@@ -194,11 +203,12 @@ function Kit.CreateTree(parent, options)
     local scrollApi = ScrollUtil and ScrollUtil.InitScrollBoxListWithScrollBar and CreateTreeDataProvider
         and CreateScrollBoxListTreeListView
     if scrollApi then
-        local container = CreateFrame("Frame", nil, parent)
+        local container = options.inset and Kit.Inset(parent) or CreateFrame("Frame", nil, parent)
+        local pad = options.inset and Kit.Theme.insetPadding or 0
         local box = CreateFrame("Frame", nil, container, "WowScrollBoxList")
         local bar = CreateFrame("EventFrame", nil, container, "MinimalScrollBar")
-        box:SetPoint("TOPLEFT")
-        box:SetPoint("BOTTOMRIGHT", -16, 0)
+        box:SetPoint("TOPLEFT", pad, -pad)
+        box:SetPoint("BOTTOMRIGHT", -16 - pad, pad)
         bar:SetPoint("TOPLEFT", box, "TOPRIGHT", 4, 0)
         bar:SetPoint("BOTTOMLEFT", box, "BOTTOMRIGHT", 4, 0)
         local view = CreateScrollBoxListTreeListView(INDENT)
@@ -229,6 +239,7 @@ function Kit.CreateTree(parent, options)
     else
         tree.list = Kit.CreateList(parent, {
             rowHeight = rowHeight,
+            inset = options.inset,
             initRow = function(row, entry)
                 local data = entry.data
                 local hasChildren = data.children ~= nil and #data.children > 0
