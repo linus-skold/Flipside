@@ -103,13 +103,27 @@ describe("ScanKey", function()
             assert.are.same({ nil, "link-mismatch" }, { r:KeyFor(100, "item:101") })
         end)
 
-        it("returns unknown when undecided", function()
-            assert.are.same({ nil, "unknown" }, { make(nil, nil):KeyFor(100, "item:100") })
+        it("returns unknown when undecided and the link is missing", function()
+            assert.are.same({ nil, "unknown" }, { make(nil, nil):KeyFor(100) })
+            assert.are.same({ nil, "unknown" }, { make(nil, nil):KeyFor(100, "nothing") })
+        end)
+
+        it("uses the exact key of the link when undecided, and counts the item once", function()
+            local r = make(nil, nil)
+            assert.are.same({ "100", nil }, { r:KeyFor(100, "item:100") })
+            assert.are.same({ "100", nil }, { r:KeyFor(100, "item:100") })
+            assert.are.same({ "100#s-34", nil }, { r:KeyFor(100, "item:100::::::-34") })
+            assert.are.equal(1, r:GetStats().linkFallback)
+            assert.are.equal(1, r:GetStats().unknown)
+        end)
+
+        it("returns link-mismatch for another item when undecided", function()
+            assert.are.same({ nil, "link-mismatch" }, { make(nil, nil):KeyFor(100, "item:101") })
         end)
     end)
 
     describe("GetStats", function()
-        it("counts decisions once per item and unknown on each call", function()
+        it("counts every item once", function()
             local lookups = { client = {}, stack = {} }
             lookups.client[1] = true
             lookups.stack[2] = 5
@@ -123,7 +137,7 @@ describe("ScanKey", function()
             r:IsCommodity(2)
             r:IsCommodity(3)
             r:IsCommodity(3)
-            assert.are.same({ client = 1, stack = 1, unknown = 2, mismatch = 0 }, r:GetStats())
+            assert.are.same({ client = 1, stack = 1, unknown = 1, mismatch = 0, linkFallback = 0 }, r:GetStats())
         end)
 
         it("returns a new table", function()

@@ -167,6 +167,7 @@ All steps run as coroutines that yield each frame, with a progress bar. A scan i
 8. **Snapshots and roll-up.** Keep up to 4 snapshots per day; a fifth drops the oldest. The day's record is the average of the day's snapshots. Roll-up into history happens at the first scan of a new day and also at login.
 9. **Partial scans** (AH closed during the read, or items not loaded within 30 s). The data updates the item's "latest" values. It does not enter the day's snapshots or the history. Only a complete scan does that. A complete scan replaces the "latest" values.
 10. **Processing-time target.** "Under 5 s of scan processing" means Flipside's own processing time (CPU time of scan work). It excludes the server delay before the first event and the item-load wait. It is measured on the largest Forever run (about 73,000 rows).
+- Key fallback: if the commodity status is still unknown after the item-load wait, the exact key from the listing link is used (equal to the base key for plain items).
 - **Passive capture (decided 2026-10-14).**
   1. A complete item search result replaces the day's value (D5): `latest` becomes this snapshot, and today's snapshots of the item become this one snapshot. A later full scan adds snapshots as usual.
   2. If the client has not sent all result pages, only the lowest price is saved, marked partial (latest only). `market`, `qty` and `auctions` stay from the old `latest`; without one, `market` is the lowest price. Flipside sends no extra server requests.

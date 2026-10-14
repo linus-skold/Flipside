@@ -156,8 +156,12 @@ end
 local function reportScanDetails(summary)
     local c, r = summary.commodityStats, summary.rowStats
     if c then
-        printLine(string.format("commodity check: client %d, stack %d, unknown %d, mismatch %d",
-            c.client, c.stack, c.unknown, c.mismatch))
+        printLine(string.format("commodity check: client %d, stack %d, unknown %d, mismatch %d, link fallback %d",
+            c.client, c.stack, c.unknown, c.mismatch, c.linkFallback or 0))
+        printLine(string.format(
+            "items %d: keyed %d, link fallback %d, pending %d, no link %d, link mismatch %d, unknown %d",
+            summary.items, summary.itemsKeyed, summary.itemsLinkFallback, summary.itemsPendingMissing,
+            summary.itemsNoLink, summary.itemsLinkMismatch, summary.itemsUnknown))
     end
     if r then
         printLine(string.format("rows skipped: empty %d, bid-only %d, pet %d, bad count %d",

@@ -101,7 +101,9 @@ end
 local function newSummary()
     return {
         result = "ok", rows = 0, kept = 0, items = 0, keys = 0, newItems = 0, changed = 0,
-        pendingMissing = 0, noKey = 0, unknownItems = 0, timeToEventMs = nil, cpuMs = 0, wallMs = 0, frames = 1,
+        pendingMissing = 0, noKey = 0, unknownItems = 0, itemsKeyed = 0, itemsPendingMissing = 0,
+        itemsNoLink = 0, itemsLinkMismatch = 0, itemsUnknown = 0, itemsLinkFallback = 0,
+        timeToEventMs = nil, cpuMs = 0, wallMs = 0, frames = 1,
     }
 end
 
@@ -123,11 +125,14 @@ local function partialReasons(run, summary)
     if run.readCut then
         reasons[#reasons + 1] = "the Auction House closed during the read"
     end
-    if run.itemsMissing > 0 then
-        reasons[#reasons + 1] = run.itemsMissing .. " items without data"
+    if summary.itemsPendingMissing > 0 then
+        reasons[#reasons + 1] = summary.itemsPendingMissing .. " items without data"
     end
-    if (summary.unknownItems or 0) > 0 then
-        reasons[#reasons + 1] = summary.unknownItems .. " items with unknown stack size"
+    if summary.itemsUnknown > 0 then
+        reasons[#reasons + 1] = summary.itemsUnknown .. " items with unknown stack size"
+    end
+    if summary.itemsNoLink + summary.itemsLinkMismatch > 0 then
+        reasons[#reasons + 1] = (summary.itemsNoLink + summary.itemsLinkMismatch) .. " items with a bad link"
     end
     if summary.noKey > 0 then
         reasons[#reasons + 1] = summary.noKey .. " rows without a key"
@@ -252,21 +257,28 @@ function Engine:_WaitForEvent(jobView)
     return true
 end
 
--- Returns a map key -> list of auctions, the number of rows used and the number without a key.
+local REASON_FIELDS = { ["no-link"] = "itemsNoLink", ["link-mismatch"] = "itemsLinkMismatch", unknown = "itemsUnknown" }
+
+-- Returns a map key -> list of auctions, rows used, rows without a key, the resolver and item counts.
+-- Each item is counted once: keyed, link fallback, pending, or the reason of its first failed row.
 function Engine:_BuildGroups(jobView, rows)
     local api = self.deps.api
     local resolver = ns.ScanKey.New({ clientIsCommodity = api.clientIsCommodity, maxStack = api.maxStack })
     local groups, used, noKey = {}, 0, 0
-    local unknown, unknownItems = {}, 0
+    local items = {
+        itemsKeyed = 0, itemsLinkFallback = 0, itemsPendingMissing = 0,
+        itemsNoLink = 0, itemsLinkMismatch = 0, itemsUnknown = 0,
+    }
     for itemID, list in pairs(rows.byItem) do
-        if not rows.pending[itemID] then
+        if rows.pending[itemID] then
+            items.itemsPendingMissing = items.itemsPendingMissing + 1
+        else
+            local keyed, fallback, failField = false, false, nil
             for _, row in ipairs(list) do
-                local key, reason = resolver:KeyFor(itemID, row.link)
-                if not key and reason == "unknown" and not unknown[itemID] then
-                    unknown[itemID] = true
-                    unknownItems = unknownItems + 1
-                end
+                local key, isCommodity = resolver:KeyFor(itemID, row.link)
                 if key then
+                    keyed = true
+                    fallback = fallback or isCommodity == nil
                     local auctions = groups[key]
                     if not auctions then
                         auctions = {}
@@ -275,15 +287,20 @@ function Engine:_BuildGroups(jobView, rows)
                     auctions[#auctions + 1] = { unitPrice = row.unitPrice, count = row.count }
                     used = used + 1
                 else
+                    failField = failField or REASON_FIELDS[isCommodity]
                     noKey = noKey + 1
                 end
             end
+            local field = failField or "itemsUnknown"
+            if keyed then
+                field = fallback and "itemsLinkFallback" or "itemsKeyed"
+            end
+            items[field] = items[field] + 1
             jobView:Checkpoint(1)
         end
     end
-    return groups, used, noKey, resolver, unknownItems
+    return groups, used, noKey, resolver, items
 end
-
 -- Returns the items to load: pending items and items with an unknown commodity status.
 function Engine:_LoadSet(jobView, rows)
     local api = self.deps.api
@@ -329,7 +346,7 @@ function Engine:_Run(job)
     local deps = self.deps
     local run = {
         startMs = deps.ms(), suspendedMs = 0, frames = 1, closed = false, eventSeen = false,
-        readCut = false, itemsMissing = 0, concluded = false,
+        readCut = false, concluded = false,
     }
     self.run = run
     local jobView = clockedJob(job, run, deps.ms)
@@ -368,18 +385,17 @@ function Engine:_Run(job)
     end
     local clock = { clock = deps.seconds }
     local loadSet = self:_LoadSet(jobView, rows)
-    local loaded, missing = ns.ScanItemLoad.Run(jobView, deps.cache, loadSet, clock)
+    local loaded = ns.ScanItemLoad.Run(jobView, deps.cache, loadSet, clock)
     if not loaded then
         return
     end
-    run.itemsMissing = count(missing)
     local loadedList = {}
     for itemID in pairs(loaded) do
         loadedList[#loadedList + 1] = itemID
     end
     ns.ScanRows.RereadLinks(jobView, deps.api, rows, loadedList)
 
-    local groups, used, noKey, resolver, unknownItems = self:_BuildGroups(jobView, rows)
+    local groups, used, noKey, resolver, itemCounts = self:_BuildGroups(jobView, rows)
     local snaps, keyCount = {}, 0
     for key, auctions in pairs(groups) do
         jobView:Checkpoint(1)
@@ -391,9 +407,12 @@ function Engine:_Run(job)
     end
 
     local pendingMissing = count(rows.pending)
-    local partial = run.readCut or pendingMissing > 0 or noKey > 0 or run.itemsMissing > 0
+    local partial = run.readCut or pendingMissing > 0 or noKey > 0
     summary.noKey = noKey
-    summary.unknownItems = unknownItems
+    summary.unknownItems = itemCounts.itemsUnknown
+    for field, value in pairs(itemCounts) do
+        summary[field] = value
+    end
     summary.pendingMissing = pendingMissing
     summary.rows = rows.stats.rows
     summary.kept = used
