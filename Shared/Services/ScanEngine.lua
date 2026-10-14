@@ -7,6 +7,7 @@ ns.ScanEngine = ScanEngine
 local Engine = {}
 Engine.__index = Engine
 
+-- The scan done event comes from deps.api.doneEvent; this default is the Forever event name.
 local EVENT_REPLICATE = "REPLICATE_ITEM_LIST_UPDATE"
 local EVENT_CLOSED = "AUCTION_HOUSE_CLOSED"
 local EVENT_FINISHED = "Flipside.ScanFinished"
@@ -116,7 +117,7 @@ local function count(map)
 end
 
 function Engine:_Unsubscribe()
-    self.deps.bus:Unsubscribe(EVENT_REPLICATE, self)
+    self.deps.bus:Unsubscribe(self.deps.api.doneEvent or EVENT_REPLICATE, self)
     self.deps.bus:Unsubscribe(EVENT_CLOSED, self)
 end
 
@@ -228,12 +229,19 @@ end
 local function readApi(api, run)
     return {
         getNum = api.getNum,
-        getInfo = function(index)
+        getInfo = api.getInfo and function(index)
             if run.closed then
                 run.readCut = true
                 return nil
             end
             return api.getInfo(index)
+        end,
+        readRow = api.readRow and function(index)
+            if run.closed then
+                run.readCut = true
+                return nil
+            end
+            return api.readRow(index)
         end,
         getLink = api.getLink,
         getPetInfo = api.getPetInfo,
@@ -352,7 +360,7 @@ function Engine:_Run(job)
     local jobView = clockedJob(job, run, deps.ms)
     local summary = newSummary()
 
-    deps.bus:Subscribe(EVENT_REPLICATE, self, function()
+    deps.bus:Subscribe(deps.api.doneEvent or EVENT_REPLICATE, self, function()
         run.eventSeen = true
         run.eventMs = deps.ms()
     end)

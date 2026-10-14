@@ -114,14 +114,6 @@ local function trackAuctionHouse()
     end)
 end
 
--- Item key of an item id for the commodity check; nil if the client does not know it.
-local function clientIsCommodity(itemID)
-    local info = C_AuctionHouse.GetItemKeyInfo(C_AuctionHouse.MakeItemKey(itemID))
-    if type(info) == "table" and type(info.isCommodity) == "boolean" then
-        return info.isCommodity
-    end
-    return nil
-end
 
 -- Max stack size from the client, or from the item cache when the client gives none.
 local function maxStack(itemID)
@@ -133,21 +125,28 @@ local function maxStack(itemID)
     return info and info.stackCount or nil
 end
 
--- Read access to the client replicate API, in the form that the scan engine needs.
+-- Read access to the auction client scan calls, in the form that the scan engine needs.
 local function buildScanApi()
-    local ah = C_AuctionHouse
+    local client = ns.AuctionClient
     local api = {
-        getNum = ah.GetNumReplicateItems,
-        getInfo = ah.GetReplicateItemInfo,
-        getLink = ah.GetReplicateItemLink,
-        getPetInfo = ah.GetReplicateItemBattlePetInfo,
+        getNum = client.RowCount,
+        readRow = client.ReadRow,
+        getLink = client.RowLink,
+        -- ScanRows treats any non-nil result as a battle pet.
+        getPetInfo = function(index)
+            if client.RowIsPet(index) then
+                return true
+            end
+            return nil
+        end,
         maxStack = maxStack,
+        doneEvent = client.ScanDoneEvent(),
     }
-    if type(ah.ReplicateItems) == "function" then
-        api.replicateItems = ah.ReplicateItems
+    if client.CanScan() then
+        api.replicateItems = client.StartScan
     end
-    if type(ah.MakeItemKey) == "function" and type(ah.GetItemKeyInfo) == "function" then
-        api.clientIsCommodity = clientIsCommodity
+    if client.HasCommodityCheck() then
+        api.clientIsCommodity = client.ItemIsCommodity
     end
     return api
 end
@@ -439,8 +438,8 @@ end
 -- Key resolver for bag items and pasted links, with the same lookups as the scan.
 local function buildKeyResolver()
     local lookups = { maxStack = maxStack }
-    if type(C_AuctionHouse.MakeItemKey) == "function" and type(C_AuctionHouse.GetItemKeyInfo) == "function" then
-        lookups.clientIsCommodity = clientIsCommodity
+    if ns.AuctionClient.HasCommodityCheck() then
+        lookups.clientIsCommodity = ns.AuctionClient.ItemIsCommodity
     end
     return ns.ScanKey.New(lookups)
 end
