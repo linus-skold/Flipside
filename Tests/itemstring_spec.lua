@@ -138,3 +138,131 @@ describe("ItemString", function()
         assert.are_not.equal(a.extra, b.extra)
     end)
 end)
+
+describe("ItemString keys", function()
+    local IS
+
+    before_each(function()
+        local ns = {}
+        assert(loadfile("Core/ItemString.lua"))("Flipside", ns)
+        IS = ns.ItemString
+    end)
+
+    it("builds keys without suffix and bonus ids", function()
+        assert.are.equal("12345", IS.ToExactKey("item:12345"))
+        assert.are.equal("12345", IS.ToBaseKey("item:12345"))
+    end)
+
+    it("adds the suffix id", function()
+        assert.are.equal("12345#s-34", IS.ToExactKey("item:12345::::::-34"))
+        assert.are.equal("12345", IS.ToBaseKey("item:12345::::::-34"))
+    end)
+
+    it("adds sorted bonus ids", function()
+        assert.are.equal("12345#b1520,6646", IS.ToExactKey("item:12345::::::::::::2:6646:1520"))
+    end)
+
+    it("adds suffix and bonus ids", function()
+        assert.are.equal("12345#s-34#b1520,6646", IS.ToExactKey("item:12345::::::-34::::::2:1520:6646"))
+    end)
+
+    it("ignores enchant, gems, unique id, level and specialization", function()
+        local full = "|cffa335ee|Hitem:12345:5:11:12:13:14:-34:999:70:250:0:0:2:6646:1520|h[Name]|h|r"
+        local bare = "item:12345::::::-34::::::2:1520:6646"
+        assert.are.equal(IS.ToExactKey(bare), IS.ToExactKey(full))
+        assert.are.equal("12345#s-34#b1520,6646", IS.ToExactKey(full))
+    end)
+
+    it("ignores the bonus order in the link", function()
+        local a = IS.ToExactKey("item:1::::::::::::3:5:1:3")
+        local b = IS.ToExactKey("item:1::::::::::::3:3:5:1")
+        assert.are.equal(a, b)
+        assert.are.equal("1#b1,3,5", a)
+    end)
+
+    it("keeps duplicate bonus ids", function()
+        assert.are.equal("1#b7,7", IS.ToExactKey("item:1::::::::::::2:7:7"))
+    end)
+
+    it("accepts a fields table", function()
+        local fields = IS.ParseLink("item:12345::::::-34::::::2:6646:1520")
+        assert.are.equal("12345#s-34#b1520,6646", IS.ToExactKey(fields))
+        assert.are.equal("12345", IS.ToBaseKey(fields))
+        assert.are.equal("9#b2", IS.ToExactKey({ itemID = 9, bonusIDs = { 2 } }))
+    end)
+
+    it("accepts a number and a digit string", function()
+        assert.are.equal("12345", IS.ToExactKey(12345))
+        assert.are.equal("12345", IS.ToBaseKey("12345"))
+        assert.are.equal("12345", IS.ToExactKey("12345"))
+    end)
+
+    it("ToKey picks the base or exact key", function()
+        local link = "item:12345::::::-34::::::1:1520"
+        assert.are.equal("12345", IS.ToKey(link, true))
+        assert.are.equal("12345#s-34#b1520", IS.ToKey(link, false))
+        assert.are.equal("12345#s-34#b1520", IS.ToKey(link))
+    end)
+
+    it("returns nil for non-item input", function()
+        local bad = { nil, false, true, "", "hello", "item:0", "item:abc", 0, -5, 1.5, {}, { itemID = 0 },
+            { itemID = 5, bonusIDs = { -1 } }, { itemID = 5, bonusIDs = { "x" } }, "|Hbattlepet:1:2|h[x]|h" }
+        for i = 1, 15 do
+            local input = bad[i]
+            assert.is_nil(IS.ToExactKey(input))
+            assert.is_nil(IS.ToBaseKey(input))
+            assert.is_nil(IS.ToKey(input, true))
+            assert.is_nil(IS.ToKey(input, false))
+        end
+    end)
+
+    it("does not change the caller's tables", function()
+        local fields = { itemID = 5, suffixID = 0, bonusIDs = { 9, 3, 6 } }
+        IS.ToExactKey(fields)
+        assert.are.same({ 9, 3, 6 }, fields.bonusIDs)
+        assert.are.same({ itemID = 5, suffixID = 0, bonusIDs = { 9, 3, 6 } }, fields)
+    end)
+
+    it("parses valid keys", function()
+        assert.are.same({ itemID = 12345, suffixID = 0, bonusIDs = {} }, IS.ParseKey("12345"))
+        assert.are.same({ itemID = 12345, suffixID = -34, bonusIDs = {} }, IS.ParseKey("12345#s-34"))
+        assert.are.same({ itemID = 12345, suffixID = 0, bonusIDs = { 1520, 6646 } }, IS.ParseKey("12345#b1520,6646"))
+        assert.are.same({ itemID = 12345, suffixID = 5, bonusIDs = { 7, 7 } }, IS.ParseKey("12345#s5#b7,7"))
+    end)
+
+    it("rejects invalid keys", function()
+        local bad = { "", "012345", "0", "12345#x5", "12345#s", "12345#s5#s6", "12345#b1#b2", "12345#b1#s5",
+            "12345#b", "12345#b2,1", "12345#b1.5", "12345#b-1", "12345#s1.5", "12345#sx", "12345#", "12345#b1,",
+            "12345#b1,,2", "12345#s05", "12345#s0", "-5", "1.5", "item:12345", "i:12345", "12345:s5", " 12345" }
+        for _, key in ipairs(bad) do
+            assert.is_nil(IS.ParseKey(key), key)
+        end
+        for _, key in ipairs({ false, true, 12345, {} }) do
+            assert.is_nil(IS.ParseKey(key))
+        end
+        assert.is_nil(IS.ParseKey())
+    end)
+
+    it("round trips 5 items", function()
+        local links = { "item:1", "item:20::::::-5", "item:300::::::::::::1:9", "item:4000::::::7::::::3:30:10:20",
+            "item:50000::::::-1::::::2:8:8" }
+        for _, link in ipairs(links) do
+            local fields = IS.ParseLink(link)
+            local parsed = IS.ParseKey(IS.ToExactKey(link))
+            local sorted = { unpack(fields.bonusIDs) }
+            table.sort(sorted)
+            assert.are.equal(fields.itemID, parsed.itemID)
+            assert.are.equal(fields.suffixID, parsed.suffixID)
+            assert.are.same(sorted, parsed.bonusIDs)
+            assert.are.equal(IS.ToExactKey(link), IS.ToExactKey(parsed))
+        end
+    end)
+
+    it("KeyToBaseKey returns the base key", function()
+        assert.are.equal("12345", IS.KeyToBaseKey("12345#s-34#b1,2"))
+        assert.are.equal("12345", IS.KeyToBaseKey("12345"))
+        assert.is_nil(IS.KeyToBaseKey("012345"))
+        assert.is_nil(IS.KeyToBaseKey(nil))
+        assert.is_nil(IS.KeyToBaseKey("12345#b2,1"))
+    end)
+end)
