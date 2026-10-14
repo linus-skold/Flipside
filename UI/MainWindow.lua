@@ -44,19 +44,19 @@ function MainWindow.Create(deps)
     })
     local win = { frame = window, tabs = tabs }
     function win:Show()
-        window:Show()
+        self.frame:Show()
     end
     function win:Hide()
-        window:Hide()
+        self.frame:Hide()
     end
     function win:Toggle()
-        window:Toggle()
+        self.frame:Toggle()
     end
     function win:IsShown()
-        return window:IsShown() and true or false
+        return self.frame:IsShown() and true or false
     end
     function win:SelectPage(key)
-        tabs:Select(key)
+        self.tabs:Select(key)
     end
     instance = win
     return win
