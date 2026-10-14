@@ -187,3 +187,51 @@ function FormulaFunctions.CallLazy(name, getArg, n)
     end
     return nil
 end
+
+FormulaFunctions.DOCS = {
+    min = {
+        usage = "min(a, b, ...)",
+        text = "Gives the lowest value. It skips invalid arguments. It is invalid only if all arguments are invalid.",
+        example = "min(scanmin, scanmarket)",
+    },
+    max = {
+        usage = "max(a, b, ...)",
+        text = "Gives the highest value. It skips invalid arguments. It is invalid only if all arguments are invalid.",
+        example = "max(scanmin, 1.5 * vendorsell)",
+    },
+    avg = {
+        usage = "avg(a, b, ...)",
+        text = "Gives the average of the values. It skips invalid arguments. It is invalid only if all are invalid.",
+        example = "avg(scanmarket, scanhistorical)",
+    },
+    first = {
+        usage = "first(a, b, ...)",
+        text = "Gives the first argument that is valid. It skips invalid arguments.",
+        example = "first(crafting, scanmarket)",
+    },
+    check = {
+        usage = "check(a, b)",
+        text = "Gives b only if a is valid and above 0. Otherwise it gives invalid.",
+        example = "check(scanmarket, 0.8 * scanmarket)",
+    },
+    ifgt = {
+        usage = "ifgt(value, limit, then, else)",
+        text = "If value is above limit, gives then. Otherwise it gives else. Without else, it gives invalid.",
+        example = "ifgt(scanage, 72, invalid, scanmarket)",
+    },
+    iflt = {
+        usage = "iflt(value, limit, then, else)",
+        text = "If value is below limit, gives then. Otherwise it gives else. Without else, it gives invalid.",
+        example = "iflt(scanqty, 5, 2 * scanmarket, scanmarket)",
+    },
+    ifeq = {
+        usage = "ifeq(value, limit, then, else)",
+        text = "If value equals limit, gives then. Otherwise it gives else. Without else, it gives invalid.",
+        example = "ifeq(scansamples, 14, scanmarket, scanrecent)",
+    },
+    round = {
+        usage = "round(x)",
+        text = "Rounds x to whole copper. Half rounds up.",
+        example = "round(scanmarket * 0.95)",
+    },
+}
