@@ -77,8 +77,8 @@ files["Core_TBC/"] = { read_globals = { "NUM_BAG_SLOTS", "NUM_BANKBAGSLOTS", "BA
 files["AH_TBC/"] = {
     read_globals = {
         "NUM_BAG_SLOTS", "NUM_BANKBAGSLOTS", "BANK_CONTAINER",
-        "AuctionFrame", "AuctionFrameBrowse", "AuctionFrameBid", "AuctionFrameAuctions",
-        "AuctionFrameTab_OnClick", "PanelTemplates_GetSelectedTab", "PanelTemplates_SelectTab",
-        "PanelTemplates_DeselectTab", "GetAuctionItemLink",
+        "AuctionFrame",
+        "AuctionFrameTab_OnClick",
+        "PanelTemplates_EnableTab", "PanelTemplates_TabResize", "SetAuctionsTabShowing", "GetAuctionItemLink",
     },
 }

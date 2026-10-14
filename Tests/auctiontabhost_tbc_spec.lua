@@ -2,9 +2,7 @@ local manifest = require("Tests.manifest")
 local mock = require("Tests.wow_mock")
 
 local TOC = "Flipside_TBC.toc"
-local FAKE_GLOBALS = { "AuctionFrame", "AuctionFrameBrowse", "AuctionFrameBid", "AuctionFrameAuctions",
-    "AuctionFrameTab1", "AuctionFrameTab2", "AuctionFrameTab3", "AuctionFrameTab_OnClick", "hooksecurefunc",
-    "PanelTemplates_GetSelectedTab", "PanelTemplates_SelectTab", "PanelTemplates_DeselectTab" }
+local ART = { "TopLeft", "Top", "TopRight", "BotLeft", "Bot", "BotRight" }
 
 local function loadModules()
     local ns = {}
@@ -15,9 +13,9 @@ local function loadModules()
 end
 
 describe("AuctionTabHost (TBC)", function()
-    local ns, ah, panes, tabs, visual, clicks, core, reports
+    local ns, ah, panes, tabs, visual, clicks, core, reports, calls, textures, realCreate
 
-    -- Writes of new keys to a fake Blizzard frame fail: Blizzard fields are read only for the addon.
+    -- Writes of new keys to a fake Blizzard frame fail: the host must not add fields.
     local function guard(frame)
         local meta = getmetatable(frame)
         setmetatable(frame, {
@@ -29,48 +27,70 @@ describe("AuctionTabHost (TBC)", function()
         return frame
     end
 
-    local function makeBlizzard()
-        ah = CreateFrame("Frame", "AuctionFrame", UIParent)
-        ah.selectedTab, ah.numTabs, ah.type = 0, 3, "list"
-        guard(ah)
-        ah:Hide()
+    -- Blizzard or another addon adds a tab: the button, the global name and the tab count.
+    local function addTab(index)
+        local tab = _G.CreateFrame("Button", "AuctionFrameTab" .. index, ah, "AuctionTabTemplate")
+        tab:SetID(index)
+        tabs[index] = tab
+        _G["AuctionFrameTab" .. index] = tab
+        ah.numTabs = index
+        return tab
+    end
+
+    -- existing is the number of tabs before Flipside: 3 for Blizzard alone, 7 with other tab addons.
+    local function makeBlizzard(existing)
+        ah = realCreate("Frame", "AuctionFrame", UIParent)
+        ah.selectedTab, ah.numTabs, ah.type = 0, 0, "list"
         panes, tabs = {}, {}
         for _, name in ipairs({ "AuctionFrameBrowse", "AuctionFrameBid", "AuctionFrameAuctions" }) do
-            local pane = guard(CreateFrame("Frame", name, ah))
+            local pane = realCreate("Frame", name, ah)
             pane:Hide()
             _G[name] = pane
             table.insert(panes, pane)
         end
-        for index = 1, 3 do
-            local tab = CreateFrame("Button", "AuctionFrameTab" .. index, ah, "AuctionTabTemplate")
-            tab:SetID(index)
-            guard(tab)
-            tab:SetScript("OnClick", function(self)
-                _G.AuctionFrameTab_OnClick(self)
-            end)
-            _G["AuctionFrameTab" .. index] = tab
-            tabs[index] = tab
+        for index = 1, existing do
+            addTab(index)
         end
-        -- Mirror of Blizzard_AuctionUI.lua:396. Blizzard's own code may write its fields.
+        for _, name in ipairs(ART) do
+            local texture = { name = name }
+            texture.SetTexture = function(_, path)
+                textures[name] = path
+            end
+            _G["AuctionFrame" .. name] = texture
+        end
+        -- Mirror of AuctionFrameTab_OnClick (Blizzard_AuctionUI.lua): PanelTemplates_SetTab, then the panes.
         _G.AuctionFrameTab_OnClick = function(self)
             local index = self:GetID()
             ah.selectedTab = index
+            for number = 1, ah.numTabs do
+                visual[tabs[number]] = number == index and "selected" or "deselected"
+            end
             for _, pane in ipairs(panes) do
                 pane:Hide()
             end
-            panes[index]:Show()
+            if index <= 3 then
+                panes[index]:Show()
+            end
             clicks[#clicks + 1] = index
         end
-        _G.PanelTemplates_GetSelectedTab = function(frame)
-            return frame.selectedTab
+        _G.PanelTemplates_SetNumTabs = function(frame, number)
+            calls[#calls + 1] = { "num", number }
+            frame.numTabs = number
         end
-        _G.PanelTemplates_SelectTab = function(tab)
-            visual[tab] = "selected"
+        _G.PanelTemplates_EnableTab = function(_, index)
+            calls[#calls + 1] = { "enable", index }
         end
-        _G.PanelTemplates_DeselectTab = function(tab)
-            visual[tab] = "deselected"
+        _G.PanelTemplates_TabResize = function(tab)
+            calls[#calls + 1] = { "resize", tab }
         end
         _G.AuctionFrame = ah
+        guard(ah)
+        for _, pane in ipairs(panes) do
+            guard(pane)
+        end
+        for index = 1, existing do
+            guard(tabs[index])
+        end
     end
 
     -- A core with the real shape: Leave deselects first, then calls the host.
@@ -109,6 +129,10 @@ describe("AuctionTabHost (TBC)", function()
         return fake
     end
 
+    local function click(tab)
+        tab:GetScript("OnClick")(tab)
+    end
+
     local function openFrame()
         ah:Show()
         -- Mirror of AuctionFrame_OnShow: it clicks the first tab.
@@ -121,14 +145,28 @@ describe("AuctionTabHost (TBC)", function()
         core.content:Hide()
     end
 
-    local function ourTab(state)
-        return state.tab
-    end
-
     before_each(function()
         mock.reset({ flavour = "tbc" })
+        realCreate = _G.CreateFrame
+        -- The client gives each button of AuctionTabTemplate the OnClick that calls AuctionFrameTab_OnClick.
+        _G.CreateFrame = function(kind, name, parent, template)
+            local frame = realCreate(kind, name, parent, template)
+            if template == "AuctionTabTemplate" then
+                frame:SetScript("OnClick", function(self)
+                    _G.AuctionFrameTab_OnClick(self)
+                end)
+            end
+            if name then
+                _G[name] = frame
+                local number = tonumber(name:match("^AuctionFrameTab(%d+)$"))
+                if number and tabs then
+                    tabs[number] = frame
+                end
+            end
+            return frame
+        end
         ns = loadModules()
-        visual, clicks, reports = {}, {}, {}
+        visual, clicks, reports, calls, textures = {}, {}, {}, {}, {}
         ns.ReportError = function(message)
             table.insert(reports, message)
         end
@@ -143,22 +181,140 @@ describe("AuctionTabHost (TBC)", function()
     end)
 
     after_each(function()
-        for _, name in ipairs(FAKE_GLOBALS) do
+        for _, name in ipairs({ "AuctionFrame", "AuctionFrameBrowse", "AuctionFrameBid", "AuctionFrameAuctions",
+            "AuctionFrameTab_OnClick", "hooksecurefunc", "PanelTemplates_EnableTab", "PanelTemplates_TabResize" }) do
             _G[name] = nil
+        end
+        for index = 1, 12 do
+            _G["AuctionFrameTab" .. index] = nil
+        end
+        for _, name in ipairs(ART) do
+            _G["AuctionFrame" .. name] = nil
         end
         mock.teardown()
     end)
 
+    for _, existing in ipairs({ 3, 7 }) do
+        describe("with " .. existing .. " existing tabs", function()
+            local ours, index
+
+            before_each(function()
+                index = existing + 1
+                makeBlizzard(existing)
+            end)
+
+            it("adds a real tab that follows the last one", function()
+                local state = ns.AuctionTabHost.Attach(core)
+                ours = state.tab
+                assert.are.equal(index, state.index)
+                assert.are.equal("AuctionFrameTab" .. index, ours.name)
+                assert.are.equal("AuctionTabTemplate", ours.template)
+                assert.are.equal(index, ours:GetID())
+                assert.are.equal("Flipside", ours:GetText())
+                assert.are.same({ "LEFT", tabs[existing], "RIGHT", -8, 0 }, ours.points[1])
+                assert.are.equal(index, ah.numTabs)
+                assert.are.same({ "num", index }, calls[1])
+                assert.are.same({ "enable", index }, calls[2])
+                assert.are.equal("resize", calls[3][1])
+            end)
+
+            it("shows our panel when our tab is clicked", function()
+                local state = ns.AuctionTabHost.Attach(core)
+                openFrame()
+                click(state.tab)
+                assert.is_true(core:IsActive())
+                assert.is_true(core.content:IsShown())
+                assert.are.equal(index, ah.selectedTab)
+                for _, pane in ipairs(panes) do
+                    assert.is_false(pane:IsShown())
+                end
+                assert.are.equal("selected", visual[state.tab])
+                assert.are.equal("deselected", visual[tabs[1]])
+                assert.are.equal(0, core.unmounts)
+            end)
+
+            it("sets the plain Auctions art", function()
+                local state = ns.AuctionTabHost.Attach(core)
+                openFrame()
+                click(state.tab)
+                assert.are.equal("Interface\\AuctionFrame\\UI-AuctionFrame-Auction-TopLeft", textures.TopLeft)
+                assert.are.equal("Interface\\AuctionFrame\\UI-AuctionFrame-Auction-Bot", textures.Bot)
+            end)
+
+            it("hides our panel when another tab is clicked", function()
+                local state = ns.AuctionTabHost.Attach(core)
+                openFrame()
+                for _, number in ipairs({ 1, 2, 3, existing }) do
+                    click(state.tab)
+                    clicks = {}
+                    click(tabs[number])
+                    assert.is_false(core:IsActive())
+                    assert.is_false(core.content:IsShown())
+                    assert.are.same({ number }, clicks)
+                    assert.are.equal("deselected", visual[state.tab])
+                end
+                assert.is_true(panes[3]:IsShown() or existing > 3)
+            end)
+
+            it("does nothing to our panel when it is not active", function()
+                ns.AuctionTabHost.Attach(core)
+                openFrame()
+                click(tabs[2])
+                assert.is_false(core.content:IsShown())
+                assert.is_true(panes[2]:IsShown())
+            end)
+
+            it("leaves on its own and asks Blizzard to show a tab", function()
+                local state = ns.AuctionTabHost.Attach(core)
+                openFrame()
+                click(state.tab)
+                clicks = {}
+                core:Leave(2)
+                assert.are.same({ 2 }, clicks)
+                assert.is_true(panes[2]:IsShown())
+                assert.is_false(core:IsActive())
+            end)
+
+            it("closes and reopens", function()
+                local state = ns.AuctionTabHost.Attach(core)
+                openFrame()
+                click(state.tab)
+                clicks = {}
+                closeFrame()
+                assert.is_false(core:IsActive())
+                assert.are.same({}, clicks)
+                openFrame()
+                assert.are.same({ 1 }, clicks)
+                assert.is_true(panes[1]:IsShown())
+                assert.is_false(core.content:IsShown())
+                click(state.tab)
+                assert.is_true(core:IsActive())
+                assert.is_false(panes[1]:IsShown())
+            end)
+
+            it("adds no field to a Blizzard frame in a full cycle", function()
+                local state = ns.AuctionTabHost.Attach(core)
+                openFrame()
+                for _ = 1, 2 do
+                    click(state.tab)
+                    click(tabs[3])
+                    click(state.tab)
+                    closeFrame()
+                    openFrame()
+                end
+                assert.are.equal(index, ah.numTabs)
+                assert.are.equal("list", ah.type)
+            end)
+        end)
+    end
+
     describe("attach", function()
         it("builds at once when the frame exists", function()
-            makeBlizzard()
+            makeBlizzard(3)
             local state = ns.AuctionTabHost.Attach(core)
             assert.are.equal(ah, state.frame)
             assert.are.equal(1, core.mounts)
             assert.are.equal(ah, core.parent)
-            assert.are.equal("FlipsideAuctionFrameTab", ourTab(state).name)
-            assert.are.equal("AuctionTabTemplate", ourTab(state).template)
-            assert.are.equal("Flipside", ourTab(state):GetText())
         end)
 
         it("waits for ADDON_LOADED of Blizzard_AuctionUI", function()
@@ -166,7 +322,7 @@ describe("AuctionTabHost (TBC)", function()
             assert.is_nil(state.frame)
             core.deps.bus:Emit("ADDON_LOADED", "Other")
             assert.are.equal(0, core.mounts)
-            makeBlizzard()
+            makeBlizzard(3)
             core.deps.bus:Emit("ADDON_LOADED", "Blizzard_AuctionUI")
             assert.are.equal(ah, state.frame)
             assert.are.equal(1, core.mounts)
@@ -174,27 +330,39 @@ describe("AuctionTabHost (TBC)", function()
             assert.are.equal(1, core.mounts)
         end)
 
-        it("anchors the tab to the right of the last Blizzard tab", function()
-            makeBlizzard()
+        it("gives the core the insets and the compact layout", function()
+            makeBlizzard(3)
+            ns.AuctionTabHost.Attach(core)
+            assert.are.same({ left = 14, right = 40, top = 60, bottom = 40 }, core.api.insets)
+            assert.are.equal("compact", core.api.layout)
+        end)
+
+        it("does not break a tab that another addon adds after ours", function()
+            makeBlizzard(3)
             local state = ns.AuctionTabHost.Attach(core)
-            assert.are.same({ "TOPLEFT", tabs[3], "TOPRIGHT", -8, 0 }, ourTab(state).points[1])
+            local later = addTab(ah.numTabs + 1)
+            assert.are.equal("AuctionFrameTab5", later.name)
+            assert.are.equal(5, ah.numTabs)
+            openFrame()
+            click(state.tab)
+            click(later)
+            assert.is_false(core:IsActive())
+            click(state.tab)
+            assert.is_true(core:IsActive())
         end)
 
-        it("gives the core insets for the legacy frame", function()
-            makeBlizzard()
-            ns.AuctionTabHost.Attach(core)
-            assert.are.same({ top = 75, bottom = 40 }, core.api.insets)
-        end)
-
-        it("does not change the tab count of Blizzard's frame", function()
-            makeBlizzard()
-            ns.AuctionTabHost.Attach(core)
-            assert.are.equal(3, ah.numTabs)
-            assert.are.same({}, mock.tabCalls)
+        it("skips an index that another addon already used without a tab count", function()
+            makeBlizzard(3)
+            realCreate("Button", "AuctionFrameTab4", ah)
+            _G.AuctionFrameTab4 = realCreate("Button", "AuctionFrameTab4", ah)
+            local state = ns.AuctionTabHost.Attach(core)
+            assert.are.equal(5, state.index)
+            assert.are.equal(5, ah.numTabs)
+            assert.are.same({ "LEFT", _G.AuctionFrameTab4, "RIGHT", -8, 0 }, state.tab.points[1])
         end)
 
         it("reports and leaves nothing behind when the build fails", function()
-            makeBlizzard()
+            makeBlizzard(3)
             core.Mount = function()
                 error("boom")
             end
@@ -204,164 +372,6 @@ describe("AuctionTabHost (TBC)", function()
             assert.are.equal(1, core.unmounts)
             assert.is_nil(state.frame)
             assert.is_nil(state.tab)
-        end)
-    end)
-
-    describe("select", function()
-        local state
-
-        before_each(function()
-            makeBlizzard()
-            state = ns.AuctionTabHost.Attach(core)
-            openFrame()
-        end)
-
-        it("hides the three panes and marks only our tab", function()
-            assert.is_true(panes[1]:IsShown())
-            ourTab(state):GetScript("OnClick")(ourTab(state))
-            assert.is_true(core.content:IsShown())
-            for _, pane in ipairs(panes) do
-                assert.is_false(pane:IsShown())
-            end
-            assert.are.equal("selected", visual[ourTab(state)])
-            assert.are.equal("deselected", visual[tabs[1]])
-        end)
-
-        it("keeps the Blizzard selected tab field", function()
-            ourTab(state):GetScript("OnClick")(ourTab(state))
-            assert.are.equal(1, ah.selectedTab)
-            assert.are.equal(3, ah.numTabs)
-        end)
-
-        it("restores the Blizzard tab that was selected before", function()
-            tabs[3]:GetScript("OnClick")(tabs[3])
-            clicks = {}
-            ourTab(state):GetScript("OnClick")(ourTab(state))
-            assert.is_false(panes[3]:IsShown())
-            core:Leave()
-            assert.are.same({ 3 }, clicks)
-            assert.is_true(panes[3]:IsShown())
-            assert.are.equal("deselected", visual[ourTab(state)])
-        end)
-
-        it("restores the given tab on Leave(i)", function()
-            ourTab(state):GetScript("OnClick")(ourTab(state))
-            clicks = {}
-            core:Leave(2)
-            assert.are.same({ 2 }, clicks)
-            assert.is_true(panes[2]:IsShown())
-            assert.is_false(core.content:IsShown())
-        end)
-
-        it("keeps the saved tab when selected twice", function()
-            tabs[2]:GetScript("OnClick")(tabs[2])
-            ourTab(state):GetScript("OnClick")(ourTab(state))
-            ourTab(state):GetScript("OnClick")(ourTab(state))
-            clicks = {}
-            core:Leave()
-            assert.are.same({ 2 }, clicks)
-        end)
-    end)
-
-    describe("Blizzard tab click", function()
-        local state
-
-        before_each(function()
-            makeBlizzard()
-            state = ns.AuctionTabHost.Attach(core)
-            openFrame()
-            ourTab(state):GetScript("OnClick")(ourTab(state))
-            clicks = {}
-        end)
-
-        it("hides our panel and shows the clicked pane", function()
-            tabs[2]:GetScript("OnClick")(tabs[2])
-            assert.is_false(core:IsActive())
-            assert.is_false(core.content:IsShown())
-            assert.is_true(panes[2]:IsShown())
-            assert.is_false(panes[1]:IsShown())
-            assert.are.equal("deselected", visual[ourTab(state)])
-            assert.are.equal(2, ah.selectedTab)
-        end)
-
-        it("clicks the Blizzard tab once only", function()
-            tabs[1]:GetScript("OnClick")(tabs[1])
-            assert.are.same({ 1 }, clicks)
-        end)
-
-        it("does nothing to our panel when it is not active", function()
-            tabs[1]:GetScript("OnClick")(tabs[1])
-            tabs[3]:GetScript("OnClick")(tabs[3])
-            assert.is_false(core.content:IsShown())
-            assert.is_true(panes[3]:IsShown())
-        end)
-
-        it("handles a click from Blizzard code, not from a tab button", function()
-            _G.AuctionFrameTab_OnClick(tabs[3])
-            assert.is_false(core:IsActive())
-            assert.is_true(panes[3]:IsShown())
-        end)
-    end)
-
-    describe("close and reopen", function()
-        local state
-
-        before_each(function()
-            makeBlizzard()
-            state = ns.AuctionTabHost.Attach(core)
-            openFrame()
-        end)
-
-        it("leaves the panel when the frame closes and shows Browse on reopen", function()
-            ourTab(state):GetScript("OnClick")(ourTab(state))
-            clicks = {}
-            closeFrame()
-            assert.is_false(core:IsActive())
-            assert.are.same({}, clicks)
-            assert.are.equal("deselected", visual[ourTab(state)])
-            openFrame()
-            assert.are.same({ 1 }, clicks)
-            assert.is_true(panes[1]:IsShown())
-            assert.is_false(core.content:IsShown())
-        end)
-
-        it("can select the tab again after a reopen", function()
-            ourTab(state):GetScript("OnClick")(ourTab(state))
-            closeFrame()
-            openFrame()
-            ourTab(state):GetScript("OnClick")(ourTab(state))
-            assert.is_true(core:IsActive())
-            assert.is_false(panes[1]:IsShown())
-            assert.are.equal("selected", visual[ourTab(state)])
-        end)
-    end)
-
-    describe("taint rule", function()
-        it("writes no field of a Blizzard frame in a full cycle", function()
-            makeBlizzard()
-            ah.selectedTab = 1 -- Blizzard's own code sets it; the guard allows existing keys
-            local state = ns.AuctionTabHost.Attach(core)
-            openFrame()
-            local before = { numTabs = ah.numTabs, selectedTab = ah.selectedTab, type = ah.type }
-            for _ = 1, 2 do
-                ourTab(state):GetScript("OnClick")(ourTab(state))
-                tabs[3]:GetScript("OnClick")(tabs[3])
-                ourTab(state):GetScript("OnClick")(ourTab(state))
-                closeFrame()
-                openFrame()
-            end
-            assert.are.equal(before.numTabs, ah.numTabs)
-            assert.are.equal(before.type, ah.type)
-            for _, frame in ipairs({ ah, tabs[1], tabs[2], tabs[3], panes[1], panes[2], panes[3] }) do
-                assert.is_nil(rawget(frame, "flipside"))
-            end
-        end)
-
-        it("fails the guard when a new field is written", function()
-            makeBlizzard()
-            assert.has_error(function()
-                ah.flipside = true
-            end)
         end)
     end)
 end)
