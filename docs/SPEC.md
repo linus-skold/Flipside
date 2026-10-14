@@ -11,7 +11,7 @@ Start with Spike 0 (§8), then follow the MVP build order. Everything below appl
 1. **Clean room.** Build from this spec only. Never copy TSM code, assets, names or string formats. Points marked *(inferred)* in the TSM reference are guesses to verify, not facts.
 2. **API source of truth.** Check every Blizzard API against the Forever client's interface code ([Ketho/wow-ui-source-forever](https://github.com/Ketho/wow-ui-source-forever)) and the API pages on [warcraft.wiki.gg](https://warcraft.wiki.gg/wiki/World_of_Warcraft_API). Forever may differ from Retail; when they disagree, the Forever source wins.
 3. **Project setup.**
-   - Folder layout: `Core/` (framework), `Services/`, `Features/<Name>/`, `UI/`, `Libs/`, `Locales/`, `Tests/`.
+   - Folder layout: `Shared/Core/` (framework), `Shared/Services/`, `Shared/Features/<Name>/`, `Shared/UI/`, `Shared/Libs/`, `Shared/Locales/`, `Tests/`.
    - TOC with the Forever interface number taken from the client source (the source has no interface number; 16001 comes from `GetBuildInfo` in the client), and both SavedVariables (Main DB, Scan DB, §7.1).
    - Lint with luacheck; WoW globals declared in its config.
    - Unit tests with busted and a mocked WoW API, for the pure logic: formula compiler, market-value algorithm, selling decisions, keep-stock maths, deposit-aware maths.
@@ -61,7 +61,7 @@ Start with Spike 0 (§8), then follow the MVP build order. Everything below appl
 | D16 | The addon is called Flipside; slash commands /flipside and /flip | — | 2026-10-13 |
 | D17 | Visual style: the pure WoW: Forever look. Only the client's own textures, atlases, fonts and frame templates, untinted and referenced by path or name; nothing is shipped. No own art and no bronze tint | TSM's flat dark theme | 2026-10-13 (changed 2026-10-14) |
 | D18 | No Ace3. Flipside writes its own framework (settings DB, event bus, coroutine scheduler, slash commands) and its own UI kit. No third-party library ships in the MVP. The use of AceComm with ChatThrottleLib for guild sharing is decided again at Phase 3 | — | 2026-10-14 |
-| D19 | The UI kit is reusable for other addons: style only (theme table, frames, buttons, tabs, lists), with no Flipside logic and no reference to Flipside code or names. It lives in `UI/Kit/` in this repository and can be extracted to a library later | — | 2026-10-14 |
+| D19 | The UI kit is reusable for other addons: style only (theme table, frames, buttons, tabs, lists), with no Flipside logic and no reference to Flipside code or names. It lives in `Shared/UI/Kit/` in this repository and can be extracted to a library later | — | 2026-10-14 |
 | D20 | Item identity: the item key is built from item link fields: item id, suffix id and bonus ids. Enchants, gems, unique id, link level and specialization are not part of the key. Commodities (stackable items) use the item id only. Granularity (base item or exact variant) is chosen when a group or price source matches, not when data is stored. Keys never contain localised names. Flipside uses its own text form for keys, not TSM's | — | 2026-10-14 |
 | D21 | Battle pets are out of the MVP | — | 2026-10-14 |
 | D22 | Scan data is keyed by region and ruleset (refines D15). The region comes from the client. Each stored record also has a ruleset field that has one fixed value in the MVP; real rulesets (for example hardcore or self-found) can come later without a rewrite of stored data | — | 2026-10-14 |
@@ -499,7 +499,7 @@ Gold, silver and copper coin amounts keep the game's own coin colours so money r
 - Use the game's own fonts (Friz Quadrata via the standard font objects) so text matches the client; ship no font without a compatible licence.
 - Borders and edges are pixel-perfect at any UI scale.
 - Frames follow the classic layout language: title bar with portrait-style icon, tabs along the bottom edge, close button top-right.
-- The kit lives in `UI/Kit/` and has no reference to Flipside code or names, so other addons can reuse it (D19).
+- The kit lives in `Shared/UI/Kit/` and has no reference to Flipside code or names, so other addons can reuse it (D19).
 
 ### UI layout (decided 2026-10-14)
 
@@ -511,7 +511,7 @@ Gold, silver and copper coin amounts keep the game's own coin colours so money r
 - The window can open in combat (plain show, no protected actions). Escape closes it.
 - One untinted theme table.
 - The chat commands stay for now: `/flip scan`, `scan stop`, `scan reset`, `price`, `formula` and `version`.
-- First UI stack: the UI kit (`UI/Kit/`), the Flipside window with a formula preview page, and the Flipside AH tab. The groups and operations UI come with build step 4.
+- First UI stack: the UI kit (`Shared/UI/Kit/`), the Flipside window with a formula preview page, and the Flipside AH tab. The groups and operations UI come with build step 4.
 
 ## Storage, profiles, sync and import/export
 

@@ -28,18 +28,18 @@ Unit tests pass; luacheck is clean; the feature's in-game checklist passes on Wo
 
 ## Layout
 Per D23 the layout moves to `Shared/`, `Core_<Flavour>/` and `AH_<Flavour>/` in a later pull request. The lists below show the current layout.
-`Core/` framework, `Services/`, `Features/<Name>/`, `UI/`, `UI/Kit/`, `Libs/` (empty, no third-party library), `Locales/`, `Tests/` (busted specs and `wow_mock.lua`), `ScanTest/` (throwaway Spike 0 addon).
-- `UI/Kit/`: reusable style kit, no Flipside logic (D19).
-- Kit modules in UI/Kit/: Theme, Window, Widgets, Tabs, List, Tree, Combat. They take all input as arguments and use no Flipside name, 
+`Shared/Core/` framework, `Shared/Services/`, `Shared/Features/<Name>/`, `Shared/UI/`, `Shared/UI/Kit/`, `Shared/UI/Pages/`, `Shared/Libs/` (empty, no third-party library), `Shared/Locales/`, `Tests/` (busted specs and `wow_mock.lua`), `ScanTest/` (throwaway Spike 0 addon).
+- `Shared/UI/Kit/`: reusable style kit, no Flipside logic (D19).
+- Kit modules in Shared/UI/Kit/: Theme, Window, Widgets, Tabs, List, Tree, Combat. They take all input as arguments and use no Flipside name, 
 s service or chat output (D19).
 - No third-party library is used (D18).
 - Core modules: `EventBus`, `Scheduler`, `ItemString`, `SettingsDB`, `ItemInfoCache`, `Init`. Core files start with `local _, ns = ...` and write no globals (`Init` also reads the addon name and sets the slash globals).
-- Scan modules in `Services/`: `ScanClock`, `ScanRecord`, `ScanMarket`, `ScanKey`, `ScanCooldown`, `ScanBucket`, `ScanStore`, `ScanRows`, `ScanItemLoad`, `ScanSources`, `ScanEngine`, `ScanCapture`.
-- Formula modules in `Services/`: `FormulaParse`, `FormulaFunctions`, `FormulaSources`, `FormulaLookup`, 
+- Scan modules in `Shared/Services/`: `ScanClock`, `ScanRecord`, `ScanMarket`, `ScanKey`, `ScanCooldown`, `ScanBucket`, `ScanStore`, `ScanRows`, `ScanItemLoad`, `ScanSources`, `ScanEngine`, `ScanCapture`.
+- Formula modules in `Shared/Services/`: `FormulaParse`, `FormulaFunctions`, `FormulaSources`, `FormulaLookup`, 
 `FormulaEval`, `FormulaRun`.
-- Tooltip and inventory modules in `Services/`: `Holdings`, `HoldingsRead`, `TooltipConfig`, `TooltipLines`. `Features/Inventory/InventoryCapture.lua` reads bags, bank, mail and own auctions into the holdings. `Features/Tooltip/Tooltip.lua` adds the lines through `TooltipDataProcessor`. `UI/Pages/TooltipPage.lua` is the Tooltip tab. Slash: `/flip tooltipstats`, `/flip forget <Name-Realm>`.
-- Rules modules in `Services/`: `ItemNameIndex`, `OperationSchema`, `GroupTree`, `BagItems`, `RulesStore`, `CustomSources`, `AHNameSearch`, `RulesExport`.
-- `UI/MainWindow.lua`, `UI/Pages/` (`GroupsPage`, `OperationsPage`, `FormulaPage`), `Features/AuctionTab/`.
+- Tooltip and inventory modules in `Shared/Services/`: `Holdings`, `HoldingsRead`, `TooltipConfig`, `TooltipLines`. `Shared/Features/Inventory/InventoryCapture.lua` reads bags, bank, mail and own auctions into the holdings. `Shared/Features/Tooltip/Tooltip.lua` adds the lines through `TooltipDataProcessor`. `Shared/UI/Pages/TooltipPage.lua` is the Tooltip tab. Slash: `/flip tooltipstats`, `/flip forget <Name-Realm>`.
+- Rules modules in `Shared/Services/`: `ItemNameIndex`, `OperationSchema`, `GroupTree`, `BagItems`, `RulesStore`, `CustomSources`, `AHNameSearch`, `RulesExport`.
+- `Shared/UI/MainWindow.lua`, `Shared/UI/Pages/` (`GroupsPage`, `OperationsPage`, `FormulaPage`), `Shared/Features/AuctionTab/`. Flavour folders `Core_<Flavour>/` and `AH_<Flavour>/` come later (D23).
 - UI: Flipside tabs inside Blizzard's AuctionHouseFrame, plus the Flipside window (800 x 540); only client assets.
 - Item keys follow D20; no battle pets in the MVP (D21); scan data is keyed by region and ruleset (D22).
 
