@@ -859,6 +859,7 @@ openUI = function()
             rules = ns.rules,
             formulaRun = ns.formulaRun,
             after = C_Timer.After,
+            db = ns.db,
         })
     end
 end
