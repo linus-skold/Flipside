@@ -7,6 +7,8 @@ local FILES = {
     manifest.path("ItemString"),
     manifest.path("SettingsDB"),
     manifest.path("ItemInfoCache"),
+    manifest.path("AuctionClient"),
+    manifest.path("ForeverBackend"),
     manifest.path("Init"),
 }
 

@@ -106,22 +106,19 @@ function ns.IsAuctionHouseOpen()
 end
 
 local function trackAuctionHouse()
-    ns.bus:Subscribe("AUCTION_HOUSE_SHOW", "Flipside.Init", function()
-        auctionHouseOpen = true
-    end)
-    ns.bus:Subscribe("AUCTION_HOUSE_CLOSED", "Flipside.Init", function()
-        auctionHouseOpen = false
-    end)
+    local openEvent, closeEvent = ns.AuctionClient.OpenEvent(), ns.AuctionClient.CloseEvent()
+    if openEvent then
+        ns.bus:Subscribe(openEvent, "Flipside.Init", function()
+            auctionHouseOpen = true
+        end)
+    end
+    if closeEvent then
+        ns.bus:Subscribe(closeEvent, "Flipside.Init", function()
+            auctionHouseOpen = false
+        end)
+    end
 end
 
--- Item key of an item id for the commodity check; nil if the client does not know it.
-local function clientIsCommodity(itemID)
-    local info = C_AuctionHouse.GetItemKeyInfo(C_AuctionHouse.MakeItemKey(itemID))
-    if type(info) == "table" and type(info.isCommodity) == "boolean" then
-        return info.isCommodity
-    end
-    return nil
-end
 
 -- Max stack size from the client, or from the item cache when the client gives none.
 local function maxStack(itemID)
@@ -133,21 +130,29 @@ local function maxStack(itemID)
     return info and info.stackCount or nil
 end
 
--- Read access to the client replicate API, in the form that the scan engine needs.
+-- Read access to the auction client scan calls, in the form that the scan engine needs.
 local function buildScanApi()
-    local ah = C_AuctionHouse
+    local client = ns.AuctionClient
     local api = {
-        getNum = ah.GetNumReplicateItems,
-        getInfo = ah.GetReplicateItemInfo,
-        getLink = ah.GetReplicateItemLink,
-        getPetInfo = ah.GetReplicateItemBattlePetInfo,
+        getNum = client.RowCount,
+        readRow = client.ReadRow,
+        getLink = client.RowLink,
+        -- ScanRows treats any non-nil result as a battle pet.
+        getPetInfo = function(index)
+            if client.RowIsPet(index) then
+                return true
+            end
+            return nil
+        end,
         maxStack = maxStack,
+        doneEvent = client.ScanDoneEvent(),
+        closeEvent = client.CloseEvent(),
     }
-    if type(ah.ReplicateItems) == "function" then
-        api.replicateItems = ah.ReplicateItems
+    if client.CanScan() then
+        api.replicateItems = client.StartScan
     end
-    if type(ah.MakeItemKey) == "function" and type(ah.GetItemKeyInfo) == "function" then
-        api.clientIsCommodity = clientIsCommodity
+    if client.HasCommodityCheck() then
+        api.clientIsCommodity = client.ItemIsCommodity
     end
     return api
 end
@@ -229,28 +234,17 @@ local function detectRegion()
     return "beta", "fallback"
 end
 
--- Read access to the client search results, in the form that the capture needs.
-local function buildCaptureApi()
-    local ah = C_AuctionHouse
-    return {
-        commodityNum = ah.GetNumCommoditySearchResults,
-        commodityInfo = ah.GetCommoditySearchResultInfo,
-        commodityFull = ah.HasFullCommoditySearchResults,
-        itemNum = ah.GetNumItemSearchResults,
-        itemInfo = ah.GetItemSearchResultInfo,
-        itemFull = ah.HasFullItemSearchResults,
-    }
-end
 
 -- Save the price of each item that the player searches in the Auction House.
 local function openCapture()
-    if not ns.ScanCapture then
+    local source = ns.AuctionClient.Capture()
+    if not (ns.ScanCapture and source) then
         return
     end
     local ok, capture = pcall(ns.ScanCapture.New, {
         store = ns.scanStore,
         serverTime = GetServerTime,
-        api = buildCaptureApi(),
+        api = source.api,
         report = ns.ReportError,
         isScanRunning = function()
             return ns.scanEngine ~= nil and ns.scanEngine:IsRunning()
@@ -261,10 +255,10 @@ local function openCapture()
         return
     end
     ns.scanCapture = capture
-    ns.bus:Subscribe("COMMODITY_SEARCH_RESULTS_UPDATED", "Flipside.Capture", function(_, itemID)
+    ns.bus:Subscribe(source.commodityEvent, "Flipside.Capture", function(_, itemID)
         capture:OnCommodityResults(itemID)
     end)
-    ns.bus:Subscribe("ITEM_SEARCH_RESULTS_UPDATED", "Flipside.Capture", function(_, itemKey)
+    ns.bus:Subscribe(source.itemEvent, "Flipside.Capture", function(_, itemKey)
         capture:OnItemResults(itemKey)
     end)
 end
@@ -365,16 +359,6 @@ local function clientLookup(name)
     return parsed.itemID, link, itemName
 end
 
--- Call an Auction House function by name; a missing function gives a clear error.
-local function ahCall(name)
-    return function(...)
-        local fn = C_AuctionHouse[name]
-        if type(fn) ~= "function" then
-            error("C_AuctionHouse." .. name .. " is not available", 0)
-        end
-        return fn(...)
-    end
-end
 
 -- Create the Auction House name search; it needs the scan setup.
 local function openAHSearch()
@@ -384,10 +368,13 @@ local function openAHSearch()
     local ok, result = pcall(ns.AHNameSearch.New, {
         bus = ns.bus,
         api = {
-            sendBrowseQuery = ahCall("SendBrowseQuery"),
-            getBrowseResults = ahCall("GetBrowseResults"),
-            getItemKeyInfo = ahCall("GetItemKeyInfo"),
+            sendBrowseQuery = function(query)
+                return ns.AuctionClient.NameSearch(query.searchString)
+            end,
+            getBrowseResults = ns.AuctionClient.NameResults,
+            getItemKeyInfo = ns.AuctionClient.NameItemKeyInfo,
         },
+        event = ns.AuctionClient.NameResultEvent(),
         isAuctionHouseOpen = ns.IsAuctionHouseOpen,
         clock = GetTime,
         after = C_Timer.After,
@@ -439,8 +426,8 @@ end
 -- Key resolver for bag items and pasted links, with the same lookups as the scan.
 local function buildKeyResolver()
     local lookups = { maxStack = maxStack }
-    if type(C_AuctionHouse.MakeItemKey) == "function" and type(C_AuctionHouse.GetItemKeyInfo) == "function" then
-        lookups.clientIsCommodity = clientIsCommodity
+    if ns.AuctionClient.HasCommodityCheck() then
+        lookups.clientIsCommodity = ns.AuctionClient.ItemIsCommodity
     end
     return ns.ScanKey.New(lookups)
 end
@@ -496,8 +483,8 @@ local function buildInventoryApi()
         and type(GetInboxItem) == "function" then
         api.mail = { numItems = GetInboxNumItems, itemLink = GetInboxItemLink, itemInfo = GetInboxItem }
     end
-    if type(C_AuctionHouse.GetOwnedAuctions) == "function" then
-        api.auctions = { owned = C_AuctionHouse.GetOwnedAuctions }
+    if ns.AuctionClient.CanReadOwned() then
+        api.auctions = { owned = ns.AuctionClient.OwnedAuctions }
     end
     return api
 end
@@ -514,6 +501,7 @@ local function openInventory()
             holdings = ns.holdings,
             holdingsRead = ns.HoldingsRead,
             api = buildInventoryApi(),
+            ownedEvent = ns.AuctionClient.OwnedEvent(),
             resolver = buildKeyResolver(),
             after = C_Timer.After,
             report = ns.ReportError,

@@ -13,6 +13,8 @@ Shared\Core\Scheduler.lua
 Shared\Core\ItemString.lua
 Shared\Core\SettingsDB.lua
 Shared\Core\ItemInfoCache.lua
+Shared\Services\AuctionClient.lua
+AH_Forever\ForeverBackend.lua
 Shared\Services\ScanClock.lua
 Shared\Services\ScanRecord.lua
 Shared\Services\ScanMarket.lua

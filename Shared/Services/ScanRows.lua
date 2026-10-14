@@ -67,9 +67,15 @@ function ScanRows.Read(job, api)
         end
         job:Checkpoint(1)
 
-        -- getInfo returns up to 18 values; keep the ones that we use.
-        local info = { pcall(api.getInfo, index) }
-        local count, buyout, itemID, hasAllInfo = info[4], info[11], info[18], info[19]
+        -- readRow gives count, buyout, itemID, hasAllInfo. A getInfo api gives the raw client tuple.
+        local info, count, buyout, itemID, hasAllInfo
+        if api.readRow then
+            info = { pcall(api.readRow, index) }
+            count, buyout, itemID, hasAllInfo = info[2], info[3], info[4], info[5]
+        else
+            info = { pcall(api.getInfo, index) }
+            count, buyout, itemID, hasAllInfo = info[4], info[11], info[18], info[19]
+        end
         if not info[1] then
             RecordError(stats, info[2])
             stats.empty = stats.empty + 1
