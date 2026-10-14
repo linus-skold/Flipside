@@ -208,11 +208,15 @@ local function buildScanApi()
     if client.HasCommodityCheck() then
         api.clientIsCommodity = client.ItemIsCommodity
     end
-    -- A backend with scan modes (legacy) keys rows without a link and refreshes missing links.
+    -- A backend with scan modes (legacy) also keys rows without a link.
+    -- A backend with ScanRefreshSeconds (Forever too) makes the engine retry item loads and missing links.
+    local refreshBackend = client.Backend()
+    if refreshBackend and refreshBackend.ScanRefreshSeconds then
+        api.refreshSeconds = client.ScanRefreshSeconds
+    end
     local modes = client.ScanModes()
     if modes then
         api.modes = modes
-        api.refreshSeconds = client.ScanRefreshSeconds
         api.canKeyWithoutLink = canKeyWithoutLink
         local backend = client.Backend()
         if client.CanScan() and backend and backend.ScanPageQuery then

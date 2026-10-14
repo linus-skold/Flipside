@@ -103,6 +103,7 @@ function ScanRows.Read(job, api)
                     unitPrice = UnitPriceFromBuyout(buyout, count),
                     count = count,
                     link = link or nil,
+                    allInfo = hasAllInfo == true,
                 }
                 stats.kept = stats.kept + 1
                 if hasAllInfo ~= true or link == nil then
@@ -159,6 +160,61 @@ function ScanRows.Merge(into, page)
     end
     into.stats.items = CountKeys(into.byItem)
     into.stats.pendingItems = CountKeys(into.pending)
+end
+
+-- Reads the rows again that have no link or no full item info, by row index. Removes pets and clears pending
+-- for the items whose rows all have a link and full info. A row index stays valid after the scan read.
+function ScanRows.RereadRows(job, api, result, itemIDs)
+    local stats = result.stats
+    for _, itemID in ipairs(itemIDs) do
+        local list = result.byItem[itemID]
+        if list then
+            local kept, complete = {}, true
+            for _, row in ipairs(list) do
+                job:Checkpoint(1)
+                if row.link == nil or not row.allInfo then
+                    local okLink, link = Call(stats, api.getLink, row.index)
+                    if okLink and link ~= nil then
+                        row.link = link
+                    end
+                    local info
+                    if api.readRow then
+                        info = { pcall(api.readRow, row.index) }
+                        if info[1] and info[5] == true then
+                            row.allInfo = true
+                        end
+                    elseif api.getInfo then
+                        info = { pcall(api.getInfo, row.index) }
+                        if info[1] and info[19] == true then
+                            row.allInfo = true
+                        end
+                    end
+                end
+                if ns.ScanKey.IsBattlePet(row.link) then
+                    stats.pet = stats.pet + 1
+                    stats.kept = stats.kept - 1
+                else
+                    kept[#kept + 1] = row
+                    if row.link == nil or not row.allInfo then
+                        complete = false
+                    end
+                end
+            end
+            if #kept == 0 then
+                result.byItem[itemID] = nil
+                result.pending[itemID] = nil
+            else
+                result.byItem[itemID] = kept
+                if complete then
+                    result.pending[itemID] = nil
+                end
+            end
+        else
+            result.pending[itemID] = nil
+        end
+    end
+    stats.items = CountKeys(result.byItem)
+    stats.pendingItems = CountKeys(result.pending)
 end
 
 -- Reads the links again for the given item ids. Removes pets and clears pending.

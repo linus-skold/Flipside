@@ -136,6 +136,10 @@ local function MakeWorld(options)
         w.api.refreshSeconds = function() return options.refresh or 10 end
         w.api.canKeyWithoutLink = function(id) return w.canKey[id] end
     end
+    if options.forever then
+        -- Forever backend: a refresh time, no scan modes, no rule for rows without a link.
+        w.api.refreshSeconds = function() return options.refresh or 30 end
+    end
     if options.noReplicate then
         w.api.replicateItems = nil
     end
@@ -350,7 +354,7 @@ describe("ScanEngine run", function()
         end
     end)
 
-    it("leaves out an item that never loads and marks the scan partial", function()
+    it("leaves out an item that never loads and stores the other items as complete", function()
         local rows = { gearRow(1), gearRow(2), gearRow(3) }
         rows[#rows + 1] = gearRow(4)
         rows[4].late = true
@@ -359,17 +363,19 @@ describe("ScanEngine run", function()
         local w = MakeWorld({ rows = rows })
         w.neverLoad[1004] = true
         local summary = Run(w)
-        assert.are.equal("partial", summary.result)
+        assert.are.equal("ok", summary.result)
         assert.are.equal(1, summary.pendingMissing)
+        assert.are.equal(1, summary.pending)
         assert.is_true(w.tick >= 30)
         assert.is_nil(w.store:Get("1004#b6004"))
         assert.is_not_nil(w.store:Get("1005#b6005"))
         assert.is_not_nil(w.store:Get("1001#b6001"))
         assert.are.equal(4, #w.store:Keys())
         local record = w.store:Get("1001#b6001")
-        assert.is_true(record.latest.partial)
-        assert.is_nil(record.today)
-        assert.is_truthy(Joined(w):find("items without data", 1, true))
+        assert.is_false(record.latest.partial)
+        assert.are.equal(1, #record.today.snaps)
+        assert.is_truthy(Joined(w):find("full scan complete with 1 pending:", 1, true))
+        assert.is_nil(Joined(w):find("partial scan", 1, true))
     end)
 
     it("skips battle pets", function()
@@ -383,14 +389,17 @@ describe("ScanEngine run", function()
         assert.are.same({ "1001#b6001" }, w.store:Keys())
     end)
 
-    it("counts rows without a key and marks the scan partial", function()
+    it("counts rows without a key and stores the item as latest only", function()
         local rows = { gearRow(1), gearRow(2) }
         rows[2].link = "|cffffffff|Hitem:9999::::::::70:::::|h[X]|h|r"
         local w = MakeWorld({ rows = rows })
         local summary = Run(w)
-        assert.are.equal("partial", summary.result)
+        assert.are.equal("ok", summary.result)
         assert.are.equal(1, summary.noKey)
         assert.are.equal(1, summary.keys)
+        assert.are.equal(1, summary.pending)
+        assert.is_false(w.store:Get("1001#b6001").latest.partial)
+        assert.is_nil(w.store:Get("1002#b6002"))
     end)
 
     it("emits Flipside.ScanFinished and calls onFinished", function()
@@ -491,7 +500,7 @@ describe("ScanEngine cpuMs", function()
         local w = MakeWorld({ rows = rows, apiCost = 0.5 })
         w.neverLoad[1002] = true
         local summary = Run(w)
-        assert.are.equal("partial", summary.result)
+        assert.are.equal("ok", summary.result)
         assert.is_true(summary.wallMs >= 30 * 16)
         assert.is_true(math.abs(summary.cpuMs - 1) < 0.001)
     end)
@@ -533,18 +542,19 @@ describe("ScanEngine unknown stack size", function()
         assert.is_false(w.store:Get("3001").latest.partial)
     end)
 
-    it("leaves out rows with a link of another item and marks the scan partial", function()
+    it("leaves out rows with a link of another item and counts the item as pending", function()
         local rows = rowsWithUnknown()
         rows[2].link = commodityRow(3999).link
         rows[3].link = commodityRow(3999).link
         local w = MakeWorld({ rows = rows, unknownStack = true })
         w.neverLoad[3001] = true
         local summary = Run(w)
-        assert.are.equal("partial", summary.result)
+        assert.are.equal("ok", summary.result)
         assert.are.equal(1, summary.itemsLinkMismatch)
+        assert.are.equal(1, summary.pending)
         assert.are.equal(2, summary.noKey)
         assert.is_nil(w.store:Get("3001"))
-        assert.is_truthy(Joined(w):find("1 items with a bad link", 1, true))
+        assert.is_truthy(Joined(w):find("complete with 1 pending", 1, true))
     end)
 
     it("counts every item in one group", function()
@@ -563,7 +573,8 @@ describe("ScanEngine unknown stack size", function()
         w.neverLoad[1003] = true
         w.neverLoad[1006] = true
         local s = Run(w)
-        assert.are.equal("partial", s.result)
+        assert.are.equal("ok", s.result)
+        assert.are.equal(4, s.pending)
         assert.are.equal(6, s.items)
         assert.are.equal(1, s.itemsKeyed)
         assert.are.equal(1, s.itemsLinkFallback)
@@ -573,7 +584,7 @@ describe("ScanEngine unknown stack size", function()
         assert.are.equal(1, s.itemsUnknown)
         assert.are.equal(s.items, s.itemsKeyed + s.itemsLinkFallback + s.itemsPendingMissing + s.itemsNoLink
             + s.itemsLinkMismatch + s.itemsUnknown)
-        assert.is_truthy(Joined(w):find("1 items without data", 1, true))
+        assert.is_truthy(Joined(w):find("complete with 4 pending", 1, true))
     end)
     it("makes one load set for pending and unknown items", function()
         local rows = rowsWithUnknown()
@@ -645,12 +656,14 @@ describe("ScanEngine legacy keys and refresh", function()
         w.canKey[3004] = false
         w.stackOnLoad[3005] = 20
         local s = Run(w)
-        assert.are.equal("partial", s.result)
+        assert.are.equal("ok", s.result)
         assert.are.equal(1, s.pendingMissing)
         assert.are.equal(1, s.noKey)
         assert.are.equal(0, s.keyedWithoutLink)
         assert.is_nil(w.store:Get("3004"))
         assert.is_not_nil(w.store:Get("3005"))
+        assert.are.equal(1, #w.store:Get("3005").today.snaps)
+        assert.is_false(w.store:Get("3005").latest.partial)
     end)
 
     it("does not stop the scan when one item load fails", function()
@@ -658,7 +671,8 @@ describe("ScanEngine legacy keys and refresh", function()
         w.canKey[3006] = false
         w.failLoad[3006] = true
         local s = Run(w)
-        assert.are.equal("partial", s.result)
+        assert.are.equal("ok", s.result)
+        assert.are.equal(1, s.pending)
         assert.are.equal(1, s.failed)
         assert.are.equal(1, s.keys)
         assert.is_not_nil(w.store:Get("3007"))
@@ -680,6 +694,136 @@ describe("ScanEngine legacy keys and refresh", function()
         assert.are.equal(0, s.refreshSeconds)
         assert.is_nil(s.mode)
         assert.are.equal(0, s.keyedWithoutLink)
+    end)
+end)
+
+describe("ScanEngine Forever retry", function()
+    it("keys an item when the link appears on the second poll", function()
+        local row = gearRow(1)
+        row.linkAfter = 2
+        local w = MakeWorld({ rows = { row, gearRow(2) }, forever = true })
+        local s = Run(w)
+        assert.are.equal("ok", s.result)
+        assert.are.equal(0, s.pending)
+        assert.are.equal(2, s.keys)
+        assert.is_not_nil(w.store:Get("1001#b6001"))
+        assert.are.equal(1, s.retried)
+        assert.is_true(s.refreshSeconds >= 2 and s.refreshSeconds < 30)
+        assert.are.equal(1, #w.store:Get("1001#b6001").today.snaps)
+    end)
+
+    it("keys an item when hasAllInfo changes from false to true", function()
+        local rows = { gearRow(1), gearRow(2) }
+        rows[2].late = true
+        local w = MakeWorld({ rows = rows, forever = true })
+        local s = Run(w)
+        assert.are.equal(0, s.pending)
+        assert.are.equal(2, s.keys)
+        assert.is_true(w.requested[1002] ~= nil or w.requestCount[1002] >= 1)
+        assert.is_not_nil(w.store:Get("1002#b6002"))
+    end)
+
+    it("keys an item when the load fails once and then works", function()
+        local rows = { gearRow(1), gearRow(2) }
+        rows[2].late = true
+        local w = MakeWorld({ rows = rows, forever = true })
+        w.failLoad[1002] = true
+        assert.is_true(w.engine:Start())
+        for _ = 1, 300 do
+            if not w.engine:IsRunning() then
+                break
+            end
+            Tick(w)
+            if (w.requestCount[1002] or 0) >= 2 then
+                w.failLoad[1002] = nil
+            end
+        end
+        assert.are.same({}, w.errors)
+        local s = w.finished[#w.finished]
+        assert.are.equal(0, s.pending)
+        assert.are.equal(0, s.failed)
+        assert.are.equal(1, s.retried)
+        assert.is_not_nil(w.store:Get("1002#b6002"))
+    end)
+
+    it("leaves an item pending when its load never answers, and stores the others for today", function()
+        local rows = { gearRow(1), gearRow(2), gearRow(3) }
+        rows[2].late = true
+        local w = MakeWorld({ rows = rows, forever = true })
+        w.neverLoad[1002] = true
+        local s = Run(w)
+        assert.are.equal("ok", s.result)
+        assert.are.equal(1, s.pending)
+        assert.are.equal(1, s.pendingMissing)
+        assert.are.equal(1, s.nilLink)
+        assert.are.equal(1, s.notAllInfo)
+        assert.are.equal(1, s.retried)
+        assert.is_true(s.refreshSeconds >= 30)
+        assert.is_nil(w.store:Get("1002#b6002"))
+        for _, key in ipairs({ "1001#b6001", "1003#b6003" }) do
+            local record = w.store:Get(key)
+            assert.is_false(record.latest.partial)
+            assert.are.equal(1, #record.today.snaps)
+        end
+        assert.is_truthy(Joined(w):find("full scan complete with 1 pending:", 1, true))
+    end)
+
+    it("counts an item whose load keeps failing", function()
+        local rows = { gearRow(1), gearRow(2) }
+        rows[2].late = true
+        local w = MakeWorld({ rows = rows, forever = true, refresh = 5 })
+        w.failLoad[1002] = true
+        local s = Run(w)
+        assert.are.equal(1, s.pending)
+        assert.are.equal(1, s.failed)
+        assert.is_not_nil(w.store:Get("1001#b6001"))
+    end)
+
+    it("uses the base key for a commodity without a link", function()
+        local rows = { commodityRow(2001), commodityRow(2001, 5, 6000), gearRow(1) }
+        rows[1].late, rows[2].late = true, true
+        local w = MakeWorld({ rows = rows, forever = true })
+        w.neverLoad[2001] = true
+        local s = Run(w)
+        assert.are.equal(0, s.pending)
+        assert.are.equal(2, s.keys)
+        assert.are.equal(10, w.store:Get("2001").latest.qty)
+        assert.is_false(w.store:Get("2001").latest.partial)
+        assert.are.equal(0, s.retried)
+    end)
+
+    it("keeps a gear item without a link pending", function()
+        local rows = { gearRow(1), gearRow(2) }
+        rows[2].late = true
+        local w = MakeWorld({ rows = rows, forever = true, refresh = 4 })
+        w.neverLoad[1002] = true
+        local s = Run(w)
+        assert.are.equal(1, s.pending)
+        assert.is_nil(w.store:Get("1002#b6002"))
+        assert.is_not_nil(w.store:Get("1001#b6001"))
+    end)
+
+    it("keeps a partial scan latest only when the read is cut", function()
+        local w = MakeWorld({ rows = bigRows(), forever = true })
+        w.onInfo = function(index)
+            if index == 1200 then
+                w.bus:Emit(CLOSED)
+            end
+        end
+        local s = Run(w)
+        assert.are.equal("partial", s.result)
+        for _, key in ipairs(w.store:Keys()) do
+            assert.is_nil(w.store:Get(key).today)
+        end
+    end)
+
+    it("does not refresh when the api has no refresh time", function()
+        local rows = { gearRow(1), gearRow(2) }
+        rows[2].late = true
+        local w = MakeWorld({ rows = rows })
+        local s = Run(w)
+        assert.are.equal(0, s.retried)
+        assert.are.equal(0, s.refreshSeconds)
     end)
 end)
 

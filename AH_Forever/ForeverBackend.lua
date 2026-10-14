@@ -35,6 +35,41 @@ function Backend.ScanDoneEvent()
     return "REPLICATE_ITEM_LIST_UPDATE"
 end
 
+-- The engine asks again for item data and reads rows without a link or item info again, for up to this long.
+local REFRESH_SECONDS = 30
+local DIAG_KEEP = 5
+
+function Backend.ScanRefreshSeconds()
+    return REFRESH_SECONDS
+end
+
+-- Builds the diagnostics line of the finished scan and keeps the last 5 runs in the scan DB.
+function Backend.ScanDiagnostics(summary)
+    summary = summary or {}
+    local entry = {
+        time = type(GetServerTime) == "function" and GetServerTime() or 0,
+        result = summary.result,
+        rows = summary.rows, items = summary.items, keys = summary.keys,
+        pending = summary.pending, failed = summary.failed, nilLink = summary.nilLink,
+        notAllInfo = summary.notAllInfo, retried = summary.retried, refreshSeconds = summary.refreshSeconds,
+    }
+    local flavour = ns.Flavour
+    local db = flavour and flavour.savedVariables and _G[flavour.savedVariables.scan]
+    if type(db) == "table" then
+        if type(db.diag) ~= "table" then
+            db.diag = {}
+        end
+        db.diag[#db.diag + 1] = entry
+        while #db.diag > DIAG_KEEP do
+            table.remove(db.diag, 1)
+        end
+    end
+    return string.format(
+        "pending %s, failed %s (load failed), nilLink %s, notAllInfo %s, retried %s, refresh %.1f s",
+        tostring(entry.pending), tostring(entry.failed), tostring(entry.nilLink), tostring(entry.notAllInfo),
+        tostring(entry.retried), entry.refreshSeconds or 0)
+end
+
 function Backend.RowCount()
     return call("GetNumReplicateItems")
 end
