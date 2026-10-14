@@ -34,7 +34,7 @@ describe("FormulaSources", function()
     end)
 
     it("reports the status of each name group", function()
-        for _, name in ipairs({ "scanmin", "scanrecent", "scanmarket", "scanhistorical",
+        for _, name in ipairs({ "scanmin", "scanrecent", "scanmarket", "scanlow", "scanhigh", "scanhistorical",
             "scanqty", "scanage", "scansamples", "vendorsell" }) do
             assert.are.equal("available", sources:Status(name))
         end
@@ -60,6 +60,8 @@ describe("FormulaSources", function()
         assert.are.equal(40, sources:Read("scanqty", ctx))
         assert.are.equal(2, sources:Read("scanage", ctx))
         assert.are.equal(expected.scanMarket, sources:Read("scanmarket", ctx))
+        assert.are.equal(1, sources:Read("scanlow", ctx))
+        assert.are.equal(3000, sources:Read("scanhigh", ctx))
         assert.are.equal(2500, sources:Read("scanhistorical", ctx))
         assert.are.equal(expected.scanSamples, sources:Read("scansamples", ctx))
         assert.is_truthy(expected.scanMarket)
@@ -139,7 +141,7 @@ describe("FormulaSources", function()
 
     it("lists the names sorted with status", function()
         local list = sources:List()
-        assert.are.equal(#LATER + 8, #list)
+        assert.are.equal(#LATER + 10, #list)
         for i = 2, #list do
             assert.is_true(list[i - 1].name < list[i].name)
         end
