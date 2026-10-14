@@ -174,6 +174,17 @@ describe("AuctionClient", function()
             assert.are.equal("ITEM_SEARCH_RESULTS_UPDATED", capture.itemEvent)
         end)
 
+        it("searches one item by item key", function()
+            local sent
+            _G.C_AuctionHouse.MakeItemKey = function(itemID) return { itemID = itemID } end
+            _G.C_AuctionHouse.SendSearchQuery = function(...) sent = { ... } end
+            assert.is_true(ns.AuctionClient.CanTargetSearch())
+            ns.AuctionClient.TargetedSearch(2589)
+            assert.are.same({ { itemID = 2589 }, {}, true }, sent)
+            _G.C_AuctionHouse.SendSearchQuery = nil
+            assert.is_false(ns.AuctionClient.CanTargetSearch())
+        end)
+
         it("reads the owned auctions", function()
             mock.ownedAuctions = { { itemID = 1 } }
             assert.is_true(ns.AuctionClient.CanReadOwned())

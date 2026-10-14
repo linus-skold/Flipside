@@ -200,6 +200,21 @@ function Backend.NameSearch(text)
     return ownQuery("name", tostring(text or ""), nil, nil, 0, false, 0, false, false, nil)
 end
 
+function Backend.CanTargetSearch()
+    return has("QueryAuctionItems") and has("CanSendAuctionQuery")
+end
+
+-- Exact-name browse query for one item; the list event and the capture handle the result.
+function Backend.TargetedSearch(_, name)
+    if type(name) ~= "string" or name == "" then
+        error("the item name is not loaded yet, try again in a moment", 0)
+    end
+    if not call("CanSendAuctionQuery", "list") then
+        error("the Auction House is busy, try again in a moment", 0)
+    end
+    return ownQuery("lookup", name, nil, nil, 0, false, 0, false, true, nil)
+end
+
 function Backend.NameResultEvent()
     return "AUCTION_ITEM_LIST_UPDATE"
 end

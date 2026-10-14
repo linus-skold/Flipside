@@ -2,7 +2,7 @@ local _, ns = ...
 
 -- The one door to the auction API. A flavour file registers a backend with Use(); shared code calls only this module.
 -- Backend functions: StartScan, ScanDoneEvent, RowCount, ReadRow, RowLink, RowIsPet, ItemIsCommodity,
--- HasCommodityCheck, NameSearch, NameResultEvent, NameResults, NameItemKeyInfo, Capture, OwnedAuctions,
+-- HasCommodityCheck, NameSearch, TargetedSearch, NameResultEvent, NameResults, NameItemKeyInfo, Capture, OwnedAuctions,
 -- CanReadOwned, OwnedEvent, OpenEvent, CloseEvent, CanScan. A backend leaves out what its client cannot do.
 local AuctionClient = {}
 ns.AuctionClient = AuctionClient
@@ -52,6 +52,7 @@ end
 query("CanScan", false)
 query("HasCommodityCheck", false)
 query("CanReadOwned", false)
+query("CanTargetSearch", false)
 
 -- Event names: nil without a backend function.
 query("ScanDoneEvent")
@@ -80,6 +81,8 @@ action("ReadRow")
 action("RowLink")
 action("RowIsPet")
 action("NameSearch")
+-- TargetedSearch(itemID, name): search the listings of one item. The capture stores the result.
+action("TargetedSearch")
 action("NameResults")
 action("NameItemKeyInfo")
 action("OwnedAuctions")

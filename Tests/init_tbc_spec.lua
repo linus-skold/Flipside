@@ -391,6 +391,74 @@ describe("Init on TBC", function()
                 assert.are.equal(0, ns.scanStore:CountItems())
             end)
 
+            describe("targeted price refresh", function()
+                it("sends an exact-name query and stores the price of the result", function()
+                    local emitted = {}
+                    ns.bus:Subscribe("Flipside.PriceCaptured", "test", function(_, key)
+                        emitted[#emitted + 1] = key
+                    end)
+                    assert.are.same({ true }, { ns.RequestPriceRefresh(2589, "Linen Cloth") })
+                    assert.are.equal(1, #queries)
+                    assert.are.equal("Linen Cloth", queries[1][1])
+                    assert.are.equal(true, queries[1][8])
+                    assert.are.equal(false, queries[1][7])
+                    rows[1] = { count = 5, buyout = 500, link = LINEN }
+                    fireEvents(3)
+                    mock.advance(1)
+                    assert.are.equal(100, ns.scanStore:Get("2589").latest.min)
+                    assert.are.same({ "2589" }, emitted)
+                end)
+
+                it("gives the hint when the Auction House is closed", function()
+                    mock.fire("AUCTION_HOUSE_CLOSED")
+                    local ok, text = ns.RequestPriceRefresh(2589, "Linen Cloth")
+                    assert.is_false(ok)
+                    assert.are.equal("open the Auction House to refresh this price", text)
+                    assert.are.equal(0, #queries)
+                end)
+
+                it("needs an item name and a free query", function()
+                    local ok, text = ns.RequestPriceRefresh(2589)
+                    assert.is_false(ok)
+                    assert.is_truthy(text:find("name is not loaded", 1, true))
+                    _G.CanSendAuctionQuery = function() return false, false end
+                    ok, text = ns.RequestPriceRefresh(2589, "Linen Cloth")
+                    assert.is_false(ok)
+                    assert.is_truthy(text:find("busy", 1, true))
+                end)
+
+                it("uses the cached item name", function()
+                    mock.itemInfo[2589] = { "Linen Cloth", LINEN }
+                    assert.is_true(ns.RequestPriceRefresh(2589))
+                    assert.are.equal("Linen Cloth", queries[1][1])
+                end)
+
+                it("/flip price takes a key and a link, and prints the fresh price", function()
+                    mock.itemInfo[2589] = { "Linen Cloth", LINEN }
+                    slash("price 2589#s-44")
+                    assert.are.equal(1, count("no scan data for 2589#s-44"))
+                    assert.are.equal(1, #queries)
+                    rows[1] = { count = 1, buyout = 800, link = LINEN }
+                    mock.messages = {}
+                    fireEvents(2)
+                    mock.advance(1)
+                    assert.are.equal(1, count("fresh price from the Auction House"))
+                    assert.are.equal(1, count("key 2589: ScanMin 800"))
+                end)
+
+                it("/flip price takes an item link", function()
+                    slash("price " .. LINEN)
+                    assert.are.equal(1, #queries)
+                    assert.are.equal("no scan data for 2589", mock.messages[1]:match("no scan data for 2589"))
+                end)
+
+                it("/flip price shows the hint with the Auction House closed", function()
+                    mock.fire("AUCTION_HOUSE_CLOSED")
+                    slash("price " .. LINEN)
+                    assert.are.equal(1, count("open the Auction House to refresh this price"))
+                end)
+            end)
+
             it("ignores the events of a Flipside scan and of a name search", function()
                 ns.AuctionClient.StartScan()
                 rows[1] = { count = 1, buyout = 100, link = LINEN }
