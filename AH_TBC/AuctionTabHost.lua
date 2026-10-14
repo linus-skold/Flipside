@@ -24,6 +24,11 @@ local ART = {
     { "AuctionFrameBotRight", "BotRight" },
 }
 
+-- Start page scan bar: the top strip of the Browse page, right of the title and left of the close button.
+-- The title is at the top centre (Blizzard_AuctionUI.xml:115-123). The close button is 3 px outside the
+-- right edge (:96-104). The Browse labels start 38 px below the top (:126-134), the Search button 39 px (:1190-1200).
+local START_BAR = { right = 36, top = 9, width = 350, buttonWidth = 62, stopWidth = 52 }
+
 local function blizzardTab(index)
     return _G["AuctionFrameTab" .. index]
 end
@@ -61,6 +66,24 @@ local function buildTab(state)
     PanelTemplates_TabResize(button, 0, nil, 36)
 end
 
+-- Give the place of the scan bar on the Browse page. Blizzard frames are only read.
+function Host.StartPage(frame)
+    local page = _G.AuctionFrameBrowse
+    if not page then
+        return nil
+    end
+    return {
+        parent = frame,
+        page = page,
+        width = START_BAR.width,
+        buttonWidth = START_BAR.buttonWidth,
+        stopWidth = START_BAR.stopWidth,
+        anchor = function(bar)
+            bar:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -START_BAR.right, -START_BAR.top)
+        end,
+    }
+end
+
 local function buildFrame(state, core)
     local frame = AuctionFrame
     state.frame = frame
@@ -68,6 +91,7 @@ local function buildFrame(state, core)
     local api = {
         insets = INSETS,
         layout = "compact",
+        startPage = Host.StartPage(frame),
         -- Core shows the panel. Blizzard's click code already hid the panes and marked the tab.
         Enter = function()
             setArt()

@@ -199,6 +199,42 @@ describe("Init UI", function()
             assert.is_false(ns.scanEngine:IsRunning())
         end)
 
+        describe("start page scan bar", function()
+            local page
+
+            before_each(function()
+                local ah = makeAH()
+                page = CreateFrame("Frame", nil, ah)
+                page:Hide()
+                ah.BrowseResultsFrame = page
+                login()
+                mock.fire("AUCTION_HOUSE_SHOW")
+            end)
+
+            it("starts a scan with the same popup as the tab", function()
+                page:Show()
+                page:GetScript("OnShow")(page)
+                local bar = ns.auctionTab.startPage.bar
+                assert.is_true(ns.auctionTab.startPage.frame:IsShown())
+                bar.scan:GetScript("OnClick")(bar.scan)
+                assert.are.equal("FLIPSIDE_FULL_SCAN", mock.popup.which)
+                mock.acceptPopup()
+                assert.is_true(ns.scanEngine:IsRunning())
+            end)
+
+            it("is on by default and the check box saves the setting in the profile", function()
+                local ui = ns.auctionTab.ui
+                assert.is_nil(ns.db:Get("profile", "ui.startPageScanBar"))
+                assert.is_true(ui.startCheck.checked)
+                ui.startCheck.checked = false
+                ui.startCheck:GetScript("OnClick")(ui.startCheck)
+                assert.is_false(ns.db:Get("profile", "ui.startPageScanBar"))
+                page:Show()
+                page:GetScript("OnShow")(page)
+                assert.is_false(ns.auctionTab.startPage.frame:IsShown())
+            end)
+        end)
+
         it("uses the same popup for /flip scan", function()
             makeAH()
             login()

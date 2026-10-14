@@ -10,6 +10,11 @@ local ADDON = "Blizzard_AuctionHouseUI"
 local TAB_TEMPLATES = { "AuctionHouseFrameTabTemplate", "PanelTabButtonTemplate" }
 local INSETS = { top = 60, bottom = 30 }
 
+-- Start page scan bar: the bottom strip right of the gold display (Blizzard_AuctionHouseFrame.xml:11-16 and 17-21).
+-- The strip is 27 px high above the frame edge: the category list ends 27 px above the bottom
+-- (Blizzard_AuctionHouseFrame.xml:76-80, height 438 in Blizzard_AuctionHouseCategoriesList.xml:61).
+local START_BAR = { left = 174, right = 8, bottom = 4, buttonWidth = 90, stopWidth = 60 }
+
 local function indexOf(list, item)
     for index, value in ipairs(list) do
         if value == item then
@@ -70,11 +75,31 @@ local function buildTab(state, core, frame)
     return blizzardTabs
 end
 
+-- Give the place of the scan bar on the browse page. The browse results frame is shown only on the Buy start page.
+-- Blizzard frames are only read.
+function Host.StartPage(frame)
+    local page = frame.BrowseResultsFrame
+    if not page then
+        return nil
+    end
+    return {
+        parent = frame,
+        page = page,
+        buttonWidth = START_BAR.buttonWidth,
+        stopWidth = START_BAR.stopWidth,
+        anchor = function(bar)
+            bar:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", START_BAR.left, START_BAR.bottom)
+            bar:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -START_BAR.right, START_BAR.bottom)
+        end,
+    }
+end
+
 local function buildFrame(state, core, frame)
     state.frame = frame
     local blizzardTabs = buildTab(state, core, frame)
     local api = {
         insets = INSETS,
+        startPage = Host.StartPage(frame),
         -- Core shows the panel: remember the Blizzard tab, hide the panes and mark the Flipside tab.
         Enter = function(wasActive)
             if not wasActive then
