@@ -134,8 +134,146 @@ describe("ItemNameIndex", function()
         assert.are.same({ "1" }, ids((index:Find("linen"))))
     end)
 
-    describe("Resolve", function()
-        it("passes links, item strings and ids through", function()
+    describe("quotes, exclude and client lookup", function()
+        local calls
+
+        local function withClient(map)
+            calls = {}
+            index = ns.ItemNameIndex.New({
+                store = store,
+                itemCache = cache,
+                clientLookup = function(name)
+                    table.insert(calls, name)
+                    local id = map[name:lower()]
+                    if id then
+                        return id, "|Hitem:" .. id .. "|h[" .. name .. "]|h", name
+                    end
+                end,
+            })
+        end
+
+        it("matches only the exact name in quotes", function()
+            setItems({ [1] = "Linen Cloth", [2] = "Bolt of Linen Cloth" })
+            assert.are.same({ "1" }, ids((index:Find('"Linen Cloth"'))))
+            assert.are.same({ "1", "2" }, ids((index:Find("linen cloth"))))
+            assert.are.same({ "1" }, ids((index:Find('  " linen CLOTH "  '))))
+        end)
+
+        it("accepts curly quotes", function()
+            setItems({ [1] = "Linen Cloth", [2] = "Bolt of Linen Cloth" })
+            assert.are.same({ "1" }, ids((index:Find("\226\128\156Linen Cloth\226\128\157"))))
+        end)
+
+        it("matches names that contain unquoted text", function()
+            setItems({ [1] = "Linen Cloth", [2] = "Bolt of Linen Cloth" })
+            assert.are.same({ "2" }, ids((index:Find("bolt"))))
+        end)
+
+        it("leaves out excluded keys", function()
+            keys = { "12345", "12345#s-34" }
+            names[12345] = "Crimson Sword"
+            assert.are.same({ "12345#s-34" }, ids((index:Find("crimson", nil, { exclude = { ["12345"] = true } }))))
+        end)
+
+        it("passes options through Resolve", function()
+            setItems({ [1] = "Linen" })
+            local result = index:Resolve("linen", { exclude = { ["1"] = true } })
+            assert.are.same({}, result.matches)
+        end)
+
+        it("adds a client match when scan data gives too few", function()
+            setItems({ [1] = "Linen Cloth" })
+            withClient({ ["linen cloth"] = 1, ["wool cloth"] = 2593 })
+            local matches = index:Find("wool cloth")
+            assert.are.same({ "2593" }, ids(matches))
+            assert.are.equal("client", matches[1].source)
+            assert.are.equal(2593, matches[1].itemID)
+            assert.are.equal("wool cloth", matches[1].name)
+        end)
+
+        it("gives no client match on a miss", function()
+            setItems({ [1] = "Linen Cloth" })
+            withClient({})
+            assert.are.same({}, (index:Find("wool")))
+            assert.are.same({ "wool" }, calls)
+        end)
+
+        it("removes duplicates between scan and client", function()
+            setItems({ [1] = "Linen Cloth" })
+            withClient({ ["linen cloth"] = 1 })
+            local matches = index:Find('"Linen Cloth"')
+            assert.are.same({ "1" }, ids(matches))
+            assert.are.equal("scan", matches[1].source)
+        end)
+
+        it("does not add an excluded client key", function()
+            withClient({ ["wool"] = 2593 })
+            assert.are.same({}, (index:Find("wool", nil, { exclude = { ["2593"] = true } })))
+        end)
+
+        it("skips the client when the scan fills the limit unless quoted", function()
+            setItems({ [1] = "Ore A", [2] = "Ore B" })
+            withClient({ ["ore"] = 99 })
+            assert.are.same({ "1", "2" }, ids((index:Find("ore", 2))))
+            assert.are.same({}, calls)
+            index:Find('"ore"', 2)
+            assert.are.same({ "ore" }, calls)
+        end)
+
+        it("keeps the limit with a client match", function()
+            setItems({ [1] = "Ore A" })
+            withClient({ ["ore"] = 99 })
+            assert.are.same({ "1", "99" }, ids((index:Find("ore", 2))))
+        end)
+
+        it("sets source scan on scan matches", function()
+            setItems({ [1] = "Linen" })
+            assert.are.equal("scan", index:Find("linen")[1].source)
+        end)
+    end)
+
+    describe("ParseQuery", function()
+        local parse
+
+        before_each(function()
+            parse = ns.ItemNameIndex.ParseQuery
+        end)
+
+        it("parses plain text", function()
+            local q = parse("  Linen Cloth ")
+            assert.are.equal("linen cloth", q.text)
+            assert.is_false(q.exact)
+        end)
+
+        it("parses quoted text with spaces", function()
+            local q = parse('  " Linen Cloth "  ')
+            assert.are.equal("linen cloth", q.text)
+            assert.is_true(q.exact)
+        end)
+
+        it("parses curly quotes", function()
+            local q = parse("\226\128\156Linen Cloth\226\128\157")
+            assert.are.equal("linen cloth", q.text)
+            assert.is_true(q.exact)
+        end)
+
+        it("parses empty quotes", function()
+            assert.are.same({ text = "", exact = true, raw = "" }, parse('""'))
+        end)
+
+        it("does not treat one quote as exact", function()
+            assert.is_false(parse('"linen').exact)
+            assert.is_false(parse('linen"').exact)
+            assert.is_false(parse('"').exact)
+        end)
+
+        it("handles empty and nil input", function()
+            assert.are.same({ text = "", exact = false, raw = "" }, parse(""))
+            assert.are.same({ text = "", exact = false, raw = "" }, parse(nil))
+        end)
+    end)
+
+    describe("Resolve", function()        it("passes links, item strings and ids through", function()
             setItems({ [1] = "Linen" })
             local link = "|cff0070dd|Hitem:123::::::::80:::::::::|h[Thing]|h|r"
             assert.are.same({ kind = "item", input = link }, index:Resolve(link))
