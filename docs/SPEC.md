@@ -175,7 +175,8 @@ All steps run as coroutines that yield each frame, with a progress bar. A scan i
   1. A complete item search result replaces the day's value (D5): `latest` becomes this snapshot, and today's snapshots of the item become this one snapshot. A later full scan adds snapshots as usual.
   2. If the client has not sent all result pages, only the lowest price is saved, marked partial (latest only). `market`, `qty` and `auctions` stay from the old `latest`; without one, `market` is the lowest price. Flipside sends no extra server requests.
   3. Only item searches (the listings of one item) are captured, not the browse list.
-  4. Commodities use the base key, other items the exact key of each listing's link (D20). Battle pets are skipped (D21).
+  4. On TBC the capture reads the legacy list page (see "Rules for TBC"). A page of any search is captured, not only item searches.
+  5. Commodities use the base key, other items the exact key of each listing's link (D20). Battle pets are skipped (D21).
 ### 3.3 History storage
 
 - Per item, region and ruleset (D15, D22): every daily record (min, market, quantity, scans) for at least 60 days by default; retention is a setting with 60 days as the minimum (D6). Market value still weights the last 14 days.
@@ -451,7 +452,12 @@ Each `Core_<Flavour>/Flavour.lua` sets these fields:
 - Ruleset (D22, D24).
 
 ### Rules for TBC
-- Passive capture (ScanCapture) is off on TBC in the first release.
+- Passive capture (ScanCapture) is on for TBC. It reads the legacy list. The rules of §3.2 apply (D5, partial results, keys).
+  - Event: `AUCTION_ITEM_LIST_UPDATE`. Many events come for one query, so Flipside reads the page once, when no event came for 0.3 s.
+  - Page: `GetNumAuctionItems("list")` and `GetAuctionItemInfo("list", i)` (count, buyout of the whole stack, item ID) and `GetAuctionItemLink`. The unit price is the buyout divided by the count.
+  - A page is complete (replaces the day's value) if the number of rows equals the total of the query. Otherwise it is partial (latest only).
+  - Keys: a stackable item uses the base key, other items the exact key of the link (D20). A row without a link uses the item ID if the item is stackable; Flipside skips other rows without a link.
+  - Excluded: a Flipside full scan, a Flipside name search, any get-all query (also from another addon) and a page of more than 50 rows. A hook on `QueryAuctionItems` tells Flipside which query is current. Any other query is captured, also the queries of other addons that use the same global.
 - The TBC full scan uses the legacy "get all" query. The ScanTest TBC spike (`ScanTest_TBC.toc`, pull request #86) tests its behaviour first.
 
 ### Open in-game checks

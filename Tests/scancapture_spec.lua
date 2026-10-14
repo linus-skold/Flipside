@@ -48,6 +48,55 @@ describe("ScanCapture", function()
         table.insert(api.itemRows, { itemLink = link, buyoutAmount = buyout, quantity = quantity or 1 })
     end
 
+    describe("legacy page", function()
+        local function pageRow(id, count, buyout, link)
+            return { itemID = id, count = count, buyout = buyout, link = link }
+        end
+
+        it("groups rows by key and converts the stack buyout to a unit price", function()
+            capture:OnPageResults({
+                pageRow(2589, 20, 2000, gear(2589, 0)), pageRow(2589, 10, 700, gear(2589, 0)),
+                pageRow(5, 1, 900, gear(5, 77)),
+            }, true)
+            assert.are.equal(70, store:Get("2589#b0").latest.min)
+            assert.are.equal(30, store:Get("2589#b0").latest.qty)
+            assert.are.equal(900, store:Get("5#b77").latest.min)
+        end)
+
+        it("uses keyFor and skips a row without a key, a buyout, a count or a pet link", function()
+            capture = ns.ScanCapture.New({
+                store = store, serverTime = function() return now end, api = api,
+                keyFor = function(id, link)
+                    if id == 9 then return nil end
+                    return tostring(id) .. (link and "L" or "")
+                end,
+            })
+            capture:OnPageResults({
+                pageRow(7, 2, 300), pageRow(9, 1, 100), pageRow(7, 1, 0), pageRow(7, 0, 100),
+                pageRow(7, 1, 100, "|Hbattlepet:7|h[P]|h"),
+            }, true)
+            assert.are.equal(1, store:CountItems())
+            assert.are.equal(150, store:Get("7").latest.min)
+        end)
+
+        it("saves a partial page as the lowest price only and does nothing during a scan", function()
+            capture:OnPageResults({ pageRow(7, 1, 100, nil) }, false)
+            assert.is_nil(store:Get("7"))
+            capture = ns.ScanCapture.New({
+                store = store, serverTime = function() return now end, api = api,
+                keyFor = function(id) return tostring(id) end,
+                isScanRunning = function() return running end,
+            })
+            running = true
+            capture:OnPageResults({ pageRow(7, 1, 100) }, false)
+            assert.is_nil(store:Get("7"))
+            running = false
+            capture:OnPageResults({ pageRow(7, 1, 100) }, false)
+            assert.is_true(store:Get("7").latest.partial)
+            assert.are.equal(100, store:Get("7").latest.market)
+        end)
+    end)
+
     describe("commodity", function()
         it("saves a complete result as latest and as the only snapshot", function()
             commodityRows({ 100, 110, 120 })
