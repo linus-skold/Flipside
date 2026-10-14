@@ -175,7 +175,7 @@ function Backend.LiveRows(itemID)
             local buyout, quantity = r and r.buyoutAmount, r and r.quantity
             if buyout and buyout > 0 and quantity and quantity > 0 then
                 rows[#rows + 1] = {
-                    auctionID = r.auctionID, unitPrice = buyout / quantity, quantity = quantity,
+                    auctionID = r.auctionID, unitPrice = buyout / quantity, quantity = quantity, buyout = buyout,
                     isCommodity = false, ownerItem = r.containsOwnerItem == true,
                     timeLeft = r.timeLeftSeconds or r.timeLeft, itemLink = r.itemLink,
                 }
@@ -220,6 +220,49 @@ function Backend.CloseEvent()
     return "AUCTION_HOUSE_CLOSED"
 end
 
+-- Buy block (Buying tab). Doc: AuctionHouseDocumentation.lua.
+-- Start, Confirm and BuyItem are protected: the caller runs them in a click. Cancel is not protected.
+function Backend.CanBuy()
+    return has("StartCommoditiesPurchase") and has("ConfirmCommoditiesPurchase") and has("PlaceBid")
+end
+
+-- Ask for a quote (doc 1063-1073). COMMODITY_PRICE_UPDATED(unitPrice, totalPrice) follows (doc 1346-1356).
+function Backend.StartCommodityPurchase(itemID, quantity)
+    return call("StartCommoditiesPurchase", itemID, quantity)
+end
+
+-- Buy at the quote (doc 83-92). COMMODITY_PURCHASE_SUCCEEDED or COMMODITY_PURCHASE_FAILED follows (doc 1357-1368).
+function Backend.ConfirmCommodityPurchase(itemID, quantity)
+    return call("ConfirmCommoditiesPurchase", itemID, quantity)
+end
+
+-- Drop the quote (doc 71-73).
+function Backend.CancelCommodityPurchase()
+    return call("CancelCommoditiesPurchase")
+end
+
+-- Seconds left of the quote (doc 584-591); 0 means the quote ended.
+function Backend.QuoteSecondsLeft()
+    return call("GetQuoteDurationRemaining")
+end
+
+-- Buy one item auction at the buyout price (doc 836-846). Blizzard's own call is the same, after its pop-up
+-- BUYOUT_AUCTION (Blizzard_AuctionHouseFrame.lua 10-12). AUCTION_HOUSE_PURCHASE_COMPLETED(auctionID) (doc 1203-1211)
+-- or AUCTION_HOUSE_SHOW_ERROR(error) (doc 1236-1244) follows.
+function Backend.BuyItemAuction(auctionID, buyout)
+    return call("PlaceBid", auctionID, buyout)
+end
+
+function Backend.BuyEvents()
+    return {
+        priceUpdated = "COMMODITY_PRICE_UPDATED",
+        priceUnavailable = "COMMODITY_PRICE_UNAVAILABLE",
+        commoditySucceeded = "COMMODITY_PURCHASE_SUCCEEDED",
+        commodityFailed = "COMMODITY_PURCHASE_FAILED",
+        itemCompleted = "AUCTION_HOUSE_PURCHASE_COMPLETED",
+        itemError = "AUCTION_HOUSE_SHOW_ERROR",
+    }
+end
 -- Posting (Selling tab). Doc: AuctionHouseDocumentation.lua. PostItem and PostCommodity are protected.
 -- The duration argument is a luaIndex. The SellFrame menu lists AUCTION_DURATION_ONE, TWO and THREE as index 1, 2, 3.
 -- The mapping 12 h = 1, 24 h = 2, 48 h = 3 is NOT verified: the hour text of those strings is not in the source.

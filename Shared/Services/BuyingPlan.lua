@@ -110,6 +110,53 @@ function BuyingPlan.Evaluate(entry, rows, opts)
     return result
 end
 
+-- Group live rows by unit price. rows: { auctionID, unitPrice, quantity, isCommodity, ownerItem }.
+-- Returns levels, cheapest first: { unitPrice, quantity, listings, own, rows }. own is true if one row is yours.
+function BuyingPlan.PriceLevels(rows, opts)
+    opts = opts or {}
+    local byPrice, levels = {}, {}
+    for _, row in ipairs(rows or {}) do
+        if type(row.unitPrice) == "number" then
+            local level = byPrice[row.unitPrice]
+            if not level then
+                level = { unitPrice = row.unitPrice, quantity = 0, listings = 0, own = false, rows = {} }
+                byPrice[row.unitPrice] = level
+                levels[#levels + 1] = level
+            end
+            level.quantity = level.quantity + (row.quantity or 1)
+            level.listings = level.listings + 1
+            level.rows[#level.rows + 1] = row
+            if IsOwn(row, opts) then
+                level.own = true
+            end
+        end
+    end
+    table.sort(levels, function(a, b)
+        return a.unitPrice < b.unitPrice
+    end)
+    return levels
+end
+
+-- The next level to buy after lastPrice (the price of the level bought last, or nil).
+-- A commodity level is gone after a buy, so only a higher price counts.
+-- includeSame also lets the same price count (an item has one auction for each buy).
+function BuyingPlan.NextLevel(levels, lastPrice, includeSame)
+    for _, level in ipairs(levels or {}) do
+        if lastPrice == nil or level.unitPrice > lastPrice or (includeSame and level.unitPrice == lastPrice) then
+            return level
+        end
+    end
+    return nil
+end
+
+-- Tell if nextPrice is more than percent above prevPrice. Returns { jump, percent }; percent is the rise in percent.
+function BuyingPlan.JumpCheck(prevPrice, nextPrice, percent)
+    if type(prevPrice) ~= "number" or type(nextPrice) ~= "number" or prevPrice <= 0 then
+        return { jump = false, percent = 0 }
+    end
+    local rise = (nextPrice - prevPrice) / prevPrice * 100
+    return { jump = rise > (percent or 0), percent = rise }
+end
 local Log = {}
 Log.__index = Log
 

@@ -866,6 +866,7 @@ openUI = function()
             rules = ns.rules,
             formulaRun = ns.formulaRun,
             after = C_Timer.After,
+            db = ns.db,
             readBags = ns.readBagStacks,
             getRecord = function(key)
                 return ns.scanStore and ns.scanStore:Get(key) or nil
