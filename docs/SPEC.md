@@ -80,8 +80,8 @@ Fifteen improvements, each specified in the section named.
 | Freshness on every price | Stale prices are visible and rules can refuse them | §3.4 |
 | Dry run and decision log | Every post, skip and cancel explains itself | §5.4 |
 | Keep stock as one rule with clear precedence | One place to say what to hold; selling can't eat your stock | §5.6 |
-| Rule-based (smart) groups | Groups that fill themselves by item properties | §5.2 |
-| Starter groups and presets | Useful on the first day, not after a week of setup | §5.2, §5.15 |
+| Rule-based (smart) groups (later; not in build step 4) | Groups that fill themselves by item properties | §5.2 |
+| Starter groups and presets (later; not in build step 4) | Useful on the first day, not after a week of setup | §5.2, §5.15 |
 | Undo for configuration edits | Experiment without fear of breaking rules | §5.15 |
 | Vendoring safety check | Never vendor something worth far more on the AH | §5.7 |
 | Open import/export and ledger CSV | Your data is yours and portable | §7.4, §5.8 |
@@ -97,7 +97,7 @@ Nine features come from your list, twelve are ones TSM users rely on that are ea
 | Full scan | Captures every AH listing and builds local price history | Replaces AuctionDB downloads (D1) | You | MVP |
 | Buying | Search the AH, buy below a max price, restock materials | Same as Shopping; adds "% of market" and data-age columns | You | MVP |
 | Selling | Post and cancel by rules with min / max / normal prices | Same as Auctioning; adds dry run and decision log | You | MVP |
-| Item groups | Organise items into a tree that rules apply to | Same model; adds starter groups and auto profession groups | You | MVP |
+| Item groups | Organise items into a tree that rules apply to | Same model; adds starter groups and auto profession groups (later; not in build step 4) | You | MVP |
 | Mail lists | Send grouped items to named characters automatically | Same as Mailing operations; adds reusable recipient lists | You | Phase 2 |
 | Keep stock | Hold target quantities per character and location | Unifies TSM restock settings from Mailing, Banking and Shopping | You | Phase 2 |
 | Vendoring | Sell junk and low-value items, buy vendor reagents | Same as Vendoring; adds "never vendor above X" safety | You | MVP |
@@ -258,9 +258,25 @@ A *Full Scan* button sits on the Flipside tab of the Auction House frame with a 
 ### 5.2 Item groups (reference §4.1)
 
 - Same tree model, exclusive membership and item-string granularity.
-- **Starter groups** on first run: common materials per profession, and "Junk" and "Vendor trash" groups pre-wired to Vendoring.
-- **Auto profession groups:** one click creates *Profession → Crafts* and *Profession → Materials* from the open profession.
-- **Smart filters (new):** a group can be defined by a rule (e.g. "quality = rare and ilvl ≥ 600 and BoE") instead of a fixed item list. Fixed items always win over rule matches.
+- **Starter groups** on first run (later; not in build step 4): common materials per profession, and "Junk" and "Vendor trash" groups pre-wired to Vendoring.
+- **Auto profession groups** (later; not in build step 4): one click creates *Profession → Crafts* and *Profession → Materials* from the open profession.
+- **Smart filters (new)** (later; not in build step 4): a group can be defined by a rule (e.g. "quality = rare and ilvl ≥ 600 and BoE") instead of a fixed item list. Fixed items always win over rule matches.
+
+**Groups and operations design (decided 2026-10-14)**
+
+1. A group stores an item as it was added: the base key for plain items and commodities, and an exact variant key only when a specific link is added. Lookup uses the exact key first, then the base key (D20).
+2. Smart (rule-based) groups come later, not in build step 4.
+3. Starter groups and auto profession groups come later, with the onboarding work. Build step 4 starts with an empty tree that has only the Base group.
+4. Deleting a group asks first. It deletes the group and its sub-groups, and moves their items to the parent of the deleted group.
+5. One operation can be attached to many groups. Each group has at most one operation per type. A sub-group uses the operation of its parent for a type, unless it has its own.
+6. Operation types in the MVP: selling, buying, vendoring.
+7. Custom sources (named formulas) come in build step 4. A loop between custom sources is refused when saved (see the formula language design).
+8. Selling defaults: undercut 1c; duration 24 h; post cap 0 (no cap); below minimum: do not post; above maximum: post at maximum; cancel when undercut: on. Price defaults: minimum = the default selling minimum formula (§4); normal = `scanmarket`; maximum = `2 * scanmarket`.
+9. Every operation has two safety settings (§3.4): skip an item if its price data is older than 72 h, or if it has fewer than 3 days of data (`ScanSamples`). Both can be changed for each operation.
+10. Vendoring: never sell to a vendor an item whose `ScanMarket` is more than 2× its vendor price. Such items are listed for review. Buying default: maximum price = `scanmarket`.
+11. Group names have 1-40 characters after trimming, and are unique among sibling groups (case-insensitive). A tree has at most 8 levels below the Base group. The Base group cannot be renamed or deleted.
+12. Items are added from bags (one button reads all bags), by name search, or by link. Adding from AH search results comes with build step 6.
+13. Profiles stay "Default" only in build step 4 (profile switching is Phase 2). Rules live in the profile scope.
 
 ### 5.3 Buying (reference §5.2 Shopping)
 
@@ -505,8 +521,8 @@ TSM behaviours this spec doesn't cover yet. Change the status as each one gets s
 
 | Area | What to specify | TSM reference | Status |
 | --- | --- | --- | --- |
-| UI and flow | Windows, AH tabs, settings layout, contextual frames | §6 | Partly scoped (2026-10-14: AH tabs, Flipside window, size, entry points; page layouts open) |
-| Onboarding | First-run steps: starter groups, presets, guild-sharing choice (D7), first scan | §6.3 | Needs scoping |
+| UI and flow | Windows, AH tabs, settings layout, contextual frames | §6 | Partly scoped (2026-10-14: AH tabs, Flipside window, size, entry points; page layouts open; Groups and Operations pages: build step 4) |
+| Onboarding | First-run steps: starter groups, presets, guild-sharing choice (D7), first scan (starter groups moved here, 2026-10-14) | §6.3 | Needs scoping |
 | One-click macro and keybinds | Bindable button for post, cancel, buy, craft next | §3, §6.2 | Needs scoping |
 | My Auctions view | Own auctions list replacing Blizzard's Auctions tab (Blizzard's Auctions tab stays; decision B) | §3 | Needs scoping |
 | Commodities vs items | Separate buy, sell and snipe paths for region commodities and individual listings | §3 | Needs scoping |
