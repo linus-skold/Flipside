@@ -1,63 +1,83 @@
 local _, ns = ...
 
--- TBC Anniversary host of the Flipside tab. It owns the legacy AuctionFrame, the tab button and the pane switch.
--- It never writes to a Blizzard frame field (taint). It never changes AuctionFrame.numTabs or selectedTab.
--- The Flipside tab is not one of the Blizzard tabs: Blizzard's tab code (numTabs = 3) never sees it.
+-- TBC Anniversary host of the Flipside tab. It owns the legacy AuctionFrame tab button and the panel show and hide.
+-- The tab is a real tab of the frame: the button is AuctionFrameTab<N+1> and PanelTemplates_SetNumTabs adds it.
+-- Blizzard's click code then marks the tab. It has no branch for our index, so a hook shows or hides our panel.
+-- The host writes no frame field itself. numTabs is written by PanelTemplates_SetNumTabs, as other tab addons do.
 local Host = {}
 ns.AuctionTabHost = Host
 
 local OWNER = "Flipside.AuctionTabHost"
 local ADDON = "Blizzard_AuctionUI"
-local TAB_NAME = "FlipsideAuctionFrameTab"
 local TAB_TEMPLATE = "AuctionTabTemplate"
-local BLIZZARD_TAB_COUNT = 3
--- The legacy frame is 832 x 447. Space for the portrait and title above, the money frame below.
-local INSETS = { top = 75, bottom = 40 }
+-- Same overlap as the Blizzard tab anchors.
+local TAB_GAP = -8
+-- The legacy frame is 832 x 447. The panel sits below the title bar, above the tab row and the money frame.
+local INSETS = { left = 14, right = 40, top = 60, bottom = 40 }
+-- The plain Auctions art, without the search bar of the Browse art.
+local ART = {
+    { "AuctionFrameTopLeft", "TopLeft" },
+    { "AuctionFrameTop", "Top" },
+    { "AuctionFrameTopRight", "TopRight" },
+    { "AuctionFrameBotLeft", "BotLeft" },
+    { "AuctionFrameBot", "Bot" },
+    { "AuctionFrameBotRight", "BotRight" },
+}
 
 local function blizzardTab(index)
     return _G["AuctionFrameTab" .. index]
 end
 
--- Hide the three Blizzard panes. Blizzard's own tab click does the same hide.
-local function hidePanes()
-    AuctionFrameBrowse:Hide()
-    AuctionFrameBid:Hide()
-    AuctionFrameAuctions:Hide()
+local function setArt()
+    for _, pair in ipairs(ART) do
+        local texture = _G[pair[1]]
+        if texture then
+            texture:SetTexture("Interface\\AuctionFrame\\UI-AuctionFrame-Auction-" .. pair[2])
+        end
+    end
 end
 
-local function buildTab(state, core)
-    local frame = AuctionFrame
-    local button = CreateFrame("Button", TAB_NAME, frame, TAB_TEMPLATE)
-    state.tab = button
+-- Find the first free tab index after the tabs that exist now.
+local function nextIndex()
+    local index = (AuctionFrame.numTabs or 0) + 1
+    while blizzardTab(index) do
+        index = index + 1
+    end
+    return index
+end
+
+local function buildTab(state)
+    local index = nextIndex()
+    local button = CreateFrame("Button", "AuctionFrameTab" .. index, AuctionFrame, TAB_TEMPLATE)
+    state.tab, state.index = button, index
+    button:SetID(index)
     button:SetText("Flipside")
-    button:SetPoint("TOPLEFT", blizzardTab(BLIZZARD_TAB_COUNT), "TOPRIGHT", -8, 0)
-    button:SetScript("OnClick", function()
-        core:Select()
-    end)
+    local last = blizzardTab(index - 1)
+    if last then
+        button:SetPoint("LEFT", last, "RIGHT", TAB_GAP, 0)
+    end
+    PanelTemplates_SetNumTabs(AuctionFrame, index)
+    PanelTemplates_EnableTab(AuctionFrame, index)
+    PanelTemplates_TabResize(button, 0, nil, 36)
 end
 
 local function buildFrame(state, core)
     local frame = AuctionFrame
     state.frame = frame
-    buildTab(state, core)
+    buildTab(state)
     local api = {
         insets = INSETS,
-        -- Core shows the panel: remember the Blizzard tab, hide the panes and mark the Flipside tab.
-        Enter = function(wasActive)
-            if not wasActive then
-                state.previousTab = PanelTemplates_GetSelectedTab(frame) or 1
+        layout = "compact",
+        -- Core shows the panel. Blizzard's click code already hid the panes and marked the tab.
+        Enter = function()
+            setArt()
+            if SetAuctionsTabShowing then
+                SetAuctionsTabShowing(false)
             end
-            hidePanes()
-            local previous = blizzardTab(state.previousTab)
-            if previous then
-                PanelTemplates_DeselectTab(previous)
-            end
-            PanelTemplates_SelectTab(state.tab)
         end,
-        -- Core left the panel: unmark the tab, then let Blizzard's tab click show the pane again.
+        -- Core left the panel by itself (not by a tab click): let Blizzard show a tab again.
         Leave = function(tabIndex)
-            PanelTemplates_DeselectTab(state.tab)
-            local tab = blizzardTab(tabIndex or state.previousTab or 1)
+            local tab = blizzardTab(tabIndex or 1)
             -- A hidden frame needs no click: AuctionFrame_OnShow clicks the first tab.
             if tab and frame:IsShown() then
                 AuctionFrameTab_OnClick(tab)
@@ -65,11 +85,12 @@ local function buildFrame(state, core)
         end,
     }
     core:Mount(frame, api)
-    -- A Blizzard tab click already showed its pane. Only hide the panel and unmark the Flipside tab.
-    hooksecurefunc("AuctionFrameTab_OnClick", function()
-        if core:IsActive() then
+    -- The template click calls AuctionFrameTab_OnClick for every tab, ours too. It runs before this hook.
+    hooksecurefunc("AuctionFrameTab_OnClick", function(tab)
+        if tab == state.tab then
+            core:Select()
+        elseif core:IsActive() then
             core:Deselect()
-            PanelTemplates_DeselectTab(state.tab)
         end
     end)
 end
@@ -80,7 +101,7 @@ local function abandon(state, core)
         state.tab:Hide()
     end
     core:Unmount()
-    state.frame, state.tab = nil, nil
+    state.frame, state.tab, state.index = nil, nil, nil
 end
 
 local function build(state, core)
@@ -96,7 +117,7 @@ end
 
 -- Attach the core panel to the legacy Auction House frame, now or when its addon loads.
 -- core needs Mount(parent, api), Unmount(), Select(), Leave(tabIndex), Deselect(), IsActive() and core.deps.bus.
--- Returns a state table with frame and tab.
+-- Returns a state table with frame, tab and index.
 function Host.Attach(core)
     local state = {}
     if AuctionFrame then

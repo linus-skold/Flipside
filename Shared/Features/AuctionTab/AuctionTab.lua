@@ -8,6 +8,7 @@ ns.AuctionTab = AuctionTab
 local OWNER = "Flipside.AuctionTab"
 local EVENT_FINISHED = "Flipside.ScanFinished"
 local WIDTH = 740
+local COMPACT_WIDTH = 760
 local PRICE_SLOTS = 9
 local MAX_CHOICES = 8
 
@@ -351,8 +352,8 @@ function Tab:_BuildContent()
     local parent, api = self.parent, self.api
     local insets = api.insets or {}
     local content = CreateFrame("Frame", nil, parent)
-    content:SetPoint("TOPLEFT", parent, "TOPLEFT", padding, -(insets.top or 0))
-    content:SetPoint("BOTTOMRIGHT", parent, "BOTTOMRIGHT", -padding, insets.bottom or 0)
+    content:SetPoint("TOPLEFT", parent, "TOPLEFT", insets.left or padding, -(insets.top or 0))
+    content:SetPoint("BOTTOMRIGHT", parent, "BOTTOMRIGHT", -(insets.right or padding), insets.bottom or 0)
     content:Hide()
     content:SetScript("OnShow", function()
         self:Refresh()
@@ -368,6 +369,17 @@ function Tab:_BuildContent()
 
     local ui = { slots = {} }
     self.ui = ui
+    if api.layout == "compact" then
+        self:_BuildCompact(content, ui)
+    else
+        self:_BuildClassic(content, ui)
+    end
+    self:_ShowPriceRows(nil)
+end
+
+-- The default layout: large headings, scan block, status block and price lookup in one column.
+function Tab:_BuildClassic(content, ui)
+    local Kit = ns.Kit
     local function place(widget, x, y)
         widget:SetPoint("TOPLEFT", content, "TOPLEFT", x, y)
         return widget
@@ -420,11 +432,67 @@ function Tab:_BuildContent()
         }
         ui.slots[index] = slot
     end
-    self:_ShowPriceRows(nil)
+end
+
+-- The compact layout for a host with a small content area: normal fonts, a slim scan bar, no large headings.
+function Tab:_BuildCompact(content, ui)
+    local Kit = ns.Kit
+    local function place(widget, x, y)
+        widget:SetPoint("TOPLEFT", content, "TOPLEFT", x, y)
+        return widget
+    end
+
+    local title = Kit.Label(content, "Flipside", "normal")
+    title:SetPoint("TOP", self.parent, "TOP", 0, -18)
+    ui.scan = place(Kit.Button(content, "Full scan", 90, function()
+        self:_ScanClicked()
+    end), 0, 0)
+    ui.stop = place(Kit.Button(content, "Stop", 60, function()
+        self.deps.scanEngine:Cancel()
+        self:Refresh()
+    end), 96, 0)
+    ui.reset = place(Kit.Button(content, "Reset cooldown", 110, function()
+        self:_ResetClicked()
+    end), 162, 0)
+    ui.cooldown = leftAligned(place(Kit.Label(content, "", "highlight"), 280, -4))
+    ui.openMain = Kit.Button(content, "Open Flipside", 110, function()
+        self.deps.openMainWindow()
+    end)
+    ui.openMain:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, 0)
+    ui.message = leftAligned(place(Kit.Label(content, "", "small"), 0, -28), COMPACT_WIDTH)
+    ui.status = leftAligned(place(Kit.Label(content, "", "small"), 0, -44), COMPACT_WIDTH)
+
+    place(Kit.Label(content, "Price lookup", "normal"), 0, -116)
+    ui.input = place(Kit.Input(content, 300, function(text)
+        self:Lookup(text)
+    end), 84, -112)
+    ui.lookup = place(Kit.Button(content, "Look up", 90, function()
+        self:Lookup(ui.input:GetText())
+    end), 392, -112)
+    ui.pendingMessage = leftAligned(place(Kit.Label(content, "", "small"), 494, -118), 270)
+    ui.priceMessage = leftAligned(place(Kit.Label(content, "", "small"), 0, -140), COMPACT_WIDTH)
+    ui.choices = {}
+    for index = 1, MAX_CHOICES do
+        local button = place(Kit.Button(content, "", 360, nil), 0, -158 - (index - 1) * 22)
+        button:Hide()
+        ui.choices[index] = button
+    end
+    local step = Kit.Theme.rowHeight - 2
+    for index = 1, PRICE_SLOTS do
+        local y = -140 - (index - 1) * step
+        ui.slots[index] = {
+            name = leftAligned(place(Kit.Label(content, "", "normal"), 0, y), 110),
+            money = place(Kit.Money(content), 120, y),
+            value = leftAligned(place(Kit.Label(content, "", "highlight"), 120, y), 300),
+        }
+    end
 end
 
 -- Build the panel in the parent frame and listen for finished scans. Errors go to the host.
--- api: Enter(wasActive), Leave(tabIndex), and optional insets { top, bottom } below and above the panel.
+-- api: Enter(wasActive), Leave(tabIndex), and optional fields.
+-- insets { left, right, top, bottom } set the distance to the parent.
+-- The default is the Kit padding left and right, and 0 above and below.
+-- layout = "compact" selects the compact panel. Without it the default layout is used.
 function Tab:Mount(parent, api)
     self.parent, self.api = parent, api
     self:_BuildContent()
