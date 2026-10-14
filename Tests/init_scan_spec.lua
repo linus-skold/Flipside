@@ -334,9 +334,53 @@ describe("Init scan", function()
             assert.are.same({}, ns.scanStore:Keys())
         end)
 
+        it("clears the cooldown with /flip scan reset", function()
+            runScan()
+            mock.advance(300)
+            slash("scan reset")
+            assert.is_true(hasMessage('Flipside: scan cooldown cleared. The server can still refuse a scan '
+                .. 'for a while; Flipside then reports "no response".'))
+            mock.messages = {}
+            slash("")
+            assert.is_true(hasMessage("cooldown ready"))
+            mock.popup = nil
+            slash("scan")
+            assert.is_not_nil(mock.popup)
+        end)
+
+        it("does not clear the cooldown while a scan runs", function()
+            mock.fire("AUCTION_HOUSE_SHOW")
+            slash("scan")
+            mock.acceptPopup()
+            pump(2)
+            mock.messages = {}
+            slash("scan reset")
+            assert.are.same({ "Flipside: a scan is running; stop it first with /flip scan stop" }, mock.messages)
+            assert.is_not_nil(ns.scanCooldown:GetLastAttempt())
+        end)
+
         it("says that no scan runs for /flip scan stop", function()
             slash("scan stop")
             assert.are.same({ "Flipside: no scan is running" }, mock.messages)
+        end)
+    end)
+
+    describe("/flip scan reset with a read-only DB", function()
+        it("prints that the cooldown was not cleared", function()
+            _G.FlipsideDB = { _schema = 99 }
+            login()
+            mock.messages = {}
+            slash("scan reset")
+            local expected = "Flipside: settings are read-only; the cooldown was not cleared"
+            assert.are.equal(expected, mock.messages[#mock.messages])
+        end)
+
+        it("prints the not available line without a scan setup", function()
+            ns.ScanEngine = nil
+            login()
+            mock.messages = {}
+            slash("scan reset")
+            assert.are.same({ "Flipside: scan is not available this session" }, mock.messages)
         end)
     end)
 
@@ -414,7 +458,7 @@ describe("Init scan", function()
                 "Flipside: profile Default",
                 "Flipside: client 1.60.1, build 70009, interface 16001",
                 "Flipside: scan (region EU): 0 items stored, last scan never, cooldown ready",
-                "Flipside: commands: scan, scan stop, price <item>, version",
+                "Flipside: commands: scan, scan stop, scan reset, price <item>, version",
                 "Flipside: No feature exists yet.",
             }, mock.messages)
         end)

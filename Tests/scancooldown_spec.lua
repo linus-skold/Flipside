@@ -72,6 +72,25 @@ describe("ScanCooldown", function()
         assert.are.equal(800, cd:Remaining())
     end)
 
+    it("clears the cooldown with Reset", function()
+        local saved = {}
+        local cd = Make(saved, 5000)
+        cd:MarkAttempt()
+        assert.is_false(cd:CanStart())
+        assert.is_true(cd:Reset())
+        assert.is_nil(cd:GetLastAttempt())
+        assert.is_nil(saved["a/scan.lastAttempt"])
+        assert.is_true(cd:CanStart())
+    end)
+
+    it("returns false from Reset in a read-only DB and keeps the value", function()
+        local saved = { _schema = 9, ["a/scan.lastAttempt"] = 1000 }
+        local db = SettingsDB.New(saved, { character = "Alice-Realm", schemaVersion = 1, onWarning = function() end })
+        local cd = ScanCooldown.New(db, { clock = function() return 1100 end })
+        assert.is_false(cd:Reset())
+        assert.are.equal(1000, cd:GetLastAttempt())
+    end)
+
     it("supports a custom cooldownSeconds", function()
         local cd, clock = Make({}, 0, { cooldownSeconds = 60 })
         cd:MarkAttempt()

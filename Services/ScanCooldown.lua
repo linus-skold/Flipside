@@ -58,6 +58,11 @@ function Cooldown:MarkAttempt()
     return self._db:Set("account", ATTEMPT_KEY, self._clock())
 end
 
+-- Clears the attempt time. Returns the result of db:Set (false if read-only).
+function Cooldown:Reset()
+    return self._db:Set("account", ATTEMPT_KEY, nil)
+end
+
 function Cooldown:MarkSuccess()
     return self._db:Set("account", SUCCESS_KEY, self._clock())
 end

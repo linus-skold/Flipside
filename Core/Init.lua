@@ -371,6 +371,17 @@ local function scanCommand(argument)
         printLine("scan is not available this session")
         return
     end
+    if argument == "reset" then
+        if engine:IsRunning() then
+            printLine("a scan is running; stop it first with /flip scan stop")
+        elseif ns.scanCooldown:Reset() then
+            printLine("scan cooldown cleared. The server can still refuse a scan for a while; "
+                .. [[Flipside then reports "no response".]])
+        else
+            printLine("settings are read-only; the cooldown was not cleared")
+        end
+        return
+    end
     if argument == "stop" then
         if engine:IsRunning() then
             engine:Cancel()
@@ -460,7 +471,7 @@ local function printScanHelp()
     local cooldown = left > 0 and ns.ScanCooldown.FormatRemaining(left) or "ready"
     printLine(string.format("scan (region %s): %d items stored, last scan %s, cooldown %s",
         ns.scanStore:GetRegion(), ns.scanStore:CountItems(), age, cooldown))
-    printLine("commands: scan, scan stop, price <item>, version")
+    printLine("commands: scan, scan stop, scan reset, price <item>, version")
 end
 
 -- Handle the text after /flipside or /flip.
