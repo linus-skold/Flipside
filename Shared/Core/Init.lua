@@ -582,6 +582,13 @@ local function openRules()
                 itemInfo = C_Container.GetContainerItemInfo,
             }, resolver, { bagIDs = ns.Flavour.bagIDs() }))
         end
+        -- The bag items with their stacks (bag and slot), for the Selling tab.
+        ns.readBagStacks = function()
+            return (ns.BagItems.Read({
+                numSlots = C_Container.GetContainerNumSlots,
+                itemInfo = C_Container.GetContainerItemInfo,
+            }, resolver, { bagIDs = ns.Flavour.bagIDs(), stacks = true }))
+        end
     end)
     if not ok then
         ns.rules, ns.customSources = nil, nil
@@ -860,6 +867,11 @@ openUI = function()
             formulaRun = ns.formulaRun,
             after = C_Timer.After,
             db = ns.db,
+            readBags = ns.readBagStacks,
+            getRecord = function(key)
+                return ns.scanStore and ns.scanStore:Get(key) or nil
+            end,
+            now = GetServerTime,
         })
     end
 end

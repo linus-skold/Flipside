@@ -263,4 +263,72 @@ function Backend.BuyEvents()
         itemError = "AUCTION_HOUSE_SHOW_ERROR",
     }
 end
+-- Posting (Selling tab). Doc: AuctionHouseDocumentation.lua. PostItem and PostCommodity are protected.
+-- The duration argument is a luaIndex. The SellFrame menu lists AUCTION_DURATION_ONE, TWO and THREE as index 1, 2, 3.
+-- The mapping 12 h = 1, 24 h = 2, 48 h = 3 is NOT verified: the hour text of those strings is not in the source.
+local DURATION_INDEX = { [12] = 1, [24] = 2, [48] = 3 }
+
+local function durationIndex(hours)
+    local index = DURATION_INDEX[hours]
+    if not index then
+        error("duration must be 12, 24 or 48 hours", 0)
+    end
+    return index
+end
+
+-- ItemLocation of a bag slot (Blizzard_ObjectAPI ItemLocation.lua line 9).
+local function location(bag, slot)
+    return ItemLocation:CreateFromBagAndSlot(bag, slot)
+end
+
+function Backend.CanPost()
+    return type(ItemLocation) == "table" and type(ItemLocation.CreateFromBagAndSlot) == "function"
+        and has("PostItem") and has("PostCommodity") and has("ConfirmPostItem") and has("ConfirmPostCommodity")
+        and has("CalculateItemDeposit") and has("CalculateCommodityDeposit") and has("GetAvailablePostCount")
+end
+
+-- PostItem (doc 867-885). Gives needsConfirmation. Protected: call it from a click only.
+function Backend.PostItem(bag, slot, duration, quantity, bid, buyout)
+    return call("PostItem", location(bag, slot), durationIndex(duration), quantity, bid, buyout)
+end
+
+-- PostCommodity (doc 848-865). Gives needsConfirmation. Protected: call it from a click only.
+function Backend.PostCommodity(bag, slot, duration, quantity, unitPrice)
+    return call("PostCommodity", location(bag, slot), durationIndex(duration), quantity, unitPrice)
+end
+
+-- ConfirmPostItem (doc 108-121). Protected: call it from a click only.
+function Backend.ConfirmPostItem(bag, slot, duration, quantity, bid, buyout)
+    return call("ConfirmPostItem", location(bag, slot), durationIndex(duration), quantity, bid, buyout)
+end
+
+-- ConfirmPostCommodity (doc 94-106). Protected: call it from a click only.
+function Backend.ConfirmPostCommodity(bag, slot, duration, quantity, unitPrice)
+    return call("ConfirmPostCommodity", location(bag, slot), durationIndex(duration), quantity, unitPrice)
+end
+
+-- CalculateCommodityDeposit (doc 11-26, itemID) or CalculateItemDeposit (doc 28-43, ItemLocation). Gives copper or nil.
+function Backend.Deposit(bag, slot, duration, quantity, isCommodity)
+    local where = location(bag, slot)
+    if isCommodity then
+        return call("CalculateCommodityDeposit", C_Item.GetItemID(where), durationIndex(duration), quantity)
+    end
+    return call("CalculateItemDeposit", where, durationIndex(duration), quantity)
+end
+
+-- GetAvailablePostCount (doc 162-175).
+function Backend.AvailablePostCount(bag, slot)
+    return call("GetAvailablePostCount", location(bag, slot))
+end
+
+-- IsSellItemValid (doc 793-807); false means no error text in the chat.
+function Backend.IsSellItemValid(bag, slot)
+    return call("IsSellItemValid", location(bag, slot), false)
+end
+
+-- AUCTION_HOUSE_AUCTION_CREATED (doc 1098-1107; payload auctionID).
+function Backend.PostedEvent()
+    return "AUCTION_HOUSE_AUCTION_CREATED"
+end
+
 ns.AuctionClient.Use(Backend)

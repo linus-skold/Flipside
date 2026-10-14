@@ -64,6 +64,7 @@ Shared\UI\MainWindow.lua
 Shared\Features\AuctionTab\AuctionTabs.lua
 Shared\Features\AuctionTab\AuctionTab.lua
 Shared\Features\Buying\BuyingTab.lua
+Shared\Features\Selling\SellingTab.lua
 AH_Forever\AuctionTabHost.lua
 Shared\Features\Inventory\InventoryCapture.lua
 Shared\Features\Tooltip\Tooltip.lua

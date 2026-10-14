@@ -5,7 +5,8 @@ local _, ns = ...
 -- HasCommodityCheck, NameSearch, TargetedSearch, NameResultEvent, NameResults, NameItemKeyInfo, Capture, OwnedAuctions,
 -- CanReadOwned, OwnedEvent, OpenEvent, CloseEvent, CanScan, CanLiveSearch, LiveSearch, LiveResultEvents, LiveRows,
 -- IsReady, ReadyEvent, RefreshOwned, CanBuy, StartCommodityPurchase, ConfirmCommodityPurchase, CancelCommodityPurchase,
--- QuoteSecondsLeft, BuyItemAuction, BuyEvents. A backend leaves out what its client cannot do.
+-- QuoteSecondsLeft, BuyItemAuction, BuyEvents, CanPost, PostItem, PostCommodity, ConfirmPostItem, ConfirmPostCommodity,
+-- Deposit, AvailablePostCount, IsSellItemValid, PostedEvent. A backend leaves out what its client cannot do.
 local AuctionClient = {}
 ns.AuctionClient = AuctionClient
 
@@ -109,6 +110,19 @@ action("ConfirmCommodityPurchase")
 action("CancelCommodityPurchase")
 action("BuyItemAuction")
 
+-- Posting (optional; Forever only). The item is a bag slot. duration is in hours: 12, 24 or 48.
+-- PostItem(bag, slot, duration, quantity, bid, buyout) and PostCommodity(bag, slot, duration, quantity, unitPrice)
+-- are protected: call them only inside a click handler. They give needsConfirmation (true or false); if it is true,
+-- the confirm call with the same arguments finishes the post. Deposit(bag, slot, duration, quantity, isCommodity)
+-- gives the deposit in copper or nil. AvailablePostCount(bag, slot) gives the number of posts of this item that the
+-- client allows. IsSellItemValid(bag, slot) tells if the slot item can be posted. PostedEvent() gives the event name
+-- that follows a post.
+query("CanPost", false)
+query("Deposit")
+query("AvailablePostCount")
+query("IsSellItemValid")
+query("PostedEvent")
+
 -- Search capture: nil means capture is off.
 query("Capture")
 
@@ -127,3 +141,8 @@ action("TargetedSearch")
 action("NameResults")
 action("NameItemKeyInfo")
 action("OwnedAuctions")
+-- Protected post calls (see the posting block above).
+action("PostItem")
+action("PostCommodity")
+action("ConfirmPostItem")
+action("ConfirmPostCommodity")
