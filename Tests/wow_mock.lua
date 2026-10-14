@@ -3,7 +3,7 @@
 local M = {}
 
 local GLOBAL_NAMES = {
-    "ACCEPT", "CANCEL", "C_AuctionHouse", "C_Item", "C_Timer", "CreateFrame", "DEFAULT_CHAT_FRAME",
+    "ACCEPT", "CANCEL", "C_AuctionHouse", "C_Container", "C_Item", "C_Timer", "CreateFrame", "DEFAULT_CHAT_FRAME",
     "C_GameRules", "FlipsideDB", "FlipsideScanDB", "GetBuildInfo", "GetCurrentRegionName", "GetNormalizedRealmName",
     "GetServerTime", "GetTime", "GetCurrentRegion", "IsTestBuild", "IsBetaBuild", "IsPublicTestClient",
     "SLASH_FLIPSIDE1", "SLASH_FLIPSIDE2",
@@ -279,6 +279,7 @@ function M.reset()
     M.commodityResults = {} -- itemID -> rows of the commodity search result
     M.itemResults = {} -- itemID -> rows of the item search result
     M.searchFull = true -- result of the HasFull...SearchResults calls
+    M.bags = {} -- bag index -> array of slot tables (as GetContainerItemInfo gives); a missing bag has no slots
 
     _G.ACCEPT = "Accept"
     _G.CANCEL = "Cancel"
@@ -529,6 +530,15 @@ function M.reset()
     ah.HasFullItemSearchResults = function()
         return M.searchFull
     end
+
+    _G.C_Container = {
+        GetContainerNumSlots = function(bag)
+            return #(M.bags[bag] or {})
+        end,
+        GetContainerItemInfo = function(bag, slot)
+            return (M.bags[bag] or {})[slot]
+        end,
+    }
 
     _G.StaticPopup_Show = function(which, arg1, arg2)
         local d = _G.StaticPopupDialogs[which]

@@ -9,6 +9,7 @@ read_globals = {
     "hooksecurefunc",
     "CANCEL",
     "C_AuctionHouse",
+    "C_Container",
     "C_GameRules",
     "C_Item",
     "C_Timer",

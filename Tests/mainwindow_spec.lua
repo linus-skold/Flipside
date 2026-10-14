@@ -41,7 +41,18 @@ describe("MainWindow", function()
                 table.insert(built, { content = content, deps = d })
             end,
         }
+        ns.GroupsPage = {
+            Build = function(content, d)
+                table.insert(built, { page = "groups", content = content, deps = d })
+            end,
+        }
+        ns.OperationsPage = {
+            Build = function(content, d)
+                table.insert(built, { page = "operations", content = content, deps = d })
+            end,
+        }
         deps = {
+            rules = {},
             formulaRun = {},
             getVersionLine = function()
                 return "Client 1.60.1"
@@ -77,17 +88,33 @@ describe("MainWindow", function()
         assert.are.equal("Interface\\Icons\\INV_Misc_Coin_02", win.frame.portrait)
     end)
 
-    it("has two page tabs", function()
+    it("has four page tabs", function()
         local win = ns.MainWindow.Create(deps)
-        assert.are.equal(2, #win.frame.Tabs)
-        assert.are.equal("Formulas", win.frame.Tabs[1]:GetText())
-        assert.are.equal("About", win.frame.Tabs[2]:GetText())
+        assert.are.equal(4, #win.frame.Tabs)
+        assert.are.equal("Groups", win.frame.Tabs[1]:GetText())
+        assert.are.equal("Operations", win.frame.Tabs[2]:GetText())
+        assert.are.equal("Formulas", win.frame.Tabs[3]:GetText())
+        assert.are.equal("About", win.frame.Tabs[4]:GetText())
     end)
 
-    it("builds the formula page with the deps", function()
-        ns.MainWindow.Create(deps)
+    it("builds the pages with the deps when they are selected", function()
+        local win = ns.MainWindow.Create(deps)
         assert.are.equal(1, #built)
+        assert.are.equal("groups", built[1].page)
         assert.are.equal(deps, built[1].deps)
+        win:SelectPage("operations")
+        assert.are.equal("operations", built[2].page)
+        assert.are.equal(deps, built[2].deps)
+        win:SelectPage("formula")
+        assert.are.equal(deps, built[3].deps)
+    end)
+
+    it("says that settings are missing on the rules pages when there are no rules", function()
+        deps.rules = nil
+        local win = ns.MainWindow.Create(deps)
+        win:SelectPage("operations")
+        assert.are.equal(0, #built)
+        assert.is_true(strings["Settings are not available this session."])
     end)
 
     it("shows the About text", function()
@@ -95,16 +122,17 @@ describe("MainWindow", function()
         win:SelectPage("about")
         assert.is_true(strings["Flipside"])
         assert.is_true(strings["Client 1.60.1"])
-        assert.is_true(strings["Groups and operations come with the next update."])
+        assert.is_true(strings["Groups sort items into trees. Operations hold the rules. "
+            .. "Formulas check and save price formulas."])
     end)
 
     it("selects pages", function()
         local win = ns.MainWindow.Create(deps)
-        assert.are.equal("formula", win.tabs:GetSelected())
+        assert.are.equal("groups", win.tabs:GetSelected())
         win:SelectPage("about")
         assert.are.equal("about", win.tabs:GetSelected())
         assert.is_false(win.tabs.contents[1]:IsShown())
-        assert.is_true(win.tabs.contents[2]:IsShown())
+        assert.is_true(win.tabs.contents[4]:IsShown())
     end)
 
     it("shows, hides and toggles", function()

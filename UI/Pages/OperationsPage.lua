@@ -457,6 +457,15 @@ function OperationsPage.Build(content, deps)
     if deps.subscribe then
         deps.subscribe(page.Refresh)
     end
+
+    local hook, insertLink = _G.hooksecurefunc, _G.ChatEdit_InsertLink
+    if hook and insertLink then
+        hook("ChatEdit_InsertLink", function(link)
+            if type(link) == "string" and page.exampleInput:HasFocus() then
+                page.exampleInput:SetText(link)
+            end
+        end)
+    end
     refresh()
     return page
 end

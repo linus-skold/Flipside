@@ -365,6 +365,74 @@ local function openNames()
     end
 end
 
+-- Functions that run when the rules or the custom sources change.
+local rulesSubscribers = {}
+
+function ns.SubscribeRules(fn)
+    rulesSubscribers[#rulesSubscribers + 1] = fn
+end
+
+local function notifyRules()
+    if ns.formulaRun then
+        ns.formulaRun:ClearCache()
+    end
+    for _, fn in ipairs(rulesSubscribers) do
+        local ok, err = pcall(fn)
+        if not ok then
+            ns.ReportError("window refresh failed: " .. tostring(err))
+        end
+    end
+    ns.bus:Emit("Flipside.RulesChanged")
+end
+
+-- Key resolver for bag items and pasted links, with the same lookups as the scan.
+local function buildKeyResolver()
+    local lookups = { maxStack = maxStack }
+    if type(C_AuctionHouse.MakeItemKey) == "function" and type(C_AuctionHouse.GetItemKeyInfo) == "function" then
+        lookups.clientIsCommodity = clientIsCommodity
+    end
+    return ns.ScanKey.New(lookups)
+end
+
+-- Create the groups and operations store and the custom sources; they need the settings DB.
+local function openRules()
+    if not (ns.db and ns.RulesStore and ns.CustomSources) then
+        return
+    end
+    local ok, err = pcall(function()
+        ns.customSources = ns.CustomSources.New(ns.db, { onWarning = ns.ReportError, onChange = notifyRules })
+        if ns.formulaSources then
+            ns.formulaSources:SetCustom(ns.customSources)
+        end
+        ns.rules = ns.RulesStore.New(ns.db, {
+            onWarning = ns.ReportError,
+            onChange = notifyRules,
+            compile = function(text)
+                return ns.formulaRun:Compile(text)
+            end,
+        })
+        local resolver = buildKeyResolver()
+        ns.keyFor = function(link)
+            local itemID = ns.ItemString.ParseLink(link)
+            itemID = itemID and itemID.itemID
+            if not itemID then
+                return nil
+            end
+            return (resolver:KeyFor(itemID, link))
+        end
+        ns.readBags = function()
+            return (ns.BagItems.Read({
+                numSlots = C_Container.GetContainerNumSlots,
+                itemInfo = C_Container.GetContainerItemInfo,
+            }, resolver))
+        end
+    end)
+    if not ok then
+        ns.rules, ns.customSources = nil, nil
+        ns.ReportError("groups and operations are not available this session: " .. tostring(err))
+    end
+end
+
 -- Set later in this file: attach the Auction House tab.
 local openUI
 
@@ -379,6 +447,7 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
         end
         openNames()
         openFormula()
+        openRules()
         openUI()
         ns.bus:Emit("Flipside.Login")
     end
@@ -482,6 +551,11 @@ function ns.OpenMainWindow()
             formulaSources = ns.formulaSources,
             itemCache = ns.itemCache,
             itemNameIndex = ns.itemNameIndex,
+            rules = ns.rules,
+            customSources = ns.customSources,
+            readBags = ns.readBags,
+            keyFor = ns.keyFor,
+            subscribe = ns.SubscribeRules,
             getVersionLine = ns.VersionLine,
         })
         window:Toggle()

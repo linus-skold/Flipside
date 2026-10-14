@@ -67,14 +67,109 @@ local function appendName(input, name)
 end
 
 local function statusLabel(status)
+    if status == "custom" then
+        return "custom"
+    end
     return status == "later" and "not available yet" or "available"
 end
 
--- Build the page in the content frame. deps: formulaRun, formulaSources, itemCache, itemNameIndex (optional).
+local DELETE_DIALOG = "FLIPSIDE_DELETE_CUSTOM_SOURCE"
+local CUSTOM_HEIGHT = 150
+
+-- The built-in sources and the custom sources, sorted by name.
+local function sourceList(sources, custom)
+    local list = sources and sources:List() or {}
+    if custom then
+        for _, entry in ipairs(custom:List()) do
+            list[#list + 1] = { name = entry.name, status = "custom" }
+        end
+        table.sort(list, function(a, b)
+            return a.name < b.name
+        end)
+    end
+    return list
+end
+
+-- Build the custom sources section: a list, a name box, a formula box, Save and Delete.
+function FormulaPage.BuildCustom(page, frame, deps)
+    local Kit, custom, run = ns.Kit, deps.customSources, deps.formulaRun
+    local gap = Kit.Theme.gap
+    local selected
+
+    local title = Kit.Label(frame, "Custom sources", "highlight")
+    title:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, 0)
+    local message = Kit.Label(frame, "", "bad")
+    message:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 0, 0)
+    message:SetWidth(760)
+    message:SetJustifyH("LEFT")
+    page.customMessage = message
+
+    page.customList = Kit.CreateList(frame, {
+        initRow = function(row, data)
+            if not row.nameText then
+                row.nameText = Kit.Label(row, "", "normal")
+                row.nameText:SetPoint("LEFT", row, "LEFT", 4, 0)
+            end
+            row.nameText:SetText(data.name .. " = " .. data.text)
+            row:SetScript("OnClick", function()
+                selected = data.name
+                page.customName:SetText(data.name)
+                page.customText:SetText(data.text)
+                message:SetText("")
+            end)
+        end,
+    })
+    page.customList.frame:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -gap)
+    page.customList.frame:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 0, -18)
+    page.customList.frame:SetHeight(60)
+
+    page.customName = Kit.Input(frame, 140, nil)
+    page.customName:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 6, 24)
+    page.customText = Kit.Input(frame, 430, nil)
+    page.customText:SetPoint("LEFT", page.customName, "RIGHT", gap * 2, 0)
+
+    local function compile(text)
+        return run:Compile(text)
+    end
+    page.customSave = Kit.Button(frame, "Save", 70, function()
+        local name, text = trim(page.customName:GetText()), trim(page.customText:GetText())
+        local ok, err = custom:Set(name, text, run and compile or nil)
+        if ok then
+            selected = name:lower()
+            message:SetText("")
+        else
+            message:SetText(tostring(err))
+        end
+    end)
+    page.customSave:SetPoint("LEFT", page.customText, "RIGHT", gap * 2, 0)
+    page.customDelete = Kit.Button(frame, "Delete", 70, function()
+        local name = selected
+        if not name then
+            message:SetText("Select a custom source first.")
+            return
+        end
+        Kit.Confirm(DELETE_DIALOG, 'Delete the custom source "' .. name .. '"?', function()
+            local ok, err = custom:Delete(name)
+            if ok then
+                selected = nil
+                page.customName:SetText("")
+                page.customText:SetText("")
+                message:SetText("")
+            else
+                message:SetText(tostring(err))
+            end
+        end)
+    end)
+    page.customDelete:SetPoint("LEFT", page.customSave, "RIGHT", gap, 0)
+    page.customList:SetData(custom:List())
+end
+-- Build the page in the content frame. deps: formulaRun, formulaSources, itemCache, itemNameIndex (optional),
+-- customSources and subscribe (optional).
 -- Shift-click on an item link fills the item box while it has focus (ChatEdit_InsertLink hook).
 function FormulaPage.Build(content, deps)
     local Kit = ns.Kit
     local run, sources, index = deps.formulaRun, deps.formulaSources, deps.itemNameIndex
+    local custom = deps.customSources
     local page = {}
 
     local formulaLabel = Kit.Label(content, "Formula", "highlight")
@@ -93,6 +188,7 @@ function FormulaPage.Build(content, deps)
         end
         if page.list then
             page.list.frame:Show()
+            page.customFrame:SetShown(custom ~= nil)
         end
     end
 
@@ -109,6 +205,7 @@ function FormulaPage.Build(content, deps)
         end
         status:SetText(text)
         page.list.frame:Hide()
+        page.customFrame:Hide()
         for position, button in ipairs(choices) do
             local match = matches[position]
             if match then
@@ -215,9 +312,30 @@ function FormulaPage.Build(content, deps)
         end,
     })
     list.frame:SetPoint("TOPLEFT", status, "BOTTOMLEFT", 0, -gap * 3)
-    list.frame:SetPoint("BOTTOMRIGHT", help, "TOPRIGHT", 0, gap)
     page.list = list
-    list:SetData(sources and sources:List() or {})
+
+    local customFrame = CreateFrame("Frame", nil, content)
+    customFrame:SetHeight(CUSTOM_HEIGHT)
+    customFrame:SetPoint("BOTTOMLEFT", help, "TOPLEFT", 0, gap)
+    customFrame:SetPoint("BOTTOMRIGHT", help, "TOPRIGHT", 0, gap)
+    page.customFrame = customFrame
+    list.frame:SetPoint("BOTTOMRIGHT", customFrame, "TOPRIGHT", 0, gap)
+    if custom then
+        FormulaPage.BuildCustom(page, customFrame, deps)
+    else
+        customFrame:Hide()
+    end
+
+    local function refreshSources()
+        list:SetData(sourceList(sources, custom))
+    end
+    refreshSources()
+    if deps.subscribe and custom then
+        deps.subscribe(function()
+            refreshSources()
+            page.customList:SetData(custom:List())
+        end)
+    end
 
     local hook, insertLink = _G.hooksecurefunc, _G.ChatEdit_InsertLink
     if hook and insertLink then
