@@ -1,6 +1,6 @@
 local _, ns = ...
 
--- Adds the Flipside price and count lines to item tooltips through the client tooltip post call.
+-- Adds the Flipside price and count lines to item tooltips. The client hook that calls it lives in a flavour file.
 
 local Tooltip = {}
 ns.Tooltip = Tooltip
@@ -9,26 +9,6 @@ Tooltip.stats = { count = 0, total = 0, max = 0 }
 
 local HEADER_COLOR = { 1, 0.82, 0 }
 local DIM_COLOR = { 0.6, 0.6, 0.6 }
-
--- Returns the item link of the tooltip data, or nil.
-local function linkOf(deps, data)
-    if type(data) ~= "table" then
-        return nil
-    end
-    if data.guid and deps.itemLinkByGUID then
-        local link = deps.itemLinkByGUID(data.guid)
-        if type(link) == "string" then
-            return link
-        end
-    end
-    if type(data.hyperlink) == "string" then
-        return data.hyperlink
-    end
-    if type(data.id) == "number" then
-        return string.format("item:%d", data.id)
-    end
-    return nil
-end
 
 -- Returns the stack count of the bag slot that owns the tooltip, or nil.
 local function stackCountOf(deps, tooltip)
@@ -74,8 +54,8 @@ function Tooltip.Rows(deps, input, stackMode, stackCount, config)
     })
 end
 
--- deps: tooltipConfig, formulaRun, rules, holdings, getRecord, now, isAltDown, itemLinkByGUID,
--- containerItemInfo, processor, itemType, clock, report.
+-- deps: tooltipConfig, formulaRun, rules, holdings, getRecord, now, isAltDown, containerItemInfo, clock, report.
+-- deps.hook (default ns.TooltipHook) has Install(onItem, opts); it calls onItem(tooltip, link) for each item tooltip.
 function Tooltip.Attach(deps)
     local stats = { count = 0, total = 0, max = 0 }
     Tooltip.stats = stats
@@ -89,23 +69,24 @@ function Tooltip.Attach(deps)
         deps.report(message)
     end
 
-    local function build(tooltip, data)
-        local link = linkOf(deps, data)
+    local function build(tooltip, link, stackCount)
         if not link then
             return
         end
         local stackMode = deps.isAltDown and deps.isAltDown() or false
-        local stackCount = stackMode and stackCountOf(deps, tooltip) or nil
-        addRows(tooltip, Tooltip.Rows(deps, link, stackMode, stackCount))
+        if stackMode and stackCount == nil then
+            stackCount = stackCountOf(deps, tooltip)
+        end
+        addRows(tooltip, Tooltip.Rows(deps, link, stackMode, stackMode and stackCount or nil))
     end
 
-    local function onTooltip(tooltip, data)
+    local function onItem(tooltip, link, stackCount)
         local start = deps.clock()
         local ok, err = pcall(function()
             if tooltip.IsForbidden and tooltip:IsForbidden() then
                 return
             end
-            build(tooltip, data)
+            build(tooltip, link, stackCount)
         end)
         local elapsed = deps.clock() - start
         stats.count = stats.count + 1
@@ -117,16 +98,23 @@ function Tooltip.Attach(deps)
             report("tooltip lines failed: " .. tostring(err))
         end
     end
+    Tooltip.handler = onItem
 
-    local processor = deps.processor
-    if type(processor) ~= "table" or type(processor.AddTooltipPostCall) ~= "function" or deps.itemType == nil then
+    local hook = deps.hook or ns.TooltipHook
+    if type(hook) ~= "table" or type(hook.Install) ~= "function" then
         report("tooltip hook not available")
         return nil
     end
-    local ok, err = pcall(processor.AddTooltipPostCall, deps.itemType, onTooltip)
-    if not ok then
-        report("tooltip hook failed: " .. tostring(err))
+    if not hook.Install(onItem, { report = report }) then
         return nil
     end
-    return { OnTooltip = onTooltip, stats = stats }
+    return { OnItem = onItem, stats = stats }
+end
+
+-- Entry point for a flavour hook: add the Flipside lines to one item tooltip.
+-- link is the item link or nil. stackCount is optional; with Alt down the bag owner of the tooltip gives it.
+function Tooltip.OnItem(tooltip, link, stackCount)
+    if Tooltip.handler then
+        Tooltip.handler(tooltip, link, stackCount)
+    end
 end
