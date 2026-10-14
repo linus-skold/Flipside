@@ -337,6 +337,7 @@ The user decided points 1 to 4. Points 5 to 9 are defaults from the study recomm
 7. TBC Buying and Selling come later. Step 6 starts on WoW: Forever only.
 8. The decision log is a table for the session. Flipside does not save it.
 9. The buying plan (`BuyingPlan`) is pure logic. It lists the items of all groups that have a Buying operation, with the maximum price for each item. It shows the buyable rows of live search results, and it stops with a reason: "above max price", "own auction only", "no results" or "no max price". For a commodity, the buy unit is a quantity at a quoted unit price. For an item, the buy unit is one auction. The option `showAboveMax` lets the UI show rows above the maximum, but never buy them.
+10. The Forever host can add many Flipside tabs (`ns.AuctionTabs.Register`). The Buying tab shows the shopping list and runs live searches (one item, or all items one at a time). It evaluates the rows and logs each decision. In this update it is a dry run: the "Buy next" button is off and Flipside makes no protected call.
 
 ### 5.5 Mail lists (reference §5.4 Mailing)
 

@@ -853,6 +853,14 @@ openUI = function()
     else
         ns.ReportError("Auction House tab is not available this session: " .. tostring(result))
     end
+    if ns.AuctionTabs then
+        ns.auctionTabs = ns.AuctionTabs.AttachAll({
+            bus = ns.bus,
+            rules = ns.rules,
+            formulaRun = ns.formulaRun,
+            after = C_Timer.After,
+        })
+    end
 end
 
 local function scanCommand(argument)
