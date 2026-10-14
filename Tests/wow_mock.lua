@@ -4,7 +4,8 @@ local M = {}
 
 local GLOBAL_NAMES = {
     "ACCEPT", "CANCEL", "C_AuctionHouse", "C_Item", "C_Timer", "CreateFrame", "DEFAULT_CHAT_FRAME",
-    "GetBuildInfo", "GetServerTime", "SLASH_SCANTEST1", "ScanTestDB", "SlashCmdList",
+    "FlipsideDB", "FlipsideScanDB", "GetBuildInfo", "GetServerTime", "SLASH_FLIPSIDE1", "SLASH_FLIPSIDE2",
+    "SLASH_SCANTEST1", "ScanTestDB", "SlashCmdList",
     "StaticPopupDialogs", "StaticPopup_Show", "WOW_PROJECT_ID", "date", "debugprofilestop", "time",
 }
 
@@ -12,11 +13,26 @@ local frameMethods = {}
 frameMethods.__index = frameMethods
 
 function frameMethods:RegisterEvent(event)
+    if M.invalidEvents[event] then
+        error("unknown event: " .. tostring(event), 2)
+    end
     self.events[event] = true
 end
 
 function frameMethods:UnregisterEvent(event)
     self.events[event] = nil
+end
+
+function frameMethods:Show()
+    self.shown = true
+end
+
+function frameMethods:Hide()
+    self.shown = false
+end
+
+function frameMethods:IsShown()
+    return self.shown
 end
 
 function frameMethods:SetScript(name, fn)
@@ -32,6 +48,7 @@ function M.reset()
     M.serverBase = 1000000
     M.timers = {}
     M.frames = {}
+    M.invalidEvents = {} -- event names that RegisterEvent rejects
     M.messages = {}
     M.popup = nil -- last popup: { which, text, dialog }
     M.replicateCalls = 0
@@ -44,12 +61,16 @@ function M.reset()
     _G.date = os.date
     _G.time = os.time
     _G.ScanTestDB = nil
+    _G.FlipsideDB = nil
+    _G.FlipsideScanDB = nil
+    _G.SLASH_FLIPSIDE1 = nil
+    _G.SLASH_FLIPSIDE2 = nil
     _G.SLASH_SCANTEST1 = nil
     _G.SlashCmdList = {}
     _G.StaticPopupDialogs = {}
 
     _G.CreateFrame = function()
-        local f = setmetatable({ events = {}, scripts = {} }, frameMethods)
+        local f = setmetatable({ events = {}, scripts = {}, shown = true }, frameMethods)
         table.insert(M.frames, f)
         return f
     end
@@ -135,16 +156,16 @@ function M.isRegistered(event)
     return false
 end
 
--- Run one frame: call each OnUpdate script once.
+-- Run one frame: call the OnUpdate script of each shown frame once.
 function M.update()
     local list = {}
     for _, f in ipairs(M.frames) do
-        if f.scripts.OnUpdate then
+        if f.scripts.OnUpdate and f.shown then
             table.insert(list, f)
         end
     end
     for _, f in ipairs(list) do
-        if f.scripts.OnUpdate then
+        if f.scripts.OnUpdate and f.shown then
             f.scripts.OnUpdate(f, 0.016)
         end
     end
