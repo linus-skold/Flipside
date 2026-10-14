@@ -1,13 +1,14 @@
+local manifest = require("Tests.manifest")
 local mock = require("Tests.wow_mock")
 
 local LINK = "|cff0070dd|Hitem:123::::::::80:::::::::|h[Thing]|h|r"
 
 local function loadModules()
     local ns = {}
-    for _, name in ipairs({ "Core/EventBus", "Core/ItemString", "Services/ScanClock", "Services/ScanCooldown",
-        "Services/ScanSources", "Services/FormulaLookup", "Services/ItemNameIndex", "UI/Kit/Theme", "UI/Kit/Widgets",
-        "Features/AuctionTab/AuctionTab" }) do
-        assert(loadfile(name .. ".lua"))("Flipside", ns)
+    for _, name in ipairs({ "EventBus", "ItemString", "ScanClock", "ScanCooldown",
+        "ScanSources", "FormulaLookup", "ItemNameIndex", "Theme", "Widgets",
+        "AuctionTab" }) do
+        assert(loadfile(manifest.path(name)))("Flipside", ns)
     end
     return ns
 end

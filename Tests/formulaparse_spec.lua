@@ -1,9 +1,10 @@
+local manifest = require("Tests.manifest")
 describe("FormulaParse", function()
     local FormulaParse
 
     before_each(function()
         local ns = {}
-        assert(loadfile("Services/FormulaParse.lua"))("Flipside", ns)
+        assert(loadfile(manifest.path("FormulaParse")))("Flipside", ns)
         FormulaParse = ns.FormulaParse
     end)
 

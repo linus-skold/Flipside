@@ -1,5 +1,6 @@
+local manifest = require("Tests.manifest")
 local ns = {}
-assert(loadfile("Core/ItemInfoCache.lua"))("Flipside", ns)
+assert(loadfile(manifest.path("ItemInfoCache")))("Flipside", ns)
 local IIC = ns.ItemInfoCache
 
 describe("ItemInfoCache", function()

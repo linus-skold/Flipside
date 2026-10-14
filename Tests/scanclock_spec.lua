@@ -1,5 +1,6 @@
+local manifest = require("Tests.manifest")
 local ns = {}
-assert(loadfile("Services/ScanClock.lua"))("Flipside", ns)
+assert(loadfile(manifest.path("ScanClock")))("Flipside", ns)
 local C = ns.ScanClock
 
 describe("ScanClock", function()

@@ -1,3 +1,4 @@
+local manifest = require("Tests.manifest")
 describe("ScanRows", function()
     local ScanRows
     local PET = "|cff0070dd|Hbattlepet:1:1:1:1:1:1:1|h[Pet]|h|r"
@@ -5,9 +6,9 @@ describe("ScanRows", function()
 
     before_each(function()
         local ns = {}
-        assert(loadfile("Core/ItemString.lua"))("Flipside", ns)
-        assert(loadfile("Services/ScanKey.lua"))("Flipside", ns)
-        assert(loadfile("Services/ScanRows.lua"))("Flipside", ns)
+        assert(loadfile(manifest.path("ItemString")))("Flipside", ns)
+        assert(loadfile(manifest.path("ScanKey")))("Flipside", ns)
+        assert(loadfile(manifest.path("ScanRows")))("Flipside", ns)
         ScanRows = ns.ScanRows
     end)
 

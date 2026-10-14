@@ -1,10 +1,11 @@
+local manifest = require("Tests.manifest")
 describe("ScanKey", function()
     local ScanKey
 
     before_each(function()
         local ns = {}
-        assert(loadfile("Core/ItemString.lua"))("Flipside", ns)
-        assert(loadfile("Services/ScanKey.lua"))("Flipside", ns)
+        assert(loadfile(manifest.path("ItemString")))("Flipside", ns)
+        assert(loadfile(manifest.path("ScanKey")))("Flipside", ns)
         ScanKey = ns.ScanKey
     end)
 

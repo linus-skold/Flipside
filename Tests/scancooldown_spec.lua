@@ -1,6 +1,7 @@
+local manifest = require("Tests.manifest")
 local ns = {}
-assert(loadfile("Core/SettingsDB.lua"))("Flipside", ns)
-assert(loadfile("Services/ScanCooldown.lua"))("Flipside", ns)
+assert(loadfile(manifest.path("SettingsDB")))("Flipside", ns)
+assert(loadfile(manifest.path("ScanCooldown")))("Flipside", ns)
 local SettingsDB = ns.SettingsDB
 local ScanCooldown = ns.ScanCooldown
 

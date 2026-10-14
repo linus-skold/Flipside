@@ -1,3 +1,4 @@
+local manifest = require("Tests.manifest")
 describe("ScanCapture", function()
     local ns, store, capture, api, now, captured, reports, running
     local DAY = 86400
@@ -10,9 +11,9 @@ describe("ScanCapture", function()
         ns = {}
         for _, name in ipairs({ "ScanClock", "ScanRecord", "ScanMarket", "ScanKey", "ScanBucket", "ScanStore",
             "ScanCapture" }) do
-            assert(loadfile("Services/" .. name .. ".lua"))("Flipside", ns)
+            assert(loadfile(manifest.path(name)))("Flipside", ns)
         end
-        assert(loadfile("Core/ItemString.lua"))("Flipside", ns)
+        assert(loadfile(manifest.path("ItemString")))("Flipside", ns)
         store = ns.ScanStore.New({}, { region = "EU", ruleset = "standard", schemaVersion = 1 })
         now = 10 * DAY + 100
         captured, reports, running = {}, {}, false

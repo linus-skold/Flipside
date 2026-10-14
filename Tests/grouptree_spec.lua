@@ -1,6 +1,7 @@
+local manifest = require("Tests.manifest")
 local ns = {}
-assert(loadfile("Core/ItemString.lua"))("Flipside", ns)
-assert(loadfile("Services/GroupTree.lua"))("Flipside", ns)
+assert(loadfile(manifest.path("ItemString")))("Flipside", ns)
+assert(loadfile(manifest.path("GroupTree")))("Flipside", ns)
 local G = ns.GroupTree
 
 local function chain(d, n)

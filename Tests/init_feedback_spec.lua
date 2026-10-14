@@ -1,16 +1,10 @@
+local manifest = require("Tests.manifest")
 local mock = require("Tests.wow_mock")
 
 local ns, deps
 
 local function tocFiles()
-    local files = {}
-    for line in io.lines("Flipside.toc") do
-        local path = line:match("^([%w\\]+%.lua)%s*$")
-        if path then
-            table.insert(files, (path:gsub("\\", "/")))
-        end
-    end
-    return files
+    return manifest.files()
 end
 
 local function loadAddon()
@@ -91,12 +85,12 @@ describe("Init feedback", function()
         local function before(first, second)
             assert.is_true(position[first] < position[second], first .. " before " .. second)
         end
-        before("Services/RulesStore.lua", "Services/RulesExport.lua")
-        before("Services/CustomSources.lua", "Services/RulesExport.lua")
-        before("Services/AHNameSearch.lua", "UI/Pages/GroupsPage.lua")
-        before("Services/RulesExport.lua", "UI/Pages/GroupsPage.lua")
-        before("Services/ItemNameIndex.lua", "UI/Pages/GroupsPage.lua")
-        before("Services/RulesExport.lua", "Core/Init.lua")
+        before(manifest.path("RulesStore"), manifest.path("RulesExport"))
+        before(manifest.path("CustomSources"), manifest.path("RulesExport"))
+        before(manifest.path("AHNameSearch"), manifest.path("GroupsPage"))
+        before(manifest.path("RulesExport"), manifest.path("GroupsPage"))
+        before(manifest.path("ItemNameIndex"), manifest.path("GroupsPage"))
+        before(manifest.path("RulesExport"), manifest.path("Init"))
         assert.is_table(ns.AHNameSearch)
         assert.is_table(ns.RulesExport)
     end)

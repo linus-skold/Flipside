@@ -1,9 +1,10 @@
+local manifest = require("Tests.manifest")
 describe("ItemString", function()
     local IS
 
     before_each(function()
         local ns = {}
-        assert(loadfile("Core/ItemString.lua"))("Flipside", ns)
+        assert(loadfile(manifest.path("ItemString")))("Flipside", ns)
         IS = ns.ItemString
     end)
 
@@ -144,7 +145,7 @@ describe("ItemString keys", function()
 
     before_each(function()
         local ns = {}
-        assert(loadfile("Core/ItemString.lua"))("Flipside", ns)
+        assert(loadfile(manifest.path("ItemString")))("Flipside", ns)
         IS = ns.ItemString
     end)
 

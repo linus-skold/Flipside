@@ -1,16 +1,10 @@
+local manifest = require("Tests.manifest")
 local mock = require("Tests.wow_mock")
 
 local ns, deps
 
 local function tocFiles()
-    local files = {}
-    for line in io.lines("Flipside.toc") do
-        local path = line:match("^([%w\\]+%.lua)%s*$")
-        if path then
-            table.insert(files, (path:gsub("\\", "/")))
-        end
-    end
-    return files
+    return manifest.files()
 end
 
 local function loadAddon()
@@ -103,17 +97,17 @@ describe("Init rules", function()
         local function before(first, second)
             assert.is_true(position[first] < position[second], first .. " before " .. second)
         end
-        before("Services/OperationSchema.lua", "Services/RulesStore.lua")
-        before("Services/GroupTree.lua", "Services/RulesStore.lua")
-        before("Services/FormulaSources.lua", "Services/CustomSources.lua")
-        before("Services/BagItems.lua", "Core/Init.lua")
-        before("Services/RulesStore.lua", "Core/Init.lua")
-        before("Services/CustomSources.lua", "Core/Init.lua")
-        before("UI/Kit/List.lua", "UI/Kit/Tree.lua")
-        before("UI/Kit/Tree.lua", "UI/Pages/GroupsPage.lua")
-        before("UI/Pages/FormulaPage.lua", "UI/Pages/OperationsPage.lua")
-        before("UI/Pages/OperationsPage.lua", "UI/MainWindow.lua")
-        before("UI/Pages/GroupsPage.lua", "UI/MainWindow.lua")
+        before(manifest.path("OperationSchema"), manifest.path("RulesStore"))
+        before(manifest.path("GroupTree"), manifest.path("RulesStore"))
+        before(manifest.path("FormulaSources"), manifest.path("CustomSources"))
+        before(manifest.path("BagItems"), manifest.path("Init"))
+        before(manifest.path("RulesStore"), manifest.path("Init"))
+        before(manifest.path("CustomSources"), manifest.path("Init"))
+        before(manifest.path("List"), manifest.path("Tree"))
+        before(manifest.path("Tree"), manifest.path("GroupsPage"))
+        before(manifest.path("FormulaPage"), manifest.path("OperationsPage"))
+        before(manifest.path("OperationsPage"), manifest.path("MainWindow"))
+        before(manifest.path("GroupsPage"), manifest.path("MainWindow"))
     end)
 
     it("creates the rules and the custom sources at login", function()

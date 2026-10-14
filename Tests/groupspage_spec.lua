@@ -1,20 +1,21 @@
+local manifest = require("Tests.manifest")
 local mock = require("Tests.wow_mock")
 
 local KIT = { "Theme", "Window", "Widgets", "Tabs", "List", "Tree", "Combat" }
-local CORE = { "Core/ItemString", "Core/SettingsDB", "Services/ScanClock", "Services/ScanSources",
-    "Services/FormulaParse", "Services/FormulaFunctions", "Services/FormulaEval", "Services/FormulaSources",
-    "Services/CustomSources", "Services/GroupTree", "Services/OperationSchema", "Services/RulesStore",
-    "Services/RulesExport", "Services/ItemNameIndex" }
+local CORE = { "ItemString", "SettingsDB", "ScanClock", "ScanSources",
+    "FormulaParse", "FormulaFunctions", "FormulaEval", "FormulaSources",
+    "CustomSources", "GroupTree", "OperationSchema", "RulesStore",
+    "RulesExport", "ItemNameIndex" }
 
 local function load()
     local ns = {}
     for _, name in ipairs(CORE) do
-        assert(loadfile(name .. ".lua"))("Flipside", ns)
+        assert(loadfile(manifest.path(name)))("Flipside", ns)
     end
     for _, name in ipairs(KIT) do
-        assert(loadfile("UI/Kit/" .. name .. ".lua"))("Flipside", ns)
+        assert(loadfile(manifest.path(name)))("Flipside", ns)
     end
-    assert(loadfile("UI/Pages/GroupsPage.lua"))("Flipside", ns)
+    assert(loadfile(manifest.path("GroupsPage")))("Flipside", ns)
     return ns
 end
 

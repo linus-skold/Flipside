@@ -1,3 +1,4 @@
+local manifest = require("Tests.manifest")
 local mock = require("Tests.wow_mock")
 
 local FILES = { "Theme", "Window", "Widgets", "Tabs", "List", "Tree", "Combat" }
@@ -5,7 +6,7 @@ local FILES = { "Theme", "Window", "Widgets", "Tabs", "List", "Tree", "Combat" }
 local function loadKit()
     local ns = {}
     for _, name in ipairs(FILES) do
-        assert(loadfile("UI/Kit/" .. name .. ".lua"))("Flipside", ns)
+        assert(loadfile(manifest.path(name)))("Flipside", ns)
     end
     return ns.Kit, ns
 end
@@ -32,7 +33,7 @@ describe("Kit", function()
 
     it("uses only ns.Kit and no Flipside name in the kit files", function()
         for _, name in ipairs(FILES) do
-            local file = assert(io.open("UI/Kit/" .. name .. ".lua", "rb"))
+            local file = assert(io.open(manifest.path(name), "rb"))
             local source = file:read("*a")
             file:close()
             for use in source:gmatch("%f[%w_]ns%.([%w_]+)") do

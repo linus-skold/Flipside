@@ -1,11 +1,12 @@
+local manifest = require("Tests.manifest")
 describe("FormulaEval", function()
     local ns, Eval
 
     before_each(function()
         ns = {}
-        assert(loadfile("Services/FormulaParse.lua"))("Flipside", ns)
-        assert(loadfile("Services/FormulaFunctions.lua"))("Flipside", ns)
-        assert(loadfile("Services/FormulaEval.lua"))("Flipside", ns)
+        assert(loadfile(manifest.path("FormulaParse")))("Flipside", ns)
+        assert(loadfile(manifest.path("FormulaFunctions")))("Flipside", ns)
+        assert(loadfile(manifest.path("FormulaEval")))("Flipside", ns)
         Eval = ns.FormulaEval
     end)
 

@@ -1,10 +1,11 @@
+local manifest = require("Tests.manifest")
 describe("FormulaFunctions", function()
     local F
     local huge = math.huge
 
     before_each(function()
         local ns = {}
-        assert(loadfile("Services/FormulaFunctions.lua"))("Flipside", ns)
+        assert(loadfile(manifest.path("FormulaFunctions")))("Flipside", ns)
         F = ns.FormulaFunctions
     end)
 

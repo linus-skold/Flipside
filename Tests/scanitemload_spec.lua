@@ -1,7 +1,8 @@
+local manifest = require("Tests.manifest")
 local ns = {}
-assert(loadfile("Core/ItemInfoCache.lua"))("Flipside", ns)
-assert(loadfile("Services/ScanClock.lua"))("Flipside", ns)
-assert(loadfile("Services/ScanItemLoad.lua"))("Flipside", ns)
+assert(loadfile(manifest.path("ItemInfoCache")))("Flipside", ns)
+assert(loadfile(manifest.path("ScanClock")))("Flipside", ns)
+assert(loadfile(manifest.path("ScanItemLoad")))("Flipside", ns)
 local ScanItemLoad = ns.ScanItemLoad
 
 -- World: fake client data, cache, clock and job.

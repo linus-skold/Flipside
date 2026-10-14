@@ -1,12 +1,13 @@
+local manifest = require("Tests.manifest")
 local mock = require("Tests.wow_mock")
 
 local FILES = {
-    "Core/EventBus.lua",
-    "Core/Scheduler.lua",
-    "Core/ItemString.lua",
-    "Core/SettingsDB.lua",
-    "Core/ItemInfoCache.lua",
-    "Core/Init.lua",
+    manifest.path("EventBus"),
+    manifest.path("Scheduler"),
+    manifest.path("ItemString"),
+    manifest.path("SettingsDB"),
+    manifest.path("ItemInfoCache"),
+    manifest.path("Init"),
 }
 
 local ns
@@ -202,11 +203,13 @@ describe("Init", function()
         end)
 
         it("loads the files from the TOC in sequence", function()
-            local toc = {}
-            for line in io.lines("Flipside.toc") do
-                local path = line:match("^(Core\\.-%.lua)%s*$")
-                if path then
-                    table.insert(toc, (path:gsub("\\", "/")))
+            local inFiles, toc = {}, {}
+            for _, path in ipairs(FILES) do
+                inFiles[path] = true
+            end
+            for _, path in ipairs(manifest.files()) do
+                if inFiles[path] then
+                    table.insert(toc, path)
                 end
             end
             assert.are.same(FILES, toc)

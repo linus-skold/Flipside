@@ -1,16 +1,10 @@
+local manifest = require("Tests.manifest")
 local mock = require("Tests.wow_mock")
 
 local ns
 
 local function tocFiles()
-    local files = {}
-    for line in io.lines("Flipside.toc") do
-        local path = line:match("^([%w]+\\[%w]+%.lua)%s*$")
-        if path then
-            table.insert(files, (path:gsub("\\", "/")))
-        end
-    end
-    return files
+    return manifest.files()
 end
 
 local function slash(text)
@@ -49,7 +43,7 @@ describe("Init formula", function()
             position[path] = i
         end
         for _, name in ipairs({ "Parse", "Functions", "Sources", "Lookup", "Eval", "Run" }) do
-            assert.is_true(position["Services/Formula" .. name .. ".lua"] < position["Core/Init.lua"], name)
+            assert.is_true(position[manifest.path("Formula" .. name)] < position[manifest.path("Init")], name)
         end
         assert.is_table(ns.formulaRun)
         assert.is_table(ns.formulaSources)

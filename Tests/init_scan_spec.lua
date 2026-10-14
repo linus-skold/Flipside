@@ -1,3 +1,4 @@
+local manifest = require("Tests.manifest")
 local mock = require("Tests.wow_mock")
 
 local REPLICATE = "REPLICATE_ITEM_LIST_UPDATE"
@@ -7,14 +8,7 @@ local ns
 
 -- Load the files in the order of the TOC, as the client does.
 local function tocFiles()
-    local files = {}
-    for line in io.lines("Flipside.toc") do
-        local path = line:match("^([%w]+\\[%w]+%.lua)%s*$")
-        if path then
-            table.insert(files, (path:gsub("\\", "/")))
-        end
-    end
-    return files
+    return manifest.files()
 end
 
 local function hasMessage(text)
@@ -105,17 +99,17 @@ describe("Init scan", function()
     describe("TOC", function()
         it("loads the scan modules before Init, and Init last", function()
             local files = tocFiles()
-            assert.are.equal("Core/Init.lua", files[#files])
+            assert.are.equal(manifest.path("Init"), files[#files])
             local position = {}
             for i, path in ipairs(files) do
                 position[path] = i
             end
             for _, name in ipairs({ "Clock", "Record", "Market", "Key", "Cooldown", "Bucket", "Store", "Rows",
                 "ItemLoad", "Sources", "Engine", "Capture" }) do
-                assert.is_truthy(position["Services/Scan" .. name .. ".lua"], name)
+                assert.is_truthy(position[manifest.path("Scan" .. name)], name)
             end
-            assert.is_true(position["Services/ScanEngine.lua"] < position["Core/Init.lua"])
-            assert.is_true(position["Services/ScanCapture.lua"] < position["Core/Init.lua"])
+            assert.is_true(position[manifest.path("ScanEngine")] < position[manifest.path("Init")])
+            assert.is_true(position[manifest.path("ScanCapture")] < position[manifest.path("Init")])
         end)
     end)
 

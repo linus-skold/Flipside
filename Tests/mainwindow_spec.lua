@@ -1,3 +1,4 @@
+local manifest = require("Tests.manifest")
 local mock = require("Tests.wow_mock")
 
 local KIT = { "Theme", "Window", "Widgets", "Tabs", "List", "Combat" }
@@ -5,9 +6,9 @@ local KIT = { "Theme", "Window", "Widgets", "Tabs", "List", "Combat" }
 local function load()
     local ns = {}
     for _, name in ipairs(KIT) do
-        assert(loadfile("UI/Kit/" .. name .. ".lua"))("Flipside", ns)
+        assert(loadfile(manifest.path(name)))("Flipside", ns)
     end
-    assert(loadfile("UI/MainWindow.lua"))("Flipside", ns)
+    assert(loadfile(manifest.path("MainWindow")))("Flipside", ns)
     return ns
 end
 

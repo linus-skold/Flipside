@@ -1,6 +1,7 @@
+local manifest = require("Tests.manifest")
 local ns = {}
-assert(loadfile("Core/SettingsDB.lua"))("Flipside", ns)
-assert(loadfile("Services/TooltipConfig.lua"))("Flipside", ns)
+assert(loadfile(manifest.path("SettingsDB")))("Flipside", ns)
+assert(loadfile(manifest.path("TooltipConfig")))("Flipside", ns)
 
 local function open(saved)
     return ns.SettingsDB.New(saved, { character = "Alice-Realm", schemaVersion = 1 })

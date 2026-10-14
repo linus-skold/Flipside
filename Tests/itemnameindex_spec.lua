@@ -1,7 +1,8 @@
+local manifest = require("Tests.manifest")
 local function load()
     local ns = {}
-    for _, name in ipairs({ "Core/ItemString", "Services/ItemNameIndex" }) do
-        assert(loadfile(name .. ".lua"))("Flipside", ns)
+    for _, name in ipairs({ "ItemString", "ItemNameIndex" }) do
+        assert(loadfile(manifest.path(name)))("Flipside", ns)
     end
     return ns
 end

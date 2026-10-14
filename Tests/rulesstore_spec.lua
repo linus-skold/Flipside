@@ -1,9 +1,10 @@
+local manifest = require("Tests.manifest")
 local ns = {}
-assert(loadfile("Core/ItemString.lua"))("Flipside", ns)
-assert(loadfile("Core/SettingsDB.lua"))("Flipside", ns)
-assert(loadfile("Services/GroupTree.lua"))("Flipside", ns)
-assert(loadfile("Services/OperationSchema.lua"))("Flipside", ns)
-assert(loadfile("Services/RulesStore.lua"))("Flipside", ns)
+assert(loadfile(manifest.path("ItemString")))("Flipside", ns)
+assert(loadfile(manifest.path("SettingsDB")))("Flipside", ns)
+assert(loadfile(manifest.path("GroupTree")))("Flipside", ns)
+assert(loadfile(manifest.path("OperationSchema")))("Flipside", ns)
+assert(loadfile(manifest.path("RulesStore")))("Flipside", ns)
 
 local PROFILE_GROUPS = "p/Default/groups"
 local PROFILE_OPS = "p/Default/operations"

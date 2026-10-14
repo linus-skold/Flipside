@@ -1,11 +1,12 @@
+local manifest = require("Tests.manifest")
 local ns = {}
-assert(loadfile("Services/ScanClock.lua"))("Flipside", ns)
-assert(loadfile("Services/ScanSources.lua"))("Flipside", ns)
-assert(loadfile("Core/ItemInfoCache.lua"))("Flipside", ns)
-assert(loadfile("Services/FormulaParse.lua"))("Flipside", ns)
-assert(loadfile("Services/FormulaFunctions.lua"))("Flipside", ns)
-assert(loadfile("Services/FormulaEval.lua"))("Flipside", ns)
-assert(loadfile("Services/FormulaSources.lua"))("Flipside", ns)
+assert(loadfile(manifest.path("ScanClock")))("Flipside", ns)
+assert(loadfile(manifest.path("ScanSources")))("Flipside", ns)
+assert(loadfile(manifest.path("ItemInfoCache")))("Flipside", ns)
+assert(loadfile(manifest.path("FormulaParse")))("Flipside", ns)
+assert(loadfile(manifest.path("FormulaFunctions")))("Flipside", ns)
+assert(loadfile(manifest.path("FormulaEval")))("Flipside", ns)
+assert(loadfile(manifest.path("FormulaSources")))("Flipside", ns)
 
 local DAY = 86400
 local TODAY = 20000

@@ -1,3 +1,4 @@
+local manifest = require("Tests.manifest")
 describe("Tooltip", function()
     local ns, registered, now, alt, reports, built, failBuild, callbackDeps
 
@@ -11,7 +12,7 @@ describe("Tooltip", function()
 
     before_each(function()
         ns = {}
-        assert(loadfile("Features/Tooltip/Tooltip.lua"))("Flipside", ns)
+        assert(loadfile(manifest.path("Tooltip")))("Flipside", ns)
         registered, now, alt, reports, built, failBuild = {}, 0, false, {}, {}, false
         ns.TooltipLines = {
             Build = function(ctx)

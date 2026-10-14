@@ -1,17 +1,11 @@
+local manifest = require("Tests.manifest")
 local mock = require("Tests.wow_mock")
 
 local ns
 
 -- Load the files in the order of the TOC, as the client does.
 local function tocFiles()
-    local files = {}
-    for line in io.lines("Flipside.toc") do
-        local path = line:match("^([%w\\]+%.lua)%s*$")
-        if path then
-            table.insert(files, (path:gsub("\\", "/")))
-        end
-    end
-    return files
+    return manifest.files()
 end
 
 local function slash(text)
@@ -98,10 +92,10 @@ describe("Init UI", function()
         for i, path in ipairs(tocFiles()) do
             position[path] = i
         end
-        assert.is_true(position["UI/Kit/Combat.lua"] < position["UI/Pages/FormulaPage.lua"])
-        assert.is_true(position["UI/Pages/FormulaPage.lua"] < position["UI/MainWindow.lua"])
-        assert.is_true(position["UI/MainWindow.lua"] < position["Features/AuctionTab/AuctionTab.lua"])
-        assert.is_true(position["Features/AuctionTab/AuctionTab.lua"] < position["Core/Init.lua"])
+        assert.is_true(position[manifest.path("Combat")] < position[manifest.path("FormulaPage")])
+        assert.is_true(position[manifest.path("FormulaPage")] < position[manifest.path("MainWindow")])
+        assert.is_true(position[manifest.path("MainWindow")] < position[manifest.path("AuctionTab")])
+        assert.is_true(position[manifest.path("AuctionTab")] < position[manifest.path("Init")])
         assert.is_table(ns.MainWindow)
         assert.is_table(ns.AuctionTab)
     end)
