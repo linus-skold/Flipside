@@ -858,6 +858,13 @@ openUI = function()
         requestPriceRefresh = ns.RequestPriceRefresh,
         confirmScan = confirmScan,
         openMainWindow = ns.OpenMainWindow,
+        -- Profile setting ui.startPageScanBar: the scan bar on the start page of the Auction House. Default on.
+        startPageEnabled = function()
+            return not ns.db or ns.db:Get("profile", "ui.startPageScanBar") ~= false
+        end,
+        setStartPageEnabled = function(on)
+            return ns.db ~= nil and ns.db:Set("profile", "ui.startPageScanBar", on and true or false)
+        end,
     })
     if ok then
         ns.auctionTab = result

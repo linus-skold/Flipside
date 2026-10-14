@@ -266,6 +266,8 @@ Each feature lists only what differs from, or is unspecified in, the TSM referen
 
 A *Full Scan* button sits on the Flipside tab of the Auction House frame with a cooldown countdown (§3.1). When the AH opens and the cooldown is clear, an optional setting starts the scan automatically. Result summary after each scan: items seen, new items, prices changed by more than 30%, and duration.
 
+The scan buttons also show on the start page of the Blizzard Auction House: a small bar with the same scan buttons, a Stop button and one status text. On Forever the bar sits in the bottom strip of the Buy page. On TBC Anniversary it sits in the top strip of the Browse page. It follows the Blizzard page. The profile setting `ui.startPageScanBar` (default on) hides it. A check box on the Flipside tab changes the setting.
+
 ### 5.2 Item groups (reference §4.1)
 
 - Same tree model, exclusive membership and item-string granularity.

@@ -7,7 +7,7 @@ local function loadModules()
     local ns = {}
     for _, name in ipairs({ "EventBus", "ItemString", "ScanClock", "ScanCooldown",
         "ScanSources", "FormulaLookup", "ItemNameIndex", "Theme", "Widgets",
-        "AuctionTab", "AuctionTabHost" }) do
+        "ScanBar", "AuctionTab", "AuctionTabHost" }) do
         assert(loadfile(manifest.path(name)))("Flipside", ns)
     end
     return ns
@@ -478,6 +478,119 @@ describe("AuctionTab", function()
             local _, ui = attach()
             assert.is_false(ui.scan.enabled)
             assert.are.equal("scan is not available this session", ui.cooldown:GetText())
+        end)
+    end)
+
+    describe("start page scan bar", function()
+        local enabled, saves, page
+
+        -- Writes of new keys to a fake Blizzard frame fail: the host must not add fields.
+        local function guard(frame)
+            local meta = getmetatable(frame)
+            setmetatable(frame, {
+                __index = meta.__index,
+                __newindex = function(_, key)
+                    error("write to a Blizzard frame: " .. tostring(key), 2)
+                end,
+            })
+        end
+
+        before_each(function()
+            enabled, saves = true, {}
+            page = CreateFrame("Frame", nil, ah)
+            page:Hide()
+            ah.BrowseResultsFrame = page
+            guard(ah)
+            guard(page)
+            deps.startPageEnabled = function()
+                return enabled
+            end
+            deps.setStartPageEnabled = function(on)
+                table.insert(saves, on)
+                enabled = on
+                return true
+            end
+        end)
+
+        local function showPage()
+            page:Show()
+            page:GetScript("OnShow")(page)
+        end
+
+        it("sits in the bottom strip right of the gold display", function()
+            local tab = attach()
+            local frame = tab.startPage.frame
+            assert.are.equal(ah, frame:GetParent())
+            assert.are.same({ "BOTTOMLEFT", ah, "BOTTOMLEFT", 174, 4 }, frame.points[1])
+            assert.are.same({ "BOTTOMRIGHT", ah, "BOTTOMRIGHT", -8, 4 }, frame.points[2])
+        end)
+
+        it("shows only while the browse page is shown", function()
+            local tab = attach()
+            local frame = tab.startPage.frame
+            assert.is_false(frame:IsShown())
+            showPage()
+            assert.is_true(frame:IsShown())
+            page:Hide()
+            assert.is_false(frame:IsShown())
+        end)
+
+        it("starts a scan with the shared rules", function()
+            local tab = attach()
+            showPage()
+            click(tab.startPage.bar.scan)
+            assert.is_function(confirmed)
+            confirmed()
+            assert.are.equal(1, engine.starts)
+        end)
+
+        it("stays hidden when the setting is off", function()
+            enabled = false
+            local tab = attach()
+            showPage()
+            assert.is_false(tab.startPage.frame:IsShown())
+        end)
+
+        it("is not built without the browse results frame", function()
+            ah.BrowseResultsFrame = nil
+            local tab = attach()
+            assert.is_nil(tab.startPage)
+        end)
+
+        it("is not built without a scan engine", function()
+            deps.scanEngine = nil
+            local tab = attach()
+            assert.is_nil(tab.startPage)
+        end)
+
+        it("has a check box that saves the setting and hides the bar", function()
+            local tab, ui = attach()
+            showPage()
+            assert.is_true(ui.startCheck.checked)
+            ui.startCheck.checked = false
+            click(ui.startCheck)
+            assert.are.same({ false }, saves)
+            assert.is_false(tab.startPage.frame:IsShown())
+            ui.startCheck.checked = true
+            click(ui.startCheck)
+            assert.are.same({ false, true }, saves)
+            assert.is_true(tab.startPage.frame:IsShown())
+        end)
+
+        it("says so when the setting cannot be saved", function()
+            deps.setStartPageEnabled = function()
+                return false
+            end
+            local _, ui = attach()
+            ui.startCheck.checked = false
+            click(ui.startCheck)
+            assert.is_truthy(ui.message:GetText():find("not saved", 1, true))
+        end)
+
+        it("removes the bar when the build fails", function()
+            local tab = attach()
+            tab:Unmount()
+            assert.is_nil(tab.startPage)
         end)
     end)
 
