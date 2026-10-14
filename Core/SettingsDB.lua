@@ -108,6 +108,52 @@ function DB:Set(scope, key, value)
     return true
 end
 
+function DB:ListCharacters()
+    local seen = {}
+    for name in pairs(self:_Map()) do
+        seen[name] = true
+    end
+    for k in pairs(self._saved) do
+        local name = type(k) == "string" and k:match("^c/([^/]+)/")
+        if name then
+            seen[name] = true
+        end
+    end
+    local names = {}
+    for name in pairs(seen) do
+        names[#names + 1] = name
+    end
+    table.sort(names)
+    return names
+end
+
+function DB:GetFor(character, key)
+    CheckName(character, "character")
+    CheckName(key, "key")
+    local value = self._saved["c/" .. character .. "/" .. key]
+    if value == nil then
+        local defaults = self._defaults.character
+        if defaults then
+            value = DeepCopy(defaults[key])
+        end
+    end
+    return value
+end
+
+function DB:SetFor(character, key, value)
+    CheckName(character, "character")
+    CheckName(key, "key")
+    if not self:_CanWrite() then
+        return false
+    end
+    self._saved["c/" .. character .. "/" .. key] = value
+    return true
+end
+
+function DB:RemoveFor(character, key)
+    return self:SetFor(character, key, nil)
+end
+
 function DB:IsReadOnly()
     return self._readOnly
 end

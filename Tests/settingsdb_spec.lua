@@ -19,6 +19,42 @@ local function Warnings()
 end
 
 describe("SettingsDB", function()
+    describe("other characters", function()
+        it("lists characters from the map and key prefixes", function()
+            local saved = { _schema = 1, ["c/Bob-Other/x"] = 1, ["c/Cy-Realm/y"] = 2 }
+            local db = Open(saved)
+            db:SetProfile("P")
+            assert.are.same({ "Alice-Realm", "Bob-Other", "Cy-Realm" }, db:ListCharacters())
+        end)
+
+        it("reads, writes and removes values of a character", function()
+            local saved = {}
+            local db = Open(saved)
+            assert.is_nil(db:GetFor("Bob-Other", "k"))
+            assert.is_true(db:SetFor("Bob-Other", "k", { 1 }))
+            assert.are.same({ 1 }, saved["c/Bob-Other/k"])
+            assert.are.same({ 1 }, db:GetFor("Bob-Other", "k"))
+            db:SetFor("Alice-Realm", "k", 5)
+            assert.are.equal(5, db:Get("character", "k"))
+            assert.is_true(db:RemoveFor("Bob-Other", "k"))
+            assert.is_nil(saved["c/Bob-Other/k"])
+        end)
+
+        it("rejects invalid names", function()
+            local db = Open({})
+            assert.has_error(function() db:GetFor("a/b", "k") end)
+            assert.has_error(function() db:SetFor("Bob", "", 1) end)
+        end)
+
+        it("does not write when read-only", function()
+            local saved = { _schema = 5, ["c/Bob/k"] = 1 }
+            local db = Open(saved)
+            assert.is_false(db:SetFor("Bob", "k", 2))
+            assert.is_false(db:RemoveFor("Bob", "k"))
+            assert.are.equal(1, db:GetFor("Bob", "k"))
+        end)
+    end)
+
     describe("new DB", function()
         it("sets the schema and the Default profile", function()
             local saved = {}
