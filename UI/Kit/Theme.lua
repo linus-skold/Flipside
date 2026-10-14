@@ -17,6 +17,7 @@ Kit.Theme = {
     padding = 12,
     rowHeight = 20,
     gap = 6,
+    insetPadding = 4,
     rowHighlight = "Interface\\QuestFrame\\UI-QuestTitleHighlight",
     divider = "Options_HorizontalDivider",
 }
@@ -25,4 +26,15 @@ Kit.Theme = {
 function Kit.Font(role)
     local fonts = Kit.Theme.fonts
     return fonts[role] or fonts.normal
+end
+
+-- Return r, g, b and the hex string (no |c prefix) of an item quality. Missing data gives white.
+function Kit.QualityColor(quality)
+    if C_Item and C_Item.GetItemQualityColor and quality then
+        local r, g, b, hex = C_Item.GetItemQualityColor(quality)
+        if r then
+            return r, g, b, hex
+        end
+    end
+    return 1, 1, 1, "ffffffff"
 end

@@ -12,7 +12,7 @@ local GLOBAL_NAMES = {
     "StaticPopupDialogs", "StaticPopup_Show", "UnitName", "WOW_PROJECT_ID", "date", "debugprofilestop", "time",
     "UISpecialFrames", "UIParent", "GameTooltip", "GetMoneyString", "PanelTemplates_SetNumTabs",
     "PanelTemplates_SetTab", "InCombatLockdown", "ScrollUtil", "CreateDataProvider",
-    "CreateScrollBoxListLinearView", "CreateTreeDataProvider", "CreateScrollBoxListTreeListView",
+    "CreateScrollBoxListLinearView", "CreateTreeDataProvider", "CreateScrollBoxListTreeListView", "MenuUtil",
 }
 
 local frameMethods = {}
@@ -43,6 +43,26 @@ end
 
 function frameMethods:SetFrameStrata(strata)
     self.strata = strata
+end
+
+function frameMethods:SetToplevel(toplevel)
+    self.toplevel = toplevel
+end
+
+function frameMethods:Raise()
+    self.raised = (self.raised or 0) + 1
+end
+
+function frameMethods:SetFrameLevel(level)
+    self.level = level
+end
+
+function frameMethods:GetFrameLevel()
+    return self.level or 1
+end
+
+function frameMethods:RegisterForClicks(...)
+    self.clickButtons = { ... }
 end
 
 function frameMethods:GetEffectiveScale()
@@ -293,6 +313,9 @@ function M.reset()
     M.invalidEvents = {} -- event names that RegisterEvent rejects
     M.messages = {}
     M.popup = nil -- last popup: { which, text, dialog }
+    M.popupFrame = nil -- frame that StaticPopup_Show gives back
+    M.qualityColors = { [4] = { 0.64, 0.21, 0.93, "ffa335ee" } } -- quality -> r, g, b, hex
+    M.menu = nil -- last context menu: { owner, title, items = { { text, onClick, enabled } } }
     M.replicateCalls = 0
     M.rows = {} -- each row: itemID, count, buyout, hasAll, link
     M.region = "EU" -- result of GetCurrentRegionName()
@@ -520,6 +543,13 @@ function M.reset()
         GetItemMaxStackSizeByID = function(itemID)
             return M.stackSizes[itemID]
         end,
+        -- Quality colours: M.qualityColors[quality] = { r, g, b, hex }.
+        GetItemQualityColor = function(quality)
+            local color = M.qualityColors[quality]
+            if color then
+                return color[1], color[2], color[3], color[4]
+            end
+        end,
     }
 
     _G.C_AuctionHouse = {
@@ -598,7 +628,31 @@ function M.reset()
     _G.StaticPopup_Show = function(which, arg1, arg2)
         local d = _G.StaticPopupDialogs[which]
         M.popup = { which = which, dialog = d, text = string.format(d.text, arg1 or "", arg2 or "") }
+        return M.popupFrame
     end
+
+    -- Context menu stub: records the owner, the title and the entries that the generator creates.
+    _G.MenuUtil = {
+        CreateContextMenu = function(owner, generator)
+            local menu = { owner = owner, items = {} }
+            local root = {}
+            function root.CreateTitle(_, text)
+                menu.title = text
+            end
+            function root.CreateButton(_, text, onClick)
+                local item = { text = text, onClick = onClick, enabled = true }
+                table.insert(menu.items, item)
+                local description = {}
+                function description.SetEnabled(_, enabled)
+                    item.enabled = enabled
+                end
+                return description
+            end
+            generator(owner, root)
+            M.menu = menu
+            return menu
+        end,
+    }
 end
 
 -- Remove the globals that the mock sets.

@@ -24,7 +24,8 @@ end
 
 -- Create a text box. Enter calls onEnter(text). Escape clears focus.
 -- The optional onFocusLost(text) runs when the box loses focus.
-function Kit.Input(parent, width, onEnter, onFocusLost)
+-- options.placeholder is a grey text that shows while the box is empty and has no focus.
+function Kit.Input(parent, width, onEnter, onFocusLost, options)
     local input = CreateFrame("EditBox", nil, parent, "InputBoxTemplate")
     input:SetSize(width or 120, 20)
     input:SetAutoFocus(false)
@@ -41,6 +42,26 @@ function Kit.Input(parent, width, onEnter, onFocusLost)
         input:SetScript("OnEditFocusLost", function(self)
             onFocusLost(self:GetText())
         end)
+    end
+    if options and options.placeholder then
+        local hint = Kit.Label(input, options.placeholder, "disabled")
+        hint:SetPoint("LEFT", input, "LEFT", 6, 0)
+        input.placeholder = hint
+        local focused = false
+        local function update(self)
+            local text = self:GetText()
+            hint:SetShown(not focused and (text == nil or text == ""))
+        end
+        input:HookScript("OnTextChanged", update)
+        input:HookScript("OnEditFocusGained", function(self)
+            focused = true
+            update(self)
+        end)
+        input:HookScript("OnEditFocusLost", function(self)
+            focused = false
+            update(self)
+        end)
+        update(input)
     end
     return input
 end
@@ -249,7 +270,11 @@ function Kit.Confirm(dialogName, text, onAccept)
         }
     end
     pendingConfirm[dialogName] = onAccept
-    StaticPopup_Show(dialogName, text)
+    local popup = StaticPopup_Show(dialogName, text)
+    if popup and popup.SetFrameStrata then
+        popup:SetFrameStrata("FULLSCREEN_DIALOG")
+        popup:Raise()
+    end
 end
 
 -- Create a multi-line text box with a scroll bar. Use it as a frame.
@@ -320,6 +345,8 @@ function Kit.EditorDialog(name, options)
     local width, height = options.width or 440, options.height or 310
     local dialog = Kit.CreateWindow(name, { width = width, height = height })
     editorDialogs[name] = dialog
+    dialog:SetFrameStrata("DIALOG")
+    dialog:SetToplevel(true)
 
     if options.help then
         local help = Kit.Label(dialog, options.help, "small")
@@ -359,10 +386,65 @@ function Kit.EditorDialog(name, options)
             self:SetTitle(title or "")
         end
         self:Show()
+        self:Raise()
         self.input:SetText(text or "")
         if options.readOnly then
             self.input:HighlightAll()
         end
     end
     return dialog
+end
+
+-- Give a frame the client inset background and border. Use the result as a frame.
+function Kit.Inset(parent)
+    local ok, inset = pcall(CreateFrame, "Frame", nil, parent, "InsetFrameTemplate")
+    if not ok then
+        inset = CreateFrame("Frame", nil, parent)
+    end
+    return inset
+end
+
+local ICON_BUTTONS = {
+    close = "UIPanelCloseButtonNoScripts",
+}
+
+-- Create a small icon button from a client template. kind is "close" (a red X).
+-- onClick runs on each click. tooltipText is optional.
+function Kit.IconButton(parent, kind, onClick, tooltipText)
+    local template = ICON_BUTTONS[kind]
+    if not template then
+        error("Kit.IconButton: unknown kind " .. tostring(kind), 2)
+    end
+    local button = CreateFrame("Button", nil, parent, template)
+    button:SetSize(20, 20)
+    button:SetFrameLevel(parent:GetFrameLevel() + 2)
+    if onClick then
+        button:SetScript("OnClick", function(self, ...)
+            onClick(self, ...)
+        end)
+    end
+    if tooltipText then
+        Kit.Tooltip(button, tooltipText)
+    end
+    return button
+end
+
+-- Open a right-click menu at the owner. entries: { { text, onClick, disabled } }.
+-- options.title adds a title line. Does nothing when the client menu API is missing.
+function Kit.ContextMenu(ownerFrame, entries, options)
+    if not MenuUtil or not MenuUtil.CreateContextMenu then
+        return
+    end
+    options = options or {}
+    return MenuUtil.CreateContextMenu(ownerFrame, function(_, root)
+        if options.title then
+            root:CreateTitle(options.title)
+        end
+        for _, entry in ipairs(entries or {}) do
+            local button = root:CreateButton(entry.text, entry.onClick)
+            if entry.disabled then
+                button:SetEnabled(false)
+            end
+        end
+    end)
 end

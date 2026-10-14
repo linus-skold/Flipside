@@ -983,4 +983,328 @@ describe("Kit", function()
             assert.are.equal(1, ran)
         end)
     end)
-end)
+
+    describe("Layering", function()
+        it("puts the editor dialog on a higher strata, top level, and raises it on open", function()
+            local d = Kit.EditorDialog("EditorLayer")
+            assert.are.equal("DIALOG", d.strata)
+            assert.is_true(d.toplevel)
+            assert.is_nil(d.raised)
+            d:Open("T", "x", function() end)
+            assert.are.equal(1, d.raised)
+            d:Open("T", "y", function() end)
+            assert.are.equal(2, d.raised)
+        end)
+
+        it("puts the confirm pop-up on the full screen dialog strata and raises it", function()
+            mock.popupFrame = CreateFrame("Frame")
+            Kit.Confirm("KIT_LAYER", "Sure?", function() end)
+            assert.are.equal("FULLSCREEN_DIALOG", mock.popupFrame.strata)
+            assert.are.equal(1, mock.popupFrame.raised)
+        end)
+
+        it("keeps the drag ghost on the tooltip strata", function()
+            local tree = Kit.CreateTree(CreateFrame("Frame"), { onDrop = function() end })
+            tree:SetNodes({ { id = "a", text = "A" } })
+            local row = CreateFrame("Button")
+            mock.scrollInit.view.initializer(row, tree.box.dataProvider.nodes[1])
+            row:GetScript("OnDragStart")(row)
+            assert.are.equal("TOOLTIP", tree.ghost.strata)
+        end)
+    end)
+
+    describe("Top tabs", function()
+        local parent, tabs, picked
+
+        before_each(function()
+            parent = CreateFrame("Frame", "SubFrame")
+            parent.Tabs = { "page tab" }
+            picked = {}
+            tabs = Kit.CreateTopTabs(parent, { { "rules", "Rules" }, { "items", "Items" } }, {
+                onSelect = function(key)
+                    table.insert(picked, key)
+                end,
+            })
+        end)
+
+        it("uses the client top tab template with the tab text", function()
+            assert.are.equal(2, #tabs.buttons)
+            assert.are.equal("PanelTopTabButtonTemplate", tabs.buttons[1].template)
+            assert.are.equal("Items", tabs.buttons[2]:GetText())
+            assert.are.equal(2, tabs.buttons[2]:GetID())
+        end)
+
+        it("anchors the first tab to the top edge of the parent", function()
+            local point = tabs.buttons[1].points[1]
+            assert.are.equal("TOPLEFT", point[1])
+            assert.are.equal(parent, point[2])
+            assert.are.equal("TOPLEFT", point[3])
+        end)
+
+        it("works on a sub-frame: own Tabs array, the parent Tabs stay", function()
+            assert.are.same({ "page tab" }, parent.Tabs)
+            assert.are.equal(tabs.buttons, tabs.holder.Tabs)
+            assert.are.same({ "num", tabs.holder, 2 }, mock.tabCalls[1])
+            assert.are.same({ "tab", tabs.holder, 1 }, mock.tabCalls[2])
+        end)
+
+        it("selects the first tab without calling onSelect", function()
+            assert.are.equal("rules", tabs:GetSelected())
+            assert.are.same({}, picked)
+            assert.is_true(tabs:GetContent("rules"):IsShown())
+            assert.is_false(tabs:GetContent("items"):IsShown())
+        end)
+
+        it("gives one content frame for each tab, below the tabs", function()
+            local rules, items = tabs:GetContent("rules"), tabs:GetContent("items")
+            assert.are_not.equal(rules, items)
+            assert.are.equal(parent, rules:GetParent())
+            assert.are.equal(-30, rules.points[1][5])
+            assert.is_nil(tabs:GetContent("nope"))
+        end)
+
+        it("Select switches the content, calls PanelTemplates_SetTab and onSelect", function()
+            tabs:Select("items")
+            assert.are.equal("items", tabs:GetSelected())
+            assert.is_false(tabs:GetContent("rules"):IsShown())
+            assert.is_true(tabs:GetContent("items"):IsShown())
+            assert.are.same({ "tab", tabs.holder, 2 }, mock.tabCalls[#mock.tabCalls])
+            assert.are.same({ "items" }, picked)
+            tabs:Select("items")
+            assert.are.same({ "items" }, picked)
+        end)
+
+        it("selects with a click on a tab", function()
+            tabs.buttons[2]:GetScript("OnClick")(tabs.buttons[2])
+            assert.are.equal("items", tabs:GetSelected())
+            assert.are.same({ "items" }, picked)
+        end)
+
+        it("ignores an unknown key and takes a start key", function()
+            tabs:Select("zzz")
+            assert.are.equal("rules", tabs:GetSelected())
+            local other = Kit.CreateTopTabs(CreateFrame("Frame"), { { "a", "A" }, { "b", "B" } }, { selected = "b" })
+            assert.are.equal("b", other:GetSelected())
+        end)
+    end)
+
+    describe("Inset", function()
+        it("uses the client inset template", function()
+            assert.are.equal("InsetFrameTemplate", Kit.Inset(CreateFrame("Frame")).template)
+        end)
+
+        it("falls back to a plain frame without the template", function()
+            mock.missingTemplates.InsetFrameTemplate = true
+            assert.are.equal("Frame", Kit.Inset(CreateFrame("Frame")).kind)
+        end)
+
+        it("wraps a list when inset is true", function()
+            local list = Kit.CreateList(CreateFrame("Frame"), { inset = true })
+            assert.are.equal("InsetFrameTemplate", list.frame.template)
+            assert.are.equal(Kit.Theme.insetPadding, list.box.points[1][2])
+            assert.are.equal(list.frame, list.box:GetParent())
+            local plain = Kit.CreateList(CreateFrame("Frame"), {})
+            assert.is_nil(plain.frame.template)
+        end)
+
+        it("wraps a fallback list rows inside the padding", function()
+            _G.ScrollUtil = nil
+            local list = Kit.CreateList(CreateFrame("Frame"), { inset = true })
+            list:SetData({ "x" })
+            assert.are.equal("InsetFrameTemplate", list.frame.template)
+            assert.are.equal(4, list.rows[1].points[1][4])
+            assert.are.equal(-4, list.rows[1].points[1][5])
+        end)
+
+        it("wraps a tree when inset is true", function()
+            local tree = Kit.CreateTree(CreateFrame("Frame"), { inset = true })
+            assert.are.equal("InsetFrameTemplate", tree.frame.template)
+            assert.are.equal(tree.frame, tree.box:GetParent())
+            assert.is_nil(Kit.CreateTree(CreateFrame("Frame"), {}).frame.template)
+        end)
+
+        it("wraps a fallback tree when inset is true", function()
+            _G.CreateTreeDataProvider = nil
+            _G.ScrollUtil = nil
+            local tree = Kit.CreateTree(CreateFrame("Frame"), { inset = true })
+            assert.are.equal("InsetFrameTemplate", tree.frame.template)
+        end)
+    end)
+
+    describe("IconButton", function()
+        it("creates the client close button template and calls onClick", function()
+            local got = 0
+            local button = Kit.IconButton(CreateFrame("Frame"), "close", function()
+                got = got + 1
+            end)
+            assert.are.equal("UIPanelCloseButtonNoScripts", button.template)
+            assert.are.equal(20, button.width)
+            button:GetScript("OnClick")(button)
+            assert.are.equal(1, got)
+        end)
+
+        it("shows the tooltip text", function()
+            local button = Kit.IconButton(CreateFrame("Frame"), "close", nil, "Remove")
+            button:GetScript("OnEnter")(button)
+            assert.is_true(mock.tooltip.shown)
+            assert.are.equal("Remove", mock.tooltip.title)
+            button:GetScript("OnLeave")(button)
+            assert.is_false(mock.tooltip.shown)
+        end)
+
+        it("sets no tooltip script without text and rejects an unknown kind", function()
+            local button = Kit.IconButton(CreateFrame("Frame"), "close")
+            assert.is_nil(button:GetScript("OnEnter"))
+            assert.has_error(function()
+                Kit.IconButton(CreateFrame("Frame"), "nope")
+            end)
+        end)
+    end)
+
+    describe("ContextMenu", function()
+        it("opens the client menu with a title and entries", function()
+            local owner = CreateFrame("Button")
+            local ran = {}
+            Kit.ContextMenu(owner, {
+                { text = "Rename", onClick = function() table.insert(ran, "rename") end },
+                { text = "Delete", onClick = function() table.insert(ran, "delete") end, disabled = true },
+            }, { title = "Group" })
+            assert.are.equal(owner, mock.menu.owner)
+            assert.are.equal("Group", mock.menu.title)
+            assert.are.equal(2, #mock.menu.items)
+            assert.are.equal("Rename", mock.menu.items[1].text)
+            assert.is_true(mock.menu.items[1].enabled)
+            assert.is_false(mock.menu.items[2].enabled)
+            mock.menu.items[1].onClick()
+            assert.are.same({ "rename" }, ran)
+        end)
+
+        it("has no title line without the option and does nothing without the menu API", function()
+            Kit.ContextMenu(CreateFrame("Button"), { { text = "A" } })
+            assert.is_nil(mock.menu.title)
+            _G.MenuUtil = nil
+            assert.is_nil(Kit.ContextMenu(CreateFrame("Button"), {}))
+        end)
+    end)
+
+    describe("Tree right click", function()
+        local rightClicks, selected
+
+        local function make(fallback)
+            if fallback then
+                _G.CreateTreeDataProvider = nil
+                _G.ScrollUtil = nil
+            end
+            rightClicks, selected = {}, {}
+            local tree = Kit.CreateTree(CreateFrame("Frame"), {
+                onSelect = function(node)
+                    table.insert(selected, node.id)
+                end,
+                onRightClick = function(id, row)
+                    table.insert(rightClicks, { id, row })
+                end,
+            })
+            tree:SetNodes({ { id = "a", text = "A" }, { id = "b", text = "B" } })
+            local row
+            if fallback then
+                row = tree.list.rows[2]
+            else
+                row = CreateFrame("Button")
+                mock.scrollInit.view.initializer(row, tree.box.dataProvider.nodes[2])
+            end
+            return tree, row
+        end
+
+        for _, fallback in ipairs({ false, true }) do
+            local label = fallback and " (fallback list)" or ""
+
+            it("calls onRightClick with the id and row, and does not select" .. label, function()
+                local tree, row = make(fallback)
+                assert.are.same({ "LeftButtonUp", "RightButtonUp" }, row.clickButtons)
+                row:GetScript("OnClick")(row, "RightButton")
+                assert.are.equal(1, #rightClicks)
+                assert.are.equal("b", rightClicks[1][1])
+                assert.are.equal(row, rightClicks[1][2])
+                assert.are.same({}, selected)
+                assert.is_nil(tree:GetSelected())
+            end)
+
+            it("still selects with a left click" .. label, function()
+                local tree, row = make(fallback)
+                row:GetScript("OnClick")(row, "LeftButton")
+                assert.are.equal("b", tree:GetSelected())
+                assert.are.same({ "b" }, selected)
+                assert.are.same({}, rightClicks)
+            end)
+        end
+
+        it("registers no extra clicks and ignores a right click without the option", function()
+            local tree = Kit.CreateTree(CreateFrame("Frame"), {})
+            tree:SetNodes({ { id = "a", text = "A" } })
+            local row = CreateFrame("Button")
+            mock.scrollInit.view.initializer(row, tree.box.dataProvider.nodes[1])
+            assert.is_nil(row.clickButtons)
+            row:GetScript("OnClick")(row, "RightButton")
+            assert.is_nil(tree:GetSelected())
+        end)
+    end)
+
+    describe("Input placeholder", function()
+        local function make()
+            return Kit.Input(CreateFrame("Frame"), 100, nil, nil, { placeholder = "<group name>" })
+        end
+
+        it("shows a grey text while the box is empty", function()
+            local input = make()
+            assert.are.equal("<group name>", input.placeholder:GetText())
+            assert.are.equal("GameFontDisable", input.placeholder.fontObject)
+            assert.is_true(input.placeholder:IsShown())
+        end)
+
+        it("hides with text and shows again when the text is cleared", function()
+            local input = make()
+            input:SetText("abc")
+            input:GetScript("OnTextChanged")(input)
+            assert.is_false(input.placeholder:IsShown())
+            input:SetText("")
+            input:GetScript("OnTextChanged")(input)
+            assert.is_true(input.placeholder:IsShown())
+        end)
+
+        it("hides on focus and shows again on focus loss while empty", function()
+            local input = make()
+            input:GetScript("OnEditFocusGained")(input)
+            assert.is_false(input.placeholder:IsShown())
+            input:GetScript("OnEditFocusLost")(input)
+            assert.is_true(input.placeholder:IsShown())
+            input:SetText("x")
+            input:GetScript("OnEditFocusGained")(input)
+            input:GetScript("OnEditFocusLost")(input)
+            assert.is_false(input.placeholder:IsShown())
+        end)
+
+        it("keeps onFocusLost and sets nothing without the option", function()
+            local got
+            local input = Kit.Input(CreateFrame("Frame"), 100, nil, function(text)
+                got = text
+            end, { placeholder = "p" })
+            input:SetText("q")
+            input:GetScript("OnEditFocusLost")(input)
+            assert.are.equal("q", got)
+            assert.is_nil(Kit.Input(CreateFrame("Frame"), 100).placeholder)
+        end)
+    end)
+
+    describe("QualityColor", function()
+        it("gives r, g, b and the hex string from the client", function()
+            local r, g, b, hex = Kit.QualityColor(4)
+            assert.are.same({ 0.64, 0.21, 0.93, "ffa335ee" }, { r, g, b, hex })
+        end)
+
+        it("gives white for a missing quality or missing API", function()
+            assert.are.same({ 1, 1, 1, "ffffffff" }, { Kit.QualityColor(nil) })
+            assert.are.same({ 1, 1, 1, "ffffffff" }, { Kit.QualityColor(99) })
+            _G.C_Item = nil
+            assert.are.same({ 1, 1, 1, "ffffffff" }, { Kit.QualityColor(4) })
+        end)
+    end)end)

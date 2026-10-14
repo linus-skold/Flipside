@@ -31,6 +31,7 @@ read_globals = {
     "GetServerTime",
     "GetTime",
     "InCombatLockdown",
+    "MenuUtil",
     "IsBetaBuild",
     "IsPublicTestClient",
     "IsTestBuild",
