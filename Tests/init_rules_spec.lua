@@ -128,13 +128,14 @@ describe("Init rules", function()
             slash("")
         end)
 
-        it("has the four tabs in sequence", function()
+        it("has the five tabs in sequence", function()
             local tabs = windowFrame().Tabs
-            assert.are.equal(4, #tabs)
+            assert.are.equal(5, #tabs)
             assert.are.equal("Groups", tabs[1]:GetText())
             assert.are.equal("Operations", tabs[2]:GetText())
-            assert.are.equal("Formulas", tabs[3]:GetText())
-            assert.are.equal("About", tabs[4]:GetText())
+            assert.are.equal("Tooltip", tabs[3]:GetText())
+            assert.are.equal("Formulas", tabs[4]:GetText())
+            assert.are.equal("About", tabs[5]:GetText())
             assert.are.same({}, mock.messages)
         end)
 

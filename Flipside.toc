@@ -39,6 +39,10 @@ Services\RulesStore.lua
 Services\CustomSources.lua
 Services\AHNameSearch.lua
 Services\RulesExport.lua
+Services\Holdings.lua
+Services\HoldingsRead.lua
+Services\TooltipConfig.lua
+Services\TooltipLines.lua
 UI\Kit\Theme.lua
 UI\Kit\Window.lua
 UI\Kit\Widgets.lua
@@ -49,6 +53,9 @@ UI\Kit\Combat.lua
 UI\Pages\FormulaPage.lua
 UI\Pages\GroupsPage.lua
 UI\Pages\OperationsPage.lua
+UI\Pages\TooltipPage.lua
 UI\MainWindow.lua
 Features\AuctionTab\AuctionTab.lua
+Features\Inventory\InventoryCapture.lua
+Features\Tooltip\Tooltip.lua
 Core\Init.lua

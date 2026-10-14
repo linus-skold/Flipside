@@ -36,6 +36,7 @@ s service or chat output (D19).
 - Scan modules in `Services/`: `ScanClock`, `ScanRecord`, `ScanMarket`, `ScanKey`, `ScanCooldown`, `ScanBucket`, `ScanStore`, `ScanRows`, `ScanItemLoad`, `ScanSources`, `ScanEngine`, `ScanCapture`.
 - Formula modules in `Services/`: `FormulaParse`, `FormulaFunctions`, `FormulaSources`, `FormulaLookup`, 
 `FormulaEval`, `FormulaRun`.
+- Tooltip and inventory modules in `Services/`: `Holdings`, `HoldingsRead`, `TooltipConfig`, `TooltipLines`. `Features/Inventory/InventoryCapture.lua` reads bags, bank, mail and own auctions into the holdings. `Features/Tooltip/Tooltip.lua` adds the lines through `TooltipDataProcessor`. `UI/Pages/TooltipPage.lua` is the Tooltip tab. Slash: `/flip tooltipstats`, `/flip forget <Name-Realm>`.
 - Rules modules in `Services/`: `ItemNameIndex`, `OperationSchema`, `GroupTree`, `BagItems`, `RulesStore`, `CustomSources`, `AHNameSearch`, `RulesExport`.
 - `UI/MainWindow.lua`, `UI/Pages/` (`GroupsPage`, `OperationsPage`, `FormulaPage`), `Features/AuctionTab/`.
 - UI: Flipside tabs inside Blizzard's AuctionHouseFrame, plus the Flipside window (800 x 540); only client assets.
