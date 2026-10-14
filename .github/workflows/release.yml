@@ -66,8 +66,9 @@ jobs:
     if: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     env:
-      GH_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+      # The packager v2 script reads GITHUB_OAUTH and CF_API_KEY, not GH_API_TOKEN and CF_API_TOKEN.
+      GITHUB_OAUTH: ${{ secrets.GITHUB_TOKEN }}
+      CF_API_KEY: ${{ secrets.CF_API_KEY }}
       WAGO_API_TOKEN: ${{ secrets.WAGO_API_TOKEN }}
     steps:
       - name: Clone project
@@ -80,7 +81,11 @@ jobs:
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.make_latest_release }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release edit "${{ inputs.tag }}" --prerelease=false --latest
+        run: |
+          if ! gh release edit "${{ inputs.tag }}" --prerelease=false --latest; then
+            echo "::error::Release ${{ inputs.tag }} not found. The packager did not upload it. Check the packager log for a GitHub token line."
+            exit 1
+          fi
       - name: Delete old alpha releases
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.make_latest_release }}
         env:
