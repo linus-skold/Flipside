@@ -74,30 +74,82 @@ local function statusLabel(status)
 end
 
 local DELETE_DIALOG = "FLIPSIDE_DELETE_CUSTOM_SOURCE"
-local CUSTOM_HEIGHT = 150
+local CUSTOM_HEIGHT = 190
 
--- The built-in sources and the custom sources, sorted by name.
-local function sourceList(sources, custom)
-    local list = sources and sources:List() or {}
-    if custom then
-        for _, entry in ipairs(custom:List()) do
-            list[#list + 1] = { name = entry.name, status = "custom" }
-        end
-        table.sort(list, function(a, b)
-            return a.name < b.name
-        end)
-    end
-    return list
+local function firstSentence(text)
+    return text:match("^.-%.") or text
 end
 
+local function sortedNames(map)
+    local names = {}
+    for name in pairs(map) do
+        names[#names + 1] = name
+    end
+    table.sort(names)
+    return names
+end
+
+-- Rows of the reference list: a header row, then one row for each entry of the section.
+function FormulaPage.ReferenceRows(sources, custom)
+    local rows = {}
+    local functions = ns.FormulaFunctions and ns.FormulaFunctions.DOCS or {}
+    local docs = ns.FormulaSources and ns.FormulaSources.DOCS or {}
+
+    rows[#rows + 1] = { header = "Functions" }
+    for _, name in ipairs(sortedNames(functions)) do
+        local doc = functions[name]
+        rows[#rows + 1] = {
+            name = name, insert = name .. "(", short = firstSentence(doc.text),
+            title = doc.usage, text = doc.text, example = doc.example,
+        }
+    end
+
+    rows[#rows + 1] = { header = "Sources" }
+    local entries = {}
+    for _, entry in ipairs(sources and sources:List() or {}) do
+        local doc = docs[entry.name]
+        entries[#entries + 1] = {
+            name = entry.name, insert = entry.name, status = entry.status,
+            text = doc and doc.text or "",
+        }
+    end
+    for _, entry in ipairs(custom and custom:List() or {}) do
+        entries[#entries + 1] = {
+            name = entry.name, insert = entry.name, status = "custom",
+            text = entry.text, custom = true,
+        }
+    end
+    table.sort(entries, function(a, b)
+        return a.name < b.name
+    end)
+    for _, entry in ipairs(entries) do
+        entry.title = entry.name
+        entry.short = entry.custom and entry.text or firstSentence(entry.text)
+        rows[#rows + 1] = entry
+    end
+
+    rows[#rows + 1] = { header = "Syntax" }
+    for _, name in ipairs({ "invalid", "10g 5s 2c", "150%" }) do
+        local doc = docs[name]
+        local text = doc and doc.text or ""
+        rows[#rows + 1] = {
+            name = name, insert = name:match("^%S+"), title = name, text = text, short = firstSentence(text),
+        }
+    end
+    return rows
+end
 -- Build the custom sources section: a list, a name box, a formula box, Save and Delete.
 function FormulaPage.BuildCustom(page, frame, deps)
     local Kit, custom, run = ns.Kit, deps.customSources, deps.formulaRun
     local gap = Kit.Theme.gap
     local selected
 
-    local title = Kit.Label(frame, "Custom sources", "highlight")
+    local title = Kit.Label(frame, "Save as custom source", "highlight")
     title:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, 0)
+    local helpLine = Kit.Label(
+        frame, "Give the formula a name, for example mymin. Then use mymin in any formula or operation.", "small"
+    )
+    helpLine:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -2)
     local message = Kit.Label(frame, "", "bad")
     message:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 0, 0)
     message:SetWidth(760)
@@ -119,8 +171,8 @@ function FormulaPage.BuildCustom(page, frame, deps)
             end)
         end,
     })
-    page.customList.frame:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -gap)
-    page.customList.frame:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 0, -18)
+    page.customList.frame:SetPoint("TOPLEFT", helpLine, "BOTTOMLEFT", 0, -gap)
+    page.customList.frame:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 0, -38)
     page.customList.frame:SetHeight(60)
 
     page.customName = Kit.Input(frame, 140, nil)
@@ -161,6 +213,14 @@ function FormulaPage.BuildCustom(page, frame, deps)
         end)
     end)
     page.customDelete:SetPoint("LEFT", page.customSave, "RIGHT", gap, 0)
+    page.customFrom = Kit.Button(frame, "Save current formula as...", 170, function()
+        page.customText:SetText(trim(page.formulaInput:GetText()))
+        message:SetText("")
+        if page.customName.SetFocus then
+            page.customName:SetFocus()
+        end
+    end)
+    page.customFrom:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 0, 0)
     page.customList:SetData(custom:List())
 end
 -- Build the page in the content frame. deps: formulaRun, formulaSources, itemCache, itemNameIndex (optional),
@@ -302,16 +362,43 @@ function FormulaPage.Build(content, deps)
                 row.nameText = Kit.Label(row, "", "normal")
                 row.nameText:SetPoint("LEFT", row, "LEFT", 4, 0)
                 row.statusText = Kit.Label(row, "", "small")
-                row.statusText:SetPoint("LEFT", row, "LEFT", 200, 0)
+                row.statusText:SetPoint("LEFT", row, "LEFT", 120, 0)
+                row.descText = Kit.Label(row, "", "small")
+                row.descText:SetPoint("LEFT", row, "LEFT", 240, 0)
+                row.descText:SetWidth(480)
+                row.descText:SetJustifyH("LEFT")
+            end
+            if data.header then
+                row.nameText:SetText(data.header)
+                row.statusText:SetText("")
+                row.descText:SetText("")
+                row:SetScript("OnClick", nil)
+                row:SetScript("OnEnter", nil)
+                row:SetScript("OnLeave", nil)
+                return
             end
             row.nameText:SetText(data.name)
-            row.statusText:SetText(statusLabel(data.status))
+            row.statusText:SetText(data.status and statusLabel(data.status) or "")
+            row.descText:SetText(data.short or "")
             row:SetScript("OnClick", function()
-                appendName(page.formulaInput, data.name)
+                appendName(page.formulaInput, data.insert)
+            end)
+            row:SetScript("OnEnter", function(self)
+                GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+                GameTooltip:SetText(data.title or data.name)
+                if data.text ~= "" then
+                    GameTooltip:AddLine(data.text, 1, 1, 1, true)
+                end
+                if data.example then
+                    GameTooltip:AddLine("Example: " .. data.example, 0.7, 0.7, 0.7, true)
+                end
+                GameTooltip:Show()
+            end)
+            row:SetScript("OnLeave", function()
+                GameTooltip:Hide()
             end)
         end,
-    })
-    list.frame:SetPoint("TOPLEFT", status, "BOTTOMLEFT", 0, -gap * 3)
+    })    list.frame:SetPoint("TOPLEFT", status, "BOTTOMLEFT", 0, -gap * 3)
     page.list = list
 
     local customFrame = CreateFrame("Frame", nil, content)
@@ -327,7 +414,7 @@ function FormulaPage.Build(content, deps)
     end
 
     local function refreshSources()
-        list:SetData(sourceList(sources, custom))
+        list:SetData(FormulaPage.ReferenceRows(sources, custom))
     end
     refreshSources()
     if deps.subscribe and custom then

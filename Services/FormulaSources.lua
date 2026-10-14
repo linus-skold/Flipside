@@ -5,6 +5,46 @@ local _, ns = ...
 local FormulaSources = {}
 ns.FormulaSources = FormulaSources
 
+FormulaSources.DOCS = {
+    scanmin = { text = "Lowest buyout in the most recent scan." },
+    scanrecent = { text = "Market value of the most recent scan only." },
+    scanmarket = {
+        text = "Average market value of the last 14 days. Newer days count more.",
+    },
+    scanhistorical = { text = "Average market value of the last 60 days. Every day counts the same." },
+    scanqty = { text = "Number of units listed in the most recent scan." },
+    scanage = { text = "Hours since the item was last seen in a scan." },
+    scansamples = { text = "Number of days with scan data in the last 14 days." },
+    vendorsell = { text = "Price that a vendor pays you for the item. Invalid if no vendor buys it." },
+    vendorbuy = { text = "Price that a vendor charges for the item. Not available yet. It comes with vendoring." },
+    avgbuy = { text = "Your average buy price from the ledger. Not available yet. It comes with the ledger." },
+    avgsell = { text = "Your average sell price from the ledger. Not available yet. It comes with the ledger." },
+    smartavgbuy = {
+        text = "Your average buy price, weighted by recent buys. Not available yet. It comes with the ledger.",
+    },
+    minbuy = { text = "Your lowest buy price from the ledger. Not available yet. It comes with the ledger." },
+    maxbuy = { text = "Your highest buy price from the ledger. Not available yet. It comes with the ledger." },
+    minsell = { text = "Your lowest sell price from the ledger. Not available yet. It comes with the ledger." },
+    maxsell = { text = "Your highest sell price from the ledger. Not available yet. It comes with the ledger." },
+    crafting = { text = "Cost to craft the item. Not available yet. It comes with crafting in Phase 2." },
+    matprice = { text = "Price of a crafting material. Not available yet. It comes with crafting in Phase 2." },
+    destroy = { text = "Value of what you get when you destroy the item. Not available yet. It comes in Phase 3." },
+    salerate = {
+        text = "Share of your listings that sold. Not available yet. It comes with the ledger.",
+    },
+    importmarket = {
+        text = "Market value from an optional imported file. Not available yet. It comes with the import feature.",
+    },
+    invalid = {
+        text = "A value that means no price. A formula with a missing price is invalid. Missing never counts as 0.",
+    },
+    ["10g 5s 2c"] = {
+        text = "Money. g is gold, s is silver, c is copper. A number with no unit is copper. Example: 12s70c.",
+    },
+    ["150%"] = {
+        text = "Percent. 150% means 1.5 times. Example: scanmarket * 90%.",
+    },
+}
 local LATER = {
     "vendorbuy", "avgbuy", "avgsell", "smartavgbuy", "minbuy", "maxbuy", "minsell",
     "maxsell", "crafting", "matprice", "destroy", "salerate", "importmarket",

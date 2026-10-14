@@ -224,4 +224,26 @@ describe("FormulaSources", function()
             assert.is_nil(ns.FormulaSources.New():Read("a", ctx))
         end)
 end)
+
+    describe("DOCS", function()
+        it("describes every built-in source", function()
+            local names = { "vendorsell" }
+            for _, name in ipairs(ns.ScanSources.NAMES) do
+                names[#names + 1] = name:lower()
+            end
+            for _, name in ipairs(LATER) do
+                names[#names + 1] = name
+            end
+            for _, name in ipairs(names) do
+                local doc = ns.FormulaSources.DOCS[name]
+                assert.is_truthy(doc and doc.text ~= "", name)
+            end
+        end)
+
+        it("describes invalid, money and percent", function()
+            for _, name in ipairs({ "invalid", "10g 5s 2c", "150%" }) do
+                assert.is_truthy(ns.FormulaSources.DOCS[name].text ~= "", name)
+            end
+        end)
+    end)
 end)

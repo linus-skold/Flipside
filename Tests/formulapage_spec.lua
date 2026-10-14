@@ -1,11 +1,15 @@
 local mock = require("Tests.wow_mock")
 
 local KIT = { "Theme", "Window", "Widgets", "Tabs", "List", "Combat" }
+local DOC_FILES = { "FormulaFunctions", "FormulaSources" }
 
 local function load()
     local ns = {}
     for _, name in ipairs(KIT) do
         assert(loadfile("UI/Kit/" .. name .. ".lua"))("Flipside", ns)
+    end
+    for _, name in ipairs(DOC_FILES) do
+        assert(loadfile("Services/" .. name .. ".lua"))("Flipside", ns)
     end
     assert(loadfile("UI/Pages/FormulaPage.lua"))("Flipside", ns)
     return ns
@@ -101,31 +105,131 @@ describe("FormulaPage", function()
         end)
     end)
 
-    describe("sources list", function()
-        it("has a row for each source with its status", function()
+    describe("reference list", function()
+        local function find(name, list)
+            for _, row in ipairs((list or page.list).rows) do
+                if row.nameText:GetText() == name then
+                    return row
+                end
+            end
+        end
+
+        local function hover(row)
+            mock.tooltip.lines = {}
+            row.scripts.OnEnter(row)
+        end
+
+        it("has the three sections in order", function()
             local rows = page.list.rows
-            assert.are.equal(2, #rows)
-            assert.are.equal("avgsell", rows[1].nameText:GetText())
-            assert.are.equal("not available yet", rows[1].statusText:GetText())
-            assert.are.equal("scanmin", rows[2].nameText:GetText())
-            assert.are.equal("available", rows[2].statusText:GetText())
+            assert.are.equal("Functions", rows[1].nameText:GetText())
+            assert.are.equal("avg", rows[2].nameText:GetText())
+            assert.are.equal("Sources", rows[11].nameText:GetText())
+            assert.are.equal("avgsell", rows[12].nameText:GetText())
+            assert.are.equal("scanmin", rows[13].nameText:GetText())
+            assert.are.equal("Syntax", rows[14].nameText:GetText())
+            assert.are.equal("invalid", rows[15].nameText:GetText())
+            assert.are.equal("10g 5s 2c", rows[16].nameText:GetText())
+            assert.are.equal("150%", rows[17].nameText:GetText())
+            assert.are.equal(17, #rows)
         end)
 
-        it("appends the name when a row is clicked", function()
+        it("shows the status of each source", function()
+            assert.are.equal("not available yet", find("avgsell").statusText:GetText())
+            assert.are.equal("available", find("scanmin").statusText:GetText())
+        end)
+
+        it("shows the first sentence as description", function()
+            local doc = ns.FormulaFunctions.DOCS.check
+            assert.are.equal("Gives b only if a is valid and above 0.", find("check").descText:GetText())
+            assert.is_truthy(doc.text:find(find("check").descText:GetText(), 1, true))
+        end)
+
+        it("shows the full text and example in the tooltip", function()
+            hover(find("max"))
+            assert.are.equal("max(a, b, ...)", mock.tooltip.title)
+            assert.are.equal(ns.FormulaFunctions.DOCS.max.text, mock.tooltip.lines[1])
+            assert.are.equal("Example: max(scanmin, 1.5 * vendorsell)", mock.tooltip.lines[2])
+            assert.is_true(mock.tooltip.shown)
+            local row = find("max")
+            row.scripts.OnLeave(row)
+            assert.is_false(mock.tooltip.shown)
+        end)
+
+        it("shows the text of a source in the tooltip", function()
+            hover(find("scanmin"))
+            assert.are.equal("scanmin", mock.tooltip.title)
+            assert.are.equal(ns.FormulaSources.DOCS.scanmin.text, mock.tooltip.lines[1])
+        end)
+
+        it("inserts name( for a function", function()
             page.formulaInput:SetText("")
-            page.list.rows[2].scripts.OnClick()
+            find("min").scripts.OnClick()
+            assert.are.equal("min(", page.formulaInput:GetText())
+        end)
+
+        it("appends the name when a source row is clicked", function()
+            page.formulaInput:SetText("")
+            find("scanmin").scripts.OnClick()
             assert.are.equal("scanmin", page.formulaInput:GetText())
-            page.list.rows[1].scripts.OnClick()
+            find("avgsell").scripts.OnClick()
             assert.are.equal("scanmin avgsell", page.formulaInput:GetText())
         end)
 
         it("does not add a space after a bracket", function()
             page.formulaInput:SetText("min(")
-            page.list.rows[2].scripts.OnClick()
+            find("scanmin").scripts.OnClick()
             assert.are.equal("min(scanmin", page.formulaInput:GetText())
+        end)
+
+        it("inserts syntax words", function()
+            page.formulaInput:SetText("")
+            find("invalid").scripts.OnClick()
+            assert.are.equal("invalid", page.formulaInput:GetText())
+        end)
+
+        it("header rows do nothing on click", function()
+            assert.is_nil(find("Functions").scripts.OnClick)
         end)
     end)
 
+    describe("custom sources", function()
+        local custom, page2, store
+
+        before_each(function()
+            store = { { name = "mymin", text = "min(scanmin, 1)" } }
+            custom = {
+                List = function()
+                    return store
+                end,
+                Set = function() return true end,
+            }
+            page2 = Page.Build(CreateFrame("Frame", nil, UIParent), {
+                formulaRun = run, formulaSources = sources, customSources = custom,
+            })
+        end)
+
+        it("lists a custom source with its formula as description", function()
+            local found
+            for _, row in ipairs(page2.list.rows) do
+                if row.nameText:GetText() == "mymin" then
+                    found = row
+                end
+            end
+            assert.is_truthy(found)
+            assert.are.equal("custom", found.statusText:GetText())
+            assert.are.equal("min(scanmin, 1)", found.descText:GetText())
+        end)
+
+        it("copies the formula into the custom formula box", function()
+            page2.formulaInput:SetText("  max(scanmin, 5) ")
+            page2.customFrom.scripts.OnClick(page2.customFrom)
+            assert.are.equal("max(scanmin, 5)", page2.customText:GetText())
+        end)
+
+        it("has a clear heading and button", function()
+            assert.are.equal("Save current formula as...", page2.customFrom:GetText())
+        end)
+    end)
     describe("Check", function()
         local function check(formula, item)
             page.formulaInput:SetText(formula)
