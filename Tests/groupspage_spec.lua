@@ -1,8 +1,10 @@
 local mock = require("Tests.wow_mock")
 
 local KIT = { "Theme", "Window", "Widgets", "Tabs", "List", "Tree", "Combat" }
-local CORE = { "Core/ItemString", "Core/SettingsDB", "Services/GroupTree", "Services/OperationSchema",
-    "Services/RulesStore" }
+local CORE = { "Core/ItemString", "Core/SettingsDB", "Services/ScanClock", "Services/ScanSources",
+    "Services/FormulaParse", "Services/FormulaFunctions", "Services/FormulaEval", "Services/FormulaSources",
+    "Services/CustomSources", "Services/GroupTree", "Services/OperationSchema", "Services/RulesStore",
+    "Services/RulesExport", "Services/ItemNameIndex" }
 
 local function load()
     local ns = {}
@@ -49,12 +51,21 @@ local function menuTexts(dropdown)
 end
 
 describe("GroupsPage", function()
-    local ns, store, page, deps, content, saved, names, requests, bags, index, subscribers
+    local ns, store, page, deps, content, saved, names, requests, bags, index, subscribers, ah, sources
+
+    local function compile(text)
+        local tree, err = ns.FormulaParse.Parse(text)
+        if not tree then
+            return nil, err
+        end
+        return { tree = tree }
+    end
 
     local function newStore(data)
         saved = data or {}
         local db = ns.SettingsDB.New(saved, { character = "Me", schemaVersion = 1 })
-        return ns.RulesStore.New(db, { onWarning = function() end })
+        sources = ns.CustomSources.New(db)
+        return ns.RulesStore.New(db, { onWarning = function() end, compile = compile })
     end
 
     local function build()
@@ -77,9 +88,24 @@ describe("GroupsPage", function()
         index = {
             matches = {},
             pending = 0,
-            Find = function(self, text)
-                self.query = text
-                return self.matches, self.pending
+            Find = function(self, text, limit, options)
+                self.query, self.limit, self.options = text, limit, options
+                local exclude = options and options.exclude or {}
+                local found = {}
+                for _, match in ipairs(self.matches) do
+                    if not exclude[match.key] then
+                        found[#found + 1] = match
+                    end
+                end
+                return found, self.pending
+            end,
+        }
+        ah = {
+            Find = function(self, name, callback, options)
+                self.name, self.options, self.callback = name, options, callback
+                if self.closed then
+                    callback(nil, "open the Auction House to search it")
+                end
             end,
         }
         deps = {
@@ -97,6 +123,9 @@ describe("GroupsPage", function()
                 end,
             },
             itemNameIndex = index,
+            ahNameSearch = ah,
+            customSources = sources,
+            compile = compile,
             readBags = function()
                 return bags
             end,
@@ -420,50 +449,129 @@ describe("GroupsPage", function()
         end)
     end)
 
+    describe("inner tabs", function()
+        it("shows the Rules tab first and switches to Items", function()
+            build()
+            assert.is_true(page.rulesPanel:IsShown())
+            assert.is_false(page.itemsPanel:IsShown())
+            assert.is_false(page.tabButtons.rules.enabled)
+            click(page.tabButtons.items)
+            assert.is_false(page.rulesPanel:IsShown())
+            assert.is_true(page.itemsPanel:IsShown())
+            assert.is_false(page.tabButtons.items.enabled)
+            assert.is_true(page.tabButtons.rules.enabled)
+            click(page.tabButtons.rules)
+            assert.is_true(page.rulesPanel:IsShown())
+        end)
+
+        it("keeps the tab when another group is selected", function()
+            local herbs = store:CreateGroup(1, "Herbs")
+            build()
+            click(page.tabButtons.items)
+            page.tree:Select(herbs)
+            assert.are.equal("items", page.tab)
+            assert.is_true(page.itemsPanel:IsShown())
+        end)
+    end)
+
     describe("add by name", function()
         local herbs
+        local PEACE = { itemID = 100, name = "Peacebloom", key = "100", source = "scan" }
+        local ORB = { itemID = 101, name = "Peaceful Orb", key = "101", source = "client" }
+
+        local function search(text)
+            page.addNameInput:SetText(text)
+            page.addNameInput.scripts.OnEnterPressed(page.addNameInput)
+        end
 
         before_each(function()
             herbs = store:CreateGroup(1, "Herbs")
             build()
             page.tree:Select(herbs)
+            click(page.tabButtons.items)
         end)
 
-        it("adds one match at once", function()
-            index.matches = { { itemID = 100, name = "Peacebloom", key = "100" } }
+        it("searches on Enter and lists the matches with their source", function()
+            index.matches = { PEACE, ORB }
+            index.pending = 2
+            search("peace")
+            assert.are.equal("peace", index.query)
+            assert.are.same({ PEACE, ORB }, page.nameList:GetData())
+            assert.are.equal("scan data", page.nameList.rows[1].sourceText:GetText())
+            assert.are.equal("game cache", page.nameList.rows[2].sourceText:GetText())
+            assert.are.equal("Peaceful Orb", page.nameList.rows[2].nameText:GetText())
+            assert.is_truthy(page.status:GetText():find("2 items found", 1, true))
+            assert.is_truthy(page.status:GetText():find("2 item names are still loading", 1, true))
+            assert.are.same({}, store:ItemsIn(herbs))
+        end)
+
+        it("searches with the Add button too", function()
+            index.matches = { PEACE }
             page.addNameInput:SetText("peace")
             click(page.addNameButton)
-            assert.are.equal("peace", index.query)
+            assert.are.same({ PEACE }, page.nameList:GetData())
+        end)
+
+        it("hides the items that are in this group", function()
+            store:AddItem("100", herbs)
+            page.Refresh()
+            index.matches = { PEACE, ORB }
+            search("peace")
+            assert.is_true(index.options.exclude["100"])
+            assert.is_nil(index.options.exclude["101"])
+            assert.are.same({ ORB }, page.nameList:GetData())
+        end)
+
+        it("shows items of another group", function()
+            local ore = store:CreateGroup(1, "Ore")
+            store:AddItem("100", ore)
+            page.Refresh()
+            index.matches = { PEACE }
+            search("peace")
+            assert.are.same({ PEACE }, page.nameList:GetData())
+        end)
+
+        it("keeps the list after an add and shows the row as added", function()
+            index.matches = { PEACE, ORB }
+            search("peace")
+            click(page.nameList.rows[1].addButton)
             assert.are.same({ "100" }, store:ItemsIn(herbs))
             assert.are.equal("Added Peacebloom", page.status:GetText())
-            assert.are.equal("", page.addNameInput:GetText())
+            assert.are.same({ PEACE, ORB }, page.nameList:GetData())
+            assert.are.equal("Added", page.nameList.rows[1].addButton:GetText())
+            assert.is_false(page.nameList.rows[1].addButton.enabled)
+            assert.are.equal("Add", page.nameList.rows[2].addButton:GetText())
+            assert.are.equal("peace", page.addNameInput:GetText())
         end)
 
-        it("shows choices for several matches", function()
-            index.matches = {
-                { itemID = 100, name = "Peacebloom", key = "100" },
-                { itemID = 101, name = "Peaceful Orb", key = "101" },
-            }
-            index.pending = 2
-            page.addNameInput:SetText("peace")
-            click(page.addNameButton)
-            assert.are.same({}, store:ItemsIn(herbs))
-            assert.is_true(page.choices[1]:IsShown())
-            assert.is_true(page.choices[2]:IsShown())
-            assert.is_false(page.choices[3]:IsShown())
-            assert.are.equal("Peaceful Orb (101)", page.choices[2]:GetText())
-            assert.is_truthy(page.status:GetText():find("2 items match", 1, true))
-            assert.is_truthy(page.status:GetText():find("2 item names are still loading", 1, true))
-            click(page.choices[2])
-            assert.are.same({ "101" }, store:ItemsIn(herbs))
-            assert.is_false(page.choices[1]:IsShown())
+        it("moves an item from another group", function()
+            local ore = store:CreateGroup(1, "Ore")
+            store:AddItem("100", ore)
+            page.Refresh()
+            index.matches = { PEACE }
+            search("peace")
+            click(page.nameList.rows[1].addButton)
+            assert.are.equal(herbs, store:GroupOf("100"))
+            assert.are.equal("Moved Peacebloom from Ore", page.status:GetText())
+        end)
+
+        it("passes quoted text on as the exact name", function()
+            index.matches = {}
+            search('"Peacebloom"')
+            assert.are.equal('"Peacebloom"', index.query)
         end)
 
         it("says so when nothing matches", function()
-            page.addNameInput:SetText("zzz")
-            click(page.addNameButton)
+            search("zzz")
             assert.are.equal('no item named "zzz"', page.status:GetText())
-            assert.are.same({}, store:ItemsIn(herbs))
+            assert.are.same({}, page.nameList:GetData())
+        end)
+
+        it("clears the list when another group is selected", function()
+            index.matches = { PEACE }
+            search("peace")
+            page.tree:Select(1)
+            assert.are.same({}, page.nameList:GetData())
         end)
 
         it("says so when there is no name index", function()
@@ -473,19 +581,281 @@ describe("GroupsPage", function()
             click(page.addNameButton)
             assert.are.equal("item names are not available", page.status:GetText())
         end)
+    end)
 
-        it("moves an item from another group", function()
-            local ore = store:CreateGroup(1, "Ore")
-            store:AddItem("100", ore)
-            page.Refresh()
-            index.matches = { { itemID = 100, name = "Peacebloom", key = "100" } }
+    describe("Auction House search", function()
+        local herbs
+        local PEACE = { itemID = 100, name = "Peacebloom", key = "100", source = "scan" }
+
+        before_each(function()
+            herbs = store:CreateGroup(1, "Herbs")
+            build()
+            page.tree:Select(herbs)
+            click(page.tabButtons.items)
+        end)
+
+        it("shows the hint under the button", function()
+            assert.are.equal("Search the Auction House", page.ahButton:GetText())
+            assert.are.equal("This uses the Auction House search; Blizzard's Buy tab will show these results.",
+                page.ahHint:GetText())
+        end)
+
+        it("does not search without a click", function()
+            index.matches = {}
             page.addNameInput:SetText("peace")
             click(page.addNameButton)
-            assert.are.equal(herbs, store:GroupOf("100"))
-            assert.are.equal("Moved Peacebloom from Ore", page.status:GetText())
+            assert.is_nil(ah.name)
+        end)
+
+        it("searches on a click and adds the results with the source", function()
+            index.matches = { PEACE }
+            page.addNameInput:SetText("peace")
+            click(page.addNameButton)
+            click(page.ahButton)
+            assert.are.equal("peace", ah.name)
+            assert.is_false(ah.options.exact)
+            ah.callback({ { itemID = 100, name = "Peacebloom", key = "100" },
+                { itemID = 7, name = "Peace Lily", key = "7" } })
+            local data = page.nameList:GetData()
+            assert.are.equal(2, #data)
+            assert.are.equal("Peace Lily", data[1].name)
+            assert.are.equal("ah", data[1].source)
+            assert.are.equal("scan", data[2].source)
+            assert.are.equal("Auction House", page.nameList.rows[1].sourceText:GetText())
+            assert.are.equal("1 items found in the Auction House", page.status:GetText())
+        end)
+
+        it("leaves out items that are in the group", function()
+            store:AddItem("7", herbs)
+            page.Refresh()
+            page.addNameInput:SetText("peace")
+            click(page.ahButton)
+            ah.callback({ { itemID = 7, name = "Peace Lily", key = "7" } })
+            assert.are.same({}, page.nameList:GetData())
+        end)
+
+        it("uses the exact name for quoted text", function()
+            page.addNameInput:SetText('"Peacebloom"')
+            click(page.ahButton)
+            assert.are.equal("Peacebloom", ah.name)
+            assert.is_true(ah.options.exact)
+        end)
+
+        it("shows the message when the Auction House is closed", function()
+            ah.closed = true
+            page.addNameInput:SetText("peace")
+            click(page.ahButton)
+            assert.are.equal("open the Auction House to search it", page.status:GetText())
+        end)
+
+        it("asks for a name first", function()
+            click(page.ahButton)
+            assert.is_nil(ah.name)
+            assert.are.equal("type a name first", page.status:GetText())
+        end)
+
+        it("hides the button without the service", function()
+            deps.ahNameSearch = nil
+            build()
+            assert.is_false(page.ahButton:IsShown())
+            assert.is_false(page.ahHint:IsShown())
         end)
     end)
 
+    describe("drag and drop", function()
+        local herbs, rare, ore
+
+        local function rowOf(id)
+            for _, row in ipairs(page.tree.list.rows) do
+                if row:IsShown() and row.kitId == id then
+                    return row
+                end
+            end
+        end
+
+        -- Drag a row and release it over a row, or over the empty tree when targetID is nil.
+        local function dragTo(id, targetID)
+            local row, target = rowOf(id), rowOf(targetID)
+            row:GetScript("OnDragStart")(row)
+            for _, other in ipairs(page.tree.list.rows) do
+                other.mouseOver = other == target
+            end
+            page.tree.frame.mouseOver = true
+            row:GetScript("OnDragStop")(row)
+        end
+
+        before_each(function()
+            herbs = store:CreateGroup(1, "Herbs")
+            rare = store:CreateGroup(herbs, "Rare")
+            ore = store:CreateGroup(1, "Ore")
+            build()
+        end)
+
+        it("moves a group onto another group", function()
+            dragTo(rare, ore)
+            assert.are.same({ "Base", "Ore", "Rare" }, store:Path(rare))
+            assert.are.equal("", page.status:GetText())
+            assert.is_table(page.tree.byId[rare])
+        end)
+
+        it("moves a group to Base on the empty tree area", function()
+            dragTo(rare, nil)
+            assert.are.same({ "Base", "Rare" }, store:Path(rare))
+        end)
+
+        it("does not drag Base", function()
+            local row = rowOf(1)
+            row:GetScript("OnDragStart")(row)
+            assert.is_nil(page.tree.dragging)
+            assert.is_false(page.tree.options.canDrag(1))
+            assert.is_true(page.tree.options.canDrag(herbs))
+        end)
+
+        it("does not drag in a read-only store", function()
+            store = newStore({ _schema = 999 })
+            deps.rules = store
+            build()
+            assert.is_false(page.tree.options.canDrag(2))
+        end)
+
+        it("shows the store message for a cycle", function()
+            dragTo(herbs, rare)
+            assert.are.equal("a group cannot move into itself or its sub-groups", page.status:GetText())
+            assert.are.same({ "Base", "Herbs", "Rare" }, store:Path(rare))
+        end)
+
+        it("shows the store message for a duplicate name", function()
+            local other = store:CreateGroup(ore, "Rare")
+            page.Refresh()
+            dragTo(rare, ore)
+            assert.are.equal("a sibling group has this name", page.status:GetText())
+            assert.are.same({ "Base", "Herbs", "Rare" }, store:Path(rare))
+            assert.is_true(other ~= nil)
+        end)
+    end)
+
+    describe("export and import", function()
+        local herbs, other
+
+        -- Export text of a group "Flowers" with one item, made in a second profile.
+        local function flowersText()
+            local db = ns.SettingsDB.New({}, { character = "Other", schemaVersion = 1 })
+            other = ns.RulesStore.New(db, { onWarning = function() end, compile = compile })
+            local id = other:CreateGroup(1, "Flowers")
+            other:AddItem("500", id)
+            return ns.RulesExport.Export(other, ns.CustomSources.New(db), id)
+        end
+
+        before_each(function()
+            herbs = store:CreateGroup(1, "Herbs")
+            store:AddItem("100", herbs)
+            build()
+            page.tree:Select(herbs)
+        end)
+
+        it("opens a read-only dialog with the export text", function()
+            click(page.exportButton)
+            local dialog = page.exportDialog
+            assert.is_true(dialog:IsShown())
+            assert.is_nil(dialog.saveButton)
+            assert.are.equal(ns.RulesExport.Export(store, sources, herbs), dialog.input:GetText())
+            assert.is_truthy(dialog.input:GetText():find("FLIPSIDE-RULES", 1, true))
+            assert.is_truthy(dialog.input:GetText():find("Herbs", 1, true))
+        end)
+
+        it("exports Base too", function()
+            page.tree:Select(1)
+            assert.is_true(page.exportButton.enabled)
+            click(page.exportButton)
+            assert.is_true(page.exportDialog:IsShown())
+        end)
+
+        it("shows a parse error with the line number and changes nothing", function()
+            click(page.importButton)
+            page.importDialog.input.EditBox:SetText("FLIPSIDE-RULES 1\nbogus|x")
+            click(page.importDialog.saveButton)
+            assert.is_truthy(page.status:GetText():find("Line 2", 1, true))
+            assert.is_nil(mock.popup)
+            assert.are.equal(1, #store:Children(1))
+        end)
+
+        it("shows the preview in plain words and the parent group", function()
+            local text = flowersText()
+            click(page.importButton)
+            page.importDialog.input.EditBox:SetText(text)
+            click(page.importDialog.saveButton)
+            local popup = mock.popup.text
+            assert.is_truthy(popup:find('Import below "Herbs"', 1, true))
+            assert.is_truthy(popup:find("Groups: 1", 1, true))
+            assert.is_truthy(popup:find("Items: 1 (0 move from other groups)", 1, true))
+            assert.is_truthy(popup:find("Operations: 0 new, 0 reused", 1, true))
+            assert.is_truthy(popup:find("Custom sources: 0 new, 0 reused", 1, true))
+            assert.are.equal(0, #store:Children(herbs))
+        end)
+
+        it("names the renames and the moved items", function()
+            store:CreateGroup(herbs, "Flowers")
+            store:AddItem("500", herbs)
+            page.Refresh()
+            click(page.importButton)
+            page.importDialog.input.EditBox:SetText(flowersText())
+            click(page.importDialog.saveButton)
+            local popup = mock.popup.text
+            assert.is_truthy(popup:find('group "Flowers" becomes "Flowers (2)"', 1, true))
+            assert.is_truthy(popup:find("(1 move from other groups)", 1, true))
+        end)
+
+        it("applies the import on accept and shows the new group", function()
+            local text = flowersText()
+            click(page.importButton)
+            page.importDialog.input.EditBox:SetText(text)
+            click(page.importDialog.saveButton)
+            mock.acceptPopup()
+            local flowers = store:Children(herbs)[1]
+            assert.are.equal("Flowers", store:Name(flowers))
+            assert.are.same({ "500" }, store:ItemsIn(flowers))
+            assert.are.equal(flowers, page.selected)
+            assert.are.equal("Flowers (1)", treeText(flowers))
+            assert.are.equal("Imported 1 groups and 1 items", page.status:GetText())
+        end)
+
+        it("changes nothing on cancel", function()
+            local text = flowersText()
+            click(page.importButton)
+            page.importDialog.input.EditBox:SetText(text)
+            click(page.importDialog.saveButton)
+            mock.cancelPopup()
+            assert.are.equal(0, #store:Children(herbs))
+            assert.are.equal(herbs, page.selected)
+        end)
+
+        it("shows the error when the apply stops", function()
+            local text = flowersText()
+            click(page.importButton)
+            page.importDialog.input.EditBox:SetText(text)
+            click(page.importDialog.saveButton)
+            deps.rules.CreateGroup = function()
+                return nil, "boom"
+            end
+            mock.acceptPopup()
+            assert.is_truthy(page.status:GetText():find("Import stopped at step 'group Flowers': boom", 1, true))
+        end)
+
+        it("disables import in a read-only store", function()
+            store = newStore({ _schema = 999 })
+            deps.rules = store
+            build()
+            assert.is_false(page.importButton.enabled)
+            assert.is_true(page.exportButton.enabled)
+        end)
+
+        it("disables both buttons without custom sources", function()
+            deps.customSources = nil
+            build()
+            assert.is_false(page.exportButton.enabled)
+            assert.is_false(page.importButton.enabled)
+        end)
+    end)
     describe("add by link", function()
         local herbs
         local LINK = "|cff1eff00|Hitem:100:0:0:0:0:0:0:0:0:0:0:0:2:5:3|h[Peacebloom]|h|r"
