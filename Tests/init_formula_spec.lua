@@ -143,7 +143,7 @@ describe("Init formula", function()
     end)
 
     it("lists the formula command in the help", function()
-        slash("")
+        slash("help")
         local found = false
         for _, msg in ipairs(mock.messages) do
             if msg:find("formula <text> [item]", 1, true) then

@@ -1,4 +1,3 @@
--- luacheck: read globals AuctionHouseFrame hooksecurefunc
 local _, ns = ...
 
 -- The "Flipside" tab in Blizzard's Auction House frame: scan controls, scan status and price lookup.

@@ -36,6 +36,7 @@ s service or chat output (D19).
 - Scan modules in `Services/`: `ScanClock`, `ScanRecord`, `ScanMarket`, `ScanKey`, `ScanCooldown`, `ScanBucket`, `ScanStore`, `ScanRows`, `ScanItemLoad`, `ScanSources`, `ScanEngine`, `ScanCapture`.
 - Formula modules in `Services/`: `FormulaParse`, `FormulaFunctions`, `FormulaSources`, `FormulaLookup`, 
 `FormulaEval`, `FormulaRun`.
+- `UI/MainWindow.lua`, `UI/Pages/`, `Features/AuctionTab/`.
 - UI: Flipside tabs inside Blizzard's AuctionHouseFrame, plus the Flipside window (800 x 540); only client assets.
 - Item keys follow D20; no battle pets in the MVP (D21); scan data is keyed by region and ruleset (D22).
 

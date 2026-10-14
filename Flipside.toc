@@ -34,4 +34,7 @@ UI\Kit\Widgets.lua
 UI\Kit\Tabs.lua
 UI\Kit\List.lua
 UI\Kit\Combat.lua
+UI\Pages\FormulaPage.lua
+UI\MainWindow.lua
+Features\AuctionTab\AuctionTab.lua
 Core\Init.lua

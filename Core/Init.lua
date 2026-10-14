@@ -352,6 +352,9 @@ local function openFormula()
     end
 end
 
+-- Set later in this file: attach the Auction House tab.
+local openUI
+
 eventFrame:SetScript("OnEvent", function(_, event, ...)
     if event == "ADDON_LOADED" and (...) == addonName then
         ns.bus:Emit("Flipside.Loaded")
@@ -362,6 +365,7 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
             openScan()
         end
         openFormula()
+        openUI()
         ns.bus:Emit("Flipside.Login")
     end
     ns.bus:Emit(event, ...)
@@ -388,9 +392,13 @@ function ns.StartJob(name, fn, ...)
 end
 
 -- Print the client version line.
-local function printVersion()
+function ns.VersionLine()
     local version, build, _, interface = GetBuildInfo()
-    printLine("client " .. tostring(version) .. ", build " .. tostring(build) .. ", interface " .. tostring(interface))
+    return "client " .. tostring(version) .. ", build " .. tostring(build) .. ", interface " .. tostring(interface)
+end
+
+local function printVersion()
+    printLine(ns.VersionLine())
 end
 
 local REFUSALS = {
@@ -409,26 +417,86 @@ local function printRefusal(reason, detail)
     printLine("full scan not started: " .. text)
 end
 
+-- The callback that the popup runs when the player accepts.
+local pendingScanAccept
+
+-- Start the scan from the chat command after the player accepts.
+local function startChatScan()
+    local engine = ns.scanEngine
+    if not engine then
+        return
+    end
+    local ok, reason, detail = engine:CanStart()
+    if ok then
+        engine:Start()
+    else
+        printRefusal(reason, detail)
+    end
+end
+
 StaticPopupDialogs["FLIPSIDE_FULL_SCAN"] = {
     text = "Flipside: a full scan has disconnected clients on busy servers in the past. Start the full scan?",
     button1 = ACCEPT,
     button2 = CANCEL,
     OnAccept = function()
-        local engine = ns.scanEngine
-        if not engine then
-            return
-        end
-        local ok, reason, detail = engine:CanStart()
-        if ok then
-            engine:Start()
-        else
-            printRefusal(reason, detail)
+        local callback = pendingScanAccept
+        pendingScanAccept = nil
+        if callback then
+            callback()
         end
     end,
     timeout = 0,
     hideOnEscape = true,
     showAlert = true,
 }
+
+-- Show the full scan warning; run onAccept if the player accepts.
+local function confirmScan(onAccept)
+    pendingScanAccept = onAccept
+    StaticPopup_Show("FLIPSIDE_FULL_SCAN")
+end
+
+-- The Flipside window is created on first use.
+function ns.OpenMainWindow()
+    if not ns.MainWindow then
+        printLine("the window is not available this session")
+        return
+    end
+    local ok, err = pcall(function()
+        local window = ns.MainWindow.Create({
+            formulaRun = ns.formulaRun,
+            formulaSources = ns.formulaSources,
+            itemCache = ns.itemCache,
+            getVersionLine = ns.VersionLine,
+        })
+        window:Toggle()
+    end)
+    if not ok then
+        ns.ReportError("window is not available this session: " .. tostring(err))
+    end
+end
+
+openUI = function()
+    if not ns.AuctionTab then
+        return
+    end
+    local ok, result = pcall(ns.AuctionTab.Attach, {
+        bus = ns.bus,
+        serverTime = GetServerTime,
+        scanEngine = ns.scanEngine,
+        scanCooldown = ns.scanCooldown,
+        scanStore = ns.scanStore,
+        formulaLookup = ns.FormulaLookup,
+        scanSources = ns.ScanSources,
+        confirmScan = confirmScan,
+        openMainWindow = ns.OpenMainWindow,
+    })
+    if ok then
+        ns.auctionTab = result
+    else
+        ns.ReportError("Auction House tab is not available this session: " .. tostring(result))
+    end
+end
 
 local function scanCommand(argument)
     local engine = ns.scanEngine
@@ -460,7 +528,7 @@ local function scanCommand(argument)
         printRefusal(reason, detail)
         return
     end
-    StaticPopup_Show("FLIPSIDE_FULL_SCAN")
+    confirmScan(startChatScan)
 end
 
 -- Money in copper as "Xg Ys Zc".
@@ -643,8 +711,11 @@ function ns.HandleSlash(msg)
     elseif command == "formula" then
         formulaCommand(rest)
         return
+    elseif command == "" then
+        ns.OpenMainWindow()
+        return
     end
-    printLine("addon Flipside")
+    printLine("/flip opens the Flipside window")
     if ns.db then
         printLine("profile " .. ns.db:GetProfile())
     end
