@@ -11,6 +11,12 @@ FormulaSources.DOCS = {
     scanmarket = {
         text = "Average market value of the last 14 days. Newer days count more.",
     },
+    scanlow = {
+        text = "Lowest buyout seen in the last 14 days. Example: min(scanlow, scanmarket).",
+    },
+    scanhigh = {
+        text = "Highest daily market value in the last 14 days. Example: scanhigh * 90%.",
+    },
     scanhistorical = { text = "Average market value of the last 60 days. Every day counts the same." },
     scanqty = { text = "Number of units listed in the most recent scan." },
     scanage = { text = "Hours since the item was last seen in a scan." },

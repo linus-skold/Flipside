@@ -11,6 +11,8 @@ ScanSources.NAMES = {
     "ScanMin",
     "ScanRecent",
     "ScanMarket",
+    "ScanLow",
+    "ScanHigh",
     "ScanHistorical",
     "ScanQty",
     "ScanAge",
@@ -21,6 +23,8 @@ ScanSources.FIELD = {
     ScanMin = "scanMin",
     ScanRecent = "scanRecent",
     ScanMarket = "scanMarket",
+    ScanLow = "scanLow",
+    ScanHigh = "scanHigh",
     ScanHistorical = "scanHistorical",
     ScanQty = "scanQty",
     ScanAge = "scanAge",
@@ -70,6 +74,19 @@ function ScanSources.Compute(record, now, options)
     local currentDay = clock.DayOf(now)
     local weightSum, valueSum, samples = 0, 0, 0
     local historySum, historyCount = 0, 0
+    local low, high
+
+    local function addLow(value)
+        if value and (not low or value < low) then
+            low = value
+        end
+    end
+
+    local function addHigh(value)
+        if value and (not high or value > high) then
+            high = value
+        end
+    end
 
     local function addToWindow(age, market)
         local weight = 0.5 ^ (age / halfLifeDays)
@@ -83,6 +100,10 @@ function ScanSources.Compute(record, now, options)
         local market = todayMarket(today)
         if market and windowDays > 0 then
             addToWindow(0, market)
+            addHigh(market)
+            for i = 1, #today.snaps do
+                addLow(today.snaps[i].min)
+            end
         end
     end
 
@@ -99,7 +120,20 @@ function ScanSources.Compute(record, now, options)
         if age >= 0 and age < windowDays and not isToday then
             addToWindow(age, entry.market)
         end
+        if age >= 0 and age < windowDays then
+            addLow(entry.min)
+            addHigh(entry.market)
+        end
     end
+
+    if latest then
+        local latestAge = currentDay - clock.DayOf(latest.time)
+        if latestAge >= 0 and latestAge < windowDays then
+            addLow(latest.min)
+        end
+    end
+    result.scanLow = low
+    result.scanHigh = high
 
     if weightSum > 0 then
         result.scanMarket = roundHalfUp(valueSum / weightSum)
