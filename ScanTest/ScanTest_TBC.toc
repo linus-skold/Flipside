@@ -1,0 +1,7 @@
+## Interface: 20505
+## Title: ScanTest (TBC)
+## Notes: Throwaway test of the legacy getAll Auction House scan for Flipside (TBC Anniversary).
+## SavedVariables: ScanTestDB
+# The interface number 20505 is from memory. Check it in game: /run print(select(4, GetBuildInfo()))
+
+ScanTest_TBC.lua
