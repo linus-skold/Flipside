@@ -84,7 +84,7 @@ describe("D23 layout", function()
         end
     end)
 
-    pending("D23: AH calls move to AH_<Flavour> in a later pull request", function()
+    it("keeps the auction API out of Shared/", function()
         local banned = { "C_AuctionHouse", "AuctionHouseFrame", "QueryAuctionItems", "GetAuctionItem" }
         for _, path in ipairs(addonFiles()) do
             if path:match("^Shared/") then
@@ -94,6 +94,17 @@ describe("D23 layout", function()
                 for _, word in ipairs(banned) do
                     assert.is_nil(text:find(word, 1, true), path .. " has " .. word)
                 end
+            end
+        end
+    end)
+
+    it("has no flavour id test in Shared/", function()
+        for _, path in ipairs(addonFiles()) do
+            if path:match("^Shared/") then
+                local handle = io.open(path, "rb")
+                local text = handle:read("*a")
+                handle:close()
+                assert.is_nil(text:find("Flavour.id", 1, true), path .. " reads ns.Flavour.id")
             end
         end
     end)

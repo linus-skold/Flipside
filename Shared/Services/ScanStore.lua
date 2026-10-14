@@ -1,6 +1,7 @@
 local _, ns = ...
 
 -- Saved scan records for one region and ruleset, with a schema version.
+-- With options.realm the records are also keyed by realm: data[region][realm][ruleset].
 local ScanStore = {}
 ns.ScanStore = ScanStore
 
@@ -44,6 +45,9 @@ end
 function Store:_Items()
     local data = self._saved.data
     local byRegion = type(data) == "table" and data[self._region]
+    if self._realm and type(byRegion) == "table" then
+        byRegion = byRegion[self._realm]
+    end
     local slot = type(byRegion) == "table" and byRegion[self._ruleset]
     local items = type(slot) == "table" and slot.items
     return type(items) == "table" and items or nil
@@ -174,6 +178,10 @@ function Store:GetRegion()
     return self._region
 end
 
+function Store:GetRealm()
+    return self._realm
+end
+
 function Store:GetRuleset()
     return self._ruleset
 end
@@ -208,6 +216,9 @@ function ScanStore.New(saved, options)
     options = options or {}
     CheckText(options.region, "region")
     CheckText(options.ruleset, "ruleset")
+    if options.realm ~= nil then
+        CheckText(options.realm, "realm")
+    end
     local version = options.schemaVersion
     if type(version) ~= "number" or version < 1 or version % 1 ~= 0 then
         error("options.schemaVersion must be an integer >= 1", 2)
@@ -216,6 +227,7 @@ function ScanStore.New(saved, options)
     local self = setmetatable({
         _saved = saved,
         _region = options.region,
+        _realm = options.realm,
         _ruleset = options.ruleset,
         _onWarning = options.onWarning,
         _readOnly = false,
@@ -259,6 +271,9 @@ function ScanStore.New(saved, options)
     if not self._readOnly then
         saved._schema = version
         local byRegion = EnsureTable(EnsureTable(saved, "data"), self._region)
+        if self._realm then
+            byRegion = EnsureTable(byRegion, self._realm)
+        end
         local slot = EnsureTable(byRegion, self._ruleset)
         EnsureTable(slot, "items")
         if type(options.meta) == "table" then

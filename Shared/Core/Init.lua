@@ -82,10 +82,11 @@ local function openSettingsDB()
         ns.ReportError("settings are not available this session (no character name or realm)")
         return
     end
-    if type(FlipsideDB) ~= "table" then
-        FlipsideDB = {}
+    local name = ns.Flavour.savedVariables.main
+    if type(_G[name]) ~= "table" then
+        _G[name] = {}
     end
-    local ok, result = pcall(ns.SettingsDB.New, FlipsideDB, {
+    local ok, result = pcall(ns.SettingsDB.New, _G[name], {
         character = character,
         schemaVersion = 1,
         onWarning = ns.ReportError,
@@ -237,7 +238,7 @@ end
 
 -- Save the price of each item that the player searches in the Auction House.
 local function openCapture()
-    local source = ns.AuctionClient.Capture()
+    local source = ns.Flavour.captureEnabled and ns.AuctionClient.Capture() or nil
     if not (ns.ScanCapture and source) then
         return
     end
@@ -282,12 +283,18 @@ local function openScan()
     if okRules and type(standard) == "boolean" then
         meta.isStandard = standard
     end
-    if type(FlipsideScanDB) ~= "table" then
-        FlipsideScanDB = {}
+    local scanName = ns.Flavour.savedVariables.scan
+    if type(_G[scanName]) ~= "table" then
+        _G[scanName] = {}
     end
-    local ok, result = pcall(ns.ScanStore.New, FlipsideScanDB, {
+    local realm
+    if ns.Flavour.scopeIncludesRealm then
+        realm = GetNormalizedRealmName()
+    end
+    local ok, result = pcall(ns.ScanStore.New, _G[scanName], {
         region = region,
-        ruleset = ns.ScanClock.RULESET_DEFAULT,
+        realm = realm,
+        ruleset = ns.Flavour.ruleset,
         meta = meta,
         schemaVersion = 1,
         onWarning = ns.ReportError,
@@ -297,7 +304,10 @@ local function openScan()
         return
     end
     ns.scanStore = result
-    ns.scanCooldown = ns.ScanCooldown.New(ns.db, { clock = GetServerTime })
+    ns.scanCooldown = ns.ScanCooldown.New(ns.db, {
+        clock = GetServerTime,
+        cooldownSeconds = ns.Flavour.scanCooldownSeconds,
+    })
     local okEngine, engine = pcall(ns.ScanEngine.New, {
         bus = ns.bus,
         startJob = ns.StartJob,
@@ -462,7 +472,7 @@ local function openRules()
             return (ns.BagItems.Read({
                 numSlots = C_Container.GetContainerNumSlots,
                 itemInfo = C_Container.GetContainerItemInfo,
-            }, resolver))
+            }, resolver, { bagIDs = ns.Flavour.bagIDs() }))
         end
     end)
     if not ok then
@@ -502,6 +512,8 @@ local function openInventory()
             holdingsRead = ns.HoldingsRead,
             api = buildInventoryApi(),
             ownedEvent = ns.AuctionClient.OwnedEvent(),
+            bagIDs = ns.Flavour.bagIDs(),
+            bankIDs = ns.Flavour.bankIDs(),
             resolver = buildKeyResolver(),
             after = C_Timer.After,
             report = ns.ReportError,

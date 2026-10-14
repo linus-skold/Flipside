@@ -3,7 +3,7 @@ local _, ns = ...
 local BagItems = {}
 ns.BagItems = BagItems
 
-local FIRST_BAG, LAST_BAG = 0, 5
+local FIRST_BAG, LAST_BAG = 0, 5 -- default bag ids; options.bagIDs overrides them
 
 -- Returns the group key of a slot item, or nil if no key can be made.
 local function KeyOf(resolver, itemID, link)
@@ -20,7 +20,15 @@ function BagItems.Read(api, resolver, options)
     local stats = { slots = 0, skipped = 0, errors = 0 }
     local byKey, list = {}, {}
 
-    for bag = FIRST_BAG, LAST_BAG do
+    local bagIDs = options and options.bagIDs
+    if not bagIDs then
+        bagIDs = {}
+        for bag = FIRST_BAG, LAST_BAG do
+            bagIDs[#bagIDs + 1] = bag
+        end
+    end
+
+    for _, bag in ipairs(bagIDs) do
         local ok, numSlots = pcall(api.numSlots, bag)
         if not ok then
             stats.errors = stats.errors + 1
