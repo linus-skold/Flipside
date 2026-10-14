@@ -69,4 +69,4 @@ globals = {
 
 files["Tests/"] = { std = "+busted" }
 files["Core_TBC/"] = { read_globals = { "NUM_BAG_SLOTS", "NUM_BANKBAGSLOTS", "BANK_CONTAINER" } }
-files["AH_TBC/"] = { read_globals = { "NUM_BAG_SLOTS", "NUM_BANKBAGSLOTS", "BANK_CONTAINER" } }
+files["AH_TBC/"] = { read_globals = { "NUM_BAG_SLOTS", "NUM_BANKBAGSLOTS", "BANK_CONTAINER", "GetAuctionItemLink" } }

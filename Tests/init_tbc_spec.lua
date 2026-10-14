@@ -129,6 +129,76 @@ describe("Init on TBC", function()
             assert.is_true(found)
         end)
 
+        describe("legacy auction", function()
+            local list, owner
+
+            before_each(function()
+                list, owner = {}, {}
+                local function tuple(name, quantity, status, id)
+                    return name, 1, quantity, 1, true, 1, 0, 0, 0, 100, 0, false, "", "o", "", status, id, true
+                end
+                _G.CanSendAuctionQuery = function() return true end
+                _G.QueryAuctionItems = function() end
+                _G.GetNumAuctionItems = function(kind)
+                    return #(kind == "list" and list or owner)
+                end
+                _G.GetAuctionItemInfo = function(kind, i)
+                    local row = (kind == "list" and list or owner)[i]
+                    return tuple(row.name, row.count, row.status, row.id)
+                end
+                _G.GetAuctionItemLink = function(kind, i)
+                    return (kind == "list" and list or owner)[i].link
+                end
+                login()
+                mock.fire("AUCTION_HOUSE_SHOW")
+            end)
+
+            after_each(function()
+                for _, name in ipairs({ "CanSendAuctionQuery", "QueryAuctionItems", "GetNumAuctionItems",
+                    "GetAuctionItemInfo", "GetAuctionItemLink" }) do
+                    _G[name] = nil
+                end
+            end)
+
+            it("finds items by name with the AH open", function()
+                local result, err
+                ns.ahNameSearch:Find("copper", function(items, e) result, err = items, e end)
+                list[1] = { name = "Copper Bar", count = 5, status = 0, id = 2840 }
+                list[2] = { name = "Copper Ore", count = 5, status = 0, id = 2770 }
+                mock.fire("AUCTION_ITEM_LIST_UPDATE")
+                assert.is_nil(err)
+                assert.are.equal(2, #result)
+                assert.are.equal("Copper Bar", result[1].name)
+                assert.are.equal(2840, result[1].itemID)
+            end)
+
+            it("shows the busy error", function()
+                _G.CanSendAuctionQuery = function() return false end
+                local result, err
+                ns.ahNameSearch:Find("copper", function(items, e) result, err = items, e end)
+                assert.is_nil(result)
+                assert.is_truthy(err:find("busy", 1, true))
+            end)
+
+            it("counts the own auctions that are not sold in the holdings", function()
+                local saved
+                local holdings = ns.holdings
+                local original = holdings.SetLocation
+                holdings.SetLocation = function(self, location, items)
+                    if location == "auctions" then saved = items end
+                    return original(self, location, items)
+                end
+                local link = "|cffffffff|Hitem:2840::::::::60:::::|h[Copper Bar]|h|r"
+                owner[1] = { name = "Copper Bar", count = 20, status = 0, id = 2840, link = link }
+                owner[2] = { name = "Copper Bar", count = 7, status = 1, id = 2840, link = link }
+                mock.fire("AUCTION_OWNED_LIST_UPDATE")
+                mock.advance(1)
+                assert.is_table(saved)
+                local total = 0
+                for _, n in pairs(saved) do total = total + n end
+                assert.are.equal(20, total)
+            end)
+        end)
         it("uses the TBC SavedVariables names", function()
             login()
             assert.is_table(_G.FlipsideDB_TBC)
