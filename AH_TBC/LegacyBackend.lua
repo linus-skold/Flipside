@@ -10,12 +10,14 @@ local INFO_NAME, INFO_COUNT, INFO_SALE_STATUS, INFO_ITEM_ID = 1, 3, 16, 17
 
 local SCAN_SETTLE_SECONDS = 2
 local DIAG_KEEP = 5
+-- Time that a scan refreshes missing links after the read, by mode.
+local REFRESH_SECONDS = { full = 90, fast = 8, page = 2 }
 
 -- Counters of the last scan, filled while the engine reads rows.
 local scan = {}
 
 local function newScan()
-    return { batch = 0, total = 0, nilName = 0, zeroBuyout = 0, nilLink = 0, linkSeen = {} }
+    return { batch = 0, total = 0, nilName = 0, zeroBuyout = 0, nilLink = 0, linkSeen = {}, page = 0 }
 end
 
 local function now()
@@ -44,7 +46,8 @@ function Backend.CanScan()
 end
 
 -- Returns true, or false and a text. The second CanSendAuctionQuery value is the get-all permission.
-function Backend.ScanCanStart()
+-- The page mode needs only the first value.
+function Backend.ScanCanStart(mode)
     if not has("CanSendAuctionQuery") then
         return true
     end
@@ -52,10 +55,20 @@ function Backend.ScanCanStart()
     if not canQuery then
         return false, "the Auction House is busy, try again in a moment"
     end
-    if not canMass then
+    if mode ~= "page" and not canMass then
         return false, "get all is on cooldown; the server allows it about every 15 minutes"
     end
     return true
+end
+
+-- The scan modes of this client. Full and fast use the get all query and differ in the refresh time.
+-- Page reads the list page by page and needs no get all permission.
+function Backend.ScanModes()
+    return { "full", "fast", "page" }
+end
+
+function Backend.ScanRefreshSeconds(mode)
+    return REFRESH_SECONDS[mode] or 0
 end
 
 -- Kind of the last list query: "scan", "name", "lookup", "browse" (any other query) or "getall" (not ours).
@@ -100,6 +113,27 @@ function Backend.StartScan()
     return ownQuery("scan", "", nil, nil, 0, false, 0, true, false, nil)
 end
 
+-- Page mode: true if the client takes a query now.
+function Backend.CanQueryPage()
+    return not has("CanSendAuctionQuery") or _G.CanSendAuctionQuery() == true
+end
+
+-- Page mode: a browse query of one page (0-based) without a name, with the get all flag off.
+function Backend.ScanPageQuery(page)
+    if page == 0 then
+        scan = newScan()
+        scan.startedAt = now()
+    end
+    scan.page = page
+    return ownQuery("scan", "", nil, nil, page, false, 0, false, false, nil)
+end
+
+-- The number of auctions in the list, from the second GetNumAuctionItems value.
+function Backend.ScanTotal()
+    local _, total = call("GetNumAuctionItems", "list")
+    return total
+end
+
 function Backend.ScanDoneEvent()
     return "AUCTION_ITEM_LIST_UPDATE"
 end
@@ -137,8 +171,9 @@ end
 function Backend.RowLink(i)
     local link = call("GetAuctionItemLink", "list", i + 1)
     scan.lastRead = now()
-    if scan.linkSeen and not scan.linkSeen[i] then
-        scan.linkSeen[i] = true
+    local seenKey = (scan.page or 0) * 100000 + i
+    if scan.linkSeen and not scan.linkSeen[seenKey] then
+        scan.linkSeen[seenKey] = true
         if link == nil then
             scan.nilLink = scan.nilLink + 1
         end
@@ -163,6 +198,9 @@ function Backend.ScanDiagnostics(summary)
         firstEventMs = summary.firstEventMs, events = summary.events,
         readSeconds = readSeconds,
         nilLink = scan.nilLink, nilName = scan.nilName, zeroBuyout = scan.zeroBuyout,
+        mode = summary.mode, pending = summary.pendingMissing, failed = summary.failed,
+        keyedWithoutLink = summary.keyedWithoutLink, refreshSeconds = summary.refreshSeconds,
+        pages = summary.pages,
     }
     local flavour = ns.Flavour
     local db = flavour and flavour.savedVariables and _G[flavour.savedVariables.scan]
@@ -176,11 +214,14 @@ function Backend.ScanDiagnostics(summary)
         end
     end
     return string.format(
-        "legacy scan: rows %s, batch %s of %s, first event %s ms, events %s, read %.1f s, nil link %d, "
-            .. "nil name %d, zero buyout %d, items %s",
-        tostring(entry.rows), tostring(entry.batch), tostring(entry.total),
+        "legacy scan: mode %s, rows %s, batch %s of %s, first event %s ms, events %s, read %.1f s, nil link %d, "
+            .. "nil name %d, zero buyout %d, items %s, keys %s, pending %s, failed %s, keyed without link %s, "
+            .. "refresh %.1f s, pages %s",
+        tostring(entry.mode), tostring(entry.rows), tostring(entry.batch), tostring(entry.total),
         entry.firstEventMs and string.format("%d", entry.firstEventMs) or "-", tostring(entry.events),
-        readSeconds, entry.nilLink or 0, entry.nilName or 0, entry.zeroBuyout or 0, tostring(entry.items))
+        readSeconds, entry.nilLink or 0, entry.nilName or 0, entry.zeroBuyout or 0, tostring(entry.items),
+        tostring(entry.keys), tostring(entry.pending), tostring(entry.failed), tostring(entry.keyedWithoutLink),
+        entry.refreshSeconds or 0, tostring(entry.pages))
 end
 
 function Backend.OpenEvent()
@@ -309,3 +350,4 @@ function Backend.OwnedEvent()
 end
 
 ns.AuctionClient.Use(Backend)
+

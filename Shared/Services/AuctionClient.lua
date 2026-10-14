@@ -68,6 +68,16 @@ query("ScanSettleSeconds")
 query("ScanComplete")
 query("ScanCanStart", true)
 
+-- Scan modes: ScanModes() gives a list of names (nil means one scan, the default). ScanRefreshSeconds(mode) gives the
+-- time that the engine refreshes missing links after the read.
+query("ScanModes")
+query("ScanRefreshSeconds")
+-- Page scan: ScanPageQuery(page) sends one page query, CanQueryPage() tells if the client takes it, ScanTotal() gives
+-- the number of auctions in the list.
+query("ScanPageQuery")
+query("CanQueryPage", false)
+query("ScanTotal")
+
 -- Search capture: nil means capture is off.
 query("Capture")
 

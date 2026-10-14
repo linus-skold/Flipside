@@ -161,6 +161,23 @@ local function maxStack(itemID)
     return info and info.stackCount or nil
 end
 
+local SUFFIX_CLASSES = { [2] = true, [4] = true } -- weapon and armor can have a random suffix
+
+-- Tells the legacy scan if an item can get its key without a link: true, false (can have a suffix), nil (no info).
+local function canKeyWithoutLink(itemID)
+    local info = ns.itemCache:Get(itemID)
+    if not info then
+        return nil
+    end
+    if SUFFIX_CLASSES[info.classID] then
+        return false
+    end
+    if info.classID == nil and info.equipLoc ~= nil and info.equipLoc ~= "" then
+        return false
+    end
+    return true
+end
+
 -- Read access to the auction client scan calls, in the form that the scan engine needs.
 local function buildScanApi()
     local client = ns.AuctionClient
@@ -190,6 +207,19 @@ local function buildScanApi()
     end
     if client.HasCommodityCheck() then
         api.clientIsCommodity = client.ItemIsCommodity
+    end
+    -- A backend with scan modes (legacy) keys rows without a link and refreshes missing links.
+    local modes = client.ScanModes()
+    if modes then
+        api.modes = modes
+        api.refreshSeconds = client.ScanRefreshSeconds
+        api.canKeyWithoutLink = canKeyWithoutLink
+        local backend = client.Backend()
+        if client.CanScan() and backend and backend.ScanPageQuery then
+            api.pageQuery = client.ScanPageQuery
+            api.canQueryPage = client.CanQueryPage
+            api.pageTotal = client.ScanTotal
+        end
     end
     return api
 end
@@ -703,33 +733,39 @@ local REFUSALS = {
     ["api-missing"] = "the scan call is not available",
     ["ah-closed"] = "open the Auction House first",
     ["read-only"] = "scan data is read-only",
+    ["bad-mode"] = "unknown scan mode",
 }
 
+-- Returns the name of a scan in messages: "full scan", "fast scan" or "page scan".
+local function scanLabel(mode)
+    return (mode == nil or mode == "full") and "full scan" or (mode .. " scan")
+end
+
 -- Print why a scan cannot start.
-local function printRefusal(reason, detail)
+local function printRefusal(reason, detail, mode)
     local text = REFUSALS[reason] or tostring(reason)
     if reason == "cooldown" then
         text = "scan on cooldown, " .. ns.ScanCooldown.FormatRemaining(detail) .. " left"
     elseif reason == "client" then
         text = detail
     end
-    printLine("full scan not started: " .. text)
+    printLine(scanLabel(mode) .. " not started: " .. text)
 end
 
 -- The callback that the popup runs when the player accepts.
 local pendingScanAccept
 
 -- Start the scan from the chat command after the player accepts.
-local function startChatScan()
+local function startChatScan(mode)
     local engine = ns.scanEngine
     if not engine then
         return
     end
-    local ok, reason, detail = engine:CanStart()
+    local ok, reason, detail = engine:CanStart(mode)
     if ok then
-        engine:Start()
+        engine:Start(mode)
     else
-        printRefusal(reason, detail)
+        printRefusal(reason, detail, mode)
     end
 end
 
@@ -802,6 +838,7 @@ openUI = function()
         bus = ns.bus,
         serverTime = GetServerTime,
         scanEngine = ns.scanEngine,
+        scanModes = ns.AuctionClient.ScanModes(),
         scanCooldown = ns.scanCooldown,
         scanStore = ns.scanStore,
         formulaLookup = ns.FormulaLookup,
@@ -843,12 +880,27 @@ local function scanCommand(argument)
         end
         return
     end
-    local ok, reason, detail = engine:CanStart()
+    -- With scan modes, the argument is the mode: "" or "full", "fast", "page". Without modes, it is ignored.
+    local mode
+    if ns.AuctionClient.ScanModes() then
+        mode = argument == "" and "full" or argument
+    end
+    local ok, reason, detail = engine:CanStart(mode)
     if not ok then
-        printRefusal(reason, detail)
+        if reason == "bad-mode" then
+            printLine("scan modes: " .. table.concat(ns.AuctionClient.ScanModes(), ", "))
+        else
+            printRefusal(reason, detail, mode)
+        end
         return
     end
-    confirmScan(startChatScan)
+    if mode == "page" then
+        startChatScan(mode)
+        return
+    end
+    confirmScan(function()
+        startChatScan(mode)
+    end)
 end
 
 -- Money in copper as "Xg Ys Zc".
@@ -1077,7 +1129,8 @@ local function printScanHelp()
     local cooldown = left > 0 and ns.ScanCooldown.FormatRemaining(left) or "ready"
     printLine(string.format("scan (region %s): %d items stored, last scan %s, cooldown %s",
         ns.scanStore:GetRegion(), ns.scanStore:CountItems(), age, cooldown))
-    printLine("commands: scan, scan stop, scan reset, price <item>, formula <text> [item], version")
+    local scanWord = ns.AuctionClient.ScanModes() and "scan [fast|page]" or "scan"
+    printLine("commands: " .. scanWord .. ", scan stop, scan reset, price <item>, formula <text> [item], version")
 end
 
 -- Print the build time of the tooltip lines in milliseconds.

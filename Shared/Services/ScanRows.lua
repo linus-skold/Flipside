@@ -124,8 +124,46 @@ function ScanRows.Read(job, api)
     return result
 end
 
+-- Returns an empty result, the same shape as ScanRows.Read gives.
+function ScanRows.NewResult()
+    return {
+        byItem = {}, pending = {},
+        stats = {
+            rows = 0, kept = 0, empty = 0, bidOnly = 0, pet = 0, badCount = 0,
+            items = 0, pendingItems = 0,
+        },
+    }
+end
+
+-- Adds the rows and the counts of one page result to the total result.
+function ScanRows.Merge(into, page)
+    for itemID, list in pairs(page.byItem) do
+        local target = into.byItem[itemID]
+        if target then
+            for _, row in ipairs(list) do
+                target[#target + 1] = row
+            end
+        else
+            into.byItem[itemID] = list
+        end
+    end
+    for itemID in pairs(page.pending) do
+        into.pending[itemID] = true
+    end
+    for name, value in pairs(page.stats) do
+        if type(value) == "number" then
+            into.stats[name] = (into.stats[name] or 0) + value
+        elseif into.stats[name] == nil then
+            into.stats[name] = value
+        end
+    end
+    into.stats.items = CountKeys(into.byItem)
+    into.stats.pendingItems = CountKeys(into.pending)
+end
+
 -- Reads the links again for the given item ids. Removes pets and clears pending.
-function ScanRows.RereadLinks(job, api, result, itemIDs)
+-- If onlyMissing is true, it reads only the rows that have no link.
+function ScanRows.RereadLinks(job, api, result, itemIDs, onlyMissing)
     local stats = result.stats
     for _, itemID in ipairs(itemIDs) do
         local list = result.byItem[itemID]
@@ -134,9 +172,11 @@ function ScanRows.RereadLinks(job, api, result, itemIDs)
             local allLinked = true
             for _, row in ipairs(list) do
                 job:Checkpoint(1)
-                local ok, link = Call(stats, api.getLink, row.index)
-                if ok and link ~= nil then
-                    row.link = link
+                if not (onlyMissing and row.link ~= nil) then
+                    local ok, link = Call(stats, api.getLink, row.index)
+                    if ok and link ~= nil then
+                        row.link = link
+                    end
                 end
                 if ns.ScanKey.IsBattlePet(row.link) then
                     stats.pet = stats.pet + 1

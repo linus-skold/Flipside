@@ -120,4 +120,38 @@ describe("LegacyBackend scan", function()
         assert.are.equal(5, #_G.FlipsideScanDB_TBC.diag)
         assert.are.equal(1000, _G.FlipsideScanDB_TBC.diag[5].time)
     end)
+
+    it("lists the three scan modes with refresh times", function()
+        assert.are.same({ "full", "fast", "page" }, tuples.ScanModes())
+        assert.is_true(tuples.ScanRefreshSeconds("full") > tuples.ScanRefreshSeconds("fast"))
+        assert.is_true(tuples.ScanRefreshSeconds("fast") > 0)
+    end)
+
+    it("queries one page without the get all flag and reads the total", function()
+        rows[1] = { name = "A", count = 1, buyout = 5, id = 1, hasAll = true }
+        tuples.ScanPageQuery(0)
+        tuples.ScanPageQuery(7)
+        assert.are.same({ "", nil, nil, 0, false, 0, false, false, nil, n = 9 }, queries[1])
+        assert.are.same({ "", nil, nil, 7, false, 0, false, false, nil, n = 9 }, queries[2])
+        assert.are.equal(1, tuples.ScanTotal())
+    end)
+
+    it("needs no get all permission for the page mode", function()
+        canMass = false
+        assert.is_false(tuples.ScanCanStart("full"))
+        assert.is_false(tuples.ScanCanStart("fast"))
+        assert.is_true(tuples.ScanCanStart("page"))
+        assert.is_true(tuples.CanQueryPage())
+        canQuery = false
+        assert.is_false(tuples.CanQueryPage())
+        assert.is_false(tuples.ScanCanStart("page"))
+    end)
+
+    it("shows the new fields in the diagnostics line", function()
+        local line = tuples.ScanDiagnostics({ result = "ok", mode = "page", rows = 2, items = 1, keys = 1,
+            pendingMissing = 3, failed = 4, keyedWithoutLink = 5, refreshSeconds = 6, pages = 7 })
+        assert.is_truthy(line:find("mode page, rows 2", 1, true))
+        assert.is_truthy(line:find("keys 1, pending 3, failed 4, keyed without link 5, refresh 6.0 s, pages 7", 1,
+            true))
+    end)
 end)
