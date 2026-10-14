@@ -308,6 +308,9 @@ function M.reset()
     M.commodityResults = {} -- itemID -> rows of the commodity search result
     M.itemResults = {} -- itemID -> rows of the item search result
     M.searchFull = true -- result of the HasFull...SearchResults calls
+    M.browseQueries = {} -- queries passed to SendBrowseQuery
+    M.browseRows = {} -- rows that GetBrowseResults gives; each has itemKey
+    M.itemNames = {} -- itemID -> itemName that GetItemKeyInfo gives
     M.bags = {} -- bag index -> array of slot tables (as GetContainerItemInfo gives); a missing bag has no slots
 
     _G.ACCEPT = "Accept"
@@ -542,9 +545,16 @@ function M.reset()
     end
     _G.C_AuctionHouse.GetItemKeyInfo = function(itemKey)
         local isCommodity = M.commodity[itemKey.itemID]
-        if isCommodity ~= nil then
-            return { isCommodity = isCommodity }
+        local itemName = M.itemNames[itemKey.itemID]
+        if isCommodity ~= nil or itemName ~= nil then
+            return { isCommodity = isCommodity, itemName = itemName }
         end
+    end
+    _G.C_AuctionHouse.SendBrowseQuery = function(query)
+        table.insert(M.browseQueries, query)
+    end
+    _G.C_AuctionHouse.GetBrowseResults = function()
+        return M.browseRows
     end
     _G.C_AuctionHouse.GetReplicateItemLink = function(index)
         local r = M.rows[index + 1]

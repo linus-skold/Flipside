@@ -352,12 +352,63 @@ local function openFormula()
     end
 end
 
+-- Look an item up by name in the client cache; returns itemID, link, name or nil.
+local function clientLookup(name)
+    local ok, itemName, link = pcall(C_Item.GetItemInfo, name)
+    if not ok or type(itemName) ~= "string" or type(link) ~= "string" then
+        return nil
+    end
+    local parsed = ns.ItemString.ParseLink(link)
+    if not parsed or not parsed.itemID then
+        return nil
+    end
+    return parsed.itemID, link, itemName
+end
+
+-- Call an Auction House function by name; a missing function gives a clear error.
+local function ahCall(name)
+    return function(...)
+        local fn = C_AuctionHouse[name]
+        if type(fn) ~= "function" then
+            error("C_AuctionHouse." .. name .. " is not available", 0)
+        end
+        return fn(...)
+    end
+end
+
+-- Create the Auction House name search; it needs the scan setup.
+local function openAHSearch()
+    if not (ns.AHNameSearch and ns.scanStore) then
+        return
+    end
+    local ok, result = pcall(ns.AHNameSearch.New, {
+        bus = ns.bus,
+        api = {
+            sendBrowseQuery = ahCall("SendBrowseQuery"),
+            getBrowseResults = ahCall("GetBrowseResults"),
+            getItemKeyInfo = ahCall("GetItemKeyInfo"),
+        },
+        isAuctionHouseOpen = ns.IsAuctionHouseOpen,
+        clock = GetTime,
+        after = C_Timer.After,
+    })
+    if ok then
+        ns.ahNameSearch = result
+    else
+        ns.ReportError("Auction House name search is not available this session: " .. tostring(result))
+    end
+end
+
 -- Create the item name index; it needs the scan store.
 local function openNames()
     if not (ns.ItemNameIndex and ns.scanStore) then
         return
     end
-    local ok, result = pcall(ns.ItemNameIndex.New, { store = ns.scanStore, itemCache = ns.itemCache })
+    local ok, result = pcall(ns.ItemNameIndex.New, {
+        store = ns.scanStore,
+        itemCache = ns.itemCache,
+        clientLookup = clientLookup,
+    })
     if ok then
         ns.itemNameIndex = result
     else
@@ -446,6 +497,7 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
             openScan()
         end
         openNames()
+        openAHSearch()
         openFormula()
         openRules()
         openUI()
@@ -551,6 +603,13 @@ function ns.OpenMainWindow()
             formulaSources = ns.formulaSources,
             itemCache = ns.itemCache,
             itemNameIndex = ns.itemNameIndex,
+            ahNameSearch = ns.ahNameSearch,
+            compile = function(text)
+                if not ns.formulaRun then
+                    return nil, { message = "formulas are not available" }
+                end
+                return ns.formulaRun:Compile(text)
+            end,
             rules = ns.rules,
             customSources = ns.customSources,
             readBags = ns.readBags,
