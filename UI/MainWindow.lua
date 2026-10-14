@@ -7,18 +7,27 @@ ns.MainWindow = MainWindow
 
 local instance
 
+local ABOUT_TEXT = "Groups sort items into trees. Operations hold the rules. Formulas check and save price formulas."
+
+-- A page that says why it cannot open.
+local function buildUnavailable(content)
+    local label = ns.Kit.Label(content, "Settings are not available this session.", "bad")
+    label:SetPoint("TOPLEFT", content, "TOPLEFT", 0, 0)
+end
+
 local function buildAbout(content, deps)
     local Kit = ns.Kit
     local title = Kit.Label(content, "Flipside", "title")
     title:SetPoint("TOPLEFT", content, "TOPLEFT", 0, 0)
     local version = Kit.Label(content, deps.getVersionLine and deps.getVersionLine() or "", "normal")
     version:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -Kit.Theme.gap)
-    local note = Kit.Label(content, "Groups and operations come with the next update.", "highlight")
+    local note = Kit.Label(content, ABOUT_TEXT, "highlight")
     note:SetPoint("TOPLEFT", version, "BOTTOMLEFT", 0, -Kit.Theme.gap * 2)
     return { title = title, version = version, note = note }
 end
 
--- Create the window once. deps: formulaRun, formulaSources, itemCache, getVersionLine.
+-- Create the window once. deps: rules, customSources, readBags, keyFor, subscribe, formulaRun, formulaSources,
+-- itemCache, itemNameIndex, getVersionLine.
 function MainWindow.Create(deps)
     if instance then
         return instance
@@ -32,6 +41,28 @@ function MainWindow.Create(deps)
         portrait = "Interface\\Icons\\INV_Misc_Coin_02",
     })
     local tabs = Kit.CreatePageTabs(window, {
+        {
+            key = "groups",
+            title = "Groups",
+            build = function(content)
+                if deps.rules then
+                    ns.GroupsPage.Build(content, deps)
+                else
+                    buildUnavailable(content)
+                end
+            end,
+        },
+        {
+            key = "operations",
+            title = "Operations",
+            build = function(content)
+                if deps.rules then
+                    ns.OperationsPage.Build(content, deps)
+                else
+                    buildUnavailable(content)
+                end
+            end,
+        },
         {
             key = "formula",
             title = "Formulas",
