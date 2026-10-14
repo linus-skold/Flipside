@@ -71,10 +71,46 @@ function Backend.ScanRefreshSeconds(mode)
     return REFRESH_SECONDS[mode] or 0
 end
 
+-- Kind of the last list query: "scan", "name", "lookup", "browse" (any other query) or "getall" (not ours).
+-- The capture reads a page only for "browse" and "lookup". The hook sees each QueryAuctionItems call.
+local query = { kind = nil, id = 0, processed = 0, own = false, hooked = false }
+
+local function startQuery(kind)
+    query.kind = kind
+    query.id = query.id + 1
+end
+
+-- Mark the next hooked call as ours, then call the client.
+local function ownQuery(kind, ...)
+    startQuery(kind)
+    query.own = true
+    local results = { pcall(call, "QueryAuctionItems", ...) }
+    query.own = false
+    if not results[1] then
+        error(results[2], 0)
+    end
+    return unpack(results, 2)
+end
+
+local function onQueryCall(_, _, _, _, _, _, getAll)
+    if query.own then
+        return
+    end
+    startQuery(getAll and "getall" or "browse")
+end
+
+local function hookQueries()
+    if query.hooked or type(hooksecurefunc) ~= "function" or not has("QueryAuctionItems") then
+        return
+    end
+    query.hooked = true
+    hooksecurefunc("QueryAuctionItems", onQueryCall)
+end
+
 function Backend.StartScan()
     scan = newScan()
     scan.startedAt = now()
-    return call("QueryAuctionItems", "", nil, nil, 0, false, 0, true, false, nil)
+    return ownQuery("scan", "", nil, nil, 0, false, 0, true, false, nil)
 end
 
 -- Page mode: true if the client takes a query now.
@@ -89,7 +125,7 @@ function Backend.ScanPageQuery(page)
         scan.startedAt = now()
     end
     scan.page = page
-    return call("QueryAuctionItems", "", nil, nil, page, false, 0, false, false, nil)
+    return ownQuery("scan", "", nil, nil, page, false, 0, false, false, nil)
 end
 
 -- The number of auctions in the list, from the second GetNumAuctionItems value.
@@ -202,7 +238,22 @@ function Backend.NameSearch(text)
         error("the Auction House is busy, try again in a moment", 0)
     end
     names = {}
-    return call("QueryAuctionItems", tostring(text or ""), nil, nil, 0, false, 0, false, false, nil)
+    return ownQuery("name", tostring(text or ""), nil, nil, 0, false, 0, false, false, nil)
+end
+
+function Backend.CanTargetSearch()
+    return has("QueryAuctionItems") and has("CanSendAuctionQuery")
+end
+
+-- Exact-name browse query for one item; the list event and the capture handle the result.
+function Backend.TargetedSearch(_, name)
+    if type(name) ~= "string" or name == "" then
+        error("the item name is not loaded yet, try again in a moment", 0)
+    end
+    if not call("CanSendAuctionQuery", "list") then
+        error("the Auction House is busy, try again in a moment", 0)
+    end
+    return ownQuery("lookup", name, nil, nil, 0, false, 0, false, true, nil)
 end
 
 function Backend.NameResultEvent()
@@ -229,6 +280,45 @@ end
 function Backend.NameItemKeyInfo(itemKey)
     local itemID = type(itemKey) == "table" and itemKey.itemID or nil
     return { itemName = names[itemID] }
+end
+
+-- A legacy browse page holds at most this many rows. A longer list is a get-all result.
+local PAGE_ROWS = 50
+local PAGE_DEBOUNCE_SECONDS = 0.3
+
+-- Search capture of the legacy list. readPage() gives rows { itemID, count, buyout, link } and a full flag,
+-- or nil if the page is not for the capture (a Flipside scan or name search, a get-all, or a page read before).
+function Backend.Capture()
+    if not (has("GetNumAuctionItems") and has("GetAuctionItemInfo")) then
+        return nil
+    end
+    hookQueries()
+    return {
+        api = {},
+        pageEvent = "AUCTION_ITEM_LIST_UPDATE",
+        debounceSeconds = PAGE_DEBOUNCE_SECONDS,
+        readPage = function()
+            if (query.kind ~= "browse" and query.kind ~= "lookup") or query.processed == query.id then
+                return nil
+            end
+            local batch, total = call("GetNumAuctionItems", "list")
+            if type(batch) ~= "number" or batch < 1 or batch > PAGE_ROWS then
+                return nil
+            end
+            query.processed = query.id
+            local rows = {}
+            for i = 1, batch do
+                local info = { call("GetAuctionItemInfo", "list", i) }
+                rows[#rows + 1] = {
+                    itemID = info[INFO_ITEM_ID],
+                    count = info[INFO_COUNT],
+                    buyout = info[10],
+                    link = has("GetAuctionItemLink") and _G.GetAuctionItemLink("list", i) or nil,
+                }
+            end
+            return rows, batch == total
+        end,
+    }
 end
 
 function Backend.CanReadOwned()

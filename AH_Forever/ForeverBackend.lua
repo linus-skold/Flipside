@@ -72,6 +72,15 @@ function Backend.NameSearch(text)
     return call("SendBrowseQuery", { searchString = tostring(text or ""), sorts = {} })
 end
 
+function Backend.CanTargetSearch()
+    return has("SendSearchQuery") and has("MakeItemKey")
+end
+
+-- Search the listings of one item by item key; the capture events carry the result.
+function Backend.TargetedSearch(itemID)
+    return call("SendSearchQuery", call("MakeItemKey", itemID), {}, true)
+end
+
 function Backend.NameResultEvent()
     return "AUCTION_HOUSE_BROWSE_RESULTS_UPDATED"
 end

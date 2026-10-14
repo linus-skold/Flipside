@@ -121,6 +121,36 @@ local function trackAuctionHouse()
 end
 
 
+-- Emitted with the key when the capture stored a price.
+local EVENT_PRICE_CAPTURED = "Flipside.PriceCaptured"
+ns.EVENT_PRICE_CAPTURED = EVENT_PRICE_CAPTURED
+
+-- Search the listings of one item in the open Auction House; the capture stores the price.
+-- name is optional. Returns true, or false and a text.
+function ns.RequestPriceRefresh(itemID, name)
+    if not (ns.scanCapture and ns.AuctionClient.CanTargetSearch()) then
+        return false
+    end
+    if not ns.IsAuctionHouseOpen() then
+        return false, "open the Auction House to refresh this price"
+    end
+    if ns.scanEngine and ns.scanEngine:IsRunning() then
+        return false, "a scan is running"
+    end
+    if ns.ahNameSearch and ns.ahNameSearch:IsBusy() then
+        return false, "a name search is running"
+    end
+    if type(name) ~= "string" or name == "" then
+        local info = ns.itemCache and ns.itemCache:Get(itemID)
+        name = info and info.name or nil
+    end
+    local ok, err = pcall(ns.AuctionClient.TargetedSearch, itemID, name)
+    if not ok then
+        return false, tostring(err)
+    end
+    return true
+end
+
 -- Max stack size from the client, or from the item cache when the client gives none.
 local function maxStack(itemID)
     local size = C_Item.GetItemMaxStackSizeByID(itemID)
@@ -276,17 +306,51 @@ local function detectRegion()
 end
 
 
+-- Legacy list: many events come for one query. Read the page once, after the events stop for a short time.
+local function subscribePageCapture(capture, source)
+    local delay = source.debounceSeconds or 0.3
+    local lastEvent, waiting = 0, false
+    local function check()
+        local quiet = GetTime() - lastEvent
+        if quiet < delay then
+            C_Timer.After(delay - quiet, check)
+            return
+        end
+        waiting = false
+        local ok, rows, full = pcall(source.readPage)
+        if ok and rows then
+            capture:OnPageResults(rows, full)
+        elseif not ok then
+            ns.ReportError("search capture failed: " .. tostring(rows))
+        end
+    end
+    ns.bus:Subscribe(source.pageEvent, "Flipside.Capture", function()
+        lastEvent = GetTime()
+        if not waiting then
+            waiting = true
+            C_Timer.After(delay, check)
+        end
+    end)
+end
+
 -- Save the price of each item that the player searches in the Auction House.
 local function openCapture()
     local source = ns.Flavour.captureEnabled and ns.AuctionClient.Capture() or nil
-    if not (ns.ScanCapture and source) then
+    if not (ns.ScanCapture and ns.ScanKey and source) then
         return
     end
+    local resolver = ns.ScanKey.New({ clientIsCommodity = ns.AuctionClient.ItemIsCommodity, maxStack = maxStack })
     local ok, capture = pcall(ns.ScanCapture.New, {
         store = ns.scanStore,
         serverTime = GetServerTime,
         api = source.api,
         report = ns.ReportError,
+        onCaptured = function(key)
+            ns.bus:Emit(EVENT_PRICE_CAPTURED, key)
+        end,
+        keyFor = function(itemID, link)
+            return resolver:KeyFor(itemID, link)
+        end,
         isScanRunning = function()
             return ns.scanEngine ~= nil and ns.scanEngine:IsRunning()
         end,
@@ -296,6 +360,10 @@ local function openCapture()
         return
     end
     ns.scanCapture = capture
+    if source.pageEvent then
+        subscribePageCapture(capture, source)
+        return
+    end
     ns.bus:Subscribe(source.commodityEvent, "Flipside.Capture", function(_, itemID)
         capture:OnCommodityResults(itemID)
     end)
@@ -776,6 +844,7 @@ openUI = function()
         formulaLookup = ns.FormulaLookup,
         scanSources = ns.ScanSources,
         itemNameIndex = ns.itemNameIndex,
+        requestPriceRefresh = ns.RequestPriceRefresh,
         confirmScan = confirmScan,
         openMainWindow = ns.OpenMainWindow,
     })
@@ -853,7 +922,8 @@ end
 -- Find the record for an item link or item id. Returns the record, the key and the keys tried.
 local function findRecord(argument)
     local keys = {}
-    if argument:match("^%d+$") then
+    if argument:match("^%d+$") or ns.ItemString.ParseKey(argument) then
+        -- An item ID or a Flipside key such as 25320#s-44.
         if ns.ItemString.ParseKey(argument) then
             keys[1] = argument
         end
@@ -884,6 +954,37 @@ local function printPrice(record, key)
         .. ", ScanSamples " .. values.scanSamples .. (values.scanPartial and ", partial" or ""))
 end
 
+local PRICE_WAIT_SECONDS = 10
+local pendingRefresh
+
+-- Search the item in the open Auction House and print the fresh price when the capture stores it.
+-- If the Auction House is closed, print the hint.
+local function refreshPrice(itemID, name)
+    if not itemID then
+        return
+    end
+    local ok, err = ns.RequestPriceRefresh(itemID, name)
+    if not ok then
+        if err then
+            printLine(err)
+        end
+        return
+    end
+    pendingRefresh = { itemID = itemID, startedAt = GetTime() }
+    ns.bus:Subscribe(EVENT_PRICE_CAPTURED, "Flipside.PriceCommand", function(_, key)
+        local pending = pendingRefresh
+        if not pending or GetTime() - pending.startedAt > PRICE_WAIT_SECONDS then
+            pendingRefresh = nil
+            ns.bus:Unsubscribe(EVENT_PRICE_CAPTURED, "Flipside.PriceCommand")
+            return
+        end
+        if ns.ItemString.KeyToBaseKey(key) == string.format("%d", pending.itemID) then
+            printLine("fresh price from the Auction House:")
+            printPrice(ns.scanStore:Get(key), key)
+        end
+    end)
+end
+
 -- Find an item by name: print the price of one match or a numbered list of several.
 local function priceByName(argument)
     local result = ns.itemNameIndex:Resolve(argument)
@@ -896,6 +997,7 @@ local function priceByName(argument)
         printLine('no item named "' .. argument .. '" in the scan data')
     elseif #matches == 1 then
         printPrice(ns.scanStore:Get(matches[1].key), matches[1].key)
+        refreshPrice(matches[1].itemID, matches[1].name)
     else
         for position, match in ipairs(matches) do
             printLine(position .. ". " .. ns.ItemNameIndex.Describe(match))
@@ -917,15 +1019,17 @@ local function priceCommand(argument)
         if ns.itemNameIndex and argument ~= "" then
             priceByName(argument)
         else
-            printLine("usage: /flip price <item link or item id>")
+            printLine("usage: /flip price <item name, id, link or key>")
         end
         return
     end
+    local parsed = ns.ItemString.ParseKey(keys[1]) or ns.ItemString.ParseLink(keys[1])
     if not record then
         printLine("no scan data for " .. table.concat(keys, " or "))
-        return
+    else
+        printPrice(record, key)
     end
-    printPrice(record, key)
+    refreshPrice(parsed and parsed.itemID, argument:match("|h%[(.-)%]|h"))
 end
 
 -- Split the text of /flip formula into the formula and the item argument (nil if none).

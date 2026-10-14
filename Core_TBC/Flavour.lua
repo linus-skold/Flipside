@@ -24,7 +24,7 @@ ns.Flavour = {
     scanCooldownSeconds = 900,
     ruleset = "tbc-anniversary",
     scopeIncludesRealm = true, -- D24
-    captureEnabled = false,
+    captureEnabled = true,
     savedVariables = { main = "FlipsideDB_TBC", scan = "FlipsideScanDB_TBC" },
     -- Backpack and bag slots 0..NUM_BAG_SLOTS.
     bagIDs = function()

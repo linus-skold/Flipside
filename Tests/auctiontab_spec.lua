@@ -617,6 +617,88 @@ describe("AuctionTab", function()
             assert.are.equal("not an item: hello", ui.priceMessage:GetText())
         end)
 
+        it("looks up a Flipside key", function()
+            records["25320#s-44"] = record(1000)
+            local _, ui = attach()
+            ui.input:SetText("25320#s-44")
+            click(ui.lookup)
+            assert.are.equal(9, #shownRows(ui))
+            assert.are.equal("25320#s-44", shownRows(ui)[1].value:GetText())
+            ui.input:SetText("25321#s-44")
+            click(ui.lookup)
+            assert.are.equal("no scan data for 25321#s-44", ui.priceMessage:GetText())
+        end)
+
+        describe("refresh from the Auction House", function()
+            local requests, answer
+
+            local function withRefresh()
+                requests, answer = {}, { true }
+                deps.requestPriceRefresh = function(itemID, name)
+                    requests[#requests + 1] = { itemID = itemID, name = name }
+                    return unpack(answer)
+                end
+            end
+
+            it("asks for a fresh price of an id, a link and a key", function()
+                withRefresh()
+                records["123"] = record(1000)
+                records["123#s-5"] = record(900)
+                local _, ui = attach()
+                for _, text in ipairs({ "123", LINK, "123#s-5" }) do
+                    ui.input:SetText(text)
+                    click(ui.lookup)
+                end
+                assert.are.equal(3, #requests)
+                for _, request in ipairs(requests) do
+                    assert.are.equal(123, request.itemID)
+                end
+                assert.are.equal("refreshing the price", ui.pendingMessage:GetText())
+            end)
+
+            it("passes the name of a name match", function()
+                withRefresh()
+                records["123"] = record(1000)
+                deps.itemNameIndex = {
+                    Resolve = function()
+                        return { kind = "name", matches = { { itemID = 123, name = "Thing", key = "123" } },
+                            pendingCount = 0 }
+                    end,
+                }
+                local _, ui = attach()
+                ui.input:SetText("thing")
+                click(ui.lookup)
+                assert.are.same({ { itemID = 123, name = "Thing" } }, requests)
+            end)
+
+            it("shows the stored price and the hint when the Auction House is closed", function()
+                withRefresh()
+                answer = { false, "open the Auction House to refresh this price" }
+                records["123"] = record(1000)
+                local _, ui = attach()
+                ui.input:SetText("123")
+                click(ui.lookup)
+                assert.are.equal(9, #shownRows(ui))
+                assert.are.equal("open the Auction House to refresh this price", ui.pendingMessage:GetText())
+            end)
+
+            it("shows the rows again when the fresh price is stored", function()
+                withRefresh()
+                local _, ui = attach()
+                ui.input:SetText("123")
+                click(ui.lookup)
+                assert.are.equal(0, #shownRows(ui))
+                records["123"] = record(777)
+                deps.bus:Emit("Flipside.PriceCaptured", "124")
+                assert.are.equal(0, #shownRows(ui))
+                deps.bus:Emit("Flipside.PriceCaptured", "123")
+                assert.are.equal(9, #shownRows(ui))
+                assert.are.equal("777c", shownRows(ui)[2].money:GetText())
+                assert.are.equal("price refreshed", ui.pendingMessage:GetText())
+                assert.are.equal(1, #requests)
+            end)
+        end)
+
         describe("by name", function()
             local pending
 
