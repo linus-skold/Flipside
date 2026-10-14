@@ -228,4 +228,16 @@ describe("FormulaFunctions", function()
             assert.is_string(msg)
         end)
     end)
+
+    describe("DOCS", function()
+        it("describes every function", function()
+            for name in pairs(F.SPECS) do
+                local doc = F.DOCS[name]
+                assert.is_table(doc, name)
+                assert.is_truthy(doc.text and doc.text ~= "", name)
+                assert.is_truthy(doc.usage and doc.usage:find(name, 1, true) == 1, name)
+                assert.is_truthy(doc.example and doc.example:find(name, 1, true) == 1, name)
+            end
+        end)
+    end)
 end)

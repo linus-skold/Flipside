@@ -650,6 +650,315 @@ describe("Kit", function()
             end)
         end)
     end)
+    describe("MultiLineInput", function()
+        local parent
+        before_each(function()
+            parent = CreateFrame("Frame")
+        end)
+
+        it("uses the client template and sizes the edit box", function()
+            local input = Kit.MultiLineInput(parent, 300, 120)
+            assert.are.equal("InputScrollFrameTemplate", input.template)
+            assert.are.equal(300, input.width)
+            assert.are.equal(120, input.height)
+            assert.are.equal(282, input.EditBox.width)
+            assert.is_false(input.CharCount:IsShown())
+        end)
+
+        it("sets and gets text", function()
+            local input = Kit.MultiLineInput(parent, 300, 120)
+            input:SetText("a\nb")
+            assert.are.equal("a\nb", input:GetText())
+            assert.are.equal("a\nb", input.EditBox:GetText())
+        end)
+
+        it("calls onChange with the text on focus loss", function()
+            local got = {}
+            local input = Kit.MultiLineInput(parent, 300, 120, {
+                onChange = function(text)
+                    table.insert(got, text)
+                end,
+            })
+            input.EditBox:SetText("typed")
+            assert.are.same({}, got)
+            input.EditBox:GetScript("OnEditFocusLost")(input.EditBox)
+            assert.are.same({ "typed" }, got)
+        end)
+
+        it("focuses and highlights", function()
+            local input = Kit.MultiLineInput(parent, 300, 120)
+            input:SetFocus()
+            assert.is_true(input.EditBox.focused)
+            input:HighlightAll()
+            assert.is_true(input.EditBox.highlighted)
+        end)
+
+        it("read only: selects on focus, undoes user edits, does not call onChange", function()
+            local calls = 0
+            local input = Kit.MultiLineInput(parent, 300, 120, {
+                readOnly = true,
+                onChange = function()
+                    calls = calls + 1
+                end,
+            })
+            local box = input.EditBox
+            input:SetText("export")
+            box:GetScript("OnEditFocusGained")(box)
+            assert.is_true(box.highlighted)
+            box:SetText("changed")
+            box:GetScript("OnTextChanged")(box, true)
+            assert.are.equal("export", input:GetText())
+            box:GetScript("OnEditFocusLost")(box)
+            assert.are.equal(0, calls)
+        end)
+
+        it("read only accepts SetText from code", function()
+            local input = Kit.MultiLineInput(parent, 300, 120, { readOnly = true })
+            input:SetText("one")
+            input.EditBox:GetScript("OnTextChanged")(input.EditBox, false)
+            assert.are.equal("one", input:GetText())
+            input:SetText("two")
+            assert.are.equal("two", input:GetText())
+        end)
+    end)
+
+    describe("EditorDialog", function()
+        it("builds a movable window with an input and two buttons", function()
+            local d = Kit.EditorDialog("EditorA", { help = "Help text" })
+            assert.is_true(d.movable)
+            assert.is_false(d:IsShown())
+            assert.are.same({ "EditorA" }, _G.UISpecialFrames)
+            assert.are.equal("InputScrollFrameTemplate", d.input.template)
+            assert.are.equal("Save", d.saveButton:GetText())
+            assert.are.equal("Cancel", d.cancelButton:GetText())
+            assert.is_nil(d.closeButton)
+        end)
+
+        it("opens with title and text", function()
+            local d = Kit.EditorDialog("EditorA")
+            d:Open("Edit", "hello", function() end)
+            assert.is_true(d:IsShown())
+            assert.are.equal("Edit", d.title)
+            assert.are.equal("hello", d.input:GetText())
+        end)
+
+        it("Save calls onSave once with the text and closes", function()
+            local d = Kit.EditorDialog("EditorA")
+            local got = {}
+            d:Open("Edit", "hello", function(text)
+                table.insert(got, text)
+            end)
+            d.input.EditBox:SetText("new")
+            d.saveButton:GetScript("OnClick")(d.saveButton)
+            assert.are.same({ "new" }, got)
+            assert.is_false(d:IsShown())
+            d.saveButton:GetScript("OnClick")(d.saveButton)
+            assert.are.same({ "new" }, got)
+        end)
+
+        it("Cancel closes and does not call onSave", function()
+            local d = Kit.EditorDialog("EditorA")
+            local calls = 0
+            d:Open("Edit", "x", function()
+                calls = calls + 1
+            end)
+            d.cancelButton:GetScript("OnClick")(d.cancelButton)
+            assert.is_false(d:IsShown())
+            d.saveButton:GetScript("OnClick")(d.saveButton)
+            assert.are.equal(0, calls)
+        end)
+
+        it("does not call onSave after Escape closes it", function()
+            local d = Kit.EditorDialog("EditorA")
+            local calls = 0
+            d:Open("Edit", "x", function()
+                calls = calls + 1
+            end)
+            d:Hide()
+            d.saveButton:GetScript("OnClick")(d.saveButton)
+            assert.are.equal(0, calls)
+        end)
+
+        it("reuses the dialog by name and uses the latest callback", function()
+            local a = Kit.EditorDialog("EditorA")
+            assert.are.equal(a, Kit.EditorDialog("EditorA", { help = "other" }))
+            assert.are_not.equal(a, Kit.EditorDialog("EditorB"))
+            local got = {}
+            a:Open("1", "one", function()
+                table.insert(got, "first")
+            end)
+            a:Open("2", "two", function()
+                table.insert(got, "second")
+            end)
+            assert.are.equal("two", a.input:GetText())
+            a.saveButton:GetScript("OnClick")(a.saveButton)
+            assert.are.same({ "second" }, got)
+        end)
+
+        it("read only: Close button only and text selected", function()
+            local d = Kit.EditorDialog("ExportA", { readOnly = true })
+            assert.is_nil(d.saveButton)
+            assert.are.equal("Close", d.closeButton:GetText())
+            d:Open("Export", "string", function() end)
+            assert.are.equal("string", d.input:GetText())
+            assert.is_true(d.input.EditBox.highlighted)
+            d.closeButton:GetScript("OnClick")(d.closeButton)
+            assert.is_false(d:IsShown())
+        end)
+    end)
+
+    describe("Tree drag and drop", function()
+        local nodes, drops, tree, rows
+
+        local function setup(options, fallback)
+            if fallback then
+                _G.CreateTreeDataProvider = nil
+                _G.ScrollUtil = nil
+            end
+            options = options or {}
+            options.onDrop = options.onDrop or function(dragged, target)
+                table.insert(drops, { dragged, target })
+            end
+            tree = Kit.CreateTree(CreateFrame("Frame"), options)
+            tree:SetNodes(nodes)
+            rows = {}
+            if fallback then
+                rows = tree.list.rows
+            else
+                for index, treeNode in ipairs(tree.box.dataProvider:GetVisible()) do
+                    local row = CreateFrame("Button")
+                    mock.scrollInit.view.initializer(row, treeNode)
+                    rows[index] = row
+                    tree.box.rowFrames[index] = row
+                end
+            end
+        end
+
+        local function over(row)
+            for _, r in ipairs(rows) do
+                r.mouseOver = (r == row)
+            end
+            tree.frame.mouseOver = row ~= nil
+        end
+
+        local function drag(row)
+            row:GetScript("OnDragStart")(row)
+        end
+
+        local function release(row)
+            row:GetScript("OnDragStop")(row)
+        end
+
+        before_each(function()
+            drops = {}
+            nodes = {
+                { id = "a", text = "A", children = { { id = "a1", text = "A1" } } },
+                { id = "b", text = "B" },
+            }
+        end)
+
+        for _, fallback in ipairs({ false, true }) do
+            local label = fallback and " (fallback list)" or ""
+
+            it("drops on a row" .. label, function()
+                setup(nil, fallback)
+                assert.are.same({ "LeftButton" }, rows[1].dragButtons)
+                drag(rows[3])
+                over(rows[1])
+                release(rows[3])
+                assert.are.same({ { "b", "a" } }, drops)
+            end)
+
+            it("drops on the empty area with a nil target" .. label, function()
+                setup(nil, fallback)
+                drag(rows[2])
+                over(nil)
+                tree.frame.mouseOver = true
+                release(rows[2])
+                assert.are.same({ { "a1", nil } }, drops)
+            end)
+
+            it("does not drop outside the tree" .. label, function()
+                setup(nil, fallback)
+                drag(rows[2])
+                over(nil)
+                tree.frame.mouseOver = false
+                release(rows[2])
+                assert.are.same({}, drops)
+            end)
+
+            it("does not drop on itself" .. label, function()
+                setup(nil, fallback)
+                drag(rows[3])
+                over(rows[3])
+                release(rows[3])
+                assert.are.same({}, drops)
+            end)
+
+            it("is blocked by canDrag" .. label, function()
+                setup({
+                    canDrag = function(id)
+                        return id ~= "a"
+                    end,
+                }, fallback)
+                drag(rows[1])
+                assert.is_nil(tree.dragging)
+                over(rows[3])
+                release(rows[1])
+                assert.are.same({}, drops)
+                drag(rows[3])
+                assert.are.equal("b", tree.dragging)
+            end)
+        end
+
+        it("shows the dragged text near the cursor and tracks the scale", function()
+            setup()
+            rawget(_G, "UIParent").scale = 2
+            mock.cursor = { 200, 100 }
+            drag(rows[3])
+            local ghost = tree.ghost
+            assert.is_true(ghost:IsShown())
+            assert.are.equal("B", ghost.label:GetText())
+            assert.are.equal("TOOLTIP", ghost.strata)
+            mock.update()
+            assert.are.same({ "TOPLEFT", UIParent, "BOTTOMLEFT", 112, 38 }, ghost.points[1])
+            release(rows[3])
+            assert.is_false(ghost:IsShown())
+        end)
+
+        it("highlights the row under the cursor and clears it on release", function()
+            setup()
+            drag(rows[3])
+            over(rows[1])
+            mock.update()
+            assert.are.equal("a", tree.dropTarget)
+            assert.is_true(rows[1].dropMark:IsShown())
+            assert.is_false(rows[2].dropMark:IsShown())
+            over(rows[2])
+            mock.update()
+            assert.is_false(rows[1].dropMark:IsShown())
+            assert.is_true(rows[2].dropMark:IsShown())
+            over(rows[3])
+            mock.update()
+            assert.is_nil(tree.dropTarget)
+            assert.is_false(rows[3].dropMark:IsShown())
+            over(rows[1])
+            mock.update()
+            release(rows[3])
+            assert.is_nil(tree.dropTarget)
+            assert.is_nil(tree.dragging)
+            assert.is_false(rows[1].dropMark:IsShown())
+        end)
+
+        it("sets no drag scripts without onDrop", function()
+            tree = Kit.CreateTree(CreateFrame("Frame"), {})
+            tree:SetNodes(nodes)
+            local row = CreateFrame("Button")
+            mock.scrollInit.view.initializer(row, tree.box.dataProvider.nodes[1])
+            assert.is_nil(row.dragButtons)
+            assert.is_nil(row:GetScript("OnDragStart"))
+        end)
+    end)
     describe("AfterCombat", function()
         it("runs now outside combat", function()
             local ran = 0

@@ -41,6 +41,101 @@ local function prepareRow(row)
     row.toggle.glyph:SetPoint("CENTER")
     row.label = Kit.Label(row, "", "normal")
     row.label:SetPoint("LEFT", row.toggle, "RIGHT", 2, 0)
+    row.dropMark = row:CreateTexture(nil, "OVERLAY")
+    row.dropMark:SetTexture(Kit.Theme.rowHighlight)
+    row.dropMark:SetBlendMode("ADD")
+    row.dropMark:SetAllPoints(row)
+    row.dropMark:Hide()
+end
+
+local function forEachRow(tree, fn)
+    if tree.box then
+        tree.box:ForEachFrame(fn)
+    else
+        for _, row in ipairs(tree.list.rows) do
+            if row:IsShown() then
+                fn(row)
+            end
+        end
+    end
+end
+
+-- Return the id of the row under the cursor, or nil.
+local function rowUnderCursor(tree)
+    local found
+    forEachRow(tree, function(row)
+        if row.kitId ~= nil and row:IsMouseOver() then
+            found = row.kitId
+        end
+    end)
+    return found
+end
+
+local function markRows(tree)
+    forEachRow(tree, function(row)
+        row.dropMark:SetShown(row.kitId ~= nil and row.kitId == tree.dropTarget)
+    end)
+end
+
+-- The small frame that follows the cursor while a row is dragged.
+local function dragFrame(tree)
+    if tree.ghost then
+        return tree.ghost
+    end
+    local ok, ghost = pcall(CreateFrame, "Frame", nil, UIParent, "TooltipBackdropTemplate")
+    if not ok then
+        ghost = CreateFrame("Frame", nil, UIParent)
+    end
+    ghost:SetFrameStrata("TOOLTIP")
+    ghost:SetSize(160, 22)
+    ghost.label = Kit.Label(ghost, "", "highlight")
+    ghost.label:SetPoint("LEFT", ghost, "LEFT", Kit.Theme.gap, 0)
+    ghost:SetScript("OnUpdate", function(self)
+        local x, y = GetCursorPosition()
+        local scale = UIParent:GetEffectiveScale()
+        self:ClearAllPoints()
+        self:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", x / scale + 12, y / scale - 12)
+        local target = rowUnderCursor(tree)
+        if target == tree.dragging then
+            target = nil
+        end
+        if target ~= tree.dropTarget then
+            tree.dropTarget = target
+            markRows(tree)
+        end
+    end)
+    ghost:Hide()
+    tree.ghost = ghost
+    return ghost
+end
+
+local function startDrag(tree, row, options)
+    local id = row.kitId
+    if id == nil or (options.canDrag and options.canDrag(id) == false) then
+        return
+    end
+    tree.dragging = id
+    tree.dropTarget = nil
+    local ghost = dragFrame(tree)
+    ghost.label:SetText(tree.byId[id] and tree.byId[id].text or "")
+    ghost:Show()
+end
+
+local function stopDrag(tree, options)
+    local dragged = tree.dragging
+    if dragged == nil then
+        return
+    end
+    local target = rowUnderCursor(tree)
+    tree.dragging, tree.dropTarget = nil, nil
+    tree.ghost:Hide()
+    markRows(tree)
+    if target == dragged then
+        return
+    end
+    if target ~= nil or tree.frame:IsMouseOver() then
+        options.onDrop(dragged, target)
+    end
 end
 
 -- Show an indented label and a collapse toggle. indentRow is true when the view does not indent.
@@ -59,9 +154,20 @@ end
 
 local function renderRow(tree, row, data, depth, isCollapsed, hasChildren, indentRow)
     prepareRow(row)
+    row.kitId = data.id
+    row.dropMark:SetShown(tree.dropTarget ~= nil and tree.dropTarget == data.id)
     row:SetScript("OnClick", function()
         tree:Select(data.id)
     end)
+    if tree.options.onDrop then
+        row:RegisterForDrag("LeftButton")
+        row:SetScript("OnDragStart", function(self)
+            startDrag(tree, self, tree.options)
+        end)
+        row:SetScript("OnDragStop", function()
+            stopDrag(tree, tree.options)
+        end)
+    end
     if tree.initRow then
         tree.initRow(row, data, depth, isCollapsed, hasChildren)
     else
@@ -69,12 +175,16 @@ local function renderRow(tree, row, data, depth, isCollapsed, hasChildren, inden
     end
 end
 
--- Create a tree. options: rowHeight, initRow(row, node, depth, isCollapsed, hasChildren), onSelect(node).
+-- Create a tree. options: rowHeight, initRow(row, node, depth, isCollapsed, hasChildren), onSelect(node),
+-- onDrop(draggedId, targetId or nil), canDrag(id).
+-- Drag a row with the left button. A drop on a row gives its id. A drop on the empty tree gives nil.
+-- A drop on the dragged row itself, or outside the tree, calls nothing. canDrag(id) false blocks the drag.
 -- A node is { id, text, children }. Use tree.frame to place the tree.
 function Kit.CreateTree(parent, options)
     options = options or {}
     local rowHeight = options.rowHeight or Kit.Theme.rowHeight
     local tree = {
+        options = options,
         roots = {},
         byId = {},
         collapsed = {},
