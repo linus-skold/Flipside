@@ -3,7 +3,8 @@ local _, ns = ...
 -- The one door to the auction API. A flavour file registers a backend with Use(); shared code calls only this module.
 -- Backend functions: StartScan, ScanDoneEvent, RowCount, ReadRow, RowLink, RowIsPet, ItemIsCommodity,
 -- HasCommodityCheck, NameSearch, TargetedSearch, NameResultEvent, NameResults, NameItemKeyInfo, Capture, OwnedAuctions,
--- CanReadOwned, OwnedEvent, OpenEvent, CloseEvent, CanScan. A backend leaves out what its client cannot do.
+-- CanReadOwned, OwnedEvent, OpenEvent, CloseEvent, CanScan, CanLiveSearch, LiveSearch, LiveResultEvents, LiveRows,
+-- IsReady, ReadyEvent, RefreshOwned. A backend leaves out what its client cannot do.
 local AuctionClient = {}
 ns.AuctionClient = AuctionClient
 
@@ -53,6 +54,7 @@ query("CanScan", false)
 query("HasCommodityCheck", false)
 query("CanReadOwned", false)
 query("CanTargetSearch", false)
+query("CanLiveSearch", false)
 
 -- Event names: nil without a backend function.
 query("ScanDoneEvent")
@@ -60,6 +62,7 @@ query("NameResultEvent")
 query("OwnedEvent")
 query("OpenEvent")
 query("CloseEvent")
+query("ReadyEvent")
 
 -- Optional scan helpers: ScanCanStart() gives true, or false and a text; ScanSettleSeconds() and ScanComplete()
 -- tell the engine when a multi-event scan is done; ScanDiagnostics(summary) gives a text line.
@@ -77,6 +80,16 @@ query("ScanRefreshSeconds")
 query("ScanPageQuery")
 query("CanQueryPage", false)
 query("ScanTotal")
+
+-- Live search (optional; absent on the legacy client). LiveSearch(itemID) gives true, or false and a text.
+-- LiveResultEvents() gives the commodity and the item result event names. LiveRows(itemID) gives rows
+-- { auctionID, unitPrice, quantity, isCommodity, ownerItem, timeLeft, itemLink } with the cheapest first.
+-- IsReady() tells if a throttled call is allowed. RefreshOwned() asks for a fresh owned list.
+query("LiveSearch", false)
+query("LiveResultEvents")
+query("LiveRows", {})
+query("IsReady", true)
+query("RefreshOwned")
 
 -- Search capture: nil means capture is off.
 query("Capture")

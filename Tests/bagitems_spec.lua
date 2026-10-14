@@ -94,4 +94,57 @@ describe("BagItems", function()
         assert.are.equal("Sword", list[1].name)
         assert.are.equal(2, stats.errors)
     end)
+
+    describe("stacks option", function()
+        it("adds no stacks by default", function()
+            local list = BagItems.Read(api(), resolver)
+            for _, e in ipairs(list) do assert.is_nil(e.stacks) end
+        end)
+
+        it("lists every stack of a key sorted by bag then slot", function()
+            bags[2] = { false, { hyperlink = link(10), itemID = 10, stackCount = 3, itemName = "Herb" } }
+            local list = BagItems.Read(api(), resolver, { stacks = true, bagIDs = { 2, 1, 0 } })
+            local herb
+            for _, e in ipairs(list) do if e.name == "Herb" then herb = e end end
+            assert.are.equal(28, herb.count)
+            assert.are.same({
+                { bag = 0, slot = 1, count = 20, link = link(10), bound = false },
+                { bag = 1, slot = 1, count = 5, link = link(10), bound = false },
+                { bag = 2, slot = 2, count = 3, link = link(10), bound = false },
+            }, herb.stacks)
+        end)
+
+        it("keeps the bound flag per stack", function()
+            bags[1][1].isBound = true
+            local list = BagItems.Read(api(), resolver, { stacks = true, includeBound = true })
+            for _, e in ipairs(list) do
+                if e.name == "Herb" then
+                    assert.is_false(e.stacks[1].bound)
+                    assert.is_true(e.stacks[2].bound)
+                end
+            end
+        end)
+
+        it("gives one stack for a single slot key", function()
+            local list = BagItems.Read(api(), resolver, { stacks = true })
+            assert.are.equal(1, #list[1].stacks)
+            assert.are.equal(1, list[1].stacks[1].bag)
+            assert.are.equal(2, list[1].stacks[1].slot)
+        end)
+
+        it("returns an empty list for empty bags", function()
+            bags = { [0] = {}, [1] = {} }
+            local list, stats = BagItems.Read(api(), resolver, { stacks = true })
+            assert.are.equal(0, #list)
+            assert.are.equal(0, stats.slots)
+        end)
+
+        it("reads the TBC bag IDs", function()
+            local f = require("Tests.manifest")
+            assert.is_table(f)
+            bags = { [0] = {}, [4] = { { hyperlink = link(30), itemID = 30, stackCount = 2, itemName = "Apple" } } }
+            local list = BagItems.Read(api(), resolver, { stacks = true, bagIDs = { 0, 1, 2, 3, 4 } })
+            assert.are.equal(4, list[1].stacks[1].bag)
+        end)
+    end)
 end)
