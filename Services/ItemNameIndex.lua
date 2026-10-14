@@ -47,7 +47,7 @@ function ItemNameIndex.ToInput(key)
     return "item:" .. table.concat(fields, ":")
 end
 
--- deps: store (Keys, GetVersion), itemCache (Get, Request).
+-- deps: store (Keys, GetVersion), itemCache (Get, Request), clientLookup(name) -> itemID, link, name (optional).
 function ItemNameIndex.New(deps)
     if type(deps) ~= "table" or type(deps.store) ~= "table" or type(deps.itemCache) ~= "table" then
         error("deps.store and deps.itemCache must be tables", 2)
@@ -55,6 +55,7 @@ function ItemNameIndex.New(deps)
     return setmetatable({
         store = deps.store,
         itemCache = deps.itemCache,
+        clientLookup = deps.clientLookup,
         version = nil,
         items = {}, -- array of { itemID, keys, name, lower }
         names = {}, -- itemID -> name, kept for the session
@@ -116,13 +117,39 @@ local function byOrder(a, b)
     return a.key < b.key
 end
 
--- Returns matches ({ itemID, name, key }, one for each stored key) and the count of items without a name.
-function Index:Find(query, limit)
+local QUOTES = { '"', "\226\128\156", "\226\128\157" } -- straight, left curly, right curly
+
+local function quoteAt(text, fromEnd)
+    for _, q in ipairs(QUOTES) do
+        local part = fromEnd and text:sub(#text - #q + 1) or text:sub(1, #q)
+        if part == q then
+            return #q
+        end
+    end
+end
+
+-- Returns { text (trimmed, lower case), exact, raw (trimmed, original case) }; text in quotes is exact.
+function ItemNameIndex.ParseQuery(text)
+    local raw = trim(text)
+    local head, tail = quoteAt(raw, false), quoteAt(raw, true)
+    local exact = false
+    if head and tail and #raw >= head + tail then
+        raw = trim(raw:sub(head + 1, #raw - tail))
+        exact = true
+    end
+    return { text = raw:lower(), exact = exact, raw = raw }
+end
+
+-- Returns matches ({ itemID, name, key, source }), one for each stored key, and the count of items without a name.
+-- options.exclude is a set of keys to leave out.
+function Index:Find(query, limit, options)
     if self.version ~= self.store:GetVersion() then
         self:_Rebuild()
     end
     local pending = self:_Refresh()
-    local text = trim(query):lower()
+    local parsed = ItemNameIndex.ParseQuery(query)
+    local text = parsed.text
+    local exclude = options and options.exclude or {}
     local groups = { {}, {}, {} }
     if #text >= MIN_LENGTH then
         for _, item in ipairs(self.items) do
@@ -130,34 +157,42 @@ function Index:Find(query, limit)
             local group
             if lower == text then
                 group = groups[1]
-            elseif lower and lower:sub(1, #text) == text then
+            elseif not parsed.exact and lower and lower:sub(1, #text) == text then
                 group = groups[2]
-            elseif lower and lower:find(text, 1, true) then
+            elseif not parsed.exact and lower and lower:find(text, 1, true) then
                 group = groups[3]
             end
             if group then
                 for _, key in ipairs(item.keys) do
-                    group[#group + 1] = { itemID = item.itemID, name = item.name, key = key, lower = lower }
+                    if not exclude[key] then
+                        group[#group + 1] = { itemID = item.itemID, name = item.name, key = key, lower = lower }
+                    end
                 end
             end
         end
     end
-    local matches = {}
+    local matches, seen = {}, {}
     limit = limit or DEFAULT_LIMIT
     for _, group in ipairs(groups) do
         table.sort(group, byOrder)
         for _, entry in ipairs(group) do
-            if #matches >= limit then
-                return matches, pending
+            if #matches < limit then
+                matches[#matches + 1] = { itemID = entry.itemID, name = entry.name, key = entry.key, source = "scan" }
+                seen[entry.key] = true
             end
-            matches[#matches + 1] = { itemID = entry.itemID, name = entry.name, key = entry.key }
+        end
+    end
+    if self.clientLookup and #text >= MIN_LENGTH and (parsed.exact or #matches < limit) then
+        local itemID, _, name = self.clientLookup(parsed.raw)
+        local key = itemID and ns.ItemString.ToBaseKey(itemID)
+        if key and not seen[key] and not exclude[key] and #matches < limit then
+            matches[#matches + 1] = { itemID = itemID, name = name, key = key, source = "client" }
         end
     end
     return matches, pending
 end
-
 -- Returns { kind = "item", input }, { kind = "name", matches, pendingCount } or { kind = "error", message }.
-function Index:Resolve(input)
+function Index:Resolve(input, options)
     if ns.ItemString.ToBaseKey(input) then
         return { kind = "item", input = input }
     end
@@ -165,6 +200,6 @@ function Index:Resolve(input)
     if #text < MIN_LENGTH then
         return { kind = "error", message = "type at least " .. MIN_LENGTH .. " characters of the name" }
     end
-    local matches, pending = self:Find(text, DEFAULT_LIMIT)
+    local matches, pending = self:Find(text, DEFAULT_LIMIT, options)
     return { kind = "name", matches = matches, pendingCount = pending }
 end
