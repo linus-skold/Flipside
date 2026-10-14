@@ -3,15 +3,15 @@ local mock = require("Tests.wow_mock")
 
 local function loadModules()
     local ns = { ReportError = function() end }
-    for _, name in ipairs({ "EventBus", "ItemString", "SellingPlan", "Theme", "Widgets", "List",
-        "AuctionTabs", "SellingTab" }) do
+    for _, name in ipairs({ "EventBus", "ItemString", "ScanKey", "BagItems", "SellingPlan", "Theme", "Widgets",
+        "List", "Tree", "AuctionTabs", "SellingTab" }) do
         assert(loadfile(manifest.path(name)))("Flipside", ns)
     end
     return ns
 end
 
 describe("SellingTab", function()
-    local ns, bus, client, rules, run, timers, tab, ui, confirms, bagItems
+    local ns, bus, client, rules, run, timers, tab, ui, confirms, bagItems, bagReads, groups, itemGroup
 
     -- A fake client: it records searches and post calls. Each post call is one protected call.
     local function makeClient()
@@ -88,25 +88,45 @@ describe("SellingTab", function()
         return c
     end
 
+    -- Groups: 2 Cloth (with 3 Bolts and 5 Empty), 6 Misc. Cloth and Bolts have a selling operation; Misc has none.
     local function makeRules()
         return {
-            Walk = function(_, fn)
-                fn(1)
-                fn(2)
+            Children = function(_, id)
+                return groups[id].children
             end,
-            EffectiveOperation = function()
-                return 7
+            Name = function(_, id)
+                return groups[id].name
+            end,
+            GroupOf = function(_, key)
+                return itemGroup[key] or 1
+            end,
+            Walk = function(_, fn)
+                for _, id in ipairs({ 1, 2, 3, 5, 6 }) do
+                    fn(id)
+                end
+            end,
+            EffectiveOperation = function(_, id)
+                if id == 2 or id == 3 or id == 5 then
+                    return 7
+                end
             end,
             GetOperation = function()
                 return { name = "Sell", settings = {
                     minPrice = "10", normalPrice = "100", maxPrice = "200", undercut = 1, duration = 24,
                 } }
             end,
-            Path = function()
-                return "Herbs"
+            Path = function(_, id)
+                return groups[id].name
             end,
-            ItemsIn = function()
-                return { "10", "11", "12" }
+            ItemsIn = function(_, id)
+                local list = {}
+                for key, group in pairs(itemGroup) do
+                    if group == id then
+                        list[#list + 1] = key
+                    end
+                end
+                table.sort(list)
+                return list
             end,
         }
     end
@@ -133,10 +153,11 @@ describe("SellingTab", function()
                 return "Item" .. id, 1
             end,
             readBags = function()
+                bagReads = bagReads + 1
                 return bagItems
             end,
             maxStack = function(id)
-                return id == 11 and 20 or 1
+                return id == 10 and 20 or 1
             end,
             confirm = function(name, text, onAccept)
                 confirms[#confirms + 1] = { name = name, text = text, onAccept = onAccept }
@@ -147,18 +168,38 @@ describe("SellingTab", function()
         end
         local core = ns.SellingTab.New(deps)
         core:Mount(CreateFrame("Frame", nil, UIParent), { Enter = function() end, Leave = function() end })
+        core:Select()
         return core
     end
 
-    -- Scan the bags and answer each search: 10 is a commodity, 11 an item, 12 sells below the minimum.
-    local function scanAll()
-        client.rows[10] = { row(150, 5) }
-        client.rows[11] = { row(120, 1) }
-        client.rows[12] = { row(10, 1) }
-        assert.is_true(tab:ScanBags())
-        fire("COMMODITY_RESULTS", 10)
-        fire("ITEM_RESULTS", 11)
-        fire("ITEM_RESULTS", 12)
+    local function entryOf(key)
+        for _, entry in ipairs(tab.entries) do
+            if entry.key == key then
+                return entry
+            end
+        end
+    end
+
+    -- Select a tree row by id, as a click on the row does.
+    local function pick(id)
+        ui.tree:Select(id)
+    end
+
+    local function idsOf(nodes)
+        local ids = {}
+        for _, node in ipairs(nodes) do
+            ids[#ids + 1] = node.id
+        end
+        return ids
+    end
+
+    -- Select the group Cloth and answer both searches: 10 is an item with 3 stacks, 11 a commodity.
+    local function selectCloth()
+        client.rows[10] = { row(120, 1) }
+        client.rows[11] = { row(150, 5) }
+        pick("g2")
+        fire("ITEM_RESULTS", 10)
+        fire("COMMODITY_RESULTS", 11)
     end
 
     before_each(function()
@@ -169,10 +210,17 @@ describe("SellingTab", function()
         ns = loadModules()
         bus = ns.EventBus.New({})
         client = makeClient()
-        client.commodity[10] = true
-        client.commodity[11] = false
-        client.commodity[12] = false
-        timers, confirms = {}, {}
+        client.commodity[10] = false
+        client.commodity[11] = true
+        timers, confirms, bagReads = {}, {}, 0
+        groups = {
+            [1] = { name = "Base", children = { 2, 6 } },
+            [2] = { name = "Cloth", children = { 3, 5 } },
+            [3] = { name = "Bolts", children = {} },
+            [5] = { name = "Empty", children = {} },
+            [6] = { name = "Misc", children = {} },
+        }
+        itemGroup = { ["10"] = 2, ["11"] = 3, ["13"] = 6 }
         rules = makeRules()
         run = {
             Evaluate = function(_, text)
@@ -180,12 +228,13 @@ describe("SellingTab", function()
             end,
         }
         bagItems = {
-            { key = "10", itemID = 10, name = "Herb", count = 30, stacks = {
-                { bag = 0, slot = 1, count = 20 }, { bag = 0, slot = 2, count = 10 } } },
-            { key = "11", itemID = 11, name = "Sword", count = 60, stacks = {
+            { key = "11", itemID = 11, name = "Bolt of Linen", count = 12, stacks = {
+                { bag = 0, slot = 4, count = 12 } } },
+            { key = "13", itemID = 13, name = "Widget", count = 2, stacks = { { bag = 2, slot = 1, count = 2 } } },
+            { key = "12", itemID = 12, name = "Copper Ore", count = 8, stacks = { { bag = 2, slot = 2, count = 8 } } },
+            { key = "10", itemID = 10, name = "Linen Cloth", count = 60, stacks = {
                 { bag = 1, slot = 1, count = 20 }, { bag = 1, slot = 2, count = 20 },
                 { bag = 1, slot = 3, count = 20 } } },
-            { key = "12", itemID = 12, name = "Cloth", count = 5, stacks = { { bag = 2, slot = 1, count = 5 } } },
         }
         ns.SellingPlan.Log:Clear()
         tab = mount()
@@ -196,25 +245,156 @@ describe("SellingTab", function()
         mock.teardown()
     end)
 
-    describe("scan bags", function()
-        it("searches one item at a time and decides on each result", function()
-            client.rows[10] = { row(150, 5) }
-            assert.is_true(tab:ScanBags())
+    describe("the tree", function()
+        it("nests the groups, puts the items first and ends with the no-group section", function()
+            local roots = tab.nodes
+            assert.are.same({ "g2", "g6", "none" }, idsOf(roots))
+            assert.are.equal("[Cloth]", roots[1].text)
+            assert.are.same({ "i10", "g3" }, idsOf(roots[1].children))
+            assert.are.same({ "i11" }, idsOf(roots[1].children[2].children))
+            assert.are.equal("[No group]", roots[3].text)
+            assert.are.same({ "i12" }, idsOf(roots[3].children))
+        end)
+
+        it("hides a group with no bag item", function()
+            for _, node in ipairs(tab.nodes[1].children) do
+                assert.are_not.equal("g5", node.id)
+            end
+            groups[2].children = { 5 }
+            itemGroup = { ["13"] = 6 }
+            tab:RefreshBags()
+            assert.are.same({ "g6", "none" }, idsOf(tab.nodes))
+        end)
+
+        it("has no [No group] section when every item is in a group", function()
+            itemGroup["12"] = 6
+            tab:RefreshBags()
+            assert.are.same({ "g2", "g6" }, idsOf(tab.nodes))
+        end)
+
+        it("hides bound items", function()
+            local function link(id)
+                return "|cff1eff00|Hitem:" .. id .. "::::::::::::|h[x]|h|r"
+            end
+            local bags = {
+                [0] = {
+                    { hyperlink = link(10), itemID = 10, stackCount = 20, itemName = "Linen Cloth" },
+                    { hyperlink = link(12), itemID = 12, stackCount = 1, itemName = "Soulbound", isBound = true },
+                },
+            }
+            local resolver = ns.ScanKey.New({ clientIsCommodity = function() return nil end })
+            tab.deps.readBags = function()
+                return (ns.BagItems.Read({
+                    numSlots = function(bag)
+                        return bags[bag] and #bags[bag] or 0
+                    end,
+                    itemInfo = function(bag, slot)
+                        return bags[bag][slot]
+                    end,
+                }, resolver, { bagIDs = { 0 }, stacks = true }))
+            end
+            itemGroup = {}
+            tab:RefreshBags()
+            assert.are.equal(1, #tab.entries)
+            assert.are.equal("Linen Cloth", tab.entries[1].item.name)
+            assert.are.same({ "none" }, idsOf(tab.nodes))
+        end)
+
+        it("shows the rows of the expanded groups with name, count and decision", function()
+            local rows = ui.tree.list.rows
+            assert.are.equal("[Cloth]", rows[1].label.text)
+            assert.are.equal("Linen Cloth", rows[2].label.text)
+            assert.are.equal("x60", rows[2].sellParts.count.text)
+            assert.are.equal("expected 100c", rows[2].sellParts.info.text)
+            assert.are.equal("[Bolts]", rows[3].label.text)
+            assert.are.equal("Bolt of Linen", rows[4].label.text)
+            assert.are.equal("[Misc]", rows[5].label.text)
+            assert.are.equal("no operation", rows[6].sellParts.info.text)
+        end)
+
+        it("collapses and expands a group", function()
+            ui.tree:SetCollapsed("g2", true)
+            assert.are.equal("[Misc]", ui.tree.list.rows[2].label.text)
+            ui.tree:SetCollapsed("g2", false)
+            assert.are.equal("Linen Cloth", ui.tree.list.rows[2].label.text)
+        end)
+
+        it("greys the expected price until the live result and shows the decision after it", function()
+            local info = ui.tree.list.rows[2].sellParts.info
+            assert.are.same({ 0.5, 0.5, 0.5 }, { info.color[1], info.color[2], info.color[3] })
+            selectCloth()
+            info = ui.tree.list.rows[2].sellParts.info
+            assert.are.equal("post 3 x 20 @ 119c | 24 h", info.text)
+            assert.are.same({ 1, 1, 1 }, { info.color[1], info.color[2], info.color[3] })
+            assert.are.equal("post 12 @ 149c | 24 h", ui.tree.list.rows[4].sellParts.info.text)
+        end)
+
+        it("reads the bags when the tab opens and again on demand", function()
+            assert.are.equal(1, bagReads)
+            tab:Select()
+            assert.are.equal(1, bagReads)
+            click(ui.refresh)
+            assert.are.equal(2, bagReads)
+        end)
+    end)
+
+    describe("selection", function()
+        it("selects a group and its subgroups", function()
+            pick("g2")
+            local keys = {}
+            for _, entry in ipairs(tab.selection) do
+                keys[#keys + 1] = entry.key
+            end
+            assert.are.same({ "10", "11" }, keys)
+        end)
+
+        it("selects only the subgroup, or only one item", function()
+            pick("g3")
+            assert.are.equal(1, #tab.selection)
+            assert.are.equal("11", tab.selection[1].key)
+            pick("i10")
+            assert.are.equal(1, #tab.selection)
+            assert.are.equal("10", tab.selection[1].key)
+        end)
+
+        it("selects through a click on the row", function()
+            local rowFrame = ui.tree.list.rows[1]
+            rowFrame.scripts.OnClick(rowFrame, "LeftButton")
+            assert.are.equal(2, #tab.selection)
+        end)
+
+        it("searches the items of the selection one at a time and decides on each result", function()
+            client.rows[10] = { row(120, 1) }
+            client.rows[11] = { row(150, 5) }
+            pick("g2")
             assert.are.same({ 10 }, client.searches)
-            assert.is_false(ui.scan.enabled)
-            fire("COMMODITY_RESULTS", 10)
+            assert.are.equal("searching", tab.selection[1].status)
+            fire("ITEM_RESULTS", 10)
             assert.are.same({ 10, 11 }, client.searches)
-            fire("ITEM_RESULTS", 11)
-            fire("ITEM_RESULTS", 12)
+            fire("COMMODITY_RESULTS", 11)
             assert.is_nil(tab.queue)
-            assert.is_true(ui.scan.enabled)
-            assert.are.equal(3, #tab.entries)
-            assert.are.equal("ready", tab.entries[1].status)
+            assert.are.equal("ready", entryOf("10").status)
+            assert.are.equal("ready", entryOf("11").status)
+        end)
+
+        it("searches only the items it has no result for", function()
+            selectCloth()
+            pick("g3")
+            pick("g2")
+            assert.are.same({ 10, 11 }, client.searches)
+        end)
+
+        it("makes no search for items without an operation", function()
+            pick("none")
+            pick("g6")
+            assert.are.same({}, client.searches)
+            assert.are.equal("noop", entryOf("12").status)
+            assert.are.equal("no operation", ns.SellingTab.Describe(entryOf("13")))
         end)
 
         it("does not search while the client is not ready and goes on at the ready event", function()
             client.ready = false
-            tab:ScanBags()
+            pick("g2")
             assert.are.same({}, client.searches)
             assert.are.equal(5, timers[#timers].seconds)
             client.ready = true
@@ -223,30 +403,24 @@ describe("SellingTab", function()
         end)
 
         it("logs no response after the timeout and goes on", function()
-            tab:ScanBags()
+            pick("g2")
             timers[1].fn()
-            assert.are.equal("skip", tab.entries[1].status)
+            assert.are.equal("skip", entryOf("10").status)
             assert.are.same({ 10, 11 }, client.searches)
             local list = ns.SellingPlan.Log:List()
             assert.are.equal("no response", list[#list].reason)
         end)
 
-        it("skips an item without a price at once and makes no search for it", function()
-            run.Evaluate = function(_, text, key)
-                if key == "12" then
-                    return nil, { kind = "none" }
-                end
-                return tonumber(text), nil
-            end
-            client.rows[10] = { row(150, 5) }
-            tab:ScanBags()
-            fire("COMMODITY_RESULTS", 10)
-            fire("ITEM_RESULTS", 11)
-            assert.are.same({ 10, 11 }, client.searches)
-            assert.are.equal("no data", tab.entries[3].decision.reason)
+        it("shows a skip reason and logs it", function()
+            client.rows[10] = { row(10, 1) }
+            pick("i10")
+            fire("ITEM_RESULTS", 10)
+            assert.are.equal("skip: below minimum", ns.SellingTab.Describe(entryOf("10")))
+            local list = ns.SellingPlan.Log:List()
+            assert.are.equal("below minimum", list[#list].reason)
         end)
 
-        it("skips stale data with the reason", function()
+        it("skips stale data with the reason and makes no search", function()
             tab = mount({
                 now = function()
                     return 1000000
@@ -255,39 +429,14 @@ describe("SellingTab", function()
                     return { latest = { time = 1000000 - 100 * 3600 }, days = { { scans = 5 } } }
                 end,
             })
-            tab:ScanBags()
-            assert.are.equal("skip", tab.entries[1].status)
-            assert.matches("stale price", tab.entries[1].decision.reason)
+            ui = tab.ui
+            ui.tree:Select("i10")
+            assert.matches("stale price", entryOf("10").decision.reason)
             assert.are.same({}, client.searches)
         end)
     end)
 
-    describe("the list", function()
-        it("shows the decision, the deposit and the duration", function()
-            scanAll()
-            assert.are.equal("post 30 at 149c each | deposit 300c | 24 h", ns.SellingTab.Describe(tab.entries[1]))
-            assert.are.equal("post 3 x 20 at 119c each | deposit 600c | 24 h", ns.SellingTab.Describe(tab.entries[2]))
-            assert.are.equal("post 30 at 149c each | deposit 300c | 24 h", ui.list.rows[1].parts.sub.text)
-            assert.are.equal("Herb", ui.list.rows[1].parts.name.text)
-        end)
-
-        it("shows a skipped item with the reason", function()
-            scanAll()
-            local entry = tab.entries[3]
-            assert.are.equal("skip", entry.status)
-            assert.are.equal("skip: below minimum", ui.list.rows[3].parts.sub.text)
-            assert.are.equal("skip: below minimum", ns.SellingTab.Describe(entry))
-            local list = ns.SellingPlan.Log:List()
-            assert.are.equal("skip", list[#list].decision)
-            assert.are.equal("below minimum", list[#list].reason)
-        end)
-
-        it("shows a question mark when the client gives no deposit", function()
-            client.Deposit = function() end
-            scanAll()
-            assert.matches("deposit %?", ns.SellingTab.Describe(tab.entries[1]))
-        end)
-
+    describe("units and data", function()
         it("splits a decision into units and takes the stacks in order", function()
             local candidate = { stacks = { { bag = 0, slot = 1, count = 45 }, { bag = 0, slot = 2, count = 20 } } }
             local units = ns.SellingTab.BuildUnits(candidate, { quantity = 20, auctions = 3 })
@@ -310,70 +459,145 @@ describe("SellingTab", function()
         end)
     end)
 
-    describe("post next", function()
-        it("posts a commodity as one listing with the unit price", function()
-            scanAll()
+    describe("the post queue of a group", function()
+        it("posts one auction for each click and counts them in the button", function()
+            selectCloth()
+            assert.are.equal("Post (1 of 4)", ui.postNext.text)
             click(ui.postNext)
-            assert.are.equal(1, #client.posts)
-            local post = client.posts[1]
-            assert.are.equal("commodity", post.kind)
-            assert.are.same({ 0, 1, 24, 30, 149 },
-                { post.bag, post.slot, post.duration, post.quantity, post.unitPrice })
-            assert.are.equal("done", tab.entries[1].status)
-            assert.are.equal(1, client.refreshed)
-            local list = ns.SellingPlan.Log:List()
-            assert.are.equal("post", list[#list].decision)
-            assert.are.equal(149, list[#list].price)
-            assert.are.equal(30, list[#list].quantity)
+            assert.are.equal("Post (2 of 4)", ui.postNext.text)
+            click(ui.postNext)
+            click(ui.postNext)
+            assert.are.equal("Post (4 of 4)", ui.postNext.text)
+            assert.are.equal(3, #client.posts)
+            click(ui.postNext)
+            assert.are.equal(4, #client.posts)
+            for index = 1, 3 do
+                local post = client.posts[index]
+                assert.are.equal("item", post.kind)
+                assert.are.same({ 1, index, 24, 20, nil, 119 * 20 },
+                    { post.bag, post.slot, post.duration, post.quantity, post.bid, post.buyout })
+            end
+            local last = client.posts[4]
+            assert.are.equal("commodity", last.kind)
+            assert.are.same({ 0, 4, 24, 12, 149 },
+                { last.bag, last.slot, last.duration, last.quantity, last.unitPrice })
         end)
 
-        it("posts each stack of an item with one click and labels the button", function()
-            scanAll()
-            tab.entries[1].status = "done"
-            assert.are.equal("Post next", ui.postNext.text)
+        it("says all posted at the end and reads the bags again", function()
+            selectCloth()
+            for _ = 1, 4 do
+                click(ui.postNext)
+            end
+            assert.are.equal("all posted", ui.message.text)
+            assert.are.equal(2, bagReads)
+            assert.are.equal("Post", ui.postNext.text)
+            assert.is_false(ui.postNext.enabled)
+            assert.are.equal(2, client.refreshed)
+            assert.are.equal(0, #tab.selection)
+            local list = ns.SellingPlan.Log:List()
+            assert.are.equal("post", list[#list].decision)
+        end)
+
+        it("shows the total deposit of the queue next to the button", function()
+            selectCloth()
+            assert.are.equal("Deposit: 720c", ui.deposit.text)
             click(ui.postNext)
-            assert.are.equal("Post next stack (2 of 3)", ui.postNext.text)
+            assert.are.equal("Deposit: 520c", ui.deposit.text)
+        end)
+
+        it("posts only the selected item", function()
+            selectCloth()
+            pick("i10")
+            assert.are.equal("Post (1 of 3)", ui.postNext.text)
             click(ui.postNext)
-            assert.are.equal("Post next stack (3 of 3)", ui.postNext.text)
+            click(ui.postNext)
             click(ui.postNext)
             assert.are.equal(3, #client.posts)
-            for index, post in ipairs(client.posts) do
+            for _, post in ipairs(client.posts) do
                 assert.are.equal("item", post.kind)
-                assert.are.same({ 1, index, 24, 20, nil, 119 * 20 }, { post.bag, post.slot, post.duration,
-                    post.quantity, post.bid, post.buyout })
             end
-            assert.are.equal("done", tab.entries[2].status)
-            assert.are.equal(1, client.refreshed)
-            assert.are.equal("Post next", ui.postNext.text)
+        end)
+
+        it("posts the subgroup only", function()
+            selectCloth()
+            pick("g3")
+            click(ui.postNext)
+            assert.are.equal("commodity", client.posts[1].kind)
+            assert.are.equal("all posted", ui.message.text)
         end)
 
         it("caps the quantity by the available post count", function()
-            scanAll()
+            selectCloth()
             client.available = 12
             click(ui.postNext)
             assert.are.equal(12, client.posts[1].quantity)
         end)
 
+        it("never posts an item without an operation", function()
+            pick("none")
+            assert.is_false(ui.postNext.enabled)
+            local ok, text = tab:PostNext()
+            assert.is_false(ok)
+            assert.are.equal("nothing to post", text)
+            pick("g6")
+            tab:PostNext()
+            assert.are.equal(0, #client.posts)
+            assert.are.equal("Post", ui.postNext.text)
+        end)
+
+        it("posts the items with an operation of a mixed selection and not the others", function()
+            itemGroup["12"] = 3
+            tab:RefreshBags()
+            ui = tab.ui
+            client.rows[12] = { row(150, 5) }
+            selectCloth()
+            tab.deps.client.commodity[12] = true
+            assert.are.equal("noop", entryOf("13").status)
+            for _ = 1, 4 do
+                click(ui.postNext)
+            end
+            for _, post in ipairs(client.posts) do
+                assert.are_not.equal(2, post.bag)
+            end
+        end)
+
+        it("has nothing to post before a selection", function()
+            local ok, text = tab:PostNext()
+            assert.is_false(ok)
+            assert.are.equal("nothing to post", text)
+            assert.is_false(ui.postNext.enabled)
+        end)
+
+        it("turns the post button off without the post capability", function()
+            selectCloth()
+            assert.is_true(ui.postNext.enabled)
+            client.canPost = false
+            tab:_Update()
+            assert.is_false(ui.postNext.enabled)
+        end)
+    end)
+
+    describe("confirm and failure", function()
         it("asks for a confirm when the server wants one and posts on the accept", function()
-            scanAll()
+            selectCloth()
+            pick("g3")
+            local bolt = entryOf("11")
             client.needsConfirmation = true
             click(ui.postNext)
             assert.are.equal(1, #client.posts)
             assert.are.equal(0, #client.confirmed)
             assert.are.equal(1, #confirms)
-            assert.matches("Post 30 x Herb at 149c each", confirms[1].text)
-            assert.are.equal("Confirm post", ui.postNext.text)
+            assert.matches("Post 12 x Bolt of Linen at 149c each", confirms[1].text)
+            assert.are.equal("Confirm post (1 of 1)", ui.postNext.text)
             confirms[1].onAccept()
-            assert.are.equal(1, #client.confirmed)
             assert.are.equal("commodity", client.confirmed[1].kind)
-            assert.are.same({ 0, 1, 24, 30, 149 }, { unpack(client.confirmed[1]) })
-            assert.are.equal("done", tab.entries[1].status)
+            assert.are.same({ 0, 4, 24, 12, 149 }, { unpack(client.confirmed[1]) })
+            assert.are.equal("done", bolt.status)
             assert.is_nil(tab.awaiting)
-            assert.are.equal("Post next", ui.postNext.text)
         end)
 
         it("shows the confirm again on the next click and makes no second post", function()
-            scanAll()
+            selectCloth()
             client.needsConfirmation = true
             click(ui.postNext)
             click(ui.postNext)
@@ -381,22 +605,22 @@ describe("SellingTab", function()
             assert.are.equal(2, #confirms)
             confirms[2].onAccept()
             assert.are.equal(1, #client.confirmed)
-        end)
-
-        it("confirms an item post with the same buyout", function()
-            scanAll()
-            tab.entries[1].status = "done"
-            client.needsConfirmation = true
-            click(ui.postNext)
-            confirms[1].onAccept()
             assert.are.equal("item", client.confirmed[1].kind)
             assert.are.same({ 1, 1, 24, 20, nil, 119 * 20 }, { client.confirmed[1][1], client.confirmed[1][2],
                 client.confirmed[1][3], client.confirmed[1][4], client.confirmed[1][5], client.confirmed[1][6] })
-            assert.are.equal(2, tab.entries[2].next)
+        end)
+
+        it("does not change the selection while a confirm is open", function()
+            selectCloth()
+            client.needsConfirmation = true
+            click(ui.postNext)
+            pick("g6")
+            assert.are.equal("g2", ui.tree.selected)
+            assert.are.equal(2, #tab.selection)
         end)
 
         it("works with the real confirm pop-up", function()
-            scanAll()
+            selectCloth()
             tab.deps.confirm = ns.Kit.Confirm
             client.needsConfirmation = true
             click(ui.postNext)
@@ -406,110 +630,110 @@ describe("SellingTab", function()
         end)
 
         it("fails the entry and goes on when the post call raises an error", function()
-            scanAll()
+            selectCloth()
             client.postError = "no auction house"
             click(ui.postNext)
-            assert.are.equal("failed", tab.entries[1].status)
-            assert.are.equal("failed: no auction house", ns.SellingTab.Describe(tab.entries[1]))
-            assert.are.equal(tab.entries[2], tab:_Current())
+            assert.are.equal("failed", entryOf("10").status)
+            assert.are.equal("failed: no auction house", ns.SellingTab.Describe(entryOf("10")))
+            assert.are.equal(entryOf("11"), tab:_Current())
+            assert.are.equal("Post (1 of 1)", ui.postNext.text)
             local list = ns.SellingPlan.Log:List()
             assert.are.equal("failed", list[#list].decision)
         end)
 
         it("fails when the item cannot be posted", function()
-            scanAll()
+            selectCloth()
             client.valid = false
             click(ui.postNext)
             assert.are.equal(0, #client.posts)
-            assert.are.equal("failed", tab.entries[1].status)
-            assert.are.equal("the item cannot be posted", tab.entries[1].note)
+            assert.are.equal("the item cannot be posted", entryOf("10").note)
         end)
 
         it("fails when no item is left", function()
-            scanAll()
+            selectCloth()
             client.available = 0
             click(ui.postNext)
+            assert.are.equal("no item left to post", entryOf("10").note)
+        end)
+    end)
+
+    describe("skip", function()
+        it("moves to the next auction and logs the skip", function()
+            selectCloth()
+            click(ui.skip)
             assert.are.equal(0, #client.posts)
-            assert.are.equal("no item left to post", tab.entries[1].note)
+            assert.are.equal("Post (2 of 4)", ui.postNext.text)
+            assert.are.equal(2, entryOf("10").next)
+            local list = ns.SellingPlan.Log:List()
+            assert.are.equal("skipped by user", list[#list].reason)
         end)
 
-        it("has nothing to post before a scan", function()
-            local ok, text = tab:PostNext()
-            assert.is_false(ok)
-            assert.are.equal("nothing to post", text)
-            assert.is_false(ui.postNext.enabled)
+        it("ends the queue when every auction is skipped", function()
+            selectCloth()
+            local linen = entryOf("10")
+            for _ = 1, 4 do
+                click(ui.skip)
+            end
+            assert.are.equal("nothing left to post", ui.message.text)
+            assert.are.equal("skipped", linen.status)
+            assert.are.equal(0, #client.posts)
+            assert.are.equal(2, bagReads)
         end)
 
-        it("turns the post button off without the post capability", function()
-            scanAll()
-            assert.is_true(ui.postNext.enabled)
-            client.canPost = false
-            tab:_Update()
-            assert.is_false(ui.postNext.enabled)
+        it("drops an open confirm", function()
+            selectCloth()
+            client.needsConfirmation = true
+            click(ui.postNext)
+            click(ui.skip)
+            assert.is_nil(tab.awaiting)
+            assert.are.equal(2, entryOf("10").next)
         end)
     end)
 
     describe("dry run", function()
         it("is off by default and logs only when on", function()
             assert.is_false(tab.dryRun)
-            scanAll()
+            selectCloth()
             ui.dryRun.checked = true
             ui.dryRun.scripts.OnClick(ui.dryRun)
             assert.is_true(tab.dryRun)
-            click(ui.postNext)
+            for _ = 1, 4 do
+                click(ui.postNext)
+            end
             assert.are.equal(0, #client.posts)
             assert.are.equal(0, #confirms)
-            assert.are.equal("done", tab.entries[1].status)
+            assert.are.equal("done", entryOf("10").status)
+            assert.are.equal(1, bagReads)
             local list = ns.SellingPlan.Log:List()
             assert.are.equal("dry run", list[#list].decision)
             assert.are.equal(149, list[#list].price)
         end)
     end)
 
-    describe("skip", function()
-        it("moves to the next item and logs the skip", function()
-            scanAll()
-            click(ui.skip)
-            assert.are.equal("skipped", tab.entries[1].status)
-            assert.are.equal(tab.entries[2], tab:_Current())
-            local list = ns.SellingPlan.Log:List()
-            assert.are.equal("skipped by user", list[#list].reason)
-            assert.are.equal(0, #client.posts)
-        end)
-
-        it("drops an open confirm", function()
-            scanAll()
-            client.needsConfirmation = true
-            click(ui.postNext)
-            click(ui.skip)
-            assert.is_nil(tab.awaiting)
-            assert.are.equal("skipped", tab.entries[1].status)
-        end)
-    end)
-
     describe("log view", function()
         it("shows the log newest first", function()
-            scanAll()
+            selectCloth()
             click(ui.postNext)
             tab:ToggleLog()
             assert.is_true(ui.logList.frame:IsShown())
-            assert.is_false(ui.list.frame:IsShown())
-            assert.matches("Item10: post 30 at 149c", ui.logList.rows[1].parts.text)
-            assert.matches("below minimum", ui.logList.rows[2].parts.text)
+            assert.is_false(ui.tree.frame:IsShown())
+            assert.matches("Item10: post 20 at 119c", ui.logList.rows[1].parts.text)
         end)
     end)
 
     describe("protected calls", function()
         it("makes no post call except from a click", function()
-            scanAll()
+            selectCloth()
             timers[#timers].fn()
             fire("READY")
             fire("CREATED", 5)
-            tab:Skip()
+            pick("g6")
+            pick("g2")
             tab:ToggleLog()
             tab:SetDryRun(false)
             tab:Select()
             tab:Stop()
+            tab:RefreshBags()
             assert.are.equal(0, #client.posts)
             assert.are.equal(0, #client.confirmed)
         end)

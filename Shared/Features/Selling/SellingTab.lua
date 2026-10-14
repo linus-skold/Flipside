@@ -12,8 +12,81 @@ local SEARCH_TIMEOUT = 10
 local RETRY_SECONDS = 5
 local SECONDS_PER_HOUR = 3600
 
+local NONE_ID = "none"
+local BASE_GROUP = 1
+local ROW_HEIGHT = 22
+local TREE_INDENT = 14
+local NAME_WIDTH = 190
+local COUNT_WIDTH = 50
+local INFO_WIDTH = 230
+local TREE_TOP = -48
+local BAR_HEIGHT = 34
+
 local function money(copper)
+    if ns.TooltipLines and ns.TooltipLines.FormatMoney then
+        return ns.TooltipLines.FormatMoney(copper)
+    end
     return GetMoneyString(math.floor((copper or 0) + 0.5))
+end
+
+-- Build the tree nodes from the entries. A group node shows only if it holds a bag item, directly or deeper.
+-- Items first (bag order), then the subgroups. Items of no group go to the last node "[No group]".
+-- Group node: { id = "g<ID>", kind = "group", groupID, text, children }.
+-- Item node: { id = "i<key>", kind = "item", entry, text }.
+function SellingTab.BuildNodes(rules, entries)
+    local byGroup = {}
+    for _, entry in ipairs(entries) do
+        local list = byGroup[entry.groupID]
+        if not list then
+            list = {}
+            byGroup[entry.groupID] = list
+        end
+        list[#list + 1] = entry
+    end
+    local function itemNodes(groupID)
+        local nodes = {}
+        for _, entry in ipairs(byGroup[groupID] or {}) do
+            nodes[#nodes + 1] = { id = "i" .. entry.key, kind = "item", entry = entry, text = entry.item.name }
+        end
+        return nodes
+    end
+    local function build(groupID)
+        local children = itemNodes(groupID)
+        for _, childID in ipairs(rules:Children(groupID)) do
+            local node = build(childID)
+            if node then
+                children[#children + 1] = node
+            end
+        end
+        if #children == 0 then
+            return nil
+        end
+        return { id = "g" .. groupID, kind = "group", groupID = groupID,
+            text = "[" .. tostring(rules:Name(groupID)) .. "]", children = children }
+    end
+    local roots = {}
+    for _, childID in ipairs(rules:Children(BASE_GROUP)) do
+        local node = build(childID)
+        if node then
+            roots[#roots + 1] = node
+        end
+    end
+    local loose = itemNodes(BASE_GROUP)
+    if #loose > 0 then
+        roots[#roots + 1] = { id = NONE_ID, kind = "group", text = "[No group]", children = loose }
+    end
+    return roots
+end
+
+-- Add the entries below a node, in tree order, to out.
+function SellingTab.CollectEntries(node, out)
+    if node.entry then
+        out[#out + 1] = node.entry
+    end
+    for _, child in ipairs(node.children or {}) do
+        SellingTab.CollectEntries(child, out)
+    end
+    return out
 end
 
 -- Age in hours and the number of scans of a scan record; nil if there is no record.
@@ -65,10 +138,13 @@ end
 -- The text of one entry: a main line and the reason line.
 function SellingTab.Describe(entry)
     local decision = entry.decision
-    if entry.status == "waiting" then
-        return "not searched"
-    elseif entry.status == "searching" then
-        return "searching"
+    if entry.status == "noop" then
+        return "no operation"
+    elseif entry.status == "waiting" or entry.status == "searching" then
+        local candidate = entry.candidate
+        local text = candidate.normalPrice and ("expected " .. money(candidate.normalPrice))
+            or tostring(candidate.reason or "not searched")
+        return entry.status == "searching" and (text .. " (searching)") or text
     elseif entry.status == "failed" then
         return "failed: " .. tostring(entry.note)
     elseif entry.status == "skipped" then
@@ -82,12 +158,11 @@ function SellingTab.Describe(entry)
     end
     local parts
     if decision.commodity then
-        parts = string.format("post %d at %s each", decision.quantity, money(decision.price))
+        parts = string.format("post %d @ %s", decision.quantity, money(decision.price))
     else
-        parts = string.format("post %d x %d at %s each", decision.auctions, decision.quantity, money(decision.price))
+        parts = string.format("post %d x %d @ %s", decision.auctions, decision.quantity, money(decision.price))
     end
-    local text = parts .. " | deposit " .. (entry.deposit and money(entry.deposit) or "?")
-        .. " | " .. tostring(decision.duration) .. " h"
+    local text = parts .. " | " .. tostring(decision.duration) .. " h"
     if entry.next > 1 then
         text = text .. " | " .. (entry.next - 1) .. " of " .. #entry.units .. " posted"
     end
@@ -119,16 +194,16 @@ function Tab:_Say(text)
 end
 
 function Tab:_Name(entry)
-    local candidate = entry.candidate
-    if candidate.name and candidate.name ~= "" then
-        return candidate.name
+    local item = entry.item
+    if item.name and item.name ~= "" then
+        return item.name
     end
-    return (self.deps.itemInfo(candidate.itemID or 0))
+    return (self.deps.itemInfo(item.itemID or 0))
 end
 
--- The first entry that has a post left.
+-- The first entry of the selection that has a post left.
 function Tab:_Current()
-    for _, entry in ipairs(self.entries) do
+    for _, entry in ipairs(self.selection) do
         if entry.status == "ready" then
             return entry
         end
@@ -252,7 +327,7 @@ function Tab:_Next()
         local entry = queue.list[queue.pos + 1]
         if not entry then
             self.queue = nil
-            self:_Say("scan finished")
+            self:_Say("search finished")
             self:_Update()
             return
         end
@@ -270,15 +345,13 @@ function Tab:_Next()
     end
 end
 
--- Read the bags, build the candidates and search each one at a time. Makes no protected call.
-function Tab:ScanBags()
-    if self.queue or self.pending then
-        return false, "a scan is running"
-    end
+-- Read the bags again and build the tree. It starts no search and makes no protected call.
+function Tab:RefreshBags()
     if self.awaiting then
         return false, "confirm or skip the open post first"
     end
     local deps = self.deps
+    self.queue = nil
     local bagItems = deps.readBags()
     local candidates = deps.plan.Candidates({
         rules = deps.rules,
@@ -289,16 +362,54 @@ function Tab:ScanBags()
             return SellingTab.DataStats(deps.getRecord(key), deps.now and deps.now() or nil)
         end or nil,
     })
-    self.entries = {}
+    local byKey = {}
     for _, candidate in ipairs(candidates) do
-        self.entries[#self.entries + 1] = { candidate = candidate, status = "waiting", next = 1, units = {} }
+        byKey[candidate.key] = candidate
     end
-    if #self.entries == 0 then
-        self:_Say("no bag item is in a group with a selling operation")
+    self.entries, self.selection, self.selectedId, self.postedCount = {}, {}, nil, 0
+    for _, item in ipairs(bagItems) do
+        local candidate = byKey[item.key]
+        self.entries[#self.entries + 1] = {
+            item = item, key = item.key, candidate = candidate, groupID = deps.rules:GroupOf(item.key),
+            status = candidate and "waiting" or "noop", next = 1, posted = 0, units = {},
+        }
+    end
+    self.nodes = SellingTab.BuildNodes(deps.rules, self.entries)
+    if self.ui then
+        self.ui.tree.selected = nil
+        self.ui.tree:SetNodes(self.nodes)
+    end
+    self:_Say(#self.entries == 0 and "no tradable item in the bags" or "pick a group or an item")
+    self:_Update()
+    return true
+end
+
+-- Select a tree node: the group and its subgroups, or one item. Start the live searches of the entries that
+-- have no result yet. It makes no protected call.
+function Tab:SelectNode(node)
+    if self.awaiting then
+        self:_Say("confirm or skip the open post first")
+        if self.ui then
+            self.ui.tree.selected = self.selectedId
+            self.ui.tree:Refresh()
+        end
+        return false
+    end
+    self.selectedId = node.id
+    self.selection = SellingTab.CollectEntries(node, {})
+    self.postedCount = 0
+    local list = {}
+    for _, entry in ipairs(self.selection) do
+        if entry.status == "waiting" then
+            list[#list + 1] = entry
+        end
+    end
+    if #list == 0 then
+        self.queue = nil
         self:_Update()
         return true
     end
-    self.queue = { list = { unpack(self.entries) }, pos = 0 }
+    self.queue = { list = list, pos = 0 }
     self:_Next()
     return true
 end
@@ -306,7 +417,7 @@ end
 -- Stop the queue. A search in flight still ends with its result.
 function Tab:Stop()
     self.queue = nil
-    self:_Say("scan stopped")
+    self:_Say("search stopped")
     self:_Update()
 end
 
@@ -360,21 +471,39 @@ function Tab:_Fail(entry, text)
     local price = entry.decision and entry.decision.price
     self.deps.log:Add(entry.candidate, { action = "failed", reason = text, price = price })
     self:_Say(self:_Name(entry) .. ": " .. text)
-    self:_Update()
+    self:_AfterStep()
     return false, text
 end
 
--- Count one finished post. After the last post of an entry, ask for a fresh owned list.
-function Tab:_Advance(entry)
+-- Update the view. If the selection has no post left and no search runs, say so and read the bags again.
+function Tab:_AfterStep()
+    self:_Update()
+    if self:_Current() or self.pending or self.queue then
+        return
+    end
+    self:_Say(self.postedCount > 0 and "all posted" or "nothing left to post")
+    if not self.dryRun then
+        local say = self.ui and self.ui.message:GetText()
+        self:RefreshBags()
+        self:_Say(say)
+    end
+end
+
+-- Count one finished unit (a post or a skip). After the last unit of an entry, ask for a fresh owned list.
+function Tab:_Advance(entry, posted)
     entry.next = entry.next + 1
+    if posted then
+        entry.posted = entry.posted + 1
+        self.postedCount = self.postedCount + 1
+    end
     if entry.next > #entry.units then
-        entry.status = "done"
+        entry.status = entry.posted > 0 and "done" or "skipped"
         local client = self.deps.client
-        if client.IsReady() then
+        if entry.posted > 0 and client.IsReady() then
             pcall(client.RefreshOwned)
         end
     end
-    self:_Update()
+    self:_AfterStep()
 end
 
 function Tab:_ConfirmText()
@@ -401,7 +530,7 @@ function Tab:_Confirmed()
         return self:_Fail(awaiting.entry, tostring(err))
     end
     self:_Record(awaiting.entry, awaiting.quantity, "post")
-    self:_Advance(awaiting.entry)
+    self:_Advance(awaiting.entry, true)
 end
 
 -- Post the next unit of the first ready entry. Call it only from the click of the post button.
@@ -421,7 +550,7 @@ function Tab:PostNext()
     if self.dryRun then
         self:_Record(entry, unit.quantity, "dry run")
         self:_Say("dry run: no post was made")
-        self:_Advance(entry)
+        self:_Advance(entry, true)
         return true
     end
     local client = self.deps.client
@@ -465,20 +594,19 @@ function Tab:PostNext()
         return true
     end
     self:_Record(entry, quantity, "post")
-    self:_Advance(entry)
+    self:_Advance(entry, true)
     return true
 end
 
--- Leave the current entry without a post. Makes no protected call.
+-- Leave the next auction of the queue without a post. Makes no protected call.
 function Tab:Skip()
     local entry = self.awaiting and self.awaiting.entry or self:_Current()
     if not entry then
         return false, "nothing to skip"
     end
     self.awaiting = nil
-    entry.status = "skipped"
     self.deps.log:Add(entry.candidate, { action = "skip", reason = "skipped by user" })
-    self:_Update()
+    self:_Advance(entry, false)
     return true
 end
 
@@ -490,38 +618,66 @@ local function setColor(label, grey)
     end
 end
 
-function Tab:_InitListRow(row, entry)
+-- Draw one tree row: a group (toggle and name) or a bag item (icon, name, count and the decision).
+function Tab:_InitTreeRow(row, node, depth, isCollapsed, hasChildren)
     local Kit = ns.Kit
-    local parts = row.parts
+    local parts = row.sellParts
     if not parts then
         parts = {
             icon = row:CreateTexture(nil, "ARTWORK"),
-            name = Kit.Label(row, "", "normal"),
-            sub = Kit.Label(row, "", "small"),
+            count = Kit.Label(row, "", "small"),
+            info = Kit.Label(row, "", "small"),
         }
-        parts.icon:SetSize(24, 24)
-        parts.icon:SetPoint("LEFT", row, "LEFT", 2, 0)
-        parts.name:SetPoint("TOPLEFT", row, "TOPLEFT", 32, -3)
-        parts.name:SetWidth(360)
-        parts.name:SetJustifyH("LEFT")
-        parts.sub:SetPoint("BOTTOMLEFT", row, "BOTTOMLEFT", 32, 3)
-        parts.sub:SetWidth(380)
-        parts.sub:SetJustifyH("LEFT")
-        row.parts = parts
+        parts.icon:SetSize(18, 18)
+        parts.info:SetPoint("RIGHT", row, "RIGHT", -4, 0)
+        parts.info:SetWidth(INFO_WIDTH)
+        parts.info:SetJustifyH("RIGHT")
+        parts.count:SetPoint("RIGHT", row, "RIGHT", -(INFO_WIDTH + 8), 0)
+        parts.count:SetWidth(COUNT_WIDTH)
+        parts.count:SetJustifyH("RIGHT")
+        row.sellParts = parts
     end
-    local _, icon = self.deps.itemInfo(entry.candidate.itemID or 0)
+    local tree = self.ui.tree
+    local indent = tree.box == nil and (depth - 1) * TREE_INDENT or 0
+    row.toggle:ClearAllPoints()
+    row.toggle:SetPoint("LEFT", row, "LEFT", indent, 0)
+    row.toggle:SetShown(hasChildren)
+    row.toggle.glyph:SetText(isCollapsed and "+" or "-")
+    row.toggle:SetScript("OnClick", function()
+        tree:SetCollapsed(node.id, not isCollapsed)
+    end)
+    row.selection:SetShown(tree.selected ~= nil and tree.selected == node.id)
+    row.label:ClearAllPoints()
+    row.label:SetWidth(NAME_WIDTH)
+    row.label:SetJustifyH("LEFT")
+    if node.kind == "group" then
+        parts.icon:Hide()
+        parts.count:SetText("")
+        parts.info:SetText("")
+        row.label:SetPoint("LEFT", row.toggle, "RIGHT", 2, 0)
+        row.label:SetText(node.text)
+        row.label:SetTextColor(1, 0.82, 0)
+        return
+    end
+    local entry = node.entry
+    local _, icon = self.deps.itemInfo(entry.item.itemID or 0)
     parts.icon:SetTexture(icon)
-    parts.name:SetText(self:_Name(entry))
-    parts.sub:SetText(SellingTab.Describe(entry))
-    local grey = entry.status == "skip" or entry.status == "skipped" or entry.status == "failed"
-        or entry.status == "done"
-    setColor(parts.name, grey)
-    setColor(parts.sub, grey)
+    parts.icon:ClearAllPoints()
+    parts.icon:SetPoint("LEFT", row.toggle, "RIGHT", 2, 0)
+    parts.icon:Show()
+    row.label:SetPoint("LEFT", parts.icon, "RIGHT", 4, 0)
+    row.label:SetText(self:_Name(entry))
+    parts.count:SetText("x" .. tostring(entry.item.count))
+    parts.info:SetText(SellingTab.Describe(entry))
+    local grey = entry.status ~= "ready"
+    setColor(row.label, entry.status == "noop" or entry.status == "done" or entry.status == "skipped"
+        or entry.status == "failed")
+    setColor(parts.count, grey)
+    setColor(parts.info, grey)
     if entry == self:_Current() then
-        parts.name:SetTextColor(1, 0.82, 0)
+        row.label:SetTextColor(1, 0.82, 0)
     end
 end
-
 function Tab:_InitLogRow(row, data)
     local Kit = ns.Kit
     local label = row.parts
@@ -543,16 +699,37 @@ function Tab:_InitLogRow(row, data)
     label:SetText(text)
 end
 
+-- Count the units of the selection: total to post and done (posted or skipped). Also the deposit still to pay.
+function Tab:_Progress()
+    local total, done, deposit = 0, 0, nil
+    for _, entry in ipairs(self.selection) do
+        if entry.decision and entry.decision.action == "post" then
+            local count = #entry.units
+            done = done + math.min(entry.next - 1, count)
+            if entry.status == "ready" or entry.status == "done" then
+                total = total + count
+            else
+                total = total + math.min(entry.next - 1, count)
+            end
+            if entry.status == "ready" and entry.deposit and count > 0 then
+                deposit = (deposit or 0) + entry.deposit * (count - (entry.next - 1)) / count
+            end
+        end
+    end
+    return total, done, deposit
+end
+
 -- The label of the post button from the state.
 function Tab:PostLabel()
+    local total, done = self:_Progress()
+    local suffix = total > 0 and string.format(" (%d of %d)", math.min(done + 1, total), total) or ""
     if self.awaiting then
-        return "Confirm post"
+        return "Confirm post" .. suffix
     end
-    local entry = self:_Current()
-    if entry and #entry.units > 1 and entry.next > 1 then
-        return string.format("Post next stack (%d of %d)", entry.next, #entry.units)
+    if self:_Current() then
+        return "Post" .. suffix
     end
-    return "Post next"
+    return "Post"
 end
 
 function Tab:_Update()
@@ -561,17 +738,18 @@ function Tab:_Update()
         return
     end
     local client = self.deps.client
-    local busy = self.pending ~= nil
-    ui.scan:SetEnabled(client.CanLiveSearch() and not busy and not self.queue)
+    ui.refresh:SetEnabled(self.awaiting == nil)
     ui.stop:SetShown(self.queue ~= nil)
     ui.logButton:SetText(self.showLog and "Items" or "Log")
-    ui.list:SetData(self.entries)
-    ui.list.frame:SetShown(not self.showLog)
+    ui.tree:Refresh()
+    ui.tree.frame:SetShown(not self.showLog)
     ui.logList.frame:SetShown(self.showLog == true)
     local current = self:_Current()
     ui.postNext:SetText(self:PostLabel())
     ui.postNext:SetEnabled(client.CanPost() and (self.awaiting ~= nil or current ~= nil))
     ui.skip:SetEnabled(self.awaiting ~= nil or current ~= nil)
+    local _, _, deposit = self:_Progress()
+    ui.deposit:SetText(deposit and ("Deposit: " .. money(deposit)) or "")
     if self.showLog then
         local entries = self.deps.log:List()
         local newestFirst = {}
@@ -581,7 +759,6 @@ function Tab:_Update()
         ui.logList:SetData(newestFirst)
     end
 end
-
 function Tab:IsActive()
     return self.active
 end
@@ -605,6 +782,10 @@ function Tab:Select()
     self.api.Enter(self.active)
     self.active = true
     self.content:Show()
+    if not self.loaded then
+        self.loaded = true
+        self:RefreshBags()
+    end
     self:_Update()
 end
 
@@ -626,14 +807,14 @@ function Tab:_BuildContent()
 
     local ui = {}
     self.ui = ui
-    ui.scan = Kit.Button(content, "Scan bags", 90, function()
-        self:ScanBags()
+    ui.refresh = Kit.Button(content, "Refresh bags", 100, function()
+        self:RefreshBags()
     end)
-    ui.scan:SetPoint("TOPLEFT", content, "TOPLEFT", 0, 0)
+    ui.refresh:SetPoint("TOPLEFT", content, "TOPLEFT", 0, 0)
     ui.stop = Kit.Button(content, "Stop", 60, function()
         self:Stop()
     end)
-    ui.stop:SetPoint("TOPLEFT", content, "TOPLEFT", 96, 0)
+    ui.stop:SetPoint("TOPLEFT", content, "TOPLEFT", 106, 0)
     ui.logButton = Kit.Button(content, "Log", 70, function()
         self:ToggleLog()
     end)
@@ -643,19 +824,22 @@ function Tab:_BuildContent()
     ui.message:SetJustifyH("LEFT")
     ui.message:SetWidth(700)
 
-    ui.list = Kit.CreateList(content, { rowHeight = 32, inset = true, initRow = function(row, entry)
-        self:_InitListRow(row, entry)
-    end })
-    ui.list.frame:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -48)
-    ui.list.frame:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", 0, 30)
+    ui.tree = Kit.CreateTree(content, { rowHeight = ROW_HEIGHT, inset = true,
+        initRow = function(row, node, depth, isCollapsed, hasChildren)
+            self:_InitTreeRow(row, node, depth, isCollapsed, hasChildren)
+        end,
+        onSelect = function(node)
+            self:SelectNode(node)
+        end })
+    ui.tree.frame:SetPoint("TOPLEFT", content, "TOPLEFT", 0, TREE_TOP)
+    ui.tree.frame:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", 0, BAR_HEIGHT)
     ui.logList = Kit.CreateList(content, { rowHeight = 18, inset = true, initRow = function(row, data)
         self:_InitLogRow(row, data)
     end })
-    ui.logList.frame:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -48)
-    ui.logList.frame:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", 0, 30)
-
+    ui.logList.frame:SetPoint("TOPLEFT", content, "TOPLEFT", 0, TREE_TOP)
+    ui.logList.frame:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", 0, BAR_HEIGHT)
     -- The post button posts in its own click handler: the protected call needs the click.
-    ui.postNext = Kit.Button(content, "Post next", 170, nil)
+    ui.postNext = Kit.Button(content, "Post", 170, nil)
     ui.postNext:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", 0, 0)
     ui.postNext:SetScript("OnClick", function()
         self:PostNext()
@@ -664,10 +848,14 @@ function Tab:_BuildContent()
         self:Skip()
     end)
     ui.skip:SetPoint("LEFT", ui.postNext, "RIGHT", 6, 0)
+    ui.deposit = Kit.Label(content, "", "small")
+    ui.deposit:SetPoint("LEFT", ui.skip, "RIGHT", 10, 0)
+    ui.deposit:SetWidth(170)
+    ui.deposit:SetJustifyH("LEFT")
     ui.dryRun = Kit.Check(content, "Dry run (log only)", function(checked)
         self:SetDryRun(checked)
     end)
-    ui.dryRun:SetPoint("LEFT", ui.skip, "RIGHT", 10, 0)
+    ui.dryRun:SetPoint("LEFT", ui.deposit, "RIGHT", 6, 0)
 end
 
 -- Build the panel in the parent frame and listen for the search events.
@@ -737,7 +925,8 @@ function SellingTab.New(deps)
     }
     resolved.log = deps.log or resolved.plan.Log
     return setmetatable({
-        deps = resolved, entries = {}, events = {}, active = false, token = 0, dryRun = false,
+        deps = resolved, entries = {}, selection = {}, events = {}, active = false, token = 0, dryRun = false,
+        postedCount = 0,
     }, Tab)
 end
 
