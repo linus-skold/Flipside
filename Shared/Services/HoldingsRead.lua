@@ -3,7 +3,7 @@ local _, ns = ...
 local HoldingsRead = {}
 ns.HoldingsRead = HoldingsRead
 
-local BAG_FIRST, BAG_LAST = 0, 5
+local BAG_FIRST, BAG_LAST = 0, 5 -- default bag ids; Init passes the ids of ns.Flavour
 local ATTACHMENTS_MAX = 16
 local STATUS_SOLD = 1
 
@@ -63,11 +63,13 @@ local function ReadBagList(api, resolver, bagIDs)
     return items, stats
 end
 
--- Reads the bags. api = { numSlots(bag), itemInfo(bag, slot) }.
-function HoldingsRead.Bags(api, resolver)
-    local bagIDs = {}
-    for bag = BAG_FIRST, BAG_LAST do
-        bagIDs[#bagIDs + 1] = bag
+-- Reads the bags. api = { numSlots(bag), itemInfo(bag, slot) }. bagIDs is optional.
+function HoldingsRead.Bags(api, resolver, bagIDs)
+    if not bagIDs then
+        bagIDs = {}
+        for bag = BAG_FIRST, BAG_LAST do
+            bagIDs[#bagIDs + 1] = bag
+        end
     end
     return ReadBagList(api, resolver, bagIDs)
 end

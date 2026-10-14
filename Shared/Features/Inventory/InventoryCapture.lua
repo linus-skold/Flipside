@@ -8,7 +8,8 @@ ns.InventoryCapture = InventoryCapture
 local DEBOUNCE_SECONDS = 0.5
 local OWNER = "Flipside.InventoryCapture"
 
--- deps: bus, holdings, holdingsRead, api, resolver, after, report, and the optional ownedEvent (default: Forever name).
+-- deps: bus, holdings, holdingsRead, api, resolver, after, report.
+-- Optional deps: ownedEvent (default: Forever name), bagIDs and bankIDs (lists of container ids).
 -- api: { container = { numSlots, itemInfo }, mail = { numItems, itemLink, itemInfo }, auctions = { owned } }.
 function InventoryCapture.Attach(deps)
     local capture = { bankOpen = false }
@@ -44,11 +45,12 @@ function InventoryCapture.Attach(deps)
     end
 
     function capture.ReadBags()
-        read("bags", "bags", deps.holdingsRead.Bags, api.container)
+        read("bags", "bags", deps.holdingsRead.Bags, api.container, deps.bagIDs)
     end
 
     function capture.ReadBank()
-        read("bank", "bank", deps.holdingsRead.Bank, api.container, deps.holdingsRead.BANK_BAGS)
+        read("bank", "bank", deps.holdingsRead.Bank, api.container,
+            deps.bankIDs or deps.holdingsRead.BANK_BAGS)
     end
 
     function capture.ReadMail()
