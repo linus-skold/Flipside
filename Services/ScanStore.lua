@@ -93,6 +93,7 @@ function Store:Put(key, record)
     self._cache[key] = record
     self._changed[key] = true
     self._removed[key] = nil
+    self._writeVersion = self._writeVersion + 1
     return true
 end
 
@@ -104,6 +105,7 @@ function Store:Remove(key)
     self._cache[key] = nil
     self._changed[key] = nil
     self._removed[key] = true
+    self._writeVersion = self._writeVersion + 1
     return true
 end
 
@@ -153,6 +155,11 @@ function Store:Flush()
     end
     self._changed = {}
     return written
+end
+
+-- Returns a number that grows by 1 on each successful Put and Remove.
+function Store:GetVersion()
+    return self._writeVersion
 end
 
 function Store:IsReadOnly()
@@ -216,6 +223,7 @@ function ScanStore.New(saved, options)
         _changed = {},
         _removed = {},
         _warnedKeys = {},
+        _writeVersion = 0,
     }, Store)
 
     local stored = saved._schema
