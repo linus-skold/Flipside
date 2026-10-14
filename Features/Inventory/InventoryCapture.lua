@@ -43,19 +43,19 @@ function InventoryCapture.Attach(deps)
         end
     end
 
-    function capture:ReadBags()
+    function capture.ReadBags()
         read("bags", "bags", deps.holdingsRead.Bags, api.container)
     end
 
-    function capture:ReadBank()
+    function capture.ReadBank()
         read("bank", "bank", deps.holdingsRead.Bank, api.container, deps.holdingsRead.BANK_BAGS)
     end
 
-    function capture:ReadMail()
+    function capture.ReadMail()
         read("mail", "mail", deps.holdingsRead.Mail, api.mail)
     end
 
-    function capture:ReadAuctions()
+    function capture.ReadAuctions()
         read("auctions", "auctions", deps.holdingsRead.Auctions, api.auctions)
     end
 
@@ -72,9 +72,9 @@ function InventoryCapture.Attach(deps)
     end
 
     local function readBagsAndOpenBank()
-        capture:ReadBags()
+        capture.ReadBags()
         if capture.bankOpen then
-            capture:ReadBank()
+            capture.ReadBank()
         end
     end
 
@@ -83,7 +83,7 @@ function InventoryCapture.Attach(deps)
     end)
     deps.bus:Subscribe("BANKFRAME_OPENED", OWNER, function()
         capture.bankOpen = true
-        capture:ReadBank()
+        capture.ReadBank()
     end)
     deps.bus:Subscribe("BANKFRAME_CLOSED", OWNER, function()
         capture.bankOpen = false
@@ -92,19 +92,19 @@ function InventoryCapture.Attach(deps)
         if capture.bankOpen then
             schedule("bank", function()
                 if capture.bankOpen then
-                    capture:ReadBank()
+                    capture.ReadBank()
                 end
             end)
         end
     end)
     deps.bus:Subscribe("MAIL_INBOX_UPDATE", OWNER, function()
         schedule("mail", function()
-            capture:ReadMail()
+            capture.ReadMail()
         end)
     end)
     deps.bus:Subscribe("OWNED_AUCTIONS_UPDATED", OWNER, function()
         schedule("auctions", function()
-            capture:ReadAuctions()
+            capture.ReadAuctions()
         end)
     end)
 

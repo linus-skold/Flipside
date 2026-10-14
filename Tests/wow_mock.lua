@@ -2,16 +2,6 @@
 
 local M = {}
 
--- The TOC lists UI/Pages/TooltipPage.lua before the file exists in this branch; load an empty chunk then.
-local realLoadfile = loadfile
-_G.loadfile = function(path, ...)
-    local chunk, err = realLoadfile(path, ...)
-    if not chunk and path == "UI/Pages/TooltipPage.lua" and not io.open(path, "r") then
-        return function() end
-    end
-    return chunk, err
-end
-
 local GLOBAL_NAMES = {
     "ACCEPT", "CANCEL", "CLOSE", "SAVE", "GetCursorPosition",
     "C_AuctionHouse", "C_Container", "C_Item", "C_Timer", "CreateFrame", "DEFAULT_CHAT_FRAME",

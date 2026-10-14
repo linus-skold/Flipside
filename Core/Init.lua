@@ -558,8 +558,8 @@ local function openTooltip()
             clock = debugprofilestop,
             report = ns.ReportError,
         }
-        ns.BuildTooltipPreview = function(input)
-            return ns.Tooltip.Rows(tooltipDeps, input, false, nil)
+        ns.BuildTooltipPreview = function(input, config)
+            return ns.Tooltip.Rows(tooltipDeps, input, false, nil, config)
         end
         ns.Tooltip.Attach(tooltipDeps)
     end)
@@ -967,6 +967,42 @@ local function printScanHelp()
     printLine("commands: scan, scan stop, scan reset, price <item>, formula <text> [item], version")
 end
 
+-- Print the build time of the tooltip lines in milliseconds.
+local function tooltipStatsCommand()
+    local stats = ns.Tooltip and ns.Tooltip.stats
+    if not stats or stats.count == 0 then
+        printLine("no tooltip lines were built yet")
+        return
+    end
+    printLine(string.format("tooltip lines: %d builds, max %.3f ms, average %.3f ms",
+        stats.count, stats.max, stats.total / stats.count))
+end
+
+-- Remove the saved inventory of one character.
+local function forgetCommand(character)
+    if not ns.holdings then
+        printLine("inventory tracking is not available this session")
+        return
+    end
+    if character == "" then
+        printLine("usage: /flip forget <Name-Realm>")
+        return
+    end
+    local known = false
+    for _, name in ipairs(ns.holdings:Characters()) do
+        if name == character then
+            known = true
+        end
+    end
+    if not known then
+        printLine("no saved character " .. character)
+    elseif ns.holdings:Forget(character) then
+        printLine("forgot the inventory of " .. character)
+    else
+        printLine("settings are read-only; the inventory was not removed")
+    end
+end
+
 -- Handle the text after /flipside or /flip.
 function ns.HandleSlash(msg)
     local text = tostring(msg or "")
@@ -983,6 +1019,12 @@ function ns.HandleSlash(msg)
         return
     elseif command == "formula" then
         formulaCommand(rest)
+        return
+    elseif command == "tooltipstats" then
+        tooltipStatsCommand()
+        return
+    elseif command == "forget" then
+        forgetCommand(rest)
         return
     elseif command == "" then
         ns.OpenMainWindow()

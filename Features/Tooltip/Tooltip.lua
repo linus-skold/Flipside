@@ -59,10 +59,10 @@ local function addRows(tooltip, rows)
     end
 end
 
--- Returns the rows of one item with the current settings.
-function Tooltip.Rows(deps, input, stackMode, stackCount)
+-- Returns the rows of one item with the current settings, or with the given config.
+function Tooltip.Rows(deps, input, stackMode, stackCount, config)
     return ns.TooltipLines.Build({
-        config = deps.tooltipConfig:Get(),
+        config = config or deps.tooltipConfig:Get(),
         input = input,
         stackCount = stackCount,
         stackMode = stackMode or false,

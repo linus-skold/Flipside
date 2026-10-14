@@ -40,7 +40,8 @@ function MainWindow.Create(deps)
         title = "Flipside",
         portrait = "Interface\\Icons\\INV_Misc_Coin_02",
     })
-    local tabs = Kit.CreatePageTabs(window, {
+    local tooltipPage
+    local pages = {
         {
             key = "groups",
             title = "Groups",
@@ -63,21 +64,44 @@ function MainWindow.Create(deps)
                 end
             end,
         },
-        {
-            key = "formula",
-            title = "Formulas",
+    }
+    if ns.TooltipPage then
+        table.insert(pages, {
+            key = "tooltip",
+            title = "Tooltip",
             build = function(content)
-                ns.FormulaPage.Build(content, deps)
+                if deps.tooltipConfig then
+                    tooltipPage = ns.TooltipPage.Build(content, deps)
+                else
+                    buildUnavailable(content)
+                end
             end,
-        },
-        {
-            key = "about",
-            title = "About",
-            build = function(content)
-                buildAbout(content, deps)
-            end,
-        },
+        })
+    end
+    table.insert(pages, {
+        key = "formula",
+        title = "Formulas",
+        build = function(content)
+            ns.FormulaPage.Build(content, deps)
+        end,
     })
+    table.insert(pages, {
+        key = "about",
+        title = "About",
+        build = function(content)
+            buildAbout(content, deps)
+        end,
+    })
+    local tabs = Kit.CreatePageTabs(window, pages)
+    for index, page in ipairs(pages) do
+        if page.key == "tooltip" then
+            tabs.buttons[index]:HookScript("OnClick", function()
+                if tooltipPage and tooltipPage.Refresh then
+                    tooltipPage.Refresh()
+                end
+            end)
+        end
+    end
     local win = { frame = window, tabs = tabs }
     function win:Show()
         self.frame:Show()
