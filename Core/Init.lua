@@ -142,6 +142,19 @@ local function buildScanApi()
     return api
 end
 
+-- Print the key and row counts of a finished scan.
+local function reportScanDetails(summary)
+    local c, r = summary.commodityStats, summary.rowStats
+    if c then
+        printLine(string.format("commodity check: client %d, stack %d, unknown %d, mismatch %d",
+            c.client, c.stack, c.unknown, c.mismatch))
+    end
+    if r then
+        printLine(string.format("rows skipped: empty %d, bid-only %d, pet %d, bad count %d",
+            r.empty, r.bidOnly, r.pet, r.badCount))
+    end
+end
+
 -- Roll up and prune the stored records of earlier days, in a job.
 local function startRollUp()
     ns.StartJob("scan-rollup", function(job)
@@ -213,6 +226,7 @@ local function openScan()
         ms = debugprofilestop,
         isAuctionHouseOpen = ns.IsAuctionHouseOpen,
         report = printLine,
+        onFinished = reportScanDetails,
     })
     if not okEngine then
         ns.ReportError("scan is not available this session: " .. tostring(engine))

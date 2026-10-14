@@ -220,6 +220,12 @@ describe("Init scan", function()
             assert.are.equal(1, mock.replicateCalls)
         end)
 
+        it("prints the commodity check and skipped rows after a scan", function()
+            runScan()
+            assert.is_true(hasMessage("Flipside: commodity check: client 5, stack 0, unknown 0, mismatch 0"))
+            assert.is_true(hasMessage("Flipside: rows skipped: empty 0, bid-only 0, pet 0, bad count 0"))
+        end)
+
         it("prints the price values with /flip price", function()
             runScan()
             mock.messages = {}
