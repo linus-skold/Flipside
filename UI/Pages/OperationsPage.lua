@@ -231,6 +231,7 @@ function OperationsPage.Build(content, deps)
     page.filter:SetPoint("TOPLEFT", content, "TOPLEFT", 0, 0)
 
     page.list = Kit.CreateList(content, {
+        inset = true,
         initRow = function(row, data)
             if not row.nameText then
                 row.nameText = Kit.Label(row, "", "normal")
@@ -260,7 +261,7 @@ function OperationsPage.Build(content, deps)
         end,
     })
     page.newType:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", 0, 58)
-    page.nameInput = Kit.Input(content, 124, nil)
+    page.nameInput = Kit.Input(content, 124, nil, nil, { placeholder = "<operation name>" })
     page.nameInput:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", 122, 58)
 
     local function typedName()
@@ -396,7 +397,7 @@ function OperationsPage.Build(content, deps)
         resolveExample()
         refresh(true)
     end
-    page.exampleInput = Kit.Input(right, 180, onExample, onExample)
+    page.exampleInput = Kit.Input(right, 180, onExample, onExample, { placeholder = "Item name, link or id" })
     page.exampleInput:SetPoint("TOPLEFT", page.exampleLabel, "BOTTOMLEFT", 6, -2)
 
     page.footer = Kit.Label(right, "", "normal")
@@ -405,6 +406,7 @@ function OperationsPage.Build(content, deps)
     page.footer:SetJustifyH("LEFT")
 
     page.fieldList = Kit.CreateList(right, {
+        inset = true,
         rowHeight = FIELD_ROW,
         initRow = function(row, field)
             showPart(row, field)

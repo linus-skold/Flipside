@@ -208,8 +208,12 @@ describe("FormulaPage", function()
             })
         end)
 
-        it("lists a custom source with its formula as description", function()
-            local found
+        it("puts the reference list and the custom list on the inset background", function()
+            assert.are.equal("InsetFrameTemplate", page2.list.frame.template)
+            assert.are.equal("InsetFrameTemplate", page2.customList.frame.template)
+        end)
+
+        it("lists a custom source with its formula as description", function()            local found
             for _, row in ipairs(page2.list.rows) do
                 if row.nameText:GetText() == "mymin" then
                     found = row
