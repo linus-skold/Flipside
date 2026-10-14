@@ -157,6 +157,7 @@ function FormulaPage.BuildCustom(page, frame, deps)
     page.customMessage = message
 
     page.customList = Kit.CreateList(frame, {
+        inset = true,
         initRow = function(row, data)
             if not row.nameText then
                 row.nameText = Kit.Label(row, "", "normal")
@@ -173,7 +174,7 @@ function FormulaPage.BuildCustom(page, frame, deps)
     })
     page.customList.frame:SetPoint("TOPLEFT", helpLine, "BOTTOMLEFT", 0, -gap)
     page.customList.frame:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 0, -38)
-    page.customList.frame:SetHeight(60)
+    page.customList.frame:SetHeight(68)
 
     page.customName = Kit.Input(frame, 140, nil)
     page.customName:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 6, 24)
@@ -357,6 +358,7 @@ function FormulaPage.Build(content, deps)
     page.help = help
 
     local list = Kit.CreateList(content, {
+        inset = true,
         initRow = function(row, data)
             if not row.nameText then
                 row.nameText = Kit.Label(row, "", "normal")
@@ -398,7 +400,8 @@ function FormulaPage.Build(content, deps)
                 GameTooltip:Hide()
             end)
         end,
-    })    list.frame:SetPoint("TOPLEFT", status, "BOTTOMLEFT", 0, -gap * 3)
+    })
+    list.frame:SetPoint("TOPLEFT", status, "BOTTOMLEFT", 0, -gap * 3)
     page.list = list
 
     local customFrame = CreateFrame("Frame", nil, content)
