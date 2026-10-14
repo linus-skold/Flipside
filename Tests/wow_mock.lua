@@ -4,7 +4,8 @@ local M = {}
 
 local GLOBAL_NAMES = {
     "ACCEPT", "CANCEL", "C_AuctionHouse", "C_Item", "C_Timer", "CreateFrame", "DEFAULT_CHAT_FRAME",
-    "FlipsideDB", "FlipsideScanDB", "GetBuildInfo", "GetNormalizedRealmName", "GetServerTime",
+    "C_GameRules", "FlipsideDB", "FlipsideScanDB", "GetBuildInfo", "GetCurrentRegionName", "GetNormalizedRealmName",
+    "GetServerTime", "GetTime",
     "SLASH_FLIPSIDE1", "SLASH_FLIPSIDE2",
     "SLASH_SCANTEST1", "ScanTestDB", "SlashCmdList",
     "StaticPopupDialogs", "StaticPopup_Show", "UnitName", "WOW_PROJECT_ID", "date", "debugprofilestop", "time",
@@ -53,7 +54,10 @@ function M.reset()
     M.messages = {}
     M.popup = nil -- last popup: { which, text, dialog }
     M.replicateCalls = 0
-    M.rows = {} -- each row: itemID, count, buyout, hasAll
+    M.rows = {} -- each row: itemID, count, buyout, hasAll, link
+    M.region = "EU" -- result of GetCurrentRegionName()
+    M.standard = true -- result of C_GameRules.IsStandard()
+    M.commodity = {} -- itemID -> isCommodity from GetItemKeyInfo; a missing id gives no info
     M.stackSizes = {} -- itemID -> max stack size
     M.playerName = nil -- result of UnitName("player")
     M.realmName = nil -- result of GetNormalizedRealmName()
@@ -92,6 +96,17 @@ function M.reset()
     _G.GetServerTime = function()
         return M.serverBase + math.floor(M.clock)
     end
+    _G.GetTime = function()
+        return M.clock
+    end
+    _G.GetCurrentRegionName = function()
+        return M.region
+    end
+    _G.C_GameRules = {
+        IsStandard = function()
+            return M.standard
+        end,
+    }
     _G.debugprofilestop = function()
         return M.clock * 1000
     end
@@ -141,6 +156,21 @@ function M.reset()
                 r.itemID, r.hasAll
         end,
     }
+
+    _G.C_AuctionHouse.MakeItemKey = function(itemID)
+        return { itemID = itemID, itemLevel = 0, itemSuffix = 0, battlePetSpeciesID = 0 }
+    end
+    _G.C_AuctionHouse.GetItemKeyInfo = function(itemKey)
+        local isCommodity = M.commodity[itemKey.itemID]
+        if isCommodity ~= nil then
+            return { isCommodity = isCommodity }
+        end
+    end
+    _G.C_AuctionHouse.GetReplicateItemLink = function(index)
+        local r = M.rows[index + 1]
+        return r and r.link
+    end
+    _G.C_AuctionHouse.GetReplicateItemBattlePetInfo = function() end
 
     _G.StaticPopup_Show = function(which, arg1, arg2)
         local d = _G.StaticPopupDialogs[which]
@@ -214,6 +244,11 @@ end
 
 function M.runSlash(args)
     _G.SlashCmdList["SCANTEST"](args or "")
+end
+
+-- Run the logout event as the client does.
+function M.logout()
+    M.fire("PLAYER_LOGOUT")
 end
 
 function M.acceptPopup()

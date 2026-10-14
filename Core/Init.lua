@@ -98,11 +98,159 @@ local function openSettingsDB()
     ns.bus:Emit("Flipside.DBReady")
 end
 
+-- Auction House state, from the client events.
+local auctionHouseOpen = false
+
+function ns.IsAuctionHouseOpen()
+    return auctionHouseOpen
+end
+
+local function trackAuctionHouse()
+    ns.bus:Subscribe("AUCTION_HOUSE_SHOW", "Flipside.Init", function()
+        auctionHouseOpen = true
+    end)
+    ns.bus:Subscribe("AUCTION_HOUSE_CLOSED", "Flipside.Init", function()
+        auctionHouseOpen = false
+    end)
+end
+
+-- Item key of an item id for the commodity check; nil if the client does not know it.
+local function clientIsCommodity(itemID)
+    local info = C_AuctionHouse.GetItemKeyInfo(C_AuctionHouse.MakeItemKey(itemID))
+    if type(info) == "table" and type(info.isCommodity) == "boolean" then
+        return info.isCommodity
+    end
+    return nil
+end
+
+-- Read access to the client replicate API, in the form that the scan engine needs.
+local function buildScanApi()
+    local ah = C_AuctionHouse
+    local api = {
+        getNum = ah.GetNumReplicateItems,
+        getInfo = ah.GetReplicateItemInfo,
+        getLink = ah.GetReplicateItemLink,
+        getPetInfo = ah.GetReplicateItemBattlePetInfo,
+        maxStack = C_Item.GetItemMaxStackSizeByID,
+    }
+    if type(ah.ReplicateItems) == "function" then
+        api.replicateItems = ah.ReplicateItems
+    end
+    if type(ah.MakeItemKey) == "function" and type(ah.GetItemKeyInfo) == "function" then
+        api.clientIsCommodity = clientIsCommodity
+    end
+    return api
+end
+
+-- Print the key and row counts of a finished scan.
+local function reportScanDetails(summary)
+    local c, r = summary.commodityStats, summary.rowStats
+    if c then
+        printLine(string.format("commodity check: client %d, stack %d, unknown %d, mismatch %d",
+            c.client, c.stack, c.unknown, c.mismatch))
+    end
+    if r then
+        printLine(string.format("rows skipped: empty %d, bid-only %d, pet %d, bad count %d",
+            r.empty, r.bidOnly, r.pet, r.badCount))
+    end
+end
+
+-- Roll up and prune the stored records of earlier days, in a job.
+local function startRollUp()
+    ns.StartJob("scan-rollup", function(job)
+        local store = ns.scanStore
+        if store:IsReadOnly() then
+            return
+        end
+        local today = ns.ScanClock.DayOf(GetServerTime())
+        for _, key in ipairs(store:Keys()) do
+            local record = store:Get(key)
+            if record then
+                local changed = ns.ScanBucket.RollUp(record, today)
+                if ns.ScanBucket.Prune(record, today) > 0 then
+                    changed = true
+                end
+                if ns.ScanBucket.IsEmpty(record) then
+                    store:Remove(key)
+                elseif changed then
+                    store:Put(key, record)
+                end
+            end
+            job:Checkpoint(1)
+        end
+    end)
+end
+
+-- Open the scan store and the scan engine; print one line if that is not possible.
+local function openScan()
+    if not (ns.ScanStore and ns.ScanEngine and ns.ScanCooldown and ns.ScanClock) then
+        return
+    end
+    local region = GetCurrentRegionName and GetCurrentRegionName()
+    if type(region) ~= "string" or region == "" then
+        ns.ReportError("scan is not available this session (no region name)")
+        return
+    end
+    local meta = {}
+    local okRules, standard = pcall(function()
+        return C_GameRules.IsStandard()
+    end)
+    if okRules and type(standard) == "boolean" then
+        meta.isStandard = standard
+    end
+    if type(FlipsideScanDB) ~= "table" then
+        FlipsideScanDB = {}
+    end
+    local ok, result = pcall(ns.ScanStore.New, FlipsideScanDB, {
+        region = region,
+        ruleset = ns.ScanClock.RULESET_DEFAULT,
+        meta = meta,
+        schemaVersion = 1,
+        onWarning = ns.ReportError,
+    })
+    if not ok then
+        ns.ReportError("scan is not available this session: " .. tostring(result))
+        return
+    end
+    ns.scanStore = result
+    ns.scanCooldown = ns.ScanCooldown.New(ns.db, { clock = GetServerTime })
+    local okEngine, engine = pcall(ns.ScanEngine.New, {
+        bus = ns.bus,
+        startJob = ns.StartJob,
+        store = ns.scanStore,
+        cooldown = ns.scanCooldown,
+        cache = ns.itemCache,
+        api = buildScanApi(),
+        serverTime = GetServerTime,
+        seconds = GetTime,
+        ms = debugprofilestop,
+        isAuctionHouseOpen = ns.IsAuctionHouseOpen,
+        report = printLine,
+        onFinished = reportScanDetails,
+    })
+    if not okEngine then
+        ns.ReportError("scan is not available this session: " .. tostring(engine))
+        return
+    end
+    ns.scanEngine = engine
+    ns.bus:Subscribe("PLAYER_LOGOUT", "Flipside.Init", function()
+        local okFlush, err = pcall(ns.scanStore.Flush, ns.scanStore)
+        if not okFlush then
+            ns.ReportError("scan data was not saved: " .. tostring(err))
+        end
+    end)
+    startRollUp()
+end
+
 eventFrame:SetScript("OnEvent", function(_, event, ...)
     if event == "ADDON_LOADED" and (...) == addonName then
         ns.bus:Emit("Flipside.Loaded")
     elseif event == "PLAYER_LOGIN" then
+        trackAuctionHouse()
         openSettingsDB()
+        if ns.db then
+            openScan()
+        end
         ns.bus:Emit("Flipside.Login")
     end
     ns.bus:Emit(event, ...)
@@ -134,11 +282,154 @@ local function printVersion()
     printLine("client " .. tostring(version) .. ", build " .. tostring(build) .. ", interface " .. tostring(interface))
 end
 
+local REFUSALS = {
+    running = "a scan is already running",
+    ["api-missing"] = "the scan call is not available",
+    ["ah-closed"] = "open the Auction House first",
+    ["read-only"] = "scan data is read-only",
+}
+
+-- Print why a scan cannot start.
+local function printRefusal(reason, detail)
+    local text = REFUSALS[reason] or tostring(reason)
+    if reason == "cooldown" then
+        text = "scan on cooldown, " .. ns.ScanCooldown.FormatRemaining(detail) .. " left"
+    end
+    printLine("full scan not started: " .. text)
+end
+
+StaticPopupDialogs["FLIPSIDE_FULL_SCAN"] = {
+    text = "Flipside: a full scan has disconnected clients on busy servers in the past. Start the full scan?",
+    button1 = ACCEPT,
+    button2 = CANCEL,
+    OnAccept = function()
+        local engine = ns.scanEngine
+        if not engine then
+            return
+        end
+        local ok, reason, detail = engine:CanStart()
+        if ok then
+            engine:Start()
+        else
+            printRefusal(reason, detail)
+        end
+    end,
+    timeout = 0,
+    hideOnEscape = true,
+    showAlert = true,
+}
+
+local function scanCommand(argument)
+    local engine = ns.scanEngine
+    if not engine then
+        printLine("scan is not available this session")
+        return
+    end
+    if argument == "stop" then
+        if engine:IsRunning() then
+            engine:Cancel()
+        else
+            printLine("no scan is running")
+        end
+        return
+    end
+    local ok, reason, detail = engine:CanStart()
+    if not ok then
+        printRefusal(reason, detail)
+        return
+    end
+    StaticPopup_Show("FLIPSIDE_FULL_SCAN")
+end
+
+-- Money in copper as "Xg Ys Zc".
+local function formatMoney(copper)
+    if type(copper) ~= "number" then
+        return "-"
+    end
+    copper = math.floor(copper + 0.5)
+    return string.format("%dg %ds %dc", math.floor(copper / 10000), math.floor(copper / 100) % 100, copper % 100)
+end
+
+local function priceText(name, copper)
+    if type(copper) ~= "number" then
+        return name .. " -"
+    end
+    return string.format("%s %d (%s)", name, math.floor(copper + 0.5), formatMoney(copper))
+end
+
+-- Find the record for an item link or item id. Returns the record, the key and the keys tried.
+local function findRecord(argument)
+    local keys = {}
+    if argument:match("^%d+$") then
+        if ns.ItemString.ParseKey(argument) then
+            keys[1] = argument
+        end
+    else
+        local exact, base = ns.ItemString.ToExactKey(argument), ns.ItemString.ToBaseKey(argument)
+        keys[1] = exact
+        if base and base ~= exact then
+            keys[#keys + 1] = base
+        end
+    end
+    for _, key in ipairs(keys) do
+        local record = ns.scanStore:Get(key)
+        if record then
+            return record, key, keys
+        end
+    end
+    return nil, nil, keys
+end
+
+local function priceCommand(argument)
+    if not ns.scanStore then
+        printLine("scan is not available this session")
+        return
+    end
+    local record, key, keys = findRecord(argument)
+    if #keys == 0 then
+        printLine("usage: /flip price <item link or item id>")
+        return
+    end
+    if not record then
+        printLine("no scan data for " .. table.concat(keys, " or "))
+        return
+    end
+    local values = ns.ScanSources.Compute(record, GetServerTime())
+    printLine("key " .. key .. ": " .. priceText("ScanMin", values.scanMin) .. ", "
+        .. priceText("ScanRecent", values.scanRecent))
+    printLine(priceText("ScanMarket", values.scanMarket) .. ", "
+        .. priceText("ScanHistorical", values.scanHistorical))
+    local age = values.scanAge and string.format("%.1f h", values.scanAge) or "-"
+    printLine("ScanQty " .. tostring(values.scanQty or "-") .. ", ScanAge " .. age
+        .. ", ScanSamples " .. values.scanSamples .. (values.scanPartial and ", partial" or ""))
+end
+
+local function printScanHelp()
+    local last = ns.scanCooldown:GetLastSuccess()
+    local age = "never"
+    if type(last) == "number" then
+        age = string.format("%.1f h ago", ns.ScanClock.HoursBetween(last, GetServerTime()))
+    end
+    local left = ns.scanCooldown:Remaining()
+    local cooldown = left > 0 and ns.ScanCooldown.FormatRemaining(left) or "ready"
+    printLine(string.format("scan: %d items stored, last scan %s, cooldown %s",
+        ns.scanStore:CountItems(), age, cooldown))
+    printLine("commands: scan, scan stop, price <item>, version")
+end
+
 -- Handle the text after /flipside or /flip.
 function ns.HandleSlash(msg)
-    local command = tostring(msg or ""):match("^%s*(%S*)"):lower()
+    local text = tostring(msg or "")
+    local command, rest = text:match("^%s*(%S*)%s*(.-)%s*$")
+    command = command:lower()
     if command == "version" then
         printVersion()
+        return
+    elseif command == "scan" then
+        scanCommand(rest:lower())
+        return
+    elseif command == "price" then
+        priceCommand(rest)
         return
     end
     printLine("addon Flipside")
@@ -146,6 +437,9 @@ function ns.HandleSlash(msg)
         printLine("profile " .. ns.db:GetProfile())
     end
     printVersion()
+    if ns.scanStore and ns.scanCooldown then
+        printScanHelp()
+    end
     printLine("No feature exists yet.")
 end
 

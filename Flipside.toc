@@ -10,4 +10,15 @@ Core\Scheduler.lua
 Core\ItemString.lua
 Core\SettingsDB.lua
 Core\ItemInfoCache.lua
+Services\ScanClock.lua
+Services\ScanRecord.lua
+Services\ScanMarket.lua
+Services\ScanKey.lua
+Services\ScanCooldown.lua
+Services\ScanBucket.lua
+Services\ScanStore.lua
+Services\ScanRows.lua
+Services\ScanItemLoad.lua
+Services\ScanSources.lua
+Services\ScanEngine.lua
 Core\Init.lua
