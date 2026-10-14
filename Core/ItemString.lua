@@ -121,3 +121,129 @@ function ItemString.IsItemLink(input)
     end
     return ItemString.ParseLink(input) ~= nil
 end
+
+-- Returns item id, suffix id and a sorted copy of the bonus ids, or nil.
+local function Resolve(input)
+    local fields = input
+    if type(input) ~= "table" then
+        fields = ItemString.ParseLink(input)
+    end
+    if type(fields) ~= "table" then
+        return nil
+    end
+    local itemID, suffixID, bonusIDs = fields.itemID, fields.suffixID or 0, fields.bonusIDs or {}
+    if type(itemID) ~= "number" or itemID < 1 or itemID % 1 ~= 0 or itemID == math.huge then
+        return nil
+    end
+    if type(suffixID) ~= "number" or suffixID % 1 ~= 0 or suffixID == math.huge or suffixID == -math.huge then
+        return nil
+    end
+    if type(bonusIDs) ~= "table" then
+        return nil
+    end
+    local sorted = {}
+    for i, id in ipairs(bonusIDs) do
+        if type(id) ~= "number" or id < 0 or id % 1 ~= 0 or id == math.huge then
+            return nil
+        end
+        sorted[i] = id
+    end
+    table.sort(sorted)
+    return itemID, suffixID, sorted
+end
+
+-- Returns the item id in decimal, or nil if the input is not an item.
+function ItemString.ToBaseKey(input)
+    local itemID = Resolve(input)
+    if not itemID then
+        return nil
+    end
+    return string.format("%d", itemID)
+end
+
+-- Returns the item id, suffix id and bonus ids as one key, or nil.
+function ItemString.ToExactKey(input)
+    local itemID, suffixID, bonusIDs = Resolve(input)
+    if not itemID then
+        return nil
+    end
+    local key = string.format("%d", itemID)
+    if suffixID ~= 0 then
+        key = key .. string.format("#s%d", suffixID)
+    end
+    if #bonusIDs > 0 then
+        local parts = {}
+        for i, id in ipairs(bonusIDs) do
+            parts[i] = string.format("%d", id)
+        end
+        key = key .. "#b" .. table.concat(parts, ",")
+    end
+    return key
+end
+
+-- Returns the base key for a commodity, otherwise the exact key.
+function ItemString.ToKey(input, isCommodity)
+    if isCommodity then
+        return ItemString.ToBaseKey(input)
+    end
+    return ItemString.ToExactKey(input)
+end
+
+-- Matches a decimal integer without leading zeros.
+local function IsPlainInteger(text)
+    return text == "0" or text:match("^[1-9]%d*$") ~= nil
+end
+
+-- Returns a table of item id, suffix id and bonus ids, or nil if the key is invalid.
+function ItemString.ParseKey(key)
+    if type(key) ~= "string" then
+        return nil
+    end
+    if key:find(":", 1, true) then
+        return nil
+    end
+    local parts = Split((key:gsub("#", ":")))
+    local itemText = parts[1]
+    if not itemText:match("^[1-9]%d*$") then
+        return nil
+    end
+    local result = { itemID = tonumber(itemText), suffixID = 0, bonusIDs = {} }
+    local seenSuffix, seenBonus = false, false
+    for i = 2, #parts do
+        local tag, value = parts[i]:sub(1, 1), parts[i]:sub(2)
+        if tag == "s" and not seenSuffix and not seenBonus then
+            local digits = value:gsub("^%-", "")
+            if not digits:match("^[1-9]%d*$") then
+                return nil
+            end
+            result.suffixID = tonumber(value)
+            seenSuffix = true
+        elseif tag == "b" and not seenBonus then
+            local previous = 0
+            for number in (value .. ","):gmatch("([^,]*),") do
+                if not IsPlainInteger(number) then
+                    return nil
+                end
+                local id = tonumber(number)
+                if id < previous then
+                    return nil
+                end
+                previous = id
+                result.bonusIDs[#result.bonusIDs + 1] = id
+            end
+            seenBonus = true
+        else
+            return nil
+        end
+    end
+    return result
+end
+
+-- Returns the base key of a valid key, or nil.
+function ItemString.KeyToBaseKey(key)
+    local parsed = ItemString.ParseKey(key)
+    if not parsed then
+        return nil
+    end
+    return string.format("%d", parsed.itemID)
+end
