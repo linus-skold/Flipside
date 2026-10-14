@@ -65,6 +65,9 @@ function M.reset()
     M.realmName = nil -- result of GetNormalizedRealmName()
     M.itemInfo = {} -- itemID -> array of GetItemInfo return values
     M.loadRequests = {} -- itemIDs passed to RequestLoadItemDataByID
+    M.commodityResults = {} -- itemID -> rows of the commodity search result
+    M.itemResults = {} -- itemID -> rows of the item search result
+    M.searchFull = true -- result of the HasFull...SearchResults calls
 
     _G.ACCEPT = "Accept"
     _G.CANCEL = "Cancel"
@@ -185,6 +188,30 @@ function M.reset()
         return r and r.link
     end
     _G.C_AuctionHouse.GetReplicateItemBattlePetInfo = function() end
+
+    -- Search results: M.commodityResults[itemID] and M.itemResults[itemID] are lists of rows.
+    -- A commodity row has unitPrice and quantity. An item row has link, buyout and quantity.
+    local ah = _G.C_AuctionHouse
+    ah.GetNumCommoditySearchResults = function(itemID)
+        return #(M.commodityResults[itemID] or {})
+    end
+    ah.GetCommoditySearchResultInfo = function(itemID, index)
+        local r = (M.commodityResults[itemID] or {})[index]
+        return r and { itemID = itemID, unitPrice = r.unitPrice, quantity = r.quantity }
+    end
+    ah.HasFullCommoditySearchResults = function()
+        return M.searchFull
+    end
+    ah.GetNumItemSearchResults = function(itemKey)
+        return #(M.itemResults[itemKey.itemID] or {})
+    end
+    ah.GetItemSearchResultInfo = function(itemKey, index)
+        local r = (M.itemResults[itemKey.itemID] or {})[index]
+        return r and { itemKey = itemKey, itemLink = r.link, buyoutAmount = r.buyout, quantity = r.quantity }
+    end
+    ah.HasFullItemSearchResults = function()
+        return M.searchFull
+    end
 
     _G.StaticPopup_Show = function(which, arg1, arg2)
         local d = _G.StaticPopupDialogs[which]

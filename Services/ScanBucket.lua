@@ -96,6 +96,33 @@ function ScanBucket.Apply(record, snap, serverTime, partial)
     end
 end
 
+-- Store a search result. A complete result also replaces all of today's snapshots.
+function ScanBucket.Override(record, snap, serverTime, partial)
+    if not checkSnap(snap) then
+        error("Override: snap must have non-negative integer min, market, qty and auctions", 2)
+    end
+    local day = ns.ScanClock.DayOf(serverTime)
+    ScanBucket.RollUp(record, day)
+    local time = math.floor(serverTime)
+    record.latest = {
+        time = time,
+        min = snap.min,
+        market = snap.market,
+        qty = snap.qty,
+        auctions = snap.auctions,
+        partial = partial and true or false,
+    }
+    if partial then
+        return
+    end
+    record.today = {
+        day = day,
+        snaps = {
+            { time = time, min = snap.min, market = snap.market, qty = snap.qty, auctions = snap.auctions },
+        },
+    }
+end
+
 -- Remove daily records that are too old. Return the number removed.
 function ScanBucket.Prune(record, currentDay, retentionDays)
     retentionDays = retentionDays or ns.ScanClock.RETENTION_DAYS_DEFAULT

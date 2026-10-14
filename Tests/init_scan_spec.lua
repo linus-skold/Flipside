@@ -111,10 +111,11 @@ describe("Init scan", function()
                 position[path] = i
             end
             for _, name in ipairs({ "Clock", "Record", "Market", "Key", "Cooldown", "Bucket", "Store", "Rows",
-                "ItemLoad", "Sources", "Engine" }) do
+                "ItemLoad", "Sources", "Engine", "Capture" }) do
                 assert.is_truthy(position["Services/Scan" .. name .. ".lua"], name)
             end
             assert.is_true(position["Services/ScanEngine.lua"] < position["Core/Init.lua"])
+            assert.is_true(position["Services/ScanCapture.lua"] < position["Core/Init.lua"])
         end)
     end)
 
@@ -362,6 +363,56 @@ describe("Init scan", function()
         it("says that no scan runs for /flip scan stop", function()
             slash("scan stop")
             assert.are.same({ "Flipside: no scan is running" }, mock.messages)
+        end)
+    end)
+
+    describe("search capture", function()
+        before_each(login)
+
+        it("listens for the two search events", function()
+            assert.is_table(ns.scanCapture)
+            assert.is_true(mock.isRegistered("COMMODITY_SEARCH_RESULTS_UPDATED"))
+            assert.is_true(mock.isRegistered("ITEM_SEARCH_RESULTS_UPDATED"))
+        end)
+
+        it("saves a commodity search and shows it with /flip price", function()
+            mock.commodityResults[2589] = {
+                { unitPrice = 100, quantity = 20 }, { unitPrice = 120, quantity = 30 },
+            }
+            mock.fire("COMMODITY_SEARCH_RESULTS_UPDATED", 2589)
+            assert.are.same({ "2589" }, ns.scanStore:Keys())
+            assert.are.equal(0, #mock.messages)
+            slash("price 2589")
+            assert.is_true(hasMessage("Flipside: key 2589: ScanMin 100 (0g 1s 0c)"))
+            assert.is_true(hasMessage("ScanQty 50"))
+        end)
+
+        it("saves the variants of an item search", function()
+            mock.itemResults[1001] = {
+                { link = gearLink(1001, 6001), buyout = 5000, quantity = 1 },
+                { link = gearLink(1001, 6002), buyout = 9000, quantity = 1 },
+            }
+            mock.fire("ITEM_SEARCH_RESULTS_UPDATED", { itemID = 1001, itemLevel = 0, itemSuffix = 0 }, nil)
+            assert.are.same({ "1001#b6001", "1001#b6002" }, ns.scanStore:Keys())
+            slash("price " .. gearLink(1001, 6002))
+            assert.is_true(hasMessage("Flipside: key 1001#b6002: ScanMin 9000"))
+        end)
+
+        it("saves a partial result as partial", function()
+            mock.searchFull = false
+            mock.commodityResults[2589] = { { unitPrice = 100, quantity = 20 } }
+            mock.fire("COMMODITY_SEARCH_RESULTS_UPDATED", 2589)
+            assert.is_true(ns.scanStore:Get("2589").latest.partial)
+        end)
+
+        it("does not capture while a full scan runs", function()
+            mock.fire("AUCTION_HOUSE_SHOW")
+            slash("scan")
+            mock.acceptPopup()
+            pump(2)
+            mock.commodityResults[2589] = { { unitPrice = 100, quantity = 20 } }
+            mock.fire("COMMODITY_SEARCH_RESULTS_UPDATED", 2589)
+            assert.is_nil(ns.scanStore:Get("2589"))
         end)
     end)
 

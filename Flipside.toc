@@ -21,4 +21,5 @@ Services\ScanRows.lua
 Services\ScanItemLoad.lua
 Services\ScanSources.lua
 Services\ScanEngine.lua
+Services\ScanCapture.lua
 Core\Init.lua
