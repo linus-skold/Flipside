@@ -260,6 +260,15 @@ describe("Init scan", function()
             assert.is_true(hasMessage("Flipside: rows skipped: empty 0, bid-only 0, pet 0, bad count 0"))
         end)
 
+        it("uses the stack size of the item cache when the client gives none", function()
+            mock.commodity[2001] = nil
+            mock.itemInfo[2001] = { "Linen", "item:2001", 1, 1, 1, "Trade", "Cloth", 20 }
+            runScan()
+            assert.is_true(hasMessage("Flipside: full scan ok: 9 rows, 5 items, 5 keys"))
+            assert.is_true(hasMessage("Flipside: commodity check: client 4, stack 1, unknown 0, mismatch 0"))
+            assert.is_not_nil(ns.scanStore:Get("2001"))
+        end)
+
         it("prints the price values with /flip price", function()
             runScan()
             mock.messages = {}

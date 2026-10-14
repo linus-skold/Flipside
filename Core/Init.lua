@@ -123,6 +123,16 @@ local function clientIsCommodity(itemID)
     return nil
 end
 
+-- Max stack size from the client, or from the item cache when the client gives none.
+local function maxStack(itemID)
+    local size = C_Item.GetItemMaxStackSizeByID(itemID)
+    if size ~= nil then
+        return size
+    end
+    local info = ns.itemCache:Get(itemID)
+    return info and info.stackCount or nil
+end
+
 -- Read access to the client replicate API, in the form that the scan engine needs.
 local function buildScanApi()
     local ah = C_AuctionHouse
@@ -131,7 +141,7 @@ local function buildScanApi()
         getInfo = ah.GetReplicateItemInfo,
         getLink = ah.GetReplicateItemLink,
         getPetInfo = ah.GetReplicateItemBattlePetInfo,
-        maxStack = C_Item.GetItemMaxStackSizeByID,
+        maxStack = maxStack,
     }
     if type(ah.ReplicateItems) == "function" then
         api.replicateItems = ah.ReplicateItems
