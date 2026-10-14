@@ -107,7 +107,7 @@ Nine features come from your list, twelve are ones TSM users rely on that are ea
 | Ledger | Record sales, purchases, fees and failures; show profit | Same as Accounting; adds documented CSV export | You | MVP |
 | Sniper | Repeat searches to catch underpriced new listings | Same as Sniper; uses local scan prices for thresholds | You | Phase 2 |
 | Operations and price formulas | Reusable rules with a formula language | Same language; new local price sources; live formula preview | Added | MVP |
-| Tooltips | Prices, counts and history on every item (the history chart is Phase 2) | Adds data age and days with data (samples) to price lines | Added | MVP |
+| Tooltips | Prices, counts and history on every item (the history chart is Phase 2) | Shows prices as a Min/Avg/Max/Market table by window (1d, 14d, 30d, 60d) with the data age in the header | Added | MVP |
 | Inventory tracking | Counts per character, bank, mail, AH, guild (guild bank later; equipped items later) | Same | Added | MVP |
 | Decision log and dry run | Shows why each item was posted, skipped or cancelled | New | Added | MVP |
 | Crafting and queue | Profit per recipe, restock queue, craft next | Same | Added | Phase 2 |
@@ -187,7 +187,7 @@ All steps run as coroutines that yield each frame, with a progress bar. A scan i
 ### 3.4 Freshness and confidence
 
 - Every price carries **age** (hours since last seen) and **samples** (days with data in the window).
-- Tooltips show both, e.g. "Market 12g 40s · 3 h old · 9/14 days".
+- Tooltips show the age once, in the header: "Flipside (updated 2 h ago)". The price table shows the prices of four windows (§5, tooltip design point 15). A formula line can still show age and days with data.
 - Operations get two safety settings: *max data age* and *min samples*. If either fails, the item is skipped with the reason "stale price" in the decision log.
 - The Flipside AH tab shows when the last full scan ran and when the next is available (a Dashboard comes in Phase 2).
 
@@ -379,14 +379,34 @@ Operations and formulas (§4.2–4.3), tooltips and inventory tracking (referenc
 4. **Characters.** All characters of the account, on every realm.
 5. **Tooltip settings.** The tooltip lines are set on a new "Tooltip" tab in the Flipside window. They are stored in the profile.
 6. **Stack total.** Shown while Alt is held. Shift is Blizzard's compare key.
-7. **Data line.** The form is "Market 12g 40s · 3 h old · 9/14 days". The days are the days with data in the 14-day window (`ScanSamples`).
+7. **Data line.** Superseded by point 15. A custom formula line shows "Label 12g 40s", and can add " · 3 h old" and " · 9/14 days" when its age and days settings are on. The days are the days with data in the 14-day window (`ScanSamples`).
 8. **Money.** Gold and silver ("12g 40s"). Copper shows only for values below 1 silver.
-9. **Default lines.** Market price with age and days, lowest price, group path, selling operation, and counts per character.
+9. **Default lines.** The price table (point 15), group path, selling operation, and counts per character. The formula lines Market, Min and Max are no longer defaults.
 10. **Combat and missing data.** Tooltip lines show in combat too. Items without data show "invalid price".
 11. **Budget.** At most 1 ms per tooltip once the data is loaded. This is measured in game.
 12. **Dashboard.** Phase 2, as in the feature list. The scan time and cooldown stay on the AH tab.
 13. **Forget character.** A function removes only the inventory of that character. The button comes later.
-14. **Min, max and average.** In tooltips they mean the last 14 days. Min is `ScanLow`, max is `ScanHigh`, average is `ScanMarket` (§4).
+14. **Min, max and average.** Superseded by point 15 for the default tooltip. The formula sources `ScanLow`, `ScanHigh` and `ScanMarket` (§4) still mean the last 14 days.
+
+15. **Price table (decided 2026-10-14).** The tooltip shows the prices as a table. The title line is "Flipside (updated 2 h ago)"; the age is that of the latest scan. With Alt and a stack, it is "Flipside (updated 2 h ago, stack of 5)" and all cells are multiplied by the stack count.
+    ```
+    Flipside (updated 2 h ago)
+            Min    Avg    Max    Market
+    1d      ...
+    14d     ...
+    30d     ...
+    60d     ...
+    ```
+    - Rows are windows by server day (UTC, `ScanClock`). 1d is today. 14d, 30d and 60d are N days with today included. The data keeps 60 days.
+    - **Min**: the lowest buyout seen in the window (the lowest snapshot or daily `min`).
+    - **Avg**: the mean of the daily lowest buyouts. For 1d it is the mean of the snapshot lows of today.
+    - **Max**: the highest daily lowest buyout. For 1d it is the highest snapshot low of today.
+    - **Market**: the mean of the daily market values. For 1d it is the mean of the snapshot market values of today.
+    - Today is the snapshots of today. Without snapshots, the latest scan counts as today if it is from today. Older days are the daily records.
+    - A cell without data shows "-"; the table keeps its shape. An item with no data at all shows one line "Prices  invalid price" and no table.
+    - The table is a line of the Tooltip tab ("Price table"). The player can turn it off or move it. It cannot be removed or edited. Formula lines of the player show below or above it as ordered. It is not a formula line, so it does not use the formula language.
+    - Drawing: `GameTooltip` lines have only a left and a right text. Flipside reserves one blank tooltip line per table row (the header row and four windows), draws the five columns in its own frame over them, and sets `SetMinimumWidth` so that the table fits. The frame hides on `OnTooltipCleared` and `OnHide`. Both clients have `GetLeftLine`, `NumLines` and `SetMinimumWidth` (checked in the Forever source and the TBC Anniversary source).
+    - Migration: a stored version 1 tooltip setting with the untouched Market, Min and Max lines gets the price table in their place, at the top. Changed, turned-off and custom lines stay below it.
 ### 5.11 Great Deals (new)
 
 Right after each full scan, before raw listings are discarded, every listing is compared with the item's `ScanMarket` from *before* this scan, so a flood of cheap listings can't lower its own benchmark.

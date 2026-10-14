@@ -6,6 +6,15 @@ local TooltipLines = {}
 ns.TooltipLines = TooltipLines
 
 local WINDOW_DAYS = 14
+local WINDOWS = {
+    { days = 1, label = "1d" },
+    { days = 14, label = "14d" },
+    { days = 30, label = "30d" },
+    { days = 60, label = "60d" },
+}
+local COLUMNS = { "Min", "Avg", "Max", "Market" }
+local NO_VALUE = "-"
+local NO_PRICES = "Prices"
 local SEP = " \194\183 "
 local INVALID = "invalid price"
 local LATER = "not available yet"
@@ -49,6 +58,9 @@ function TooltipLines.FormatAge(hours)
 end
 
 local function dataRow(line, ctx, state)
+    if line.kind == "table" then
+        return ctx.tableRow()
+    end
     local copper, info
     if ctx.formulaRun then
         copper, info = ctx.formulaRun:Evaluate(line.formula or "", ctx.input)
@@ -77,6 +89,102 @@ local function dataRow(line, ctx, state)
         right = INVALID
     end
     return { left = label, right = right, color = copper and "normal" or "dim" }
+end
+
+-- Returns one entry per server day: { day, min, market, low, high }. min and market are the daily values.
+local function dayEntries(record, currentDay)
+    local list, hasToday = {}, false
+    for _, d in ipairs(record.days or {}) do
+        list[#list + 1] = { day = d.day, min = d.min, market = d.market, low = d.min, high = d.min }
+        hasToday = hasToday or d.day == currentDay
+    end
+    local today = record.today
+    local snaps = today and today.snaps
+    if snaps and #snaps > 0 then
+        local sumMin, sumMarket, low, high = 0, 0, nil, nil
+        for _, snap in ipairs(snaps) do
+            sumMin, sumMarket = sumMin + snap.min, sumMarket + snap.market
+            low = (not low or snap.min < low) and snap.min or low
+            high = (not high or snap.min > high) and snap.min or high
+        end
+        list[#list + 1] =
+            { day = today.day, min = sumMin / #snaps, market = sumMarket / #snaps, low = low, high = high }
+        hasToday = hasToday or today.day == currentDay
+    end
+    local latest = record.latest
+    if not hasToday and latest and ns.ScanClock.DayOf(latest.time) == currentDay then
+        list[#list + 1] =
+            { day = currentDay, min = latest.min, market = latest.market, low = latest.min, high = latest.min }
+    end
+    return list
+end
+
+-- Returns the values of one window from the day entries; a field is nil when the window has no data.
+local function windowValues(entries, currentDay, days)
+    local first = currentDay - days
+    local count, sumMin, sumMarket, low, high = 0, 0, 0, nil, nil
+    for _, e in ipairs(entries) do
+        if e.day > first and e.day <= currentDay then
+            count = count + 1
+            sumMin, sumMarket = sumMin + e.min, sumMarket + e.market
+            local top = days == 1 and e.high or e.min
+            low = (not low or e.low < low) and e.low or low
+            high = (not high or top > high) and top or high
+        end
+    end
+    if count == 0 then
+        return {}
+    end
+    return { min = low, avg = sumMin / count, max = high, market = sumMarket / count }
+end
+
+-- Returns an array of { days, label, min, avg, max, market } in copper for the windows 1, 14, 30 and 60 days.
+-- 1d is today. The other windows are today and the earlier days, so N days in all. A field is nil without data.
+function TooltipLines.Windows(record, now)
+    local currentDay = ns.ScanClock.DayOf(now or 0)
+    local entries = dayEntries(record, currentDay)
+    local out = {}
+    for i, window in ipairs(WINDOWS) do
+        local values = windowValues(entries, currentDay, window.days)
+        values.days, values.label = window.days, window.label
+        out[i] = values
+    end
+    return out
+end
+
+local function tableModel(ctx, key)
+    local record = key and ctx.getRecord and ctx.getRecord(key)
+    if type(record) ~= "table" then
+        return { left = NO_PRICES, right = INVALID, color = "dim" }
+    end
+    local windows = TooltipLines.Windows(record, ctx.now)
+    local stack = ctx.stackMode and ctx.stackCount and ctx.stackCount > 1 and ctx.stackCount or 1
+    local rows, any = {}, false
+    for i, w in ipairs(windows) do
+        local cells = {}
+        for j, field in ipairs({ "min", "avg", "max", "market" }) do
+            if w[field] then
+                any = true
+                cells[j] = TooltipLines.FormatMoney(w[field] * stack)
+            else
+                cells[j] = NO_VALUE
+            end
+        end
+        rows[i] = { label = w.label, cells = cells }
+    end
+    if not any then
+        return { left = NO_PRICES, right = INVALID, color = "dim" }
+    end
+    local parts = {}
+    if record.latest then
+        local hours = ns.ScanClock.HoursBetween(record.latest.time, ctx.now or 0)
+        parts[#parts + 1] = "updated " .. TooltipLines.FormatAge(hours) .. " ago"
+    end
+    if stack > 1 then
+        parts[#parts + 1] = "stack of " .. stack
+    end
+    local header = "Flipside" .. (#parts > 0 and (" (" .. table.concat(parts, ", ") .. ")") or "")
+    return { kind = "table", header = header, columns = COLUMNS, rows = rows }
 end
 
 local function groupRows(ctx, rows, key, config)
@@ -136,7 +244,7 @@ local function countRows(ctx, rows, key)
     end
 end
 
--- Returns an array of { left, right, color } rows.
+-- Returns an array of { left, right, color } rows. A price table row is { kind = "table", header, columns, rows }.
 function TooltipLines.Build(ctx)
     local rows = {}
     local config = ctx and ctx.config
@@ -156,13 +264,14 @@ function TooltipLines.Build(ctx)
         return cached or nil
     end
 
+    local key = ns.ItemString and (ns.ItemString.ToExactKey(ctx.input))
+    local tableCtx = setmetatable({ tableRow = function() return tableModel(ctx, key) end }, { __index = ctx })
     for _, line in ipairs(config.lines or {}) do
         if line.enabled ~= false then
-            rows[#rows + 1] = dataRow(line, ctx, state)
+            rows[#rows + 1] = dataRow(line, tableCtx, state)
         end
     end
 
-    local key = ns.ItemString and (ns.ItemString.ToExactKey(ctx.input))
     groupRows(ctx, rows, key, config)
     if config.showCounts then
         countRows(ctx, rows, key)

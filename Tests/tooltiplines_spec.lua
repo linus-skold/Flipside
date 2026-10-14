@@ -263,4 +263,163 @@ describe("TooltipLines", function()
             assert.is_true(ms < 100)
         end)
     end)
+
+    describe("price table", function()
+        local S = 1 -- copper per unit; 400 copper show as 4s
+
+        local function snap(minimum, market)
+            return { time = NOW - 3600, min = minimum * S, market = market * S, qty = 1, auctions = 1 }
+        end
+
+        local function day(offset, minimum, market)
+            return { day = TODAY + offset, min = minimum * S, market = market * S, qty = 1, scans = 1 }
+        end
+
+        -- Days -20, -5 and -1, and two snapshots today. The latest scan is 2 hours old.
+        local function full()
+            local r = ns.ScanRecord.New()
+            r.days = { day(-20, 100, 1000), day(-5, 200, 2000), day(-1, 300, 3000) }
+            r.today = { day = TODAY, snaps = { snap(400, 4000), snap(600, 6000) } }
+            r.latest = { time = NOW - 7200, min = 600 * S, market = 6000 * S, qty = 1, auctions = 1, partial = false }
+            return r
+        end
+
+        local tableLine = { id = 1, kind = "table", label = "Price table", formula = "", enabled = true }
+
+        local function build(record, extra)
+            local c = ctx({
+                config = { lines = { tableLine } },
+                getRecord = function()
+                    return record
+                end,
+            })
+            for k, v in pairs(extra or {}) do
+                c[k] = v
+            end
+            return TL.Build(c)
+        end
+
+        it("gives min, average, max and market for each window", function()
+            local w = TL.Windows(full(), NOW)
+            assert.are.equal(4, #w)
+            assert.are.same({ 1, "1d" }, { w[1].days, w[1].label })
+            -- 1d: the two snapshots of today.
+            assert.are.same({ 400 * S, 500 * S, 600 * S, 5000 * S }, { w[1].min, w[1].avg, w[1].max, w[1].market })
+            -- 14d: day -5, day -1 and today (daily min 500).
+            assert.are.equal(200 * S, w[2].min)
+            assert.is_true(math.abs(w[2].avg - 1000 * S / 3) < 1e-6)
+            assert.are.equal(500 * S, w[2].max)
+            assert.is_true(math.abs(w[2].market - 10000 * S / 3) < 1e-6)
+            -- 30d and 60d add day -20.
+            assert.are.same({ 100 * S, 275 * S, 500 * S, 2750 * S }, { w[3].min, w[3].avg, w[3].max, w[3].market })
+            assert.are.same({ w[3].min, w[3].avg, w[3].max, w[3].market },
+                { w[4].min, w[4].avg, w[4].max, w[4].market })
+        end)
+
+        it("counts N days including today", function()
+            local r = ns.ScanRecord.New()
+            r.days = {
+                day(-60, 1, 10), day(-59, 5, 50), day(-30, 10, 100), day(-29, 20, 200), day(-14, 50, 500),
+                day(-13, 70, 700),
+            }
+            r.today = { day = TODAY, snaps = { snap(900, 9000) } }
+            local w = TL.Windows(r, NOW)
+            assert.are.equal(70 * S, w[2].min) -- 14d: day -13 is in, day -14 is out
+            assert.are.equal(20 * S, w[3].min) -- 30d: day -29 is in, day -30 is out
+            assert.are.equal(5 * S, w[4].min) -- 60d: day -59 is in, day -60 is out
+        end)
+
+        it("leaves a window empty where it has no days", function()
+            local r = ns.ScanRecord.New()
+            r.days = { day(-20, 100, 1000) }
+            local w = TL.Windows(r, NOW)
+            assert.are.same({}, { w[1].min, w[1].avg, w[1].max, w[1].market })
+            assert.is_nil(w[2].min)
+            assert.are.equal(100 * S, w[3].min)
+            assert.are.equal(100 * S, w[3].max)
+            assert.are.equal(1000 * S, w[4].market)
+        end)
+
+        it("uses only today when there is no history", function()
+            local r = ns.ScanRecord.New()
+            r.today = { day = TODAY, snaps = { snap(300, 3000) } }
+            local w = TL.Windows(r, NOW)
+            for i = 1, 4 do
+                assert.are.same({ 300 * S, 300 * S, 300 * S, 3000 * S }, { w[i].min, w[i].avg, w[i].max, w[i].market })
+            end
+        end)
+
+        it("uses the latest scan for 1d when it is from today and there are no snapshots", function()
+            local r = ns.ScanRecord.New()
+            r.latest = { time = NOW - 3600, min = 250 * S, market = 2500 * S, qty = 1, auctions = 1, partial = true }
+            local w = TL.Windows(r, NOW)
+            assert.are.same({ 250 * S, 250 * S, 250 * S, 2500 * S }, { w[1].min, w[1].avg, w[1].max, w[1].market })
+            r.latest.time = NOW - DAY
+            w = TL.Windows(r, NOW)
+            assert.is_nil(w[1].min)
+        end)
+
+        it("builds the table model with the header and the age", function()
+            local rows = build(full())
+            assert.are.equal(1, #rows)
+            local model = rows[1]
+            assert.are.equal("table", model.kind)
+            assert.are.equal("Flipside (updated 2 h ago)", model.header)
+            assert.are.same({ "Min", "Avg", "Max", "Market" }, model.columns)
+            assert.are.equal(4, #model.rows)
+            assert.are.equal("1d", model.rows[1].label)
+            assert.are.same({ "4s", "5s", "6s", "50s" }, model.rows[1].cells)
+            assert.are.same({ "2s", "3s", "5s", "33s" }, model.rows[2].cells)
+            assert.are.equal("60d", model.rows[4].label)
+        end)
+
+        it("shows a dash for a cell without data and keeps the shape", function()
+            local r = ns.ScanRecord.New()
+            r.days = { day(-20, 100, 1000) }
+            r.latest = { time = NOW - 3600 * 30, min = 100, market = 1000, qty = 1, auctions = 1, partial = false }
+            local model = build(r)[1]
+            assert.are.equal(4, #model.rows)
+            assert.are.same({ "-", "-", "-", "-" }, model.rows[1].cells)
+            assert.are.same({ "-", "-", "-", "-" }, model.rows[2].cells)
+            assert.are.same({ "1s", "1s", "1s", "10s" }, model.rows[3].cells)
+            assert.are.equal("Flipside (updated 30 h ago)", model.header)
+        end)
+
+        it("gives one invalid price row without any data", function()
+            local rows = build(ns.ScanRecord.New())
+            assert.are.same({ { left = "Prices", right = "invalid price", color = "dim" } }, rows)
+            rows = build(nil)
+            assert.are.same({ { left = "Prices", right = "invalid price", color = "dim" } }, rows)
+        end)
+
+        it("multiplies the cells by the stack count in Alt mode", function()
+            local model = build(full(), { stackMode = true, stackCount = 5 })[1]
+            assert.are.equal("Flipside (updated 2 h ago, stack of 5)", model.header)
+            assert.are.same({ "20s", "25s", "30s", "2g 50s" }, model.rows[1].cells)
+            model = build(full(), { stackMode = false, stackCount = 5 })[1]
+            assert.are.same({ "4s", "5s", "6s", "50s" }, model.rows[1].cells)
+            model = build(full(), { stackMode = true, stackCount = 1 })[1]
+            assert.are.equal("Flipside (updated 2 h ago)", model.header)
+        end)
+
+        it("omits the table when its line is off and keeps formula lines below it", function()
+            local off = { id = 1, kind = "table", label = "Price table", formula = "", enabled = false }
+            local rows = build(full(), {
+                config = { lines = { off, { label = "Market", formula = "scanmarket", enabled = true } } },
+            })
+            assert.are.equal(1, #rows)
+            assert.are.equal("Market", rows[1].left)
+            rows = build(full(), {
+                config = { lines = { { label = "Market", formula = "scanmarket", enabled = true }, tableLine } },
+            })
+            assert.are.equal("Market", rows[1].left)
+            assert.are.equal("table", rows[2].kind)
+        end)
+
+        it("does not add the age to the data lines of the default table", function()
+            local row = build(full())[1]
+            assert.is_nil(row.right)
+            assert.is_nil(row.header:find("days", 1, true))
+        end)
+    end)
 end)

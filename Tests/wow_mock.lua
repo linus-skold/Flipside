@@ -207,6 +207,15 @@ function frameMethods:ClearFocus()
     self.focusCleared = (self.focusCleared or 0) + 1
 end
 
+-- Text width of the mock: 6 per character.
+function frameMethods:GetStringWidth()
+    return #(self.text or "") * 6
+end
+
+function frameMethods:SetJustifyH(justify)
+    self.justifyH = justify
+end
+
 function frameMethods:SetFontObject(font)
     self.fontObject = font
 end
