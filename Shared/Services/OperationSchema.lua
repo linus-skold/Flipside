@@ -55,6 +55,10 @@ local FIELDS = {
             help = "The most auctions to post for each item. 0 means no cap.",
         },
         {
+            key = "stackSize", label = "Stack size", kind = "number", default = 0, min = 0, max = 1000,
+            help = "Units in each auction. 0 means a full stack. The client limit caps it.",
+        },
+        {
             key = "keepInBags", label = "Keep in bags", kind = "number", default = 0, min = 0, max = 10000,
             help = "This many of each item stay in your bags; the rest can be sold.",
         },
