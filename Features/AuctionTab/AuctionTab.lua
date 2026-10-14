@@ -375,23 +375,29 @@ function Tab:_BuildContent()
     self:_ShowPriceRows(nil)
 end
 
-function Tab:_Build()
-    local frame = AuctionHouseFrame
-    if self.frame or not frame then
-        return
+local function indexOf(list, item)
+    for index, value in ipairs(list) do
+        if value == item then
+            return index
+        end
     end
-    self.frame = frame
-    local button = createTabButton(frame)
+    return nil
+end
+
+-- Create the tab button after the Blizzard tabs. The tab template can add the button to frame.Tabs itself.
+function Tab:_BuildTab(frame)
     local tabs = frame.Tabs
-    local last = tabs[#tabs]
-    self.index = #tabs + 1
-    for blizzardIndex, blizzardTab in ipairs(tabs) do
-        blizzardTab:HookScript("OnClick", function()
-            if self.active then
-                self:_Restore(blizzardIndex)
-            end
-        end)
+    local blizzardTabs = {}
+    for index, existing in ipairs(tabs) do
+        blizzardTabs[index] = existing
     end
+    local last = blizzardTabs[#blizzardTabs]
+    local button = createTabButton(frame)
+    self.tab = button
+    if not indexOf(tabs, button) then
+        table.insert(tabs, button)
+    end
+    self.index = indexOf(tabs, button)
     button:SetID(self.index)
     button:SetText("Flipside")
     if last then
@@ -400,11 +406,21 @@ function Tab:_Build()
     button:SetScript("OnClick", function()
         self:_Select()
     end)
-    table.insert(tabs, button)
     PanelTemplates_SetNumTabs(frame, #tabs)
-    self.tab = button
+    return blizzardTabs
+end
 
+function Tab:_BuildFrame(frame)
+    self.frame = frame
+    local blizzardTabs = self:_BuildTab(frame)
     self:_BuildContent()
+    for blizzardIndex, blizzardTab in ipairs(blizzardTabs) do
+        blizzardTab:HookScript("OnClick", function()
+            if self.active then
+                self:_Restore(blizzardIndex)
+            end
+        end)
+    end
     hooksecurefunc(frame, "SetDisplayMode", function()
         -- Same mode again: Blizzard did nothing, so the tab click hook restores the panes.
         if self.active and frame:GetDisplayMode() ~= self.selectedMode then
@@ -418,6 +434,34 @@ function Tab:_Build()
     self:Refresh()
 end
 
+-- Undo a failed build: hide the tab, remove it from the frame and keep no half-built state.
+function Tab:_Abandon(frame)
+    local tab = self.tab
+    if tab then
+        tab:Hide()
+        local index = indexOf(frame.Tabs, tab)
+        if index then
+            table.remove(frame.Tabs, index)
+            PanelTemplates_SetNumTabs(frame, #frame.Tabs)
+        end
+    end
+    if self.content then
+        self.content:Hide()
+    end
+    self.frame, self.tab, self.content, self.ui, self.index = nil, nil, nil, nil, nil
+end
+
+function Tab:_Build()
+    local frame = AuctionHouseFrame
+    if self.frame or not frame then
+        return
+    end
+    local ok, err = pcall(self._BuildFrame, self, frame)
+    if not ok then
+        self:_Abandon(frame)
+        ns.ReportError("the Auction House tab is not available: " .. tostring(err))
+    end
+end
 local REQUIRED_FUNCTIONS = { "serverTime", "confirmScan", "openMainWindow" }
 
 -- Attach the Flipside tab to the Auction House frame, now or when its addon loads.
