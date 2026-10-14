@@ -257,6 +257,19 @@ describe("Init scan", function()
                 "Flipside: items 5: keyed 5, link fallback 0, pending 0, no link 0, link mismatch 0, unknown 0"))
         end)
 
+        it("prints the Forever diagnostics line and keeps the last 5 runs in the scan DB", function()
+            runScan()
+            assert.is_true(hasMessage(
+                "Flipside: pending 0, failed 0 (load failed), nilLink 0, notAllInfo 0, retried 0, refresh 0.0 s"))
+            assert.are.equal(1, #_G.FlipsideScanDB.diag)
+            assert.are.equal(5, _G.FlipsideScanDB.diag[1].keys)
+            assert.are.equal(30, ns.AuctionClient.ScanRefreshSeconds())
+            for _ = 1, 6 do
+                ns.AuctionClient.ScanDiagnostics({ result = "ok" })
+            end
+            assert.are.equal(5, #_G.FlipsideScanDB.diag)
+        end)
+
         it("uses the stack size of the item cache when the client gives none", function()
             mock.commodity[2001] = nil
             mock.itemInfo[2001] = { "Linen", "item:2001", 1, 1, 1, "Trade", "Cloth", 20 }

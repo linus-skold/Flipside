@@ -140,7 +140,7 @@ Full-scan facts that shape the design ([Warcraft Wiki](https://warcraft.wiki.gg/
 
 - The cooldown is per account, not per character. Store the time of the last scan call account-wide in SavedVariables, and show the shared countdown on every character (D9).
 - Results are read by index, and the client handles about 2,000 item-info events per frame. The reader must process in slices of roughly 1,000–2,000 rows per frame.
-- Some rows arrive without item info. Queue those for item-info load and wait at most 30 s for them. An item without data after the wait gets no new snapshot and keeps its old data. The other items are stored in full (see the scan engine design in §3.2).
+- Some rows arrive without item info. Queue those for item-info load and retry them for at most 30 s (see "Forever scan retry"). An item without data after the wait gets no new snapshot and keeps its old data. The other items are stored in full (see the scan engine design in §3.2).
 - On very busy realms the call has disconnected clients before (a fix in 9.0.2 removed seller names). Seller names are therefore never available from a full scan; blacklist features must use targeted searches.
 - WoW: Forever lists the same full-scan call in Blizzard's API (confirm behaviour in the beta); older Classic clients use the older "get all" query, also on a cooldown; the snapshot pipeline after it is the same.
 
@@ -159,7 +159,7 @@ All steps run as coroutines that yield each frame, with a progress bar. A scan i
 **Scan engine design (decided 2026-10-14)**
 
 - A `/reload` or logout during a scan discards the run. Nothing of it is saved.
-- After the rows are read, the scan waits at most 30 s for item data. An item without data after the wait is pending. It gets no write and keeps its old data. It gets a new attempt at the next scan. The other items are stored as a complete scan, and the summary says "complete with N pending".
+- After the rows are read, the scan retries for at most 30 s (backend value `ScanRefreshSeconds`; see "Forever scan retry"). An item without data after the wait is pending. It gets no write and keeps its old data. It gets a new attempt at the next scan. The other items are stored as a complete scan, and the summary says "complete with N pending".
 1. **Stored format.** One record per item per region and ruleset, stored as one delimited string per item (§3.3). Gear and other non-stackable items use the D20 exact key. Commodities use the base key. Money is whole copper. Days are integer day numbers.
 2. **Market value.** The "lowest 30%" and "first 15%" rules count auctions, not units. Outliers are removed with the population standard deviation. The market value is the plain (unweighted) average of the remaining unit prices, rounded half up to whole copper.
 3. **Price day (D4).** A day starts at 00:00 UTC by the server clock (`GetServerTime`). Day number = floor(server time / 86,400).
@@ -506,6 +506,16 @@ A row can have an item ID and no link, because the client has no item data yet. 
 6. If some rows of an item have a link, the rows without a link of a weapon or armor item are not stored.
 
 Risk: rule 4 can put a suffix item without item info under the base key. Rule 3 can also be wrong for an unusual item class. The `keyedWithoutLink` count lets the in-game check find these cases.
+
+### Forever scan retry
+The Forever backend gives `ScanRefreshSeconds()` (30 s). The engine uses the refresh loop of the TBC modes for each Forever scan:
+
+1. In each poll (once each second) the engine resets the failed item loads and asks again for the items that are still pending (a row has no link, or `hasAllInfo` is not true). It also asks for the items with an unknown commodity status. It then reads the rows of these items again by index. The replicate list stays valid after the scan.
+2. A load that ends "failed" gets a new request in the next poll.
+3. Key rule after the window: an item without a link is stored under the base key if the client says it is a commodity (or, without that answer, the maximum stack size is more than 1). Other items stay pending, for example gear without a link. A commodity item needs no retry.
+4. A pending item gets no write and keeps its old data. All keyed items get a normal snapshot (today and latest), also if other items stay pending (see §3.2 rule 9).
+5. The Forever diagnostics line shows `pending N, failed F (load failed), nilLink L, notAllInfo A, retried R, refresh S s`. `nilLink` and `notAllInfo` count the pending items by reason. `retried` counts the items that got a request in poll 2 or later. The scan DB `diag` table keeps the last 5 runs.
+6. The summary says "complete with N pending" if the read was complete and N items stay pending. It says "partial" only if the read was incomplete.
 
 ### TBC scan diagnostics
 The `legacy scan:` line and the `diag` entries of the scan DB have `mode`, `keys`, `pending`, `failed`, `keyedWithoutLink`, `refreshSeconds` and `pages` (page mode) in addition to the row counts.
