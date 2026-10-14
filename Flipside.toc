@@ -37,6 +37,8 @@ Services\GroupTree.lua
 Services\BagItems.lua
 Services\RulesStore.lua
 Services\CustomSources.lua
+Services\AHNameSearch.lua
+Services\RulesExport.lua
 UI\Kit\Theme.lua
 UI\Kit\Window.lua
 UI\Kit\Widgets.lua
