@@ -21,7 +21,7 @@ end
 
 describe("ScanSources", function()
     it("lists the names and fields", function()
-        assert.are.equal(7, #S.NAMES)
+        assert.are.equal(9, #S.NAMES)
         assert.are.equal("scanMin", S.FIELD.ScanMin)
         assert.are.equal("scanMarket", S.FIELD.ScanMarket)
         for _, name in ipairs(S.NAMES) do
@@ -37,6 +37,8 @@ describe("ScanSources", function()
         assert.is_nil(r.scanAge)
         assert.is_nil(r.scanPartial)
         assert.is_nil(r.scanMarket)
+        assert.is_nil(r.scanLow)
+        assert.is_nil(r.scanHigh)
         assert.is_nil(r.scanHistorical)
         assert.are.equal(0, r.scanSamples)
         assert.are.equal(0, r.scanDays)
@@ -168,5 +170,56 @@ describe("ScanSources", function()
         assert.are.equal(1, r.scanSamples)
         assert.are.equal(300, r.scanHistorical)
         assert.are.equal(1, r.scanDays)
+    end)
+
+    describe("scanLow and scanHigh", function()
+        it("uses latest only for low", function()
+            local latest = { time = NOW - 60, min = 900, market = 1000, qty = 1, auctions = 1, partial = false }
+            local r = S.Compute(record(nil, latest), NOW)
+            assert.are.equal(900, r.scanLow)
+            assert.is_nil(r.scanHigh)
+        end)
+
+        it("counts a partial latest for low", function()
+            local latest = { time = NOW - 60, min = 400, market = 1000, qty = 1, auctions = 1, partial = true }
+            assert.are.equal(400, S.Compute(record(nil, latest), NOW).scanLow)
+        end)
+
+        it("ignores a latest outside the window", function()
+            local latest = { time = (TODAY - 14) * DAY, min = 5, market = 9, qty = 1, auctions = 1, partial = false }
+            local r = S.Compute(record(nil, latest), NOW)
+            assert.is_nil(r.scanLow)
+            local edge = { time = (TODAY - 13) * DAY, min = 5, market = 9, qty = 1, auctions = 1, partial = false }
+            assert.are.equal(5, S.Compute(record(nil, edge), NOW).scanLow)
+        end)
+
+        it("uses the snaps of today", function()
+            local today = { day = TODAY, snaps = { snap(NOW - 100, 1000), snap(NOW, 2000) } }
+            local r = S.Compute(record(nil, nil, today), NOW)
+            assert.are.equal(990, r.scanLow)
+            assert.are.equal(1500, r.scanHigh)
+        end)
+
+        it("uses the lowest min and highest market over 14 days", function()
+            local days = { entry(TODAY - 13, 800), entry(TODAY - 5, 300), entry(TODAY - 1, 600) }
+            local today = { day = TODAY, snaps = { snap(NOW, 1000) } }
+            local latest = { time = NOW, min = 700, market = 1, qty = 1, auctions = 1, partial = false }
+            local r = S.Compute(record(days, latest, today), NOW)
+            assert.are.equal(290, r.scanLow)
+            assert.are.equal(1000, r.scanHigh)
+        end)
+
+        it("ignores days outside the window", function()
+            local days = { entry(TODAY - 14, 1), entry(TODAY - 30, 99999), entry(TODAY - 2, 500) }
+            local r = S.Compute(record(days), NOW)
+            assert.are.equal(490, r.scanLow)
+            assert.are.equal(500, r.scanHigh)
+        end)
+
+        it("is invalid with only old data", function()
+            local r = S.Compute(record({ entry(TODAY - 20, 500) }), NOW)
+            assert.is_nil(r.scanLow)
+            assert.is_nil(r.scanHigh)
+        end)
     end)
 end)
