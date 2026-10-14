@@ -15,6 +15,8 @@ read_globals = {
     "CreateDataProvider",
     "CreateFrame",
     "CreateScrollBoxListLinearView",
+    "CreateScrollBoxListTreeListView",
+    "CreateTreeDataProvider",
     "DEFAULT_CHAT_FRAME",
     "GameTooltip",
     "GetBuildInfo",
