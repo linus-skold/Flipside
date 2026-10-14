@@ -2,6 +2,9 @@ local ns = {}
 assert(loadfile("Services/ScanClock.lua"))("Flipside", ns)
 assert(loadfile("Services/ScanSources.lua"))("Flipside", ns)
 assert(loadfile("Core/ItemInfoCache.lua"))("Flipside", ns)
+assert(loadfile("Services/FormulaParse.lua"))("Flipside", ns)
+assert(loadfile("Services/FormulaFunctions.lua"))("Flipside", ns)
+assert(loadfile("Services/FormulaEval.lua"))("Flipside", ns)
 assert(loadfile("Services/FormulaSources.lua"))("Flipside", ns)
 
 local DAY = 86400
@@ -147,4 +150,78 @@ describe("FormulaSources", function()
         assert.are.equal("available", found.vendorsell)
         assert.are.equal("later", found.crafting)
     end)
+
+    describe("custom sources", function()
+        local texts, version, ctx
+
+        before_each(function()
+            texts = {}
+            version = 1
+            sources:SetCustom({
+                Get = function(_, name)
+                    return texts[name]
+                end,
+                Version = function()
+                    return version
+                end,
+            })
+            ctx = { record = makeRecord(), now = NOW, itemID = 10 }
+        end)
+
+        it("reports custom names and keeps built-in status", function()
+            texts.myprice = "scanmin"
+            assert.are.equal("custom", sources:Status("myprice"))
+            assert.are.equal("custom", sources:Status("MyPrice"))
+            assert.are.equal("unknown", sources:Status("nothere"))
+            assert.are.equal("available", sources:Status("scanmin"))
+            assert.are.equal("later", sources:Status("crafting"))
+        end)
+
+        it("reads the value in the same ctx without rounding", function()
+            texts.half = "scanmin / 8"
+            assert.are.equal(112.5, sources:Read("half", ctx))
+            texts.sum = "half + half"
+            assert.are.equal(225, sources:Read("sum", ctx))
+        end)
+
+        it("is nil when a part is missing or the text is bad", function()
+            texts.a = "scanmin + crafting"
+            texts.b = "1 +"
+            assert.is_nil(sources:Read("a", ctx))
+            assert.is_nil(sources:Read("b", ctx))
+            assert.is_nil(sources:Read("a", { now = NOW }))
+        end)
+
+        it("gives nil for a loop at run time", function()
+            texts.a = "b + 1"
+            texts.b = "a + 1"
+            texts.c = "c"
+            assert.is_nil(sources:Read("a", ctx))
+            assert.is_nil(sources:Read("c", ctx))
+        end)
+
+        it("allows 8 levels of nesting and not 9", function()
+            for i = 1, 8 do
+                texts["s" .. i] = "s" .. (i + 1) .. " + 1"
+            end
+            texts.s9 = "scanmin"
+            assert.is_nil(sources:Read("s1", ctx))
+            assert.are.equal(907, sources:Read("s2", ctx))
+            texts.s9 = nil
+            texts.s8 = "scanmin"
+            assert.are.equal(907, sources:Read("s1", ctx))
+        end)
+
+        it("leaves the stack clean after a read", function()
+            texts.a = "b"
+            texts.b = "scanmin"
+            assert.are.equal(900, sources:Read("a", ctx))
+            assert.are.equal(900, sources:Read("a", ctx))
+            assert.are.equal(0, ctx._custom.depth)
+        end)
+
+        it("does not read custom names without a custom set", function()
+            assert.is_nil(ns.FormulaSources.New():Read("a", ctx))
+        end)
+end)
 end)
