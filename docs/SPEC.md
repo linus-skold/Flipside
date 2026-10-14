@@ -129,15 +129,15 @@ All prices come from three kinds of in-game scans, folded into a compact daily h
 
 | Scan | Blizzard API (Retail) | Returns | Limit | Use |
 | --- | --- | --- | --- | --- |
-| Full scan | `C_AuctionHouse.ReplicateItems` | Every listing with price and quantity | 15 min account-wide cooldown | Primary data source, one button |
+| Full scan | `C_AuctionHouse.ReplicateItems` | Every listing with price and quantity | 15 min account-wide cooldown (assumed; not yet measured on Forever) | Primary data source, one button |
 | Summary scan | Browse query + "request more results" | Lowest price and total quantity per item | Search throttle, no cooldown | Fallback when full scan is on cooldown or fails |
 | Passive capture | Any search done by Buying, Selling or Sniper | Full depth for searched items | None extra | Keeps watched items fresh between full scans |
 
 Full-scan facts that shape the design ([Warcraft Wiki](https://warcraft.wiki.gg/wiki/API:C_AuctionHouse.ReplicateItems)):
 
-- The cooldown is per account, not per character. Store the last successful scan time account-wide in SavedVariables, and show the shared countdown on every character (D9).
+- The cooldown is per account, not per character. Store the time of the last scan call account-wide in SavedVariables, and show the shared countdown on every character (D9).
 - Results are read by index, and the client handles about 2,000 item-info events per frame. The reader must process in slices of roughly 1,000–2,000 rows per frame.
-- Some rows arrive without item info. Queue those for item-info load and finish the snapshot only when all have resolved or a timeout passes.
+- Some rows arrive without item info. Queue those for item-info load and wait at most 30 s for them. Items without data after 30 s are left out and the snapshot is marked partial (see the scan engine design in §3.2).
 - On very busy realms the call has disconnected clients before (a fix in 9.0.2 removed seller names). Seller names are therefore never available from a full scan; blacklist features must use targeted searches.
 - WoW: Forever lists the same full-scan call in Blizzard's API (confirm behaviour in the beta); older Classic clients use the older "get all" query, also on a cooldown; the snapshot pipeline after it is the same.
 
@@ -145,14 +145,28 @@ Full-scan facts that shape the design ([Warcraft Wiki](https://warcraft.wiki.gg/
 
 1. **Collect** rows into a temporary per-item list of unit buyouts and quantities (bid-only listings skipped).
 2. **Reduce** each item to snapshot stats: min buyout, market value (the outlier filter from the reference §4.3), listed quantity, auction count.
-3. **Merge** into today's bucket for that item; keep up to 4 snapshots per day, then average. A targeted search newer than the day's full scan replaces that day's value for the searched item (D5).
-4. **Roll up** at the first scan after the server day changes (D4): today's bucket becomes one daily record.
+3. **Merge** into today's bucket for that item; keep up to 4 snapshots per day (a fifth drops the oldest); the day's record is their average. A targeted search newer than the day's full scan replaces that day's value for the searched item (D5).
+4. **Roll up** at the first scan after the server day changes (D4) and also at login: today's bucket becomes one daily record.
 5. **Discard** raw listings. Only daily records and today's bucket are saved.
 
 Rows can arrive without full item info, so the pipeline loads item data before it uses names, links or stack sizes (see Spike 0 result in §8).
 
-All steps run as coroutines that yield each frame, with a progress bar. A scan interrupted by closing the AH keeps the rows processed so far, marked partial.
+All steps run as coroutines that yield each frame, with a progress bar. A scan interrupted by closing the AH is marked partial; its data updates only the "latest" values (see the scan engine design below).
 
+**Scan engine design (decided 2026-10-14)**
+
+- A `/reload` or logout during a scan discards the run. Nothing of it is saved.
+- After the rows are read, the scan waits at most 30 s for item data. Items without data after 30 s are left out of the snapshot, which is marked partial. They get a new attempt at the next scan.
+1. **Stored format.** One record per item per region and ruleset, stored as one delimited string per item (§3.3). Gear and other non-stackable items use the D20 exact key. Commodities use the base key. Money is whole copper. Days are integer day numbers.
+2. **Market value.** The "lowest 30%" and "first 15%" rules count auctions, not units. Outliers are removed with the population standard deviation. The market value is the plain (unweighted) average of the remaining unit prices, rounded half up to whole copper.
+3. **Price day (D4).** A day starts at 00:00 UTC by the server clock (`GetServerTime`). Day number = floor(server time / 86,400).
+4. **Region and ruleset.** Region is the client's region text (`GetCurrentRegionName`, for example "EU"). Ruleset is the fixed value "standard" in the MVP. The client's standard-mode flag (`C_GameRules.IsStandard`) is stored next to it as information.
+5. **Commodity detection.** After the item loads, ask the client (`C_AuctionHouse.GetItemKeyInfo`, field `isCommodity`). If the client gives no answer, use "maximum stack size above 1". Cases where both answers exist and disagree are counted and reported, so they can be checked in game.
+6. **Cooldown.** The 15-minute timer starts when the scan is called, not when data arrives. Flipside refuses a new full scan before the timer ends and shows the time left. The 15 minutes stays an assumption until measured (open question).
+7. **Start before the AH frame exists.** `/flip scan` (or `/flipside scan`) at the open Auction House shows a warning popup. Accept starts the scan.
+8. **Snapshots and roll-up.** Keep up to 4 snapshots per day; a fifth drops the oldest. The day's record is the average of the day's snapshots. Roll-up into history happens at the first scan of a new day and also at login.
+9. **Partial scans** (AH closed during the read, or items not loaded within 30 s). The data updates the item's "latest" values. It does not enter the day's snapshots or the history. Only a complete scan does that. A complete scan replaces the "latest" values.
+10. **Processing-time target.** "Under 5 s of scan processing" means Flipside's own processing time (CPU time of scan work). It excludes the server delay before the first event and the item-load wait. It is measured on the largest Forever run (about 73,000 rows).
 ### 3.3 History storage
 
 - Per item, region and ruleset (D15, D22): every daily record (min, market, quantity, scans) for at least 60 days by default; retention is a setting with 60 days as the minimum (D6). Market value still weights the last 14 days.
@@ -412,7 +426,7 @@ The MVP is done when a player on WoW: Forever can scan, see prices in tooltips, 
 
 | Phase | Goal | Features | Done when |
 | --- | --- | --- | --- |
-| MVP | Scan → price → buy / sell → profit, one realm | Full scan, groups, operations and formulas, tooltips, inventory tracking, buying, selling with dry run and decision log, vendoring, ledger, Great Deals | A week of daily use on one realm with no errors, under 5 s of scan processing on a mid-size realm |
+| MVP | Scan → price → buy / sell → profit, one realm | Full scan, groups, operations and formulas, tooltips, inventory tracking, buying, selling with dry run and decision log, vendoring, ledger, Great Deals | A week of daily use on one realm with no errors, under 5 s of scan processing on a mid-size realm (Flipside processing time; see §3.2 scan engine design) |
 | Phase 2 | Run a multi-character business | Mail lists, keep stock, banking, crafting and queue, sniper, profiles, import/export, dashboard, price history chart, deposit-aware posting, craft profit ranking, presets and undo | A crafter-and-seller pair of alts restocks and sells through one session without manual moves |
 | Phase 3 | Multi-account and polish | Account sync (incl. scan data), Task List, destroying, guild scan sharing, TBC Anniversary, then Retail | Two accounts on one realm share inventory, ledger and prices |
 
