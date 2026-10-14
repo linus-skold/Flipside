@@ -14,6 +14,7 @@ local GLOBAL_NAMES = {
     "PanelTemplates_SetTab", "InCombatLockdown", "ScrollUtil", "CreateDataProvider",
     "CreateScrollBoxListLinearView", "CreateTreeDataProvider", "CreateScrollBoxListTreeListView", "MenuUtil",
     "Enum", "TooltipDataProcessor", "IsAltKeyDown", "GetInboxNumItems", "GetInboxItemLink", "GetInboxItem",
+    "FlipsideDB_TBC", "FlipsideScanDB_TBC", "NUM_BAG_SLOTS", "NUM_BANKBAGSLOTS", "BANK_CONTAINER",
 }
 
 local frameMethods = {}
@@ -310,7 +311,8 @@ local function newObject(kind, name, parent, template)
     end
     return f
 end
-function M.reset()
+-- options.flavour = "tbc" removes the Forever-only globals and sets the TBC bag constants.
+function M.reset(options)
     M.clock = 0 -- seconds since reset
     M.serverBase = 1000000
     M.timers = {}
@@ -359,6 +361,8 @@ function M.reset()
     _G.time = os.time
     _G.ScanTestDB = nil
     _G.FlipsideDB = nil
+    _G.FlipsideDB_TBC = nil
+    _G.FlipsideScanDB_TBC = nil
     _G.FlipsideScanDB = nil
     _G.SLASH_FLIPSIDE1 = nil
     _G.SLASH_FLIPSIDE2 = nil
@@ -695,6 +699,14 @@ function M.reset()
             return menu
         end,
     }
+
+    if options and options.flavour == "tbc" then
+        _G.C_AuctionHouse = nil
+        _G.TooltipDataProcessor = nil
+        _G.NUM_BAG_SLOTS = 4
+        _G.NUM_BANKBAGSLOTS = 7
+        _G.BANK_CONTAINER = -1
+    end
 end
 
 -- Remove the globals that the mock sets.

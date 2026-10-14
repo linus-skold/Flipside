@@ -1,0 +1,63 @@
+## Interface: 20505
+# The interface number 20505 is NOT verified. Check GetBuildInfo on the TBC Anniversary client.
+## Title: Flipside
+## Notes: Auction house and economy addon for WoW: TBC Anniversary.
+## Author: linus-skold
+## Version: @project-version@
+## IconTexture: Interface\Icons\INV_Misc_Coin_02
+## SavedVariables: FlipsideDB_TBC, FlipsideScanDB_TBC
+
+Shared\Core\EventBus.lua
+Shared\Core\Scheduler.lua
+Shared\Core\ItemString.lua
+Shared\Core\SettingsDB.lua
+Shared\Core\ItemInfoCache.lua
+Core_TBC\Flavour.lua
+Shared\Services\AuctionClient.lua
+AH_TBC\LegacyBackend.lua
+Shared\Services\ScanClock.lua
+Shared\Services\ScanRecord.lua
+Shared\Services\ScanMarket.lua
+Shared\Services\ScanKey.lua
+Shared\Services\ScanCooldown.lua
+Shared\Services\ScanBucket.lua
+Shared\Services\ScanStore.lua
+Shared\Services\ScanRows.lua
+Shared\Services\ScanItemLoad.lua
+Shared\Services\ScanSources.lua
+Shared\Services\ScanEngine.lua
+Shared\Services\ScanCapture.lua
+Shared\Services\FormulaParse.lua
+Shared\Services\FormulaFunctions.lua
+Shared\Services\FormulaSources.lua
+Shared\Services\FormulaLookup.lua
+Shared\Services\FormulaEval.lua
+Shared\Services\FormulaRun.lua
+Shared\Services\ItemNameIndex.lua
+Shared\Services\OperationSchema.lua
+Shared\Services\GroupTree.lua
+Shared\Services\BagItems.lua
+Shared\Services\RulesStore.lua
+Shared\Services\CustomSources.lua
+Shared\Services\AHNameSearch.lua
+Shared\Services\RulesExport.lua
+Shared\Services\Holdings.lua
+Shared\Services\HoldingsRead.lua
+Shared\Services\TooltipConfig.lua
+Shared\Services\TooltipLines.lua
+Shared\UI\Kit\Theme.lua
+Shared\UI\Kit\Window.lua
+Shared\UI\Kit\Widgets.lua
+Shared\UI\Kit\Tabs.lua
+Shared\UI\Kit\List.lua
+Shared\UI\Kit\Tree.lua
+Shared\UI\Kit\Combat.lua
+Shared\UI\Pages\FormulaPage.lua
+Shared\UI\Pages\GroupsPage.lua
+Shared\UI\Pages\OperationsPage.lua
+Shared\UI\Pages\TooltipPage.lua
+Shared\UI\MainWindow.lua
+Shared\Features\AuctionTab\AuctionTab.lua
+Shared\Features\Inventory\InventoryCapture.lua
+Shared\Features\Tooltip\Tooltip.lua
+Shared\Core\Init.lua
