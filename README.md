@@ -55,6 +55,8 @@ git push origin v0.1.0
 
 Use `v0.1.0-beta.1` for a beta and `v0.1.0-alpha.1` for an alpha.
 
-Each push to `main` builds an alpha zip. It is not a release. Download it from the workflow run, in the artifact `Flipside-alpha-<short sha>`. It stays for 30 days.
+Each push to `main` creates an alpha pre-release named `vX.Y.(Z+1)-alpha.N`. X.Y.Z is the latest release tag. N is the workflow run number. The workflow keeps the 10 newest alpha builds and deletes older ones with their tags. It never deletes releases or betas.
+
+WowUp: add the GitHub repository URL. Choose the Alpha channel to get alpha builds, Beta for beta tags, and Stable for releases.
 
 CurseForge and Wago need no code change. Add the IDs to `Flipside.toc` (`## X-Curse-Project-ID: <id>` and `## X-Wago-ID: <id>`). Add the secrets `CF_API_TOKEN` and `WAGO_API_TOKEN` in the GitHub repository settings. The packager skips a site that has no ID or no token.
