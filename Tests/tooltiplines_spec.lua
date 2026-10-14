@@ -195,6 +195,17 @@ describe("TooltipLines", function()
             assert.are.equal("Market", rows[1].left)
         end)
 
+        it("shows the per-item value in stack mode when altStack is off", function()
+            local c = ctx({ stackMode = true, stackCount = 5 })
+            c.config.lines[1].altStack = false
+            c.config.lines[2] = { label = "Stack", formula = "scanmarket", enabled = true, altStack = true }
+            local rows = TL.Build(c)
+            assert.are.equal("Market", rows[1].left)
+            assert.are.equal("12g 40s", rows[1].right)
+            assert.are.equal("Stack (stack of 5)", rows[2].left)
+            assert.are.equal("62g", rows[2].right)
+        end)
+
         it("skips disabled lines", function()
             local c = ctx()
             c.config.lines[2] = { label = "Off", formula = "scanmarket", enabled = false }
@@ -407,6 +418,17 @@ describe("TooltipLines", function()
             assert.are.same({ "4s", "5s", "6s", "50s" }, model.rows[1].cells)
             model = build(full(), { stackMode = true, stackCount = 1 })[1]
             assert.are.equal("Flipside (updated 2 h ago)", model.header)
+        end)
+
+        it("shows the per-item cells and no stack header when the table altStack is off", function()
+            local line =
+                { id = 1, kind = "table", label = "Price table", formula = "", enabled = true, altStack = false }
+            local model = build(full(), { stackMode = true, stackCount = 5, config = { lines = { line } } })[1]
+            assert.are.equal("Flipside (updated 2 h ago)", model.header)
+            assert.are.same({ "4s", "5s", "6s", "50s" }, model.rows[1].cells)
+            line.altStack = true
+            model = build(full(), { stackMode = true, stackCount = 5, config = { lines = { line } } })[1]
+            assert.are.equal("Flipside (updated 2 h ago, stack of 5)", model.header)
         end)
 
         it("omits the table when its line is off and keeps formula lines below it", function()
