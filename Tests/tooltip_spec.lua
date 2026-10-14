@@ -28,33 +28,64 @@ describe("Tooltip", function()
             tooltipConfig = { Get = function() return { lines = {} } end },
             now = function() return 1234 end,
             isAltDown = function() return alt end,
-            itemLinkByGUID = function(guid) return guid == "G1" and "item:77" or nil end,
             containerItemInfo = function() return { stackCount = 20 } end,
-            processor = {
-                AddTooltipPostCall = function(kind, fn) registered[#registered + 1] = { kind = kind, fn = fn } end,
+            hook = {
+                Install = function(onItem, opts)
+                    registered[#registered + 1] = { fn = onItem, opts = opts }
+                    return true
+                end,
             },
-            itemType = 0,
             clock = function() now = now + 2 return now end,
             report = function(message) reports[#reports + 1] = message end,
         }
     end)
 
-    it("registers one item post call", function()
+    it("installs the hook once", function()
         ns.Tooltip.Attach(callbackDeps)
         assert.are.equal(1, #registered)
-        assert.are.equal(0, registered[1].kind)
     end)
 
     it("reports a missing hook once", function()
-        callbackDeps.processor = nil
+        callbackDeps.hook = nil
         ns.Tooltip.Attach(callbackDeps)
         assert.are.same({ "tooltip hook not available" }, reports)
     end)
 
+    it("gives the hook a report function that reports once", function()
+        ns.Tooltip.Attach(callbackDeps)
+        registered[1].opts.report("a")
+        registered[1].opts.report("b")
+        assert.are.same({ "a" }, reports)
+    end)
+
+    it("stops when the hook does not install", function()
+        callbackDeps.hook.Install = function() return nil end
+        assert.is_nil(ns.Tooltip.Attach(callbackDeps))
+    end)
+
+    it("handles an item through the shared entry point", function()
+        ns.Tooltip.Attach(callbackDeps)
+        local tip = newTooltip()
+        ns.Tooltip.OnItem(tip, "item:5")
+        assert.are.equal("item:5", built[1].input)
+        assert.are.equal("Flipside", tip.lines[2].text)
+    end)
+
+    it("uses the stack count that the hook gives", function()
+        alt = true
+        ns.Tooltip.Attach(callbackDeps)
+        ns.Tooltip.OnItem(newTooltip(), "item:5", 7)
+        assert.are.equal(7, built[1].stackCount)
+    end)
+
+    it("ignores the entry point before an attach", function()
+        ns.Tooltip.handler = nil
+        assert.has_no.errors(function() ns.Tooltip.OnItem(newTooltip(), "item:5") end)
+    end)
     it("adds a blank line, the header and the rows", function()
         ns.Tooltip.Attach(callbackDeps)
         local tip = newTooltip()
-        registered[1].fn(tip, { hyperlink = "item:5" })
+        registered[1].fn(tip, "item:5")
         assert.are.equal(" ", tip.lines[1].text)
         assert.are.equal("Flipside", tip.lines[2].text)
         assert.are.equal("Market", tip.lines[3].left)
@@ -64,18 +95,10 @@ describe("Tooltip", function()
         assert.are.equal(1234, built[1].now)
     end)
 
-    it("takes the link from the guid or the id", function()
-        ns.Tooltip.Attach(callbackDeps)
-        registered[1].fn(newTooltip(), { guid = "G1" })
-        registered[1].fn(newTooltip(), { id = 9 })
-        assert.are.equal("item:77", built[1].input)
-        assert.are.equal("item:9", built[2].input)
-    end)
-
     it("adds nothing without a link", function()
         ns.Tooltip.Attach(callbackDeps)
         local tip = newTooltip()
-        registered[1].fn(tip, {})
+        registered[1].fn(tip, nil)
         assert.are.equal(0, #tip.lines)
         assert.are.equal(0, #built)
     end)
@@ -83,14 +106,14 @@ describe("Tooltip", function()
     it("gives the stack count only with Alt", function()
         local owner = { GetBagID = function() return 0 end, GetID = function() return 1 end }
         ns.Tooltip.Attach(callbackDeps)
-        registered[1].fn(newTooltip(owner), { hyperlink = "item:5" })
+        registered[1].fn(newTooltip(owner), "item:5")
         assert.is_false(built[1].stackMode)
         assert.is_nil(built[1].stackCount)
         alt = true
-        registered[1].fn(newTooltip(owner), { hyperlink = "item:5" })
+        registered[1].fn(newTooltip(owner), "item:5")
         assert.is_true(built[2].stackMode)
         assert.are.equal(20, built[2].stackCount)
-        registered[1].fn(newTooltip(), { hyperlink = "item:5" })
+        registered[1].fn(newTooltip(), "item:5")
         assert.is_nil(built[3].stackCount)
     end)
 
@@ -99,8 +122,8 @@ describe("Tooltip", function()
         failBuild = true
         local tip = newTooltip()
         assert.has_no.errors(function()
-            registered[1].fn(tip, { hyperlink = "item:5" })
-            registered[1].fn(tip, { hyperlink = "item:5" })
+            registered[1].fn(tip, "item:5")
+            registered[1].fn(tip, "item:5")
         end)
         assert.are.equal(0, #tip.lines)
         assert.are.equal(1, #reports)
@@ -108,8 +131,8 @@ describe("Tooltip", function()
 
     it("keeps the build time", function()
         ns.Tooltip.Attach(callbackDeps)
-        registered[1].fn(newTooltip(), { hyperlink = "item:5" })
-        registered[1].fn(newTooltip(), { hyperlink = "item:5" })
+        registered[1].fn(newTooltip(), "item:5")
+        registered[1].fn(newTooltip(), "item:5")
         assert.are.equal(2, ns.Tooltip.stats.count)
         assert.are.equal(4, ns.Tooltip.stats.total)
         assert.are.equal(2, ns.Tooltip.stats.max)

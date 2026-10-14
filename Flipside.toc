@@ -56,6 +56,8 @@ Shared\UI\Pages\OperationsPage.lua
 Shared\UI\Pages\TooltipPage.lua
 Shared\UI\MainWindow.lua
 Shared\Features\AuctionTab\AuctionTab.lua
+AH_Forever\AuctionTabHost.lua
 Shared\Features\Inventory\InventoryCapture.lua
 Shared\Features\Tooltip\Tooltip.lua
+Core_Forever\TooltipHook.lua
 Shared\Core\Init.lua
