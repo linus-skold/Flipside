@@ -1,12 +1,13 @@
+local manifest = require("Tests.manifest")
 describe("FormulaLookup", function()
     local ns, Find
 
     before_each(function()
         ns = {}
-        assert(loadfile("Core/ItemString.lua"))("Flipside", ns)
-        assert(loadfile("Services/ScanRecord.lua"))("Flipside", ns)
-        assert(loadfile("Services/ScanStore.lua"))("Flipside", ns)
-        assert(loadfile("Services/FormulaLookup.lua"))("Flipside", ns)
+        assert(loadfile(manifest.path("ItemString")))("Flipside", ns)
+        assert(loadfile(manifest.path("ScanRecord")))("Flipside", ns)
+        assert(loadfile(manifest.path("ScanStore")))("Flipside", ns)
+        assert(loadfile(manifest.path("FormulaLookup")))("Flipside", ns)
         Find = ns.FormulaLookup.Find
     end)
 

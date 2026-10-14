@@ -1,3 +1,4 @@
+local manifest = require("Tests.manifest")
 describe("Scheduler", function()
     local ns, now, sched, errors
 
@@ -22,7 +23,7 @@ describe("Scheduler", function()
 
     before_each(function()
         ns = {}
-        assert(loadfile("Core/Scheduler.lua"))("Flipside", ns)
+        assert(loadfile(manifest.path("Scheduler")))("Flipside", ns)
         now = 0
         errors = {}
         sched = newScheduler({ frameBudgetMs = 10, unitsPerFrame = 1000 })
@@ -407,7 +408,7 @@ describe("Scheduler", function()
             local fresh = {}
             local savedDebug = _G.debug
             rawset(_G, "debug", nil)
-            local loaded, err = pcall(assert(loadfile("Core/Scheduler.lua")), "Flipside", fresh)
+            local loaded, err = pcall(assert(loadfile(manifest.path("Scheduler"))), "Flipside", fresh)
             rawset(_G, "debug", savedDebug)
             assert(loaded, err)
             local s = fresh.Scheduler.New({ clock = function() return now end, onError = function(_, msg)

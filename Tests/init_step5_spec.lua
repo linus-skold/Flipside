@@ -1,16 +1,10 @@
+local manifest = require("Tests.manifest")
 local mock = require("Tests.wow_mock")
 
 local ns, deps
 
 local function tocFiles()
-    local files = {}
-    for line in io.lines("Flipside.toc") do
-        local path = line:match("^([%w\\]+%.lua)%s*$")
-        if path then
-            table.insert(files, (path:gsub("\\", "/")))
-        end
-    end
-    return files
+    return manifest.files()
 end
 
 local function loadAddon()

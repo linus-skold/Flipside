@@ -1,5 +1,6 @@
+local manifest = require("Tests.manifest")
 local ns = {}
-assert(loadfile("Core/SettingsDB.lua"))("Flipside", ns)
+assert(loadfile(manifest.path("SettingsDB")))("Flipside", ns)
 local SettingsDB = ns.SettingsDB
 
 local function Open(saved, extra)

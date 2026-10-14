@@ -1,6 +1,7 @@
+local manifest = require("Tests.manifest")
 local ns = {}
-assert(loadfile("Services/ScanClock.lua"))("Flipside", ns)
-assert(loadfile("Services/ScanSources.lua"))("Flipside", ns)
+assert(loadfile(manifest.path("ScanClock")))("Flipside", ns)
+assert(loadfile(manifest.path("ScanSources")))("Flipside", ns)
 local S = ns.ScanSources
 
 local DAY = 86400

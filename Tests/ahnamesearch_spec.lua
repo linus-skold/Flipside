@@ -1,3 +1,4 @@
+local manifest = require("Tests.manifest")
 describe("AHNameSearch", function()
     local ns, bus, search, api, now, open, timers, sent, EVENT
 
@@ -16,8 +17,8 @@ describe("AHNameSearch", function()
 
     before_each(function()
         ns = {}
-        assert(loadfile("Core/EventBus.lua"))("Flipside", ns)
-        assert(loadfile("Services/AHNameSearch.lua"))("Flipside", ns)
+        assert(loadfile(manifest.path("EventBus")))("Flipside", ns)
+        assert(loadfile(manifest.path("AHNameSearch")))("Flipside", ns)
         EVENT = "AUCTION_HOUSE_BROWSE_RESULTS_UPDATED"
         bus = ns.EventBus.New()
         now, open, timers, sent = 100, true, {}, {}

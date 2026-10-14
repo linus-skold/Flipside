@@ -1,8 +1,9 @@
+local manifest = require("Tests.manifest")
 local FILES = {
-    "Core/EventBus.lua", "Core/Scheduler.lua", "Core/ItemInfoCache.lua", "Core/SettingsDB.lua",
-    "Core/ItemString.lua", "Services/ScanClock.lua", "Services/ScanKey.lua", "Services/ScanCooldown.lua",
-    "Services/ScanRecord.lua", "Services/ScanMarket.lua", "Services/ScanItemLoad.lua",
-    "Services/ScanBucket.lua", "Services/ScanStore.lua", "Services/ScanRows.lua", "Services/ScanEngine.lua",
+    manifest.path("EventBus"), manifest.path("Scheduler"), manifest.path("ItemInfoCache"), manifest.path("SettingsDB"),
+    manifest.path("ItemString"), manifest.path("ScanClock"), manifest.path("ScanKey"), manifest.path("ScanCooldown"),
+    manifest.path("ScanRecord"), manifest.path("ScanMarket"), manifest.path("ScanItemLoad"),
+    manifest.path("ScanBucket"), manifest.path("ScanStore"), manifest.path("ScanRows"), manifest.path("ScanEngine"),
 }
 
 local DAY = 86400

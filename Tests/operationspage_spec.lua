@@ -1,3 +1,4 @@
+local manifest = require("Tests.manifest")
 local mock = require("Tests.wow_mock")
 
 local KIT = { "Theme", "Window", "Widgets", "Tabs", "List", "Combat" }
@@ -5,16 +6,16 @@ local KIT = { "Theme", "Window", "Widgets", "Tabs", "List", "Combat" }
 local function load()
     local ns = {}
     for _, name in ipairs(KIT) do
-        assert(loadfile("UI/Kit/" .. name .. ".lua"))("Flipside", ns)
+        assert(loadfile(manifest.path(name)))("Flipside", ns)
     end
-    assert(loadfile("Core/ItemString.lua"))("Flipside", ns)
-    assert(loadfile("Core/SettingsDB.lua"))("Flipside", ns)
-    assert(loadfile("Services/GroupTree.lua"))("Flipside", ns)
-    assert(loadfile("Services/OperationSchema.lua"))("Flipside", ns)
-    assert(loadfile("Services/RulesStore.lua"))("Flipside", ns)
-    assert(loadfile("Services/ItemNameIndex.lua"))("Flipside", ns)
-    assert(loadfile("UI/Pages/FormulaPage.lua"))("Flipside", ns)
-    assert(loadfile("UI/Pages/OperationsPage.lua"))("Flipside", ns)
+    assert(loadfile(manifest.path("ItemString")))("Flipside", ns)
+    assert(loadfile(manifest.path("SettingsDB")))("Flipside", ns)
+    assert(loadfile(manifest.path("GroupTree")))("Flipside", ns)
+    assert(loadfile(manifest.path("OperationSchema")))("Flipside", ns)
+    assert(loadfile(manifest.path("RulesStore")))("Flipside", ns)
+    assert(loadfile(manifest.path("ItemNameIndex")))("Flipside", ns)
+    assert(loadfile(manifest.path("FormulaPage")))("Flipside", ns)
+    assert(loadfile(manifest.path("OperationsPage")))("Flipside", ns)
     return ns
 end
 

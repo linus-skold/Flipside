@@ -1,9 +1,10 @@
+local manifest = require("Tests.manifest")
 describe("ScanMarket", function()
     local SM
 
     before_each(function()
         local ns = {}
-        assert(loadfile("Services/ScanMarket.lua"))("Flipside", ns)
+        assert(loadfile(manifest.path("ScanMarket")))("Flipside", ns)
         SM = ns.ScanMarket
     end)
 

@@ -1,9 +1,10 @@
+local manifest = require("Tests.manifest")
 describe("EventBus", function()
     local EventBus
 
     before_each(function()
         local ns = {}
-        assert(loadfile("Core/EventBus.lua"))("Flipside", ns)
+        assert(loadfile(manifest.path("EventBus")))("Flipside", ns)
         EventBus = ns.EventBus
     end)
 

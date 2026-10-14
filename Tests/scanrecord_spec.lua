@@ -1,9 +1,10 @@
+local manifest = require("Tests.manifest")
 describe("ScanRecord", function()
     local ScanRecord
 
     before_each(function()
         local ns = {}
-        assert(loadfile("Services/ScanRecord.lua"))("Flipside", ns)
+        assert(loadfile(manifest.path("ScanRecord")))("Flipside", ns)
         ScanRecord = ns.ScanRecord
     end)
 

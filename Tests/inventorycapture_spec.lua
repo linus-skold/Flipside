@@ -1,3 +1,4 @@
+local manifest = require("Tests.manifest")
 describe("InventoryCapture", function()
     local ns, bus, saved, timers, reports, bags, bankSlots, mail, owned, failBags
 
@@ -56,9 +57,9 @@ describe("InventoryCapture", function()
 
     before_each(function()
         ns = {}
-        for _, name in ipairs({ "Core/EventBus", "Core/ItemString", "Services/ScanKey", "Services/HoldingsRead",
-            "Features/Inventory/InventoryCapture" }) do
-            assert(loadfile(name .. ".lua"))("Flipside", ns)
+        for _, name in ipairs({ "EventBus", "ItemString", "ScanKey", "HoldingsRead",
+            "InventoryCapture" }) do
+            assert(loadfile(manifest.path(name)))("Flipside", ns)
         end
         bus = ns.EventBus.New({})
         saved, timers, reports, failBags = {}, {}, {}, false

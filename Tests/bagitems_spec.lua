@@ -1,3 +1,4 @@
+local manifest = require("Tests.manifest")
 describe("BagItems", function()
     local ns, BagItems, bags, failBag, failSlot, resolver
 
@@ -20,8 +21,8 @@ describe("BagItems", function()
 
     before_each(function()
         ns = {}
-        for _, name in ipairs({ "Core/ItemString", "Services/ScanKey", "Services/BagItems" }) do
-            assert(loadfile(name .. ".lua"))("Flipside", ns)
+        for _, name in ipairs({ "ItemString", "ScanKey", "BagItems" }) do
+            assert(loadfile(manifest.path(name)))("Flipside", ns)
         end
         BagItems = ns.BagItems
         failBag, failSlot = nil, {}

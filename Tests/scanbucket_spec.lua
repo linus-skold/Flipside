@@ -1,12 +1,13 @@
+local manifest = require("Tests.manifest")
 describe("ScanBucket", function()
     local SB, SR, Clock
     local DAY = 86400
 
     before_each(function()
         local ns = {}
-        assert(loadfile("Services/ScanClock.lua"))("Flipside", ns)
-        assert(loadfile("Services/ScanRecord.lua"))("Flipside", ns)
-        assert(loadfile("Services/ScanBucket.lua"))("Flipside", ns)
+        assert(loadfile(manifest.path("ScanClock")))("Flipside", ns)
+        assert(loadfile(manifest.path("ScanRecord")))("Flipside", ns)
+        assert(loadfile(manifest.path("ScanBucket")))("Flipside", ns)
         SB, SR, Clock = ns.ScanBucket, ns.ScanRecord, ns.ScanClock
     end)
 

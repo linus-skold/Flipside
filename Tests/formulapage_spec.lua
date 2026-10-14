@@ -1,3 +1,4 @@
+local manifest = require("Tests.manifest")
 local mock = require("Tests.wow_mock")
 
 local KIT = { "Theme", "Window", "Widgets", "Tabs", "List", "Combat" }
@@ -6,12 +7,12 @@ local DOC_FILES = { "FormulaFunctions", "FormulaSources" }
 local function load()
     local ns = {}
     for _, name in ipairs(KIT) do
-        assert(loadfile("UI/Kit/" .. name .. ".lua"))("Flipside", ns)
+        assert(loadfile(manifest.path(name)))("Flipside", ns)
     end
     for _, name in ipairs(DOC_FILES) do
-        assert(loadfile("Services/" .. name .. ".lua"))("Flipside", ns)
+        assert(loadfile(manifest.path(name)))("Flipside", ns)
     end
-    assert(loadfile("UI/Pages/FormulaPage.lua"))("Flipside", ns)
+    assert(loadfile(manifest.path("FormulaPage")))("Flipside", ns)
     return ns
 end
 
@@ -336,8 +337,8 @@ describe("FormulaPage", function()
         before_each(function()
             pending = 0
             matches = {}
-            assert(loadfile("Core/ItemString.lua"))("Flipside", ns)
-            assert(loadfile("Services/ItemNameIndex.lua"))("Flipside", ns)
+            assert(loadfile(manifest.path("ItemString")))("Flipside", ns)
+            assert(loadfile(manifest.path("ItemNameIndex")))("Flipside", ns)
             build()
         end)
 

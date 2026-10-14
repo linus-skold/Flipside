@@ -1,3 +1,4 @@
+local manifest = require("Tests.manifest")
 describe("FormulaRun", function()
     local ns, run, store, sources, reads, now, infos, parseCalls
 
@@ -25,17 +26,17 @@ describe("FormulaRun", function()
 
     before_each(function()
         ns = {}
-        load("Services/ScanClock.lua")
-        load("Services/ScanRecord.lua")
-        load("Services/ScanSources.lua")
-        load("Services/ScanStore.lua")
-        load("Core/ItemString.lua")
-        load("Services/FormulaParse.lua")
-        load("Services/FormulaFunctions.lua")
-        load("Services/FormulaSources.lua")
-        load("Services/FormulaLookup.lua")
-        load("Services/FormulaEval.lua")
-        load("Services/FormulaRun.lua")
+        load(manifest.path("ScanClock"))
+        load(manifest.path("ScanRecord"))
+        load(manifest.path("ScanSources"))
+        load(manifest.path("ScanStore"))
+        load(manifest.path("ItemString"))
+        load(manifest.path("FormulaParse"))
+        load(manifest.path("FormulaFunctions"))
+        load(manifest.path("FormulaSources"))
+        load(manifest.path("FormulaLookup"))
+        load(manifest.path("FormulaEval"))
+        load(manifest.path("FormulaRun"))
 
         parseCalls = 0
         local parse = ns.FormulaParse.Parse

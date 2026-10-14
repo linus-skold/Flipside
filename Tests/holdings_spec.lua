@@ -1,7 +1,8 @@
+local manifest = require("Tests.manifest")
 local ns = {}
-assert(loadfile("Core/ItemString.lua"))("Flipside", ns)
-assert(loadfile("Core/SettingsDB.lua"))("Flipside", ns)
-assert(loadfile("Services/Holdings.lua"))("Flipside", ns)
+assert(loadfile(manifest.path("ItemString")))("Flipside", ns)
+assert(loadfile(manifest.path("SettingsDB")))("Flipside", ns)
+assert(loadfile(manifest.path("Holdings")))("Flipside", ns)
 
 local now = 100
 local function Clock()
