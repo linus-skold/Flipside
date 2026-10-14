@@ -7,6 +7,7 @@ ns.AuctionTab = AuctionTab
 
 local OWNER = "Flipside.AuctionTab"
 local EVENT_FINISHED = "Flipside.ScanFinished"
+local EVENT_PRICE_CAPTURED = "Flipside.PriceCaptured"
 local WIDTH = 740
 local COMPACT_WIDTH = 760
 local PRICE_SLOTS = 9
@@ -216,18 +217,63 @@ function Tab:_HideChoices()
     end
 end
 
--- Show the price of one stored key.
-function Tab:ShowKey(key)
+-- Show the notes beside the lookup box: the loading count and the refresh state.
+function Tab:_ShowNote()
+    local parts = {}
+    for _, text in ipairs({ self.loadingNote or "", self.refreshNote or "" }) do
+        if text ~= "" then
+            parts[#parts + 1] = text
+        end
+    end
+    self.ui.pendingMessage:SetText(table.concat(parts, "; "))
+end
+
+-- Ask the Auction House for a fresh price of the item. The result comes as a price captured event.
+function Tab:_RequestRefresh(itemID, name)
+    local request = self.deps.requestPriceRefresh
+    self.pendingItemID, self.refreshNote = nil, ""
+    if request and itemID then
+        local ok, err = request(itemID, name)
+        if ok then
+            self.pendingItemID = itemID
+            self.refreshNote = "refreshing the price"
+        else
+            self.refreshNote = err and tostring(err) or ""
+        end
+    end
+    self:_ShowNote()
+end
+
+-- Show the price of one stored key. A refresh from the Auction House follows unless noRefresh is true.
+function Tab:ShowKey(key, noRefresh, name)
     local deps = self.deps
     local record = deps.scanStore:Get(key)
     self:_HideChoices()
+    self.redisplay = function()
+        self:ShowKey(key, true, name)
+    end
     if not record then
         self.ui.priceMessage:SetText("no scan data for " .. key)
-        return
+    else
+        self.ui.priceMessage:SetText("")
+        local values = deps.scanSources.Compute(record, deps.serverTime())
+        self:_ShowPriceRows(AuctionTab.DescribePrice(values, key))
     end
-    self.ui.priceMessage:SetText("")
-    local values = deps.scanSources.Compute(record, deps.serverTime())
-    self:_ShowPriceRows(AuctionTab.DescribePrice(values, key))
+    if not noRefresh then
+        local parsed = ns.ItemString.ParseKey(key)
+        self:_RequestRefresh(parsed and parsed.itemID, name)
+    end
+end
+
+-- A price was stored: show the rows again if it is the item that the lookup waits for.
+function Tab:_OnPriceCaptured(key)
+    local base = ns.ItemString.KeyToBaseKey(key)
+    if self.pendingItemID and self.redisplay and base == string.format("%d", self.pendingItemID) then
+        self.pendingItemID = nil
+        self.redisplay()
+        self.refreshNote = "price refreshed"
+        self:_ShowNote()
+    end
 end
 
 function Tab:_ShowChoices(matches)
@@ -238,7 +284,7 @@ function Tab:_ShowChoices(matches)
         if match then
             button:SetText(ns.ItemNameIndex.Describe(match))
             button:SetScript("OnClick", function()
-                self:ShowKey(match.key)
+                self:ShowKey(match.key, false, match.name)
             end)
             button:Show()
         else
@@ -248,7 +294,7 @@ function Tab:_ShowChoices(matches)
 end
 
 -- Look up a name in the scan data. Returns true if the input was handled.
-function Tab:_LookupName(text)
+function Tab:_LookupName(text, noRefresh)
     local ui = self.ui
     local result = self.deps.itemNameIndex:Resolve(text)
     if result.kind == "item" then
@@ -259,26 +305,32 @@ function Tab:_LookupName(text)
         return true
     end
     local count = result.pendingCount
-    ui.pendingMessage:SetText(count > 0 and (count .. " item names are still loading") or "")
+    self.loadingNote = count > 0 and (count .. " item names are still loading") or ""
+    self:_ShowNote()
     if #result.matches == 0 then
         ui.priceMessage:SetText('no item named "' .. text .. '" in the scan data')
     elseif #result.matches == 1 then
-        self:ShowKey(result.matches[1].key)
+        self:ShowKey(result.matches[1].key, noRefresh, result.matches[1].name)
     else
         self:_ShowChoices(result.matches)
     end
     return true
 end
 
--- Look up an item link, item id or item name in the scan data and show its prices.
-function Tab:Lookup(input)
+-- Look up an item name, item id, item link or Flipside key (for example 25320#s-44) in the scan data.
+-- It shows the stored prices, then asks the Auction House for a fresh price unless noRefresh is true.
+function Tab:Lookup(input, noRefresh)
     local deps = self.deps
     local text = tostring(input or ""):match("^%s*(.-)%s*$")
     self:_ShowPriceRows(nil)
     self:_HideChoices()
-    self.ui.pendingMessage:SetText("")
+    self.loadingNote, self.refreshNote, self.redisplay = "", "", nil
+    if not noRefresh then
+        self.pendingItemID = nil
+    end
+    self:_ShowNote()
     if text == "" then
-        self.ui.priceMessage:SetText(deps.itemNameIndex and "enter an item name, link or id"
+        self.ui.priceMessage:SetText(deps.itemNameIndex and "enter an item name, link, id or key"
             or "enter an item link or item id")
         return
     end
@@ -286,18 +338,30 @@ function Tab:Lookup(input)
         self.ui.priceMessage:SetText("scan is not available this session")
         return
     end
-    if deps.itemNameIndex and self:_LookupName(text) then
+    if text:find("#", 1, true) and ns.ItemString.ParseKey(text) then
+        self:ShowKey(text, noRefresh)
+        return
+    end
+    if deps.itemNameIndex and self:_LookupName(text, noRefresh) then
         return
     end
     local record, key, itemID = deps.formulaLookup.Find(deps.scanStore, text)
     if not itemID then
         self.ui.priceMessage:SetText("not an item: " .. text)
-    elseif not record then
+        return
+    end
+    self.redisplay = function()
+        self:Lookup(text, true)
+    end
+    if not record then
         self.ui.priceMessage:SetText("no scan data for " .. itemID)
     else
         self.ui.priceMessage:SetText("")
         local values = deps.scanSources.Compute(record, deps.serverTime())
         self:_ShowPriceRows(AuctionTab.DescribePrice(values, key))
+    end
+    if not noRefresh then
+        self:_RequestRefresh(itemID, text:match("|h%[(.-)%]|h"))
     end
 end
 
@@ -500,6 +564,9 @@ function Tab:Mount(parent, api)
         self.summaryLines = AuctionTab.DescribeSummary(summary)
         self:Refresh()
     end)
+    self.deps.bus:Subscribe(EVENT_PRICE_CAPTURED, OWNER, function(_, key)
+        self:_OnPriceCaptured(key)
+    end)
     self:Refresh()
 end
 
@@ -510,6 +577,7 @@ function Tab:Unmount()
     end
     self:_StopTicker()
     self.deps.bus:Unsubscribe(EVENT_FINISHED, OWNER)
+    self.deps.bus:Unsubscribe(EVENT_PRICE_CAPTURED, OWNER)
     self.parent, self.api, self.content, self.ui, self.active = nil, nil, nil, nil, false
 end
 
@@ -518,6 +586,7 @@ local REQUIRED_FUNCTIONS = { "serverTime", "confirmScan", "openMainWindow" }
 -- Attach the Flipside panel to the Auction House through the host, which calls Tab:Mount when its frame is ready.
 -- Host interface: host.Attach(tab) -> state table (optional). The host is deps.host or ns.AuctionTabHost.
 -- deps: bus, scanEngine, scanCooldown, scanStore, formulaLookup, scanSources, itemNameIndex (optional),
+-- requestPriceRefresh(itemID, name) -> ok, text (optional),
 -- serverTime, confirmScan, openMainWindow, host (optional). Returns an object with :Refresh().
 function AuctionTab.Attach(deps)
     if type(deps) ~= "table" then

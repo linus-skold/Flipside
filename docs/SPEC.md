@@ -513,6 +513,16 @@ Gold, silver and copper coin amounts keep the game's own coin colours so money r
 - A separate Flipside window, like the reference main window, holds groups, operations, settings and the formula preview.
 - The Flipside window has a fixed size of 800 x 540, the same as the AH frame.
 - The AH frame gets one tab, "Flipside". It has the full scan button, the cooldown, the scan status and the item price lookup.
+- **Price lookup input** (the AH tab box and `/flip price`). It accepts four forms:
+  1. An item name (the name index and the choice list).
+  2. An item ID, for example `785`.
+  3. An item link (shift-click into the box).
+  4. A Flipside key, for example `25320#s-44`.
+- The lookup shows the stored values first. A link or a name gives the item name for the refresh.
+- **Targeted refresh.** If the Auction House is open, the lookup also searches that one item and stores the fresh price through the capture. Then it shows the rows again (the tab) or prints the fresh price (`/flip price`). The result follows the capture rules of §3.2.
+  - TBC: `QueryAuctionItems(name, nil, nil, 0, false, 0, false, true, nil)`. The eighth argument is `exactMatch`. The name comes from the link, the name match or the item cache. If no name is known, the lookup says so.
+  - Forever: `C_AuctionHouse.SendSearchQuery(itemKey, {}, true)` with an item key made from the item ID. The existing search capture events store the result.
+  - A running Flipside scan or name search blocks the refresh. If the Auction House is closed, the lookup shows the stored data and the hint "open the Auction House to refresh this price".
 - `/flip` without arguments opens the Flipside window. A button on the Flipside AH tab opens it too.
 - The window can open in combat (plain show, no protected actions). Escape closes it.
 - One untinted theme table.
