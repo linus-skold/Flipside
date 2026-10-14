@@ -25,7 +25,12 @@ function MainWindow.Create(deps)
     end
     deps = deps or {}
     local Kit = ns.Kit
-    local window = Kit.CreateWindow("FlipsideMainWindow", { width = 800, height = 540, title = "Flipside" })
+    local window = Kit.CreateWindow("FlipsideMainWindow", {
+        width = 800,
+        height = 540,
+        title = "Flipside",
+        portrait = "Interface\\Icons\\INV_Misc_Coin_02",
+    })
     local tabs = Kit.CreatePageTabs(window, {
         {
             key = "formula",

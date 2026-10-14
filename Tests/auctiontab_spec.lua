@@ -270,6 +270,86 @@ describe("AuctionTab", function()
         end)
     end)
 
+    describe("tab template", function()
+        local function useTemplate(addsItself)
+            local create = _G.CreateFrame
+            _G.CreateFrame = function(kind, name, parent, template)
+                local f = create(kind, name, parent, template)
+                if template == "AuctionHouseFrameTabTemplate" and parent == ah and addsItself then
+                    table.insert(parent.Tabs, f)
+                end
+                return f
+            end
+        end
+
+        local function countHooks()
+            local hooked = {}
+            local function spy(tab)
+                tab.HookScript = function(self)
+                    table.insert(hooked, self)
+                end
+            end
+            for _, tab in ipairs(ah.Tabs) do
+                spy(tab)
+            end
+            local create = _G.CreateFrame
+            _G.CreateFrame = function(...)
+                local f = create(...)
+                spy(f)
+                return f
+            end
+            return hooked
+        end
+
+        for _, addsItself in ipairs({ true, false }) do
+            it("builds the tab once when the template " .. (addsItself and "adds" or "does not add")
+                .. " it to Tabs", function()
+                local blizzardOne, blizzardTwo = ah.Tabs[1], ah.Tabs[2]
+                local hooked = countHooks()
+                useTemplate(addsItself)
+                local tab = attach()
+                assert.are.equal(3, #ah.Tabs)
+                assert.are.equal(blizzardOne, ah.Tabs[1])
+                assert.are.equal(blizzardTwo, ah.Tabs[2])
+                assert.are.equal(tab.tab, ah.Tabs[3])
+                assert.are.equal(3, tab.index)
+                assert.are.equal(3, tab.tab:GetID())
+                assert.are.same({ "TOPLEFT", blizzardTwo, "TOPRIGHT", 3, 0 }, tab.tab.points[1])
+                assert.are.same({ "num", ah, 3 }, mock.tabCalls[#mock.tabCalls])
+                assert.are.same({ blizzardOne, blizzardTwo }, hooked)
+                click(tab.tab)
+                assert.is_true(tab.content:IsShown())
+            end)
+        end
+
+        it("leaves nothing behind and reports when the build fails", function()
+            local reports = {}
+            ns.ReportError = function(message)
+                table.insert(reports, message)
+            end
+            local create = _G.CreateFrame
+            local button
+            _G.CreateFrame = function(kind, name, parent, template)
+                local f = create(kind, name, parent, template)
+                if template == "AuctionHouseFrameTabTemplate" then
+                    button = f
+                    f.SetPoint = function()
+                        error("Cannot anchor to itself")
+                    end
+                end
+                return f
+            end
+            local tab = attach()
+            assert.are.equal(1, #reports)
+            assert.is_truthy(reports[1]:find("Cannot anchor to itself", 1, true))
+            assert.are.equal(2, #ah.Tabs)
+            assert.is_false(button:IsShown())
+            assert.is_nil(tab.tab)
+            assert.is_nil(tab.frame)
+            assert.are.same({ "num", ah, 2 }, mock.tabCalls[#mock.tabCalls])
+            assert.are.same({}, hooks)
+        end)
+    end)
     describe("attach", function()
         it("attaches at once when the frame exists", function()
             local tab = attach()

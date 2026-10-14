@@ -72,6 +72,11 @@ describe("MainWindow", function()
         assert.are.equal("Flipside", win.frame.title)
     end)
 
+    it("uses a client icon as the portrait", function()
+        local win = ns.MainWindow.Create(deps)
+        assert.are.equal("Interface\\Icons\\INV_Misc_Coin_02", win.frame.portrait)
+    end)
+
     it("has two page tabs", function()
         local win = ns.MainWindow.Create(deps)
         assert.are.equal(2, #win.frame.Tabs)
