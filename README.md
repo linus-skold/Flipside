@@ -8,7 +8,7 @@ Spike 0. Only the throwaway test addon `ScanTest` exists. It checks if the full 
 The interface number 16001 in the TOC files is confirmed by `GetBuildInfo` in the client (build 70338).
 
 ## Licence
-MIT.
+MIT. See `LICENSE`.
 
 ## Development setup
 The tools are Lua 5.1, luarocks, luacheck and busted. Code must run on Lua 5.1.
