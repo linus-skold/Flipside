@@ -67,4 +67,9 @@ globals = {
     "UISpecialFrames",
 }
 
+files["ScanTest/ScanTest_TBC.lua"] = {
+    read_globals = { "AuctionFrame", "QueryAuctionItems", "CanSendAuctionQuery", "GetNumAuctionItems",
+        "GetAuctionItemInfo", "GetAuctionItemLink" },
+}
+
 files["Tests/"] = { std = "+busted" }
