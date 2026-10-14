@@ -42,6 +42,15 @@ describe("Init on TBC", function()
             return self.focused
         end
         _G.ScrollUtil = nil
+        local tip = _G.GameTooltip
+        tip.scripts = {}
+        tip.HookScript = function(self, name, fn)
+            self.scripts[name] = fn
+        end
+        tip.GetItem = function(self)
+            return "Item", self.link
+        end
+        _G.ItemRefTooltip = { HookScript = function() end, GetItem = function() end }
         _G.C_Timer.NewTicker = function()
             return { Cancel = function() end }
         end
@@ -54,6 +63,7 @@ describe("Init on TBC", function()
     end)
 
     after_each(function()
+        _G.ItemRefTooltip = nil
         mock.teardown()
     end)
 
@@ -103,9 +113,20 @@ describe("Init on TBC", function()
             end
         end)
 
-        it("reports the missing tooltip hook once", function()
+        it("installs the tooltip hook and adds Flipside lines to an item tooltip", function()
             login()
-            assert.are.equal(1, count("tooltip hook not available"))
+            assert.are.equal(0, count("tooltip hook not available"))
+            local linen = "|cff1eff00|Hitem:2589::::::::60:::::|h[Linen Cloth]|h|r"
+            local tip = _G.GameTooltip
+            tip.link = linen
+            tip.scripts.OnTooltipSetItem(tip)
+            local found
+            for _, line in ipairs(mock.tooltip.lines) do
+                if line == "Flipside" then
+                    found = true
+                end
+            end
+            assert.is_true(found)
         end)
 
         it("uses the TBC SavedVariables names", function()
