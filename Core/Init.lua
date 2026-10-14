@@ -533,7 +533,20 @@ local function splitFormula(text)
         return text:sub(1, linkStart - 1):match("^(.-)%s*$"), text:sub(linkStart)
     end
     local formula, number = text:match("^(.-)%s+(%d+)$")
-    if number then
+    if not number then
+        return text, nil
+    end
+    local run = ns.formulaRun
+    local beforeOk = run:Compile(formula)
+    local wholeOk, wholeErr = run:Compile(text)
+    if beforeOk then
+        return formula, number
+    end
+    if wholeOk then
+        return text, nil
+    end
+    -- Neither compiles: an error at the number belongs to the formula before it.
+    if wholeErr and wholeErr.pos and wholeErr.pos > #formula then
         return formula, number
     end
     return text, nil

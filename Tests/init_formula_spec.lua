@@ -109,6 +109,18 @@ describe("Init formula", function()
         assert.is_truthy(mock.messages[1]:match("^Flipside: formula error at "))
     end)
 
+    it("reads a trailing number as the item only when it fits", function()
+        slash("formula scanmin * 2")
+        assert.are.same({ "Flipside: formula ok (sources: scanmin)" }, mock.messages)
+        slash("formula scanmin * 2 2589")
+        assert.are.same({ "Flipside: formula = 200 (0g 2s 0c) for 2589" }, mock.messages)
+        slash("formula max(scanmin, 2) 2589")
+        assert.are.same({ "Flipside: formula = 100 (0g 1s 0c) for 2589" }, mock.messages)
+        slash("formula scanmarkt 2589")
+        assert.is_truthy(mock.messages[1]:match("^Flipside: formula error at 1: "))
+        assert.are.equal('Flipside: near "scanmarkt"', mock.messages[2])
+    end)
+
     it("prints not an item for a link that is not an item", function()
         local link = "|cff71d5ff|Hspell:1|h[Spell]|h|r"
         slash("formula scanmin " .. link)
