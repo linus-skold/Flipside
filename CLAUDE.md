@@ -20,7 +20,7 @@ Flipside is a World of Warcraft: Forever auction house addon. Lua 5.1. Licence M
 3. Formula compiler, with live preview.
 4. Groups and operations UI.
 5. Tooltips and inventory tracking.
-6. AH frame: Buying, then Selling with dry run and decision log.
+6. AH tabs in Blizzard's Auction House frame: Buying, then Selling with dry run and decision log.
 7. Mailbox parsing and the ledger; then Vendoring.
 
 ## Definition of done
@@ -34,6 +34,7 @@ Unit tests pass; luacheck is clean; the feature's in-game checklist passes on Wo
 - Scan modules in `Services/`: `ScanClock`, `ScanRecord`, `ScanMarket`, `ScanKey`, `ScanCooldown`, `ScanBucket`, `ScanStore`, `ScanRows`, `ScanItemLoad`, `ScanSources`, `ScanEngine`, `ScanCapture`.
 - Formula modules in `Services/`: `FormulaParse`, `FormulaFunctions`, `FormulaSources`, `FormulaLookup`, 
 `FormulaEval`, `FormulaRun`.
+- UI: Flipside tabs inside Blizzard's AuctionHouseFrame, plus the Flipside window (800 x 540); only client assets.
 - Item keys follow D20; no battle pets in the MVP (D21); scan data is keyed by region and ruleset (D22).
 
 ## Commands
