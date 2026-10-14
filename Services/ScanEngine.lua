@@ -101,7 +101,7 @@ end
 local function newSummary()
     return {
         result = "ok", rows = 0, kept = 0, items = 0, keys = 0, newItems = 0, changed = 0,
-        pendingMissing = 0, noKey = 0, timeToEventMs = nil, cpuMs = 0, wallMs = 0, frames = 1,
+        pendingMissing = 0, noKey = 0, unknownItems = 0, timeToEventMs = nil, cpuMs = 0, wallMs = 0, frames = 1,
     }
 end
 
@@ -125,6 +125,9 @@ local function partialReasons(run, summary)
     end
     if run.itemsMissing > 0 then
         reasons[#reasons + 1] = run.itemsMissing .. " items without data"
+    end
+    if (summary.unknownItems or 0) > 0 then
+        reasons[#reasons + 1] = summary.unknownItems .. " items with unknown stack size"
     end
     if summary.noKey > 0 then
         reasons[#reasons + 1] = summary.noKey .. " rows without a key"
@@ -254,10 +257,15 @@ function Engine:_BuildGroups(jobView, rows)
     local api = self.deps.api
     local resolver = ns.ScanKey.New({ clientIsCommodity = api.clientIsCommodity, maxStack = api.maxStack })
     local groups, used, noKey = {}, 0, 0
+    local unknown, unknownItems = {}, 0
     for itemID, list in pairs(rows.byItem) do
         if not rows.pending[itemID] then
             for _, row in ipairs(list) do
-                local key = resolver:KeyFor(itemID, row.link)
+                local key, reason = resolver:KeyFor(itemID, row.link)
+                if not key and reason == "unknown" and not unknown[itemID] then
+                    unknown[itemID] = true
+                    unknownItems = unknownItems + 1
+                end
                 if key then
                     local auctions = groups[key]
                     if not auctions then
@@ -273,7 +281,24 @@ function Engine:_BuildGroups(jobView, rows)
             jobView:Checkpoint(1)
         end
     end
-    return groups, used, noKey, resolver
+    return groups, used, noKey, resolver, unknownItems
+end
+
+-- Returns the items to load: pending items and items with an unknown commodity status.
+function Engine:_LoadSet(jobView, rows)
+    local api = self.deps.api
+    local probe = ns.ScanKey.New({ clientIsCommodity = api.clientIsCommodity, maxStack = api.maxStack })
+    local set = {}
+    for itemID in pairs(rows.pending) do
+        set[itemID] = true
+    end
+    for itemID in pairs(rows.byItem) do
+        if not set[itemID] and probe:IsCommodity(itemID) == nil then
+            set[itemID] = true
+        end
+        jobView:Checkpoint(1)
+    end
+    return set
 end
 
 -- Writes all snapshots in one frame. Returns the number of new keys and of changed keys.
@@ -342,7 +367,8 @@ function Engine:_Run(job)
         return
     end
     local clock = { clock = deps.seconds }
-    local loaded, missing = ns.ScanItemLoad.Run(jobView, deps.cache, rows.pending, clock)
+    local loadSet = self:_LoadSet(jobView, rows)
+    local loaded, missing = ns.ScanItemLoad.Run(jobView, deps.cache, loadSet, clock)
     if not loaded then
         return
     end
@@ -353,7 +379,7 @@ function Engine:_Run(job)
     end
     ns.ScanRows.RereadLinks(jobView, deps.api, rows, loadedList)
 
-    local groups, used, noKey, resolver = self:_BuildGroups(jobView, rows)
+    local groups, used, noKey, resolver, unknownItems = self:_BuildGroups(jobView, rows)
     local snaps, keyCount = {}, 0
     for key, auctions in pairs(groups) do
         jobView:Checkpoint(1)
@@ -367,6 +393,7 @@ function Engine:_Run(job)
     local pendingMissing = count(rows.pending)
     local partial = run.readCut or pendingMissing > 0 or noKey > 0 or run.itemsMissing > 0
     summary.noKey = noKey
+    summary.unknownItems = unknownItems
     summary.pendingMissing = pendingMissing
     summary.rows = rows.stats.rows
     summary.kept = used

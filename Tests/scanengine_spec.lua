@@ -47,7 +47,8 @@ local function MakeWorld(options)
     end
     local w = {
         ns = ns, ms = 0, sec = 0, tick = 0, server = FIRST_DAY * DAY + 1000, rows = options.rows or {},
-        known = {}, requested = {}, neverLoad = {}, errors = {}, reports = {}, finished = {},
+        known = {}, requested = {}, requestCount = {}, neverLoad = {}, stack = {},
+        stackOnLoad = {}, errors = {}, reports = {}, finished = {},
         putTicks = {}, ahOpen = true, apiCost = options.apiCost or 0.001,
     }
     w.saved = options.saved or {}
@@ -67,7 +68,10 @@ local function MakeWorld(options)
                 return { name = "Item" .. id }
             end
         end,
-        requestLoad = function(id) w.requested[id] = true end,
+        requestLoad = function(id)
+            w.requested[id] = true
+            w.requestCount[id] = (w.requestCount[id] or 0) + 1
+        end,
     })
 
     local realPut = w.store.Put
@@ -115,6 +119,10 @@ local function MakeWorld(options)
         end,
         clientIsCommodity = function(id) return id >= 2000 end,
     }
+    if options.unknownStack then
+        w.api.clientIsCommodity = nil
+        w.api.maxStack = function(id) return w.stack[id] end
+    end
     if options.noReplicate then
         w.api.replicateItems = nil
     end
@@ -148,6 +156,7 @@ local function Tick(w)
         if not w.neverLoad[id] then
             w.requested[id] = nil
             w.known[id] = true
+            w.stack[id] = w.stackOnLoad[id]
             w.cache:OnLoadResult(id, true)
         end
     end
@@ -469,5 +478,65 @@ describe("ScanEngine cpuMs", function()
         assert.are.equal("partial", summary.result)
         assert.is_true(summary.wallMs >= 30 * 16)
         assert.is_true(math.abs(summary.cpuMs - 1) < 0.001)
+    end)
+end)
+
+describe("ScanEngine unknown stack size", function()
+    local function rowsWithUnknown()
+        return { gearRow(1), commodityRow(3001, 5, 5000), commodityRow(3001, 5, 6000), gearRow(2) }
+    end
+
+    it("loads the item and stores it under the right key", function()
+        local w = MakeWorld({ rows = rowsWithUnknown(), unknownStack = true })
+        w.stackOnLoad[1001] = 1
+        w.stackOnLoad[1002] = 1
+        w.stackOnLoad[3001] = 20
+        local summary = Run(w)
+        assert.are.equal("ok", summary.result)
+        assert.are.equal(0, summary.unknownItems)
+        assert.are.equal(0, summary.noKey)
+        assert.are.equal(3, summary.keys)
+        assert.is_not_nil(w.store:Get("3001"))
+        assert.is_not_nil(w.store:Get("1001#b6001"))
+        assert.is_false(w.store:Get("3001").latest.partial)
+        assert.are.equal(1, w.requestCount[3001])
+        assert.are.equal(1, w.requestCount[1001])
+    end)
+
+    it("leaves out an item that never loads and marks the scan partial", function()
+        local w = MakeWorld({ rows = rowsWithUnknown(), unknownStack = true })
+        w.stackOnLoad[1001] = 1
+        w.stackOnLoad[1002] = 1
+        w.neverLoad[3001] = true
+        local summary = Run(w)
+        assert.are.equal("partial", summary.result)
+        assert.are.equal(1, summary.unknownItems)
+        assert.are.equal(2, summary.noKey)
+        assert.is_nil(w.store:Get("3001"))
+        assert.is_not_nil(w.store:Get("1001#b6001"))
+        assert.is_true(w.store:Get("1001#b6001").latest.partial)
+        assert.is_truthy(Joined(w):find("1 items with unknown stack size", 1, true))
+    end)
+
+    it("makes one load set for pending and unknown items", function()
+        local rows = rowsWithUnknown()
+        rows[1].late = true
+        local w = MakeWorld({ rows = rows, unknownStack = true })
+        w.stackOnLoad[1001] = 1
+        w.stackOnLoad[1002] = 1
+        w.stackOnLoad[3001] = 20
+        local seen = {}
+        local realRun = w.ns.ScanItemLoad.Run
+        w.ns.ScanItemLoad.Run = function(job, cache, set, options)
+            local n = 0
+            for _ in pairs(set) do
+                n = n + 1
+            end
+            seen[#seen + 1] = n
+            return realRun(job, cache, set, options)
+        end
+        local summary = Run(w)
+        assert.are.equal("ok", summary.result)
+        assert.are.same({ 3 }, seen)
     end)
 end)

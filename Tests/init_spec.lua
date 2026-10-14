@@ -23,7 +23,7 @@ end
 describe("Init", function()
     before_each(function()
         mock.reset()
-        ns = {}
+        ns = { scanModulesOptional = true }
         for _, path in ipairs(FILES) do
             assert(loadfile(path))("Flipside", ns)
         end
