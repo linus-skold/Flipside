@@ -55,6 +55,10 @@ local FIELDS = {
             help = "The most auctions to post for each item. 0 means no cap.",
         },
         {
+            key = "keepInBags", label = "Keep in bags", kind = "number", default = 0, min = 0, max = 10000,
+            help = "This many of each item stay in your bags; the rest can be sold.",
+        },
+        {
             key = "belowMin", label = "Below minimum", kind = "choice", default = "skip",
             choices = {
                 { value = "skip", label = "Skip the item" },
@@ -89,6 +93,10 @@ local FIELDS = {
         {
             key = "sellToVendor", label = "Sell to vendor", kind = "bool", default = false,
             help = "Sell matching items to a vendor.",
+        },
+        {
+            key = "keepInBags", label = "Keep in bags", kind = "number", default = 0, min = 0, max = 10000,
+            help = "This many of each item stay in your bags; the rest can be sold to a vendor.",
         },
         {
             key = "safetyMultiple", label = "Safety multiple", kind = "number", default = 2, min = 1, max = 100,
