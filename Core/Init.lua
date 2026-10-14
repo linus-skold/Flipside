@@ -225,6 +225,46 @@ local function detectRegion()
     return "beta", "fallback"
 end
 
+-- Read access to the client search results, in the form that the capture needs.
+local function buildCaptureApi()
+    local ah = C_AuctionHouse
+    return {
+        commodityNum = ah.GetNumCommoditySearchResults,
+        commodityInfo = ah.GetCommoditySearchResultInfo,
+        commodityFull = ah.HasFullCommoditySearchResults,
+        itemNum = ah.GetNumItemSearchResults,
+        itemInfo = ah.GetItemSearchResultInfo,
+        itemFull = ah.HasFullItemSearchResults,
+    }
+end
+
+-- Save the price of each item that the player searches in the Auction House.
+local function openCapture()
+    if not ns.ScanCapture then
+        return
+    end
+    local ok, capture = pcall(ns.ScanCapture.New, {
+        store = ns.scanStore,
+        serverTime = GetServerTime,
+        api = buildCaptureApi(),
+        report = ns.ReportError,
+        isScanRunning = function()
+            return ns.scanEngine ~= nil and ns.scanEngine:IsRunning()
+        end,
+    })
+    if not ok then
+        ns.ReportError("search capture is not available this session: " .. tostring(capture))
+        return
+    end
+    ns.scanCapture = capture
+    ns.bus:Subscribe("COMMODITY_SEARCH_RESULTS_UPDATED", "Flipside.Capture", function(_, itemID)
+        capture:OnCommodityResults(itemID)
+    end)
+    ns.bus:Subscribe("ITEM_SEARCH_RESULTS_UPDATED", "Flipside.Capture", function(_, itemKey)
+        capture:OnItemResults(itemKey)
+    end)
+end
+
 -- Open the scan store and the scan engine; print one line if that is not possible.
 local function openScan()
     if not (ns.ScanStore and ns.ScanEngine and ns.ScanCooldown and ns.ScanClock) then
@@ -279,6 +319,7 @@ local function openScan()
         return
     end
     ns.scanEngine = engine
+    openCapture()
     ns.bus:Subscribe("PLAYER_LOGOUT", "Flipside.Init", function()
         local okFlush, err = pcall(ns.scanStore.Flush, ns.scanStore)
         if not okFlush then

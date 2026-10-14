@@ -131,7 +131,7 @@ All prices come from three kinds of in-game scans, folded into a compact daily h
 | --- | --- | --- | --- | --- |
 | Full scan | `C_AuctionHouse.ReplicateItems` | Every listing with price and quantity | 15 min account-wide cooldown (assumed; not yet measured on Forever) | Primary data source, one button |
 | Summary scan | Browse query + "request more results" | Lowest price and total quantity per item | Search throttle, no cooldown | Fallback when full scan is on cooldown or fails |
-| Passive capture | Any search done by Buying, Selling or Sniper | Full depth for searched items | None extra | Keeps watched items fresh between full scans |
+| Passive capture | Any search done by Buying, Selling or Sniper | Full depth for searched items | None extra | Keeps watched items fresh between full scans; searches in Blizzard's own AH window are captured too |
 
 Full-scan facts that shape the design ([Warcraft Wiki](https://warcraft.wiki.gg/wiki/API:C_AuctionHouse.ReplicateItems)):
 
@@ -167,6 +167,11 @@ All steps run as coroutines that yield each frame, with a progress bar. A scan i
 8. **Snapshots and roll-up.** Keep up to 4 snapshots per day; a fifth drops the oldest. The day's record is the average of the day's snapshots. Roll-up into history happens at the first scan of a new day and also at login.
 9. **Partial scans** (AH closed during the read, or items not loaded within 30 s). The data updates the item's "latest" values. It does not enter the day's snapshots or the history. Only a complete scan does that. A complete scan replaces the "latest" values.
 10. **Processing-time target.** "Under 5 s of scan processing" means Flipside's own processing time (CPU time of scan work). It excludes the server delay before the first event and the item-load wait. It is measured on the largest Forever run (about 73,000 rows).
+- **Passive capture (decided 2026-10-14).**
+  1. A complete item search result replaces the day's value (D5): `latest` becomes this snapshot, and today's snapshots of the item become this one snapshot. A later full scan adds snapshots as usual.
+  2. If the client has not sent all result pages, only the lowest price is saved, marked partial (latest only). `market`, `qty` and `auctions` stay from the old `latest`; without one, `market` is the lowest price. Flipside sends no extra server requests.
+  3. Only item searches (the listings of one item) are captured, not the browse list.
+  4. Commodities use the base key, other items the exact key of each listing's link (D20). Battle pets are skipped (D21).
 ### 3.3 History storage
 
 - Per item, region and ruleset (D15, D22): every daily record (min, market, quantity, scans) for at least 60 days by default; retention is a setting with 60 days as the minimum (D6). Market value still weights the last 14 days.
