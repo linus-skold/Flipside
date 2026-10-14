@@ -257,19 +257,37 @@ function Tab:_Deselect()
     self.content:Hide()
 end
 
--- Show the Flipside content in place of Blizzard's panes of the current display mode.
-function Tab:_Select()
+-- Show or hide the panes that the current display mode lists. Blizzard's state is only read.
+function Tab:_SetPanes(shown)
     local frame = self.frame
     local mode = frame:GetDisplayMode()
     if type(mode) == "table" then
         for _, name in ipairs(mode) do
             if frame[name] then
-                frame[name]:Hide()
+                frame[name]:SetShown(shown)
             end
         end
     end
-    -- Clear the mode so that the next click on any Blizzard tab is not ignored.
-    frame.displayMode = nil
+    return mode
+end
+
+-- Leave the Flipside tab: show Blizzard's panes again and select the given Blizzard tab.
+function Tab:_Restore(tabIndex)
+    self:_Deselect()
+    self:_SetPanes(true)
+    local index = tabIndex or self.previousTab
+    if index then
+        PanelTemplates_SetTab(self.frame, index)
+    end
+end
+
+-- Show the Flipside content in place of Blizzard's panes of the current display mode.
+function Tab:_Select()
+    local frame = self.frame
+    if not self.active then
+        self.previousTab = frame.selectedTab
+    end
+    self.selectedMode = self:_SetPanes(false)
     self.active = true
     self.content:Show()
     self:Refresh()
@@ -301,7 +319,9 @@ function Tab:_BuildContent()
         self:_StartTicker()
     end)
     content:SetScript("OnHide", function()
-        self.active = false
+        if self.active then
+            self:_Restore()
+        end
         self:_StopTicker()
     end)
     self.content = content
@@ -366,6 +386,13 @@ function Tab:_Build()
     local tabs = frame.Tabs
     local last = tabs[#tabs]
     self.index = #tabs + 1
+    for blizzardIndex, blizzardTab in ipairs(tabs) do
+        blizzardTab:HookScript("OnClick", function()
+            if self.active then
+                self:_Restore(blizzardIndex)
+            end
+        end)
+    end
     button:SetID(self.index)
     button:SetText("Flipside")
     if last then
@@ -380,7 +407,8 @@ function Tab:_Build()
 
     self:_BuildContent()
     hooksecurefunc(frame, "SetDisplayMode", function()
-        if self.active then
+        -- Same mode again: Blizzard did nothing, so the tab click hook restores the panes.
+        if self.active and frame:GetDisplayMode() ~= self.selectedMode then
             self:_Deselect()
         end
     end)
