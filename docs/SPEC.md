@@ -59,7 +59,7 @@ Start with Spike 0 (§8), then follow the MVP build order. Everything below appl
 | D14 | Guild sharing ships, behind an on/off toggle | — | 2026-10-13 |
 | D15 | WoW: Forever has one region-wide market per ruleset (mega-server), with stackables traded as commodities; all price data is keyed by region and ruleset | Per-realm AuctionDB data | 2026-10-13 |
 | D16 | The addon is called Flipside; slash commands /flipside and /flip | — | 2026-10-13 |
-| D17 | Visual style: WoW: Forever classic look in bronze and copper; Blizzard textures referenced by path, never shipped; Flipside's own art drawn at 2–4× resolution | TSM's flat dark theme | 2026-10-13 |
+| D17 | Visual style: the pure WoW: Forever look. Only the client's own textures, atlases, fonts and frame templates, untinted and referenced by path or name; nothing is shipped. No own art and no bronze tint | TSM's flat dark theme | 2026-10-13 (changed 2026-10-14) |
 | D18 | No Ace3. Flipside writes its own framework (settings DB, event bus, coroutine scheduler, slash commands) and its own UI kit. No third-party library ships in the MVP. The use of AceComm with ChatThrottleLib for guild sharing is decided again at Phase 3 | — | 2026-10-14 |
 | D19 | The UI kit is reusable for other addons: style only (theme table, frames, buttons, tabs, lists), with no Flipside logic and no reference to Flipside code or names. It lives in `UI/Kit/` in this repository and can be extracted to a library later | — | 2026-10-14 |
 | D20 | Item identity: the item key is built from item link fields: item id, suffix id and bonus ids. Enchants, gems, unique id, link level and specialization are not part of the key. Commodities (stackable items) use the item id only. Granularity (base item or exact variant) is chosen when a group or price source matches, not when data is stored. Keys never contain localised names. Flipside uses its own text form for keys, not TSM's | — | 2026-10-14 |
@@ -220,7 +220,32 @@ check(
 )
 ```
 
-**Staleness is part of the language.** Because `ScanAge` and `ScanSamples` are ordinary value sources, a rule like `ifgt(scanage, 72, 0, scanmarket)` (treat prices older than 3 days as invalid) needs no new syntax.
+**Staleness is part of the language.** Because `ScanAge` and `ScanSamples` are ordinary value sources, a rule like `ifgt(scanage, 72, invalid, scanmarket)` (treat prices older than 3 days as invalid) needs no new syntax.
+
+### Formula language design (decided 2026-10-14)
+
+1. A missing source value makes the whole formula invalid (no price). The item is skipped with the reason "invalid price". A missing value never counts as 0.
+2. The word `invalid` is a value that means "no price".
+3. A number without a unit is copper. Money literals work: `10g`, `5s`, `12s70c`. Results are whole copper.
+4. The end result is rounded half up to whole copper. Division by zero gives invalid.
+5. The decimal separator is a dot only (`0.25`). The comma separates function arguments.
+6. Source and function names ignore upper and lower case.
+7. Live preview: the chat command `/flip formula <formula> <item link>` now. A window comes with the UI (MVP build step 4).
+8. The preview uses the item link given in the command.
+9. A formula reads the exact variant record of the item first, then the base item record (same order as `/flip price`).
+10. Functions in version one: `min`, `max`, `avg`, `first`, `check`, `ifgt`, `iflt`, `ifeq`, `round`.
+    - `min`, `max`, `avg` and `first` skip invalid arguments.
+    - `check(a, b)` returns b only if a is valid and above 0.
+    - `ifgt(value, limit, then, else)`. `iflt` and `ifeq` use the same argument order.
+    - `round(x)` rounds to whole copper.
+11. A known source that is not built yet (for example `crafting`) is accepted in a formula and counts as missing for now. The preview says "not available yet".
+12. Limits: 500 characters and 16 bracket levels.
+13. Custom sources (step 4): a loop between custom sources is refused when saved, and gives invalid at run time.
+14. Not in version one: a source for another item (item arguments) and `convert()`. They come with crafting (Phase 2).
+15. No TSM source names as aliases (for example no `dbmarket`), in line with D13.
+16. The MVP vendoring safety check uses `ScanMarket` only. `Destroy` comes in Phase 3.
+17. The default selling minimum ships as written. `first` and `avg` skip the missing crafting value.
+18. A vendor sell price of 0 means the vendor does not buy the item. `vendorsell` is then invalid.
 
 ## Feature specs
 
@@ -228,7 +253,7 @@ Each feature lists only what differs from, or is unspecified in, the TSM referen
 
 ### 5.1 Full scan
 
-A *Full Scan* button sits in the AH frame header with a cooldown countdown (§3.1). When the AH opens and the cooldown is clear, an optional setting starts the scan automatically. Result summary after each scan: items seen, new items, prices changed by more than 30%, and duration.
+A *Full Scan* button sits on the Flipside tab of the Auction House frame with a cooldown countdown (§3.1). When the AH opens and the cooldown is clear, an optional setting starts the scan automatically. Result summary after each scan: items seen, new items, prices changed by more than 30%, and duration.
 
 ### 5.2 Item groups (reference §4.1)
 
@@ -248,7 +273,7 @@ A *Full Scan* button sits in the AH frame header with a cooldown countdown (§3.
 
 - Same min / max / normal model, below-min and above-max actions, undercut and cancel rules.
 - **Dry run:** runs the post and cancel logic without touching the AH and shows the queue with prices and reasons.
-- **Decision log:** every item gets one reason code (posting at undercut, at normal, below min, stale price, keep-in-bags reached, post cap reached).
+- **Decision log:** every item gets one reason code (posting at undercut, at normal, below min, stale price, invalid price, keep-in-bags reached, post cap reached).
 - Blacklist of sellers works only from targeted searches (full scans carry no seller names).
 
 ### 5.5 Mail lists (reference §5.4 Mailing)
@@ -278,7 +303,7 @@ How features use it: Banking moves to and from the bank; Mail lists send shortfa
 ### 5.7 Vendoring (reference §5.5)
 
 - Sell junk and groups marked for vendor; buy vendor reagents up to Keep stock targets.
-- **Safety:** never auto-vendor an item whose `ScanMarket` or `Destroy` value is more than a set multiple of its vendor price (default 2×); such items are listed for review instead.
+- **Safety:** never auto-vendor an item whose `ScanMarket` or `Destroy` value (MVP: ScanMarket only; Destroy from Phase 3) is more than a set multiple of its vendor price (default 2×); such items are listed for review instead.
 - Buyback tab with one-click undo of the last sale batch.
 
 ### 5.8 Ledger (reference §5.7)
@@ -346,7 +371,7 @@ Features sit on shared services, which sit on the framework; the scan engine is 
 
 ## Visual style
 
-Flipside should look like it belongs in WoW: Forever: the classic stone, parchment and gold-trim frames of the original UI, shifted towards bronze and copper and drawn crisply at modern resolutions (D17).
+Flipside looks like the WoW: Forever UI: the classic stone, parchment and gold-trim frames of the original UI, with no tint and no own art (D17).
 
 ### Using Blizzard's textures
 
@@ -359,32 +384,33 @@ Flipside should look like it belongs in WoW: Forever: the classic stone, parchme
 
 ### Flipside's own textures
 
-- Original art drawn for Flipside in the classic idiom: bevelled bronze trim, rivets, worn parchment, coin and scale motifs.
-- Drawn at 2× or 4× the classic texture size so frames stay sharp at high UI scale; power-of-two dimensions, saved as TGA or BLP.
-- Licensed with the code (MIT) or under CC BY 4.0; state which in the README.
-- Until custom art exists, tint Blizzard frame textures towards bronze with vertex colouring and desaturation, so the look is right from day one.
+Obsolete (D17, changed 2026-10-14). Flipside has no own art and ships no texture. It uses only the client's own assets.
 
-### Palette (starting points)
+### Palette
 
-| Token | Hex | Use |
-| --- | --- | --- |
-| Bronze | `#B0793A` | Frame trim, active tabs, primary buttons |
-| Deep bronze | `#6E4A26` | Borders, pressed states, dividers |
-| Copper | `#B87333` | Highlights, selection, hover |
-| Burnished highlight | `#E3B778` | Headings, focused controls |
-| Verdigris | `#4A9C8C` | Accent for profit, deals and good states |
-| Parchment | `#E8D9B5` | Light panels, item detail pages |
-| Dark stone | `#1C1712` | Window backgrounds |
+Obsolete: the bronze palette is removed (D17, changed 2026-10-14). Flipside uses the client's own colours and font colours, untinted.
 
 Gold, silver and copper coin amounts keep the game's own coin colours so money reads instantly. Profit and loss never rely on colour alone (add + / − signs and icons), and text must meet WCAG AA contrast on its background.
 
 ### Rules for the UI kit
 
-- Every colour, texture and font comes from one theme table. Ship two themes: **Flipside Bronze** (default) and **Blizzard Classic** (untinted game art).
+- Every colour, texture and font comes from one theme table. Ship one theme: untinted game art.
 - Use the game's own fonts (Friz Quadrata via the standard font objects) so text matches the client; ship no font without a compatible licence.
 - Borders and edges are pixel-perfect at any UI scale.
 - Frames follow the classic layout language: title bar with portrait-style icon, tabs along the bottom edge, close button top-right.
 - The kit lives in `UI/Kit/` and has no reference to Flipside code or names, so other addons can reuse it (D19).
+
+### UI layout (decided 2026-10-14)
+
+- Every Auction House feature is embedded in Blizzard's Auction House frame (`AuctionHouseFrame`). Flipside adds its own tabs to it when needed. There is no replacement frame.
+- A separate Flipside window, like the reference main window, holds groups, operations, settings and the formula preview.
+- The Flipside window has a fixed size of 800 x 540, the same as the AH frame.
+- The AH frame gets one tab, "Flipside". It has the full scan button, the cooldown, the scan status and the item price lookup.
+- `/flip` without arguments opens the Flipside window. A button on the Flipside AH tab opens it too.
+- The window can open in combat (plain show, no protected actions). Escape closes it.
+- One untinted theme table.
+- The chat commands stay for now: `/flip scan`, `scan stop`, `scan reset`, `price`, `formula` and `version`.
+- First UI stack: the UI kit (`UI/Kit/`), the Flipside window with a formula preview page, and the Flipside AH tab. The groups and operations UI come with build step 4.
 
 ## Storage, profiles, sync and import/export
 
@@ -468,7 +494,7 @@ The MVP is done when a player on WoW: Forever can scan, see prices in tooltips, 
 3. Formula compiler (tokenise → tree → evaluate), with live preview.
 4. Groups and operations UI.
 5. Tooltips and inventory tracking.
-6. AH frame: Buying, then Selling with dry run and decision log.
+6. AH tabs in Blizzard's Auction House frame: Buying, then Selling with dry run and decision log.
 7. Mailbox parsing and the ledger; then Vendoring.
 
 **Test strategy:** the formula compiler, market-value algorithm, selling decision rules and keep-stock maths are pure functions, so they get unit tests run outside the game (plain Lua with a mocked API). In-game features get a scripted checklist per release.
@@ -479,16 +505,16 @@ TSM behaviours this spec doesn't cover yet. Change the status as each one gets s
 
 | Area | What to specify | TSM reference | Status |
 | --- | --- | --- | --- |
-| UI and flow | Windows, AH tabs, settings layout, contextual frames | §6 | Needs scoping |
+| UI and flow | Windows, AH tabs, settings layout, contextual frames | §6 | Partly scoped (2026-10-14: AH tabs, Flipside window, size, entry points; page layouts open) |
 | Onboarding | First-run steps: starter groups, presets, guild-sharing choice (D7), first scan | §6.3 | Needs scoping |
 | One-click macro and keybinds | Bindable button for post, cancel, buy, craft next | §3, §6.2 | Needs scoping |
-| My Auctions view | Own auctions list replacing Blizzard's Auctions tab | §3 | Needs scoping |
+| My Auctions view | Own auctions list replacing Blizzard's Auctions tab (Blizzard's Auctions tab stays; decision B) | §3 | Needs scoping |
 | Commodities vs items | Separate buy, sell and snipe paths for region commodities and individual listings | §3 | Needs scoping |
 | Retail crafting details | Quality tiers and optional reagents in item identity and crafting cost | §5.3 | Needs scoping |
 | Smaller settings | Forget character, ignore guilds, sale and purchase sounds, chat output, slash commands | §5.11, §8.3 | Needs scoping |
 | Performance budgets | Memory, SavedVariables size, login time, tooltip speed, scan processing | §10.3 | Needs scoping |
 | Combat lockdown | What is deferred or disabled in combat | §3 | Needs scoping |
-| Localisation | String tables, number and money formats, client languages | §10.3 | Needs scoping |
+| Localisation | String tables, number and money formats, client languages (decimal separator in formulas decided: dot only) | §10.3 | Needs scoping |
 | Error handling and recovery | Failed posts and buys, disconnects mid-scan, corrupted data | §7.6 | Needs scoping |
 | Later flavours | TBC Anniversary and Retail differences: AH API, professions, banks, commodities | §3 | Needs scoping |
 

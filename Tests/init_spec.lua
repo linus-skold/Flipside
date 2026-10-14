@@ -172,21 +172,18 @@ describe("Init", function()
             assert.is_function(_G.SlashCmdList.FLIPSIDE)
         end)
 
-        it("prints help without an argument", function()
-            _G.SlashCmdList.FLIPSIDE("")
+        it("prints help for the help argument", function()
+            _G.SlashCmdList.FLIPSIDE("help")
             assert.are.same({
-                "Flipside: addon Flipside",
+                "Flipside: /flip opens the Flipside window",
                 "Flipside: client 1.60.1, build 70009, interface 16001",
                 "Flipside: No feature exists yet.",
             }, mock.messages)
         end)
 
         it("prints the same help for help and an unknown argument", function()
-            _G.SlashCmdList.FLIPSIDE("")
-            local expected = mock.messages
-            mock.messages = {}
             _G.SlashCmdList.FLIPSIDE("help")
-            assert.are.same(expected, mock.messages)
+            local expected = mock.messages
             mock.messages = {}
             _G.SlashCmdList.FLIPSIDE("nonsense words")
             assert.are.same(expected, mock.messages)
@@ -306,13 +303,13 @@ describe("Init", function()
         end)
 
         it("shows the profile line in /flipside only if the DB exists", function()
-            _G.SlashCmdList.FLIPSIDE("")
+            _G.SlashCmdList.FLIPSIDE("help")
             assert.are.equal(3, #mock.messages)
             mock.fire("PLAYER_LOGIN")
             mock.messages = {}
-            _G.SlashCmdList.FLIPSIDE("")
+            _G.SlashCmdList.FLIPSIDE("help")
             assert.are.same({
-                "Flipside: addon Flipside",
+                "Flipside: /flip opens the Flipside window",
                 "Flipside: profile Default",
                 "Flipside: client 1.60.1, build 70009, interface 16001",
                 "Flipside: No feature exists yet.",

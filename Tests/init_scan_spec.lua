@@ -344,7 +344,7 @@ describe("Init scan", function()
             assert.is_true(hasMessage('Flipside: scan cooldown cleared. The server can still refuse a scan '
                 .. 'for a while; Flipside then reports "no response".'))
             mock.messages = {}
-            slash("")
+            slash("help")
             assert.is_true(hasMessage("cooldown ready"))
             mock.popup = nil
             slash("scan")
@@ -505,13 +505,13 @@ describe("Init scan", function()
         it("shows the scan line and the command list", function()
             login()
             mock.messages = {}
-            slash("")
+            slash("help")
             assert.are.same({
-                "Flipside: addon Flipside",
+                "Flipside: /flip opens the Flipside window",
                 "Flipside: profile Default",
                 "Flipside: client 1.60.1, build 70009, interface 16001",
                 "Flipside: scan (region EU): 0 items stored, last scan never, cooldown ready",
-                "Flipside: commands: scan, scan stop, scan reset, price <item>, version",
+                "Flipside: commands: scan, scan stop, scan reset, price <item>, formula <text> [item], version",
                 "Flipside: No feature exists yet.",
             }, mock.messages)
         end)
@@ -530,7 +530,7 @@ describe("Init scan", function()
             ns.ScanEngine = nil
             login()
             mock.messages = {}
-            slash("")
+            slash("help")
             assert.is_false(hasMessage("scan:"))
         end)
     end)

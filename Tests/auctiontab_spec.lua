@@ -1,0 +1,549 @@
+local mock = require("Tests.wow_mock")
+
+local LINK = "|cff0070dd|Hitem:123::::::::80:::::::::|h[Thing]|h|r"
+
+local function loadModules()
+    local ns = {}
+    for _, name in ipairs({ "Core/EventBus", "Core/ItemString", "Services/ScanClock", "Services/ScanCooldown",
+        "Services/ScanSources", "Services/FormulaLookup", "UI/Kit/Theme", "UI/Kit/Widgets",
+        "Features/AuctionTab/AuctionTab" }) do
+        assert(loadfile(name .. ".lua"))("Flipside", ns)
+    end
+    return ns
+end
+
+local function record(min)
+    return { latest = { time = 1000000 - 7200, min = min, market = 5200, qty = 40, partial = true }, days = {} }
+end
+
+describe("AuctionTab", function()
+    local ns, deps, ah, ticker, hooks, confirmed, opened, engine, cooldown, records, tickers
+
+    local function makeAH()
+        local frame = CreateFrame("Frame", "AuctionHouseFrame", UIParent)
+        local modes = { Buy = { "PaneA", "PaneB" }, Auctions = { "PaneC" } }
+        frame.modes = modes
+        for _, name in ipairs({ "PaneA", "PaneB", "PaneC" }) do
+            frame[name] = CreateFrame("Frame", nil, frame)
+            frame[name]:Hide()
+        end
+        frame.Tabs = {}
+        for _, mode in ipairs({ "Buy", "Auctions" }) do
+            local tab = CreateFrame("Button", nil, frame, "AuctionHouseFrameTabTemplate")
+            tab:SetScript("OnClick", function()
+                frame:SetDisplayMode(modes[mode])
+            end)
+            table.insert(frame.Tabs, tab)
+        end
+        frame.GetDisplayMode = function(self)
+            return self.displayMode
+        end
+        frame.SetDisplayMode = function(self, mode)
+            if self.displayMode == mode then
+                return
+            end
+            self.displayMode = mode
+            for _, list in pairs(modes) do
+                for _, name in ipairs(list) do
+                    self[name]:Hide()
+                end
+            end
+            for _, name in ipairs(mode) do
+                self[name]:Show()
+            end
+        end
+        _G.AuctionHouseFrame = frame
+        return frame
+    end
+
+    local function fakeStore()
+        return {
+            Get = function(_, key)
+                return records[key]
+            end,
+            GetRegion = function()
+                return "EU"
+            end,
+            CountItems = function()
+                return 42
+            end,
+        }
+    end
+
+    before_each(function()
+        mock.reset()
+        local frameMethods = getmetatable(CreateFrame("Frame")).__index
+        frameMethods.SetJustifyH = function() end
+        hooks, tickers, confirmed, opened, records = {}, {}, nil, 0, {}
+        _G.hooksecurefunc = function(target, name, hook)
+            local original = target[name]
+            target[name] = function(...)
+                original(...)
+                hook(...)
+            end
+            table.insert(hooks, name)
+        end
+        _G.C_Timer = {
+            After = function() end,
+            NewTicker = function(seconds, fn)
+                ticker = { seconds = seconds, fn = fn, cancelled = false }
+                ticker.Cancel = function(self)
+                    self.cancelled = true
+                end
+                table.insert(tickers, ticker)
+                return ticker
+            end,
+        }
+        ns = loadModules()
+        engine = {
+            running = false, starts = 0, cancels = 0, canStart = { true },
+            IsRunning = function(self)
+                return self.running
+            end,
+            CanStart = function(self)
+                return unpack(self.canStart)
+            end,
+            Start = function(self)
+                self.starts = self.starts + 1
+            end,
+            Cancel = function(self)
+                self.cancels = self.cancels + 1
+            end,
+        }
+        cooldown = {
+            left = 0, resets = 0, resetResult = true,
+            Remaining = function(self)
+                return self.left
+            end,
+            Reset = function(self)
+                self.resets = self.resets + 1
+                return self.resetResult
+            end,
+            GetLastSuccess = function()
+                return 1000000 - 7200
+            end,
+        }
+        deps = {
+            bus = ns.EventBus.New({}),
+            scanEngine = engine,
+            scanCooldown = cooldown,
+            scanStore = fakeStore(),
+            formulaLookup = ns.FormulaLookup,
+            scanSources = ns.ScanSources,
+            serverTime = GetServerTime,
+            confirmScan = function(onAccept)
+                confirmed = onAccept
+            end,
+            openMainWindow = function()
+                opened = opened + 1
+            end,
+        }
+        ah = makeAH()
+    end)
+
+    after_each(function()
+        _G.AuctionHouseFrame = nil
+        _G.hooksecurefunc = nil
+        mock.teardown()
+    end)
+
+    local function attach()
+        local tab = ns.AuctionTab.Attach(deps)
+        return tab, tab.ui
+    end
+
+    local function click(button)
+        button:GetScript("OnClick")(button)
+    end
+
+    describe("tab", function()
+        it("appends one tab after Blizzard's tabs and sets the tab count", function()
+            local tab = attach()
+            assert.are.equal(3, #ah.Tabs)
+            assert.are.equal(ah.Tabs[3], tab.tab)
+            assert.are.equal("Flipside", tab.tab:GetText())
+            assert.are.equal(3, tab.tab:GetID())
+            assert.are.equal("AuctionHouseFrameTabTemplate", tab.tab.template)
+            local last = mock.tabCalls[#mock.tabCalls]
+            assert.are.same({ "num", ah, 3 }, last)
+            assert.is_false(tab.content:IsShown())
+        end)
+
+        it("falls back to the panel tab template", function()
+            mock.missingTemplates.AuctionHouseFrameTabTemplate = true
+            local tab = attach()
+            assert.are.equal("PanelTabButtonTemplate", tab.tab.template)
+        end)
+
+        it("shows the content and hides Blizzard's panes on click", function()
+            local tab = attach()
+            click(ah.Tabs[1])
+            assert.is_true(ah.PaneA:IsShown())
+            click(tab.tab)
+            assert.is_true(tab.content:IsShown())
+            assert.is_false(ah.PaneA:IsShown())
+            assert.is_false(ah.PaneB:IsShown())
+            assert.are.same({ "tab", ah, 3 }, mock.tabCalls[#mock.tabCalls])
+            assert.is_false(ticker.cancelled)
+            assert.are.equal(1, ticker.seconds)
+        end)
+
+        it("does not change the display mode of Blizzard's frame", function()
+            local tab = attach()
+            click(ah.Tabs[1])
+            local mode = ah.displayMode
+            click(tab.tab)
+            assert.are.equal(ah.modes.Buy, mode)
+            assert.are.equal(mode, ah.displayMode)
+        end)
+
+        it("restores the panes when the same Blizzard tab is clicked again", function()
+            local tab = attach()
+            click(ah.Tabs[1])
+            click(tab.tab)
+            click(ah.Tabs[1])
+            assert.is_false(tab.content:IsShown())
+            assert.is_true(ah.PaneA:IsShown())
+            assert.is_true(ah.PaneB:IsShown())
+            assert.is_true(ticker.cancelled)
+            assert.are.same({ "tab", ah, 1 }, mock.tabCalls[#mock.tabCalls])
+            click(ah.Tabs[1])
+            assert.is_true(ah.PaneA:IsShown())
+        end)
+
+        it("switches to a different Blizzard tab", function()
+            local tab = attach()
+            click(ah.Tabs[1])
+            click(tab.tab)
+            click(ah.Tabs[2])
+            assert.is_false(tab.content:IsShown())
+            assert.is_true(ah.PaneC:IsShown())
+            assert.is_false(ah.PaneA:IsShown())
+            assert.is_false(ah.PaneB:IsShown())
+            assert.is_true(ticker.cancelled)
+        end)
+
+        it("hides the content when Blizzard changes the mode by itself", function()
+            local tab = attach()
+            click(ah.Tabs[1])
+            click(tab.tab)
+            ah:SetDisplayMode(ah.modes.Auctions)
+            assert.is_false(tab.content:IsShown())
+            assert.is_true(ah.PaneC:IsShown())
+            assert.is_false(ah.PaneA:IsShown())
+        end)
+
+        it("keeps the content when Blizzard sets the same mode", function()
+            local tab = attach()
+            click(ah.Tabs[1])
+            click(tab.tab)
+            ah:SetDisplayMode(ah.modes.Buy)
+            assert.is_true(tab.content:IsShown())
+        end)
+
+        it("restores the panes and the tab when the frame hides", function()
+            local tab = attach()
+            click(ah.Tabs[1])
+            ah.selectedTab = 1
+            click(tab.tab)
+            tab.content:Hide()
+            tab.content:GetScript("OnHide")(tab.content)
+            assert.is_true(ticker.cancelled)
+            assert.is_true(ah.PaneA:IsShown())
+            assert.are.same({ "tab", ah, 1 }, mock.tabCalls[#mock.tabCalls])
+            ah:SetDisplayMode(ah.modes.Buy)
+            assert.is_true(ah.PaneA:IsShown())
+        end)
+        it("restarts the ticker when the content shows again", function()
+            local tab = attach()
+            click(ah.Tabs[1])
+            click(tab.tab)
+            ah:SetDisplayMode(ah.modes.Auctions)
+            click(tab.tab)
+            assert.are.equal(2, #tickers)
+            assert.is_false(tickers[2].cancelled)
+        end)
+
+        it("hooks SetDisplayMode once", function()
+            attach()
+            assert.are.same({ "SetDisplayMode" }, hooks)
+        end)
+    end)
+
+    describe("attach", function()
+        it("attaches at once when the frame exists", function()
+            local tab = attach()
+            assert.is_not_nil(tab.tab)
+        end)
+
+        it("waits for the Auction House addon", function()
+            _G.AuctionHouseFrame = nil
+            local tab = attach()
+            assert.is_nil(tab.tab)
+            assert.is_nil(tab:Refresh())
+            deps.bus:Emit("ADDON_LOADED", "Other")
+            assert.is_nil(tab.tab)
+            ah = makeAH()
+            deps.bus:Emit("ADDON_LOADED", "Blizzard_AuctionHouseUI")
+            assert.is_not_nil(tab.tab)
+            assert.are.equal(3, #ah.Tabs)
+            deps.bus:Emit("ADDON_LOADED", "Blizzard_AuctionHouseUI")
+            assert.are.equal(3, #ah.Tabs)
+        end)
+
+        it("checks the deps", function()
+            assert.has_error(function()
+                ns.AuctionTab.Attach(nil)
+            end)
+            deps.confirmScan = nil
+            assert.has_error(function()
+                ns.AuctionTab.Attach(deps)
+            end)
+        end)
+    end)
+
+    describe("scan block", function()
+        it("is ready when no cooldown runs", function()
+            local _, ui = attach()
+            assert.is_true(ui.scan.enabled)
+            assert.is_false(ui.stop:IsShown())
+            assert.are.equal("Cooldown: ready", ui.cooldown:GetText())
+        end)
+
+        it("is disabled during the cooldown and counts down", function()
+            cooldown.left = 845
+            local tab, ui = attach()
+            assert.is_false(ui.scan.enabled)
+            assert.are.equal("Cooldown: 14 min 05 s", ui.cooldown:GetText())
+            cooldown.left = 0
+            click(ah.Tabs[1])
+            click(tab.tab)
+            ticker.fn()
+            assert.is_true(ui.scan.enabled)
+            assert.are.equal("Cooldown: ready", ui.cooldown:GetText())
+        end)
+
+        it("shows Stop and disables the scan while a scan runs", function()
+            engine.running = true
+            local _, ui = attach()
+            assert.is_false(ui.scan.enabled)
+            assert.is_true(ui.stop:IsShown())
+            assert.are.equal("Scan running", ui.cooldown:GetText())
+        end)
+
+        it("asks first, then starts the scan on accept", function()
+            local _, ui = attach()
+            click(ui.scan)
+            assert.are.equal(0, engine.starts)
+            assert.is_function(confirmed)
+            confirmed()
+            assert.are.equal(1, engine.starts)
+        end)
+
+        it("does not ask when the scan cannot start", function()
+            engine.canStart = { false, "ah-closed" }
+            local _, ui = attach()
+            click(ui.scan)
+            assert.is_nil(confirmed)
+            assert.are.equal("full scan not started: open the Auction House first", ui.message:GetText())
+        end)
+
+        it("says why when the scan cannot start after accept", function()
+            local _, ui = attach()
+            click(ui.scan)
+            engine.canStart = { false, "cooldown", 65 }
+            confirmed()
+            assert.are.equal(0, engine.starts)
+            assert.are.equal("full scan not started: scan on cooldown, 1 min 05 s left", ui.message:GetText())
+        end)
+
+        it("stops the scan", function()
+            engine.running = true
+            local _, ui = attach()
+            click(ui.stop)
+            assert.are.equal(1, engine.cancels)
+        end)
+
+        it("resets the cooldown", function()
+            local _, ui = attach()
+            click(ui.reset)
+            assert.are.equal(1, cooldown.resets)
+            assert.is_truthy(ui.message:GetText():find("scan cooldown cleared", 1, true))
+        end)
+
+        it("does not reset while a scan runs", function()
+            engine.running = true
+            local _, ui = attach()
+            click(ui.reset)
+            assert.are.equal(0, cooldown.resets)
+            assert.is_truthy(ui.message:GetText():find("stop it first", 1, true))
+        end)
+
+        it("says so when settings are read-only", function()
+            cooldown.resetResult = false
+            local _, ui = attach()
+            click(ui.reset)
+            assert.are.equal("settings are read-only; the cooldown was not cleared", ui.message:GetText())
+        end)
+
+        it("opens the Flipside window", function()
+            local _, ui = attach()
+            click(ui.openMain)
+            assert.are.equal(1, opened)
+        end)
+
+        it("disables the scan when the engine is missing", function()
+            deps.scanEngine, deps.scanCooldown = nil, nil
+            local _, ui = attach()
+            assert.is_false(ui.scan.enabled)
+            assert.are.equal("scan is not available this session", ui.cooldown:GetText())
+        end)
+    end)
+
+    describe("status block", function()
+        it("shows the region, the item count and the last scan age", function()
+            local _, ui = attach()
+            assert.are.equal("Region EU, 42 items stored\nLast scan: 2.0 h ago", ui.status:GetText())
+        end)
+
+        it("adds the summary lines after a scan", function()
+            local _, ui = attach()
+            deps.bus:Emit("Flipside.ScanFinished", {
+                result = "ok", rows = 10, kept = 9, items = 8, keys = 7, newItems = 2, changed = 1,
+                cpuMs = 12.4, wallMs = 3000, itemsKeyed = 8, itemsPendingMissing = 0, itemsNoLink = 0,
+                itemsLinkMismatch = 0, itemsUnknown = 0, itemsLinkFallback = 0, noKey = 0,
+                commodityStats = { client = 1, stack = 2, unknown = 3, mismatch = 4, linkFallback = 5 },
+            })
+            local text = ui.status:GetText()
+            assert.is_truthy(text:find("full scan ok: 10 rows, 8 items, 7 keys, 2 new, 1 changed >30%, cpu 12 ms, "
+                .. "wall 3.0 s", 1, true))
+            assert.is_truthy(text:find("commodity check: client 1, stack 2, unknown 3, mismatch 4, link fallback 5",
+                1, true))
+            assert.is_truthy(text:find("items 8: keyed 8, link fallback 0, pending 0, no link 0, link mismatch 0, "
+                .. "unknown 0", 1, true))
+        end)
+    end)
+
+    describe("DescribeSummary", function()
+        local function summary(extra)
+            local s = {
+                result = "partial", rows = 1, kept = 1, items = 1, keys = 1, newItems = 0, changed = 0,
+                cpuMs = 1, wallMs = 1000, itemsKeyed = 0, itemsPendingMissing = 3, itemsNoLink = 1,
+                itemsLinkMismatch = 1, itemsUnknown = 2, itemsLinkFallback = 0, noKey = 4,
+            }
+            for k, v in pairs(extra or {}) do
+                s[k] = v
+            end
+            return s
+        end
+
+        it("lists the reasons of a partial scan", function()
+            local lines = ns.AuctionTab.DescribeSummary(summary())
+            assert.are.equal(2, #lines)
+            assert.are.equal("partial scan, latest values only: 3 items without data, 2 items with unknown "
+                .. "stack size, 2 items with a bad link, 4 rows without a key", lines[2])
+        end)
+
+        it("reports an error and a cancel", function()
+            assert.are.same({ "full scan failed: boom" },
+                ns.AuctionTab.DescribeSummary(summary({ result = "error", error = "boom" })))
+            assert.are.same({ "full scan cancelled" },
+                ns.AuctionTab.DescribeSummary(summary({ result = "cancelled" })))
+        end)
+    end)
+
+    describe("DescribePrice", function()
+        it("describes all values", function()
+            local rows = ns.AuctionTab.DescribePrice({
+                scanMin = 100, scanRecent = 200, scanMarket = 300, scanHistorical = 400, scanQty = 50,
+                scanAge = 1.25, scanSamples = 3, scanPartial = true,
+            }, "123")
+            assert.are.same({
+                { label = "Key", text = "123" },
+                { label = "ScanMin", money = true, copper = 100 },
+                { label = "ScanRecent", money = true, copper = 200 },
+                { label = "ScanMarket", money = true, copper = 300 },
+                { label = "ScanHistorical", money = true, copper = 400 },
+                { label = "ScanQty", text = "50" },
+                { label = "ScanAge", text = "1.2 h" },
+                { label = "ScanSamples", text = "3" },
+                { label = "Partial", text = "yes" },
+            }, rows)
+        end)
+
+        it("shows a dash for missing values and no partial row", function()
+            local rows = ns.AuctionTab.DescribePrice({ scanSamples = 0 }, "9")
+            assert.are.equal(8, #rows)
+            assert.is_nil(rows[2].copper)
+            assert.are.equal("-", rows[6].text)
+            assert.are.equal("-", rows[7].text)
+            assert.are.equal("0", rows[8].text)
+        end)
+    end)
+
+    describe("price lookup", function()
+        local function shownRows(ui)
+            local out = {}
+            for _, slot in ipairs(ui.slots) do
+                if slot.name:IsShown() then
+                    table.insert(out, slot)
+                end
+            end
+            return out
+        end
+
+        it("looks up an item link", function()
+            records["123"] = record(1000)
+            local tab, ui = attach()
+            ui.input:SetText(LINK)
+            click(ui.lookup)
+            local rows = shownRows(ui)
+            assert.are.equal(9, #rows)
+            assert.are.equal("Key", rows[1].name:GetText())
+            assert.are.equal("123", rows[1].value:GetText())
+            assert.are.equal("ScanMin", rows[2].name:GetText())
+            assert.is_true(rows[2].money:IsShown())
+            assert.are.equal("1000c", rows[2].money:GetText())
+            assert.are.equal("ScanQty", rows[6].name:GetText())
+            assert.are.equal("40", rows[6].value:GetText())
+            assert.are.equal("2.0 h", rows[7].value:GetText())
+            assert.are.equal("", ui.priceMessage:GetText())
+            assert.is_not_nil(tab)
+        end)
+
+        it("looks up an item id with the Enter key", function()
+            records["123"] = record(1000)
+            local _, ui = attach()
+            ui.input:GetScript("OnEnterPressed")(ui.input)
+            assert.are.equal("enter an item link or item id", ui.priceMessage:GetText())
+            ui.input:SetText("123")
+            ui.input:GetScript("OnEnterPressed")(ui.input)
+            assert.are.equal(9, #shownRows(ui))
+        end)
+
+        it("says when no data exists", function()
+            local _, ui = attach()
+            ui.input:SetText("77")
+            click(ui.lookup)
+            assert.are.equal("no scan data for 77", ui.priceMessage:GetText())
+            assert.are.equal(0, #shownRows(ui))
+        end)
+
+        it("says when the input is not an item", function()
+            local _, ui = attach()
+            ui.input:SetText("hello")
+            click(ui.lookup)
+            assert.are.equal("not an item: hello", ui.priceMessage:GetText())
+        end)
+
+        it("clears old rows on a new lookup", function()
+            records["123"] = record(1000)
+            local _, ui = attach()
+            ui.input:SetText("123")
+            click(ui.lookup)
+            ui.input:SetText("77")
+            click(ui.lookup)
+            assert.are.equal(0, #shownRows(ui))
+        end)
+    end)
+end)
