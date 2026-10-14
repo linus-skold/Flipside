@@ -205,6 +205,11 @@ describe("ScanBar", function()
             assert.are.equal("Last: full scan ok, 3200 items", bar.status:GetText())
         end)
 
+        it("shows pending items in the last result", function()
+            assert.are.equal("Last: full scan complete, 7 pending",
+                ns.ScanBar.ResultText({ label = "full scan", result = "ok", items = 9, pending = 7 }))
+        end)
+
         it("shows short progress", function()
             engine.running = true
             engine.progress = { "page", 5, 40 }

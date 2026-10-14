@@ -35,6 +35,41 @@ function Backend.ScanDoneEvent()
     return "REPLICATE_ITEM_LIST_UPDATE"
 end
 
+-- The engine asks again for item data and reads rows without a link or item info again, for up to this long.
+local REFRESH_SECONDS = 30
+local DIAG_KEEP = 5
+
+function Backend.ScanRefreshSeconds()
+    return REFRESH_SECONDS
+end
+
+-- Builds the diagnostics line of the finished scan and keeps the last 5 runs in the scan DB.
+function Backend.ScanDiagnostics(summary)
+    summary = summary or {}
+    local entry = {
+        time = type(GetServerTime) == "function" and GetServerTime() or 0,
+        result = summary.result,
+        rows = summary.rows, items = summary.items, keys = summary.keys,
+        pending = summary.pending, failed = summary.failed, nilLink = summary.nilLink,
+        notAllInfo = summary.notAllInfo, retried = summary.retried, refreshSeconds = summary.refreshSeconds,
+    }
+    local flavour = ns.Flavour
+    local db = flavour and flavour.savedVariables and _G[flavour.savedVariables.scan]
+    if type(db) == "table" then
+        if type(db.diag) ~= "table" then
+            db.diag = {}
+        end
+        db.diag[#db.diag + 1] = entry
+        while #db.diag > DIAG_KEEP do
+            table.remove(db.diag, 1)
+        end
+    end
+    return string.format(
+        "pending %s, failed %s (load failed), nilLink %s, notAllInfo %s, retried %s, refresh %.1f s",
+        tostring(entry.pending), tostring(entry.failed), tostring(entry.nilLink), tostring(entry.notAllInfo),
+        tostring(entry.retried), entry.refreshSeconds or 0)
+end
+
 function Backend.RowCount()
     return call("GetNumReplicateItems")
 end
@@ -113,6 +148,93 @@ function Backend.Capture()
     }
 end
 
+-- Live search (Buying tab). Doc: AuctionHouseDocumentation.lua.
+local SEARCH_LIMIT = 100 -- SendSearchQuery: 100 calls per minute (doc line 1018)
+local SEARCH_WINDOW = 60
+local searchTimes = {}
+
+function Backend.CanLiveSearch()
+    return has("SendSearchQuery") and has("MakeItemKey") and has("GetItemKeyInfo")
+end
+
+-- One targeted search for an item key (doc 1015-1028). Gives true, or false and a text if the rate guard stops it.
+function Backend.LiveSearch(itemID)
+    local now = GetTime()
+    local kept = {}
+    for _, t in ipairs(searchTimes) do
+        if now - t < SEARCH_WINDOW then
+            kept[#kept + 1] = t
+        end
+    end
+    searchTimes = kept
+    if #searchTimes >= SEARCH_LIMIT then
+        return false, "search limit, wait"
+    end
+    searchTimes[#searchTimes + 1] = now
+    call("SendSearchQuery", call("MakeItemKey", itemID), {}, true)
+    return true
+end
+
+-- Result events: COMMODITY_SEARCH_RESULTS_UPDATED (doc 1397-1405), ITEM_SEARCH_RESULTS_UPDATED (doc 1447-1456).
+function Backend.LiveResultEvents()
+    return "COMMODITY_SEARCH_RESULTS_UPDATED", "ITEM_SEARCH_RESULTS_UPDATED"
+end
+
+local function byPrice(a, b)
+    if a.unitPrice ~= b.unitPrice then
+        return a.unitPrice < b.unitPrice
+    end
+    return (a.auctionID or 0) < (b.auctionID or 0)
+end
+
+-- Rows of the last search of an item, cheapest unit price first. Commodity: GetNumCommoditySearchResults (doc 488)
+-- and GetCommoditySearchResultInfo (doc 240). Item: GetNumItemSearchResults (doc 503) and GetItemSearchResultInfo
+-- (doc 358); a row with no buyout is skipped and the unit price is buyoutAmount / quantity.
+function Backend.LiveRows(itemID)
+    local rows = {}
+    local isCommodity = Backend.ItemIsCommodity(itemID)
+    if isCommodity then
+        for i = 1, call("GetNumCommoditySearchResults", itemID) do
+            local r = call("GetCommoditySearchResultInfo", itemID, i)
+            if r and r.unitPrice and (r.quantity or 0) > 0 then
+                rows[#rows + 1] = {
+                    auctionID = r.auctionID, unitPrice = r.unitPrice, quantity = r.quantity, isCommodity = true,
+                    ownerItem = r.containsOwnerItem == true, timeLeft = r.timeLeftSeconds,
+                }
+            end
+        end
+    else
+        local key = call("MakeItemKey", itemID)
+        for i = 1, call("GetNumItemSearchResults", key) do
+            local r = call("GetItemSearchResultInfo", key, i)
+            local buyout, quantity = r and r.buyoutAmount, r and r.quantity
+            if buyout and buyout > 0 and quantity and quantity > 0 then
+                rows[#rows + 1] = {
+                    auctionID = r.auctionID, unitPrice = buyout / quantity, quantity = quantity, buyout = buyout,
+                    isCommodity = false, ownerItem = r.containsOwnerItem == true,
+                    timeLeft = r.timeLeftSeconds or r.timeLeft, itemLink = r.itemLink,
+                }
+            end
+        end
+    end
+    table.sort(rows, byPrice)
+    return rows
+end
+
+-- Doc 809-816: true when the client can send a throttled message.
+function Backend.IsReady()
+    return call("IsThrottledMessageSystemReady")
+end
+
+-- Doc 1291-1296.
+function Backend.ReadyEvent()
+    return "AUCTION_HOUSE_THROTTLED_SYSTEM_READY"
+end
+
+-- Ask for a fresh owned list (doc 898; argument: sorts table). OWNED_AUCTIONS_UPDATED follows.
+function Backend.RefreshOwned()
+    return call("QueryOwnedAuctions", {})
+end
 function Backend.CanReadOwned()
     return has("GetOwnedAuctions")
 end
@@ -131,6 +253,117 @@ end
 
 function Backend.CloseEvent()
     return "AUCTION_HOUSE_CLOSED"
+end
+
+-- Buy block (Buying tab). Doc: AuctionHouseDocumentation.lua.
+-- Start, Confirm and BuyItem are protected: the caller runs them in a click. Cancel is not protected.
+function Backend.CanBuy()
+    return has("StartCommoditiesPurchase") and has("ConfirmCommoditiesPurchase") and has("PlaceBid")
+end
+
+-- Ask for a quote (doc 1063-1073). COMMODITY_PRICE_UPDATED(unitPrice, totalPrice) follows (doc 1346-1356).
+function Backend.StartCommodityPurchase(itemID, quantity)
+    return call("StartCommoditiesPurchase", itemID, quantity)
+end
+
+-- Buy at the quote (doc 83-92). COMMODITY_PURCHASE_SUCCEEDED or COMMODITY_PURCHASE_FAILED follows (doc 1357-1368).
+function Backend.ConfirmCommodityPurchase(itemID, quantity)
+    return call("ConfirmCommoditiesPurchase", itemID, quantity)
+end
+
+-- Drop the quote (doc 71-73).
+function Backend.CancelCommodityPurchase()
+    return call("CancelCommoditiesPurchase")
+end
+
+-- Seconds left of the quote (doc 584-591); 0 means the quote ended.
+function Backend.QuoteSecondsLeft()
+    return call("GetQuoteDurationRemaining")
+end
+
+-- Buy one item auction at the buyout price (doc 836-846). Blizzard's own call is the same, after its pop-up
+-- BUYOUT_AUCTION (Blizzard_AuctionHouseFrame.lua 10-12). AUCTION_HOUSE_PURCHASE_COMPLETED(auctionID) (doc 1203-1211)
+-- or AUCTION_HOUSE_SHOW_ERROR(error) (doc 1236-1244) follows.
+function Backend.BuyItemAuction(auctionID, buyout)
+    return call("PlaceBid", auctionID, buyout)
+end
+
+function Backend.BuyEvents()
+    return {
+        priceUpdated = "COMMODITY_PRICE_UPDATED",
+        priceUnavailable = "COMMODITY_PRICE_UNAVAILABLE",
+        commoditySucceeded = "COMMODITY_PURCHASE_SUCCEEDED",
+        commodityFailed = "COMMODITY_PURCHASE_FAILED",
+        itemCompleted = "AUCTION_HOUSE_PURCHASE_COMPLETED",
+        itemError = "AUCTION_HOUSE_SHOW_ERROR",
+    }
+end
+-- Posting (Selling tab). Doc: AuctionHouseDocumentation.lua. PostItem and PostCommodity are protected.
+-- The duration argument is a luaIndex. The SellFrame menu lists AUCTION_DURATION_ONE, TWO and THREE as index 1, 2, 3.
+-- The mapping 12 h = 1, 24 h = 2, 48 h = 3 is NOT verified: the hour text of those strings is not in the source.
+local DURATION_INDEX = { [12] = 1, [24] = 2, [48] = 3 }
+
+local function durationIndex(hours)
+    local index = DURATION_INDEX[hours]
+    if not index then
+        error("duration must be 12, 24 or 48 hours", 0)
+    end
+    return index
+end
+
+-- ItemLocation of a bag slot (Blizzard_ObjectAPI ItemLocation.lua line 9).
+local function location(bag, slot)
+    return ItemLocation:CreateFromBagAndSlot(bag, slot)
+end
+
+function Backend.CanPost()
+    return type(ItemLocation) == "table" and type(ItemLocation.CreateFromBagAndSlot) == "function"
+        and has("PostItem") and has("PostCommodity") and has("ConfirmPostItem") and has("ConfirmPostCommodity")
+        and has("CalculateItemDeposit") and has("CalculateCommodityDeposit") and has("GetAvailablePostCount")
+end
+
+-- PostItem (doc 867-885). Gives needsConfirmation. Protected: call it from a click only.
+function Backend.PostItem(bag, slot, duration, quantity, bid, buyout)
+    return call("PostItem", location(bag, slot), durationIndex(duration), quantity, bid, buyout)
+end
+
+-- PostCommodity (doc 848-865). Gives needsConfirmation. Protected: call it from a click only.
+function Backend.PostCommodity(bag, slot, duration, quantity, unitPrice)
+    return call("PostCommodity", location(bag, slot), durationIndex(duration), quantity, unitPrice)
+end
+
+-- ConfirmPostItem (doc 108-121). Protected: call it from a click only.
+function Backend.ConfirmPostItem(bag, slot, duration, quantity, bid, buyout)
+    return call("ConfirmPostItem", location(bag, slot), durationIndex(duration), quantity, bid, buyout)
+end
+
+-- ConfirmPostCommodity (doc 94-106). Protected: call it from a click only.
+function Backend.ConfirmPostCommodity(bag, slot, duration, quantity, unitPrice)
+    return call("ConfirmPostCommodity", location(bag, slot), durationIndex(duration), quantity, unitPrice)
+end
+
+-- CalculateCommodityDeposit (doc 11-26, itemID) or CalculateItemDeposit (doc 28-43, ItemLocation). Gives copper or nil.
+function Backend.Deposit(bag, slot, duration, quantity, isCommodity)
+    local where = location(bag, slot)
+    if isCommodity then
+        return call("CalculateCommodityDeposit", C_Item.GetItemID(where), durationIndex(duration), quantity)
+    end
+    return call("CalculateItemDeposit", where, durationIndex(duration), quantity)
+end
+
+-- GetAvailablePostCount (doc 162-175).
+function Backend.AvailablePostCount(bag, slot)
+    return call("GetAvailablePostCount", location(bag, slot))
+end
+
+-- IsSellItemValid (doc 793-807); false means no error text in the chat.
+function Backend.IsSellItemValid(bag, slot)
+    return call("IsSellItemValid", location(bag, slot), false)
+end
+
+-- AUCTION_HOUSE_AUCTION_CREATED (doc 1098-1107; payload auctionID).
+function Backend.PostedEvent()
+    return "AUCTION_HOUSE_AUCTION_CREATED"
 end
 
 ns.AuctionClient.Use(Backend)

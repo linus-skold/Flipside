@@ -88,14 +88,14 @@ function Kit.Divider(parent)
     return line
 end
 
--- Create a money text. Call :SetCopper(copper) with a number or nil.
-function Kit.Money(parent)
+-- Create a money text. Call :SetCopper(copper) with a number or nil. format(copper) is optional.
+function Kit.Money(parent, format)
     local text = parent:CreateFontString(nil, "ARTWORK", Kit.Font("highlight"))
     function text:SetCopper(copper)
         if copper == nil then
             self:SetText("-")
         else
-            self:SetText(GetMoneyString(copper))
+            self:SetText(format and format(copper) or GetMoneyString(copper))
         end
     end
     text:SetCopper(nil)

@@ -42,6 +42,8 @@ Shared\Services\RulesStore.lua
 Shared\Services\CustomSources.lua
 Shared\Services\AHNameSearch.lua
 Shared\Services\RulesExport.lua
+Shared\Services\BuyingPlan.lua
+Shared\Services\SellingPlan.lua
 Shared\Services\Holdings.lua
 Shared\Services\HoldingsRead.lua
 Shared\Services\TooltipConfig.lua
@@ -59,8 +61,11 @@ Shared\UI\Pages\OperationsPage.lua
 Shared\UI\TooltipTable.lua
 Shared\UI\Pages\TooltipPage.lua
 Shared\UI\MainWindow.lua
+Shared\Features\AuctionTab\AuctionTabs.lua
 Shared\Features\AuctionTab\ScanBar.lua
 Shared\Features\AuctionTab\AuctionTab.lua
+Shared\Features\Buying\BuyingTab.lua
+Shared\Features\Selling\SellingTab.lua
 AH_Forever\AuctionTabHost.lua
 Shared\Features\Inventory\InventoryCapture.lua
 Shared\Features\Tooltip\Tooltip.lua

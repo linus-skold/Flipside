@@ -629,7 +629,8 @@ function M.reset(options)
     end
     ah.GetCommoditySearchResultInfo = function(itemID, index)
         local r = (M.commodityResults[itemID] or {})[index]
-        return r and { itemID = itemID, unitPrice = r.unitPrice, quantity = r.quantity }
+        return r and { itemID = itemID, unitPrice = r.unitPrice, quantity = r.quantity, auctionID = r.auctionID,
+            containsOwnerItem = r.owner, timeLeftSeconds = r.timeLeftSeconds }
     end
     ah.HasFullCommoditySearchResults = function()
         return M.searchFull
@@ -639,10 +640,24 @@ function M.reset(options)
     end
     ah.GetItemSearchResultInfo = function(itemKey, index)
         local r = (M.itemResults[itemKey.itemID] or {})[index]
-        return r and { itemKey = itemKey, itemLink = r.link, buyoutAmount = r.buyout, quantity = r.quantity }
+        return r and { itemKey = itemKey, itemLink = r.link, buyoutAmount = r.buyout, quantity = r.quantity,
+            auctionID = r.auctionID, containsOwnerItem = r.owner, timeLeft = r.timeLeft }
     end
     ah.HasFullItemSearchResults = function()
         return M.searchFull
+    end
+    -- Live search: M.searchQueries records SendSearchQuery calls; M.throttleReady is the ready flag.
+    M.searchQueries = {}
+    M.ownedQueries = {}
+    M.throttleReady = true
+    ah.SendSearchQuery = function(itemKey, sorts, separate)
+        table.insert(M.searchQueries, { itemKey = itemKey, sorts = sorts, separate = separate })
+    end
+    ah.IsThrottledMessageSystemReady = function()
+        return M.throttleReady
+    end
+    ah.QueryOwnedAuctions = function(sorts)
+        table.insert(M.ownedQueries, sorts)
     end
 
     _G.C_Container = {

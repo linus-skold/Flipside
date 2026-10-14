@@ -38,6 +38,9 @@ end
 function ScanBar.ResultText(summary)
     local label = summary.label or "full scan"
     if summary.result == "ok" or summary.result == "partial" then
+        if summary.result == "ok" and (summary.pending or 0) > 0 then
+            return string.format("Last: %s complete, %d pending", label, summary.pending)
+        end
         return string.format("Last: %s %s, %d items", label, summary.result, summary.items or 0)
     elseif summary.result == "error" then
         return "Last: " .. label .. " failed"

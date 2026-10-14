@@ -231,6 +231,10 @@ function TooltipPage.Build(content, deps)
         save("showSamples", checked, page.status)
     end)
     page.samplesCheck:SetPoint("TOPLEFT", right, "TOPLEFT", 160, -124)
+    page.altCheck = Kit.Check(right, "Hold Alt for stack value", function(checked)
+        save("altStack", checked, page.status)
+    end)
+    page.altCheck:SetPoint("TOPLEFT", right, "TOPLEFT", 0, -142)
 
     -- Preview.
 
@@ -401,6 +405,7 @@ function TooltipPage.Build(content, deps)
         page.formulaInput:SetText(line and line.formula or "")
         page.ageCheck:SetChecked(line and line.showAge)
         page.samplesCheck:SetChecked(line and line.showSamples)
+        page.altCheck:SetChecked(line and line.altStack ~= false)
         if page.tableView then
             page.tableView:Clear()
         end
@@ -412,6 +417,7 @@ function TooltipPage.Build(content, deps)
             page.samplesCheck }) do
             setEnabled(widget, active)
         end
+        setEnabled(page.altCheck, line ~= nil and not ro)
         setEnabled(page.addButton, not ro)
         setEnabled(page.upButton, moveable)
         setEnabled(page.downButton, moveable)

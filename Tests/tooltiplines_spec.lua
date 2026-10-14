@@ -109,7 +109,14 @@ describe("TooltipLines", function()
             assert.are.equal("40s", TL.FormatMoney(4000))
             assert.are.equal("1g", TL.FormatMoney(10000))
             assert.are.equal("12g 40s", TL.FormatMoney(124000))
-            assert.are.equal("12g", TL.FormatMoney(120035))
+            assert.are.equal("12g 35c", TL.FormatMoney(120035))
+            assert.are.equal("12g 40s 7c", TL.FormatMoney(124007))
+            assert.are.equal("3s 25c", TL.FormatMoney(25 * 13))
+            assert.are.equal("1g 5c", TL.FormatMoney(10005))
+            assert.are.equal("1g 1s 1c", TL.FormatMoney(10101))
+            assert.are.equal("2c", TL.FormatMoney(1.5))
+            assert.are.equal("-3s 25c", TL.FormatMoney(-325))
+            assert.are.equal("-1c", TL.FormatMoney(-1))
             assert.are.equal("1,234g 5s", TL.FormatMoney(12340500))
             assert.are.equal("12,345,678g", TL.FormatMoney(123456780000))
         end)
@@ -186,6 +193,17 @@ describe("TooltipLines", function()
             assert.are.equal("12g 40s", TL.Build(ctx({ stackCount = 5 }))[1].right)
             local rows = TL.Build(ctx({ stackMode = true, stackCount = 1 }))
             assert.are.equal("Market", rows[1].left)
+        end)
+
+        it("shows the per-item value in stack mode when altStack is off", function()
+            local c = ctx({ stackMode = true, stackCount = 5 })
+            c.config.lines[1].altStack = false
+            c.config.lines[2] = { label = "Stack", formula = "scanmarket", enabled = true, altStack = true }
+            local rows = TL.Build(c)
+            assert.are.equal("Market", rows[1].left)
+            assert.are.equal("12g 40s", rows[1].right)
+            assert.are.equal("Stack (stack of 5)", rows[2].left)
+            assert.are.equal("62g", rows[2].right)
         end)
 
         it("skips disabled lines", function()
@@ -369,7 +387,7 @@ describe("TooltipLines", function()
             assert.are.equal(4, #model.rows)
             assert.are.equal("1d", model.rows[1].label)
             assert.are.same({ "4s", "5s", "6s", "50s" }, model.rows[1].cells)
-            assert.are.same({ "2s", "3s", "5s", "33s" }, model.rows[2].cells)
+            assert.are.same({ "2s", "3s 33c", "5s", "33s 33c" }, model.rows[2].cells)
             assert.are.equal("60d", model.rows[4].label)
         end)
 
@@ -400,6 +418,17 @@ describe("TooltipLines", function()
             assert.are.same({ "4s", "5s", "6s", "50s" }, model.rows[1].cells)
             model = build(full(), { stackMode = true, stackCount = 1 })[1]
             assert.are.equal("Flipside (updated 2 h ago)", model.header)
+        end)
+
+        it("shows the per-item cells and no stack header when the table altStack is off", function()
+            local line =
+                { id = 1, kind = "table", label = "Price table", formula = "", enabled = true, altStack = false }
+            local model = build(full(), { stackMode = true, stackCount = 5, config = { lines = { line } } })[1]
+            assert.are.equal("Flipside (updated 2 h ago)", model.header)
+            assert.are.same({ "4s", "5s", "6s", "50s" }, model.rows[1].cells)
+            line.altStack = true
+            model = build(full(), { stackMode = true, stackCount = 5, config = { lines = { line } } })[1]
+            assert.are.equal("Flipside (updated 2 h ago, stack of 5)", model.header)
         end)
 
         it("omits the table when its line is off and keeps formula lines below it", function()

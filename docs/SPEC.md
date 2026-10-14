@@ -68,6 +68,7 @@ Start with Spike 0 (§8), then follow the MVP build order. Everything below appl
 | D23 | Flavour separation. Each flavour has its own TOC: `Flipside.toc` for Forever and `Flipside_TBC.toc` for TBC Anniversary. One release zip holds both TOCs. Shared code lives in `Shared/` (`Shared/Core`, `Shared/Services`, `Shared/Features`, `Shared/UI`, `Shared/UI/Kit`, `Shared/UI/Pages`). Flavour code lives in `Core_<Flavour>/` (flavour config `Flavour.lua`, tooltip hook) and `AH_<Flavour>/` (all auction API calls and the AH tab host). Only AuctionClient backends call the auction API. Shared code reads `ns.Flavour` and never checks the flavour name. The TOC selects the flavour folders | One TOC with flavour checks in shared code | 2026-10-14 |
 | D24 | TBC scan data is keyed by region, realm and ruleset. The ruleset value is "tbc-anniversary" (refines D15 and D22). Forever stays region + "standard". The realm part can be removed later if a test shows that TBC auctions are shared across realms | Region and ruleset only | 2026-10-14 |
 | D25 | TBC uses its own SavedVariables names: `FlipsideDB_TBC` and `FlipsideScanDB_TBC`. These are the names in `Flipside.toc` plus `_TBC` | Shared SavedVariables | 2026-10-14 |
+| D26 | Buying and Selling make one protected AH call for each click. Every buy asks for confirmation in v1 and shows the final server price. Flipside never buys without a click | Automatic buying of listed rows | 2026-10-14 |
 
 ### Improvements over TSM
 
@@ -140,7 +141,7 @@ Full-scan facts that shape the design ([Warcraft Wiki](https://warcraft.wiki.gg/
 
 - The cooldown is per account, not per character. Store the time of the last scan call account-wide in SavedVariables, and show the shared countdown on every character (D9).
 - Results are read by index, and the client handles about 2,000 item-info events per frame. The reader must process in slices of roughly 1,000–2,000 rows per frame.
-- Some rows arrive without item info. Queue those for item-info load and wait at most 30 s for them. Items without data after 30 s are left out and the snapshot is marked partial (see the scan engine design in §3.2).
+- Some rows arrive without item info. Queue those for item-info load and retry them for at most 30 s (see "Forever scan retry"). An item without data after the wait gets no new snapshot and keeps its old data. The other items are stored in full (see the scan engine design in §3.2).
 - On very busy realms the call has disconnected clients before (a fix in 9.0.2 removed seller names). Seller names are therefore never available from a full scan; blacklist features must use targeted searches.
 - WoW: Forever lists the same full-scan call in Blizzard's API (confirm behaviour in the beta); older Classic clients use the older "get all" query, also on a cooldown; the snapshot pipeline after it is the same.
 
@@ -154,12 +155,12 @@ Full-scan facts that shape the design ([Warcraft Wiki](https://warcraft.wiki.gg/
 
 Rows can arrive without full item info, so the pipeline loads item data before it uses names, links or stack sizes (see Spike 0 result in §8).
 
-All steps run as coroutines that yield each frame, with a progress bar. A scan interrupted by closing the AH is marked partial; its data updates only the "latest" values (see the scan engine design below).
+All steps run as coroutines that yield each frame, with a progress bar. A scan is partial only if the read is incomplete (for example the AH closes during the read); a partial scan updates only the "latest" values (see the scan engine design below).
 
 **Scan engine design (decided 2026-10-14)**
 
 - A `/reload` or logout during a scan discards the run. Nothing of it is saved.
-- After the rows are read, the scan waits at most 30 s for item data. Items without data after 30 s are left out of the snapshot, which is marked partial. They get a new attempt at the next scan.
+- After the rows are read, the scan retries for at most 30 s (backend value `ScanRefreshSeconds`; see "Forever scan retry"). An item without data after the wait is pending. It gets no write and keeps its old data. It gets a new attempt at the next scan. The other items are stored as a complete scan, and the summary says "complete with N pending".
 1. **Stored format.** One record per item per region and ruleset, stored as one delimited string per item (§3.3). Gear and other non-stackable items use the D20 exact key. Commodities use the base key. Money is whole copper. Days are integer day numbers.
 2. **Market value.** The "lowest 30%" and "first 15%" rules count auctions, not units. Outliers are removed with the population standard deviation. The market value is the plain (unweighted) average of the remaining unit prices, rounded half up to whole copper.
 3. **Price day (D4).** A day starts at 00:00 UTC by the server clock (`GetServerTime`). Day number = floor(server time / 86,400).
@@ -168,7 +169,7 @@ All steps run as coroutines that yield each frame, with a progress bar. A scan i
 6. **Cooldown.** The 15-minute timer starts when the scan is called, not when data arrives. Flipside refuses a new full scan before the timer ends and shows the time left. The 15 minutes stays an assumption until measured (open question).
 7. **Start before the AH frame exists.** `/flip scan` (or `/flipside scan`) at the open Auction House shows a warning popup. Accept starts the scan.
 8. **Snapshots and roll-up.** Keep up to 4 snapshots per day; a fifth drops the oldest. The day's record is the average of the day's snapshots. Roll-up into history happens at the first scan of a new day and also at login.
-9. **Partial scans** (AH closed during the read, or items not loaded within 30 s). The data updates the item's "latest" values. It does not enter the day's snapshots or the history. Only a complete scan does that. A complete scan replaces the "latest" values.
+9. **Partial scans** (the read is incomplete: the AH closed during the read, or a page got no answer). The data updates the "latest" values of each item. It does not enter the day's snapshots or the history. Only a complete read does that. Completeness is decided for each item: a complete read writes a normal snapshot (today and latest) for every item that has a key, also if other items stay pending. A pending item (no key yet, for example no item data or no link) gets no write. If some rows of a keyed item have no key, that item gets latest values only. This rule is the same for the full, fast and page modes.
 10. **Processing-time target.** "Under 5 s of scan processing" means Flipside's own processing time (CPU time of scan work). It excludes the server delay before the first event and the item-load wait. It is measured on the largest Forever run (about 73,000 rows).
 - Key fallback: if the commodity status is still unknown after the item-load wait, the exact key from the listing link is used (equal to the base key for plain items).
 - **Passive capture (decided 2026-10-14).**
@@ -325,6 +326,25 @@ The scan buttons also show on the start page of the Blizzard Auction House: a sm
 - Blacklist of sellers works only from targeted searches (full scans carry no seller names).
 - **Keep in bags:** the operation has a number for each item (default 0). Posting leaves that many units of the item in the bags (see the feedback decisions in §5.2).
 
+#### Buying and Selling decisions (step 6, 2026-10-14)
+
+The user decided points 1 to 4. Points 5 to 9 are defaults from the study recommendations. The user can change them.
+
+1. Build order: the Buying tab first, then the Selling tab. Both use the same step 6 stack.
+2. Every purchase asks for confirmation in v1 (D26). The confirm shows the final server price, because Forever quotes can rise between the search and the buy. Flipside never buys without a click. One click makes one protected AH call.
+3. The default undercut is 1 copper. The operation can override it.
+4. Selling has an operation field `stackSize`. The default is a full slot (the maximum stack; the value 0 means this). The client limit caps the value. A commodity posts the whole quantity as one listing.
+5. Items below the minimum price are skipped (the `belowMin` default, §5.4).
+6. No keybinds in v1.
+7. TBC Buying and Selling come later. Step 6 starts on WoW: Forever only.
+8. The decision log is a table for the session. Flipside does not save it.
+9. The buying plan (`BuyingPlan`) is pure logic. It lists the items of all groups that have a Buying operation, with the maximum price for each item. It shows the buyable rows of live search results, and it stops with a reason: "above max price", "own auction only", "no results" or "no max price". For a commodity, the buy unit is a quantity at a quoted unit price. For an item, the buy unit is one auction. The option `showAboveMax` lets the UI show rows above the maximum, but never buy them.
+10. The Forever host can add many Flipside tabs (`ns.AuctionTabs.Register`). The Buying tab shows the shopping list and runs live searches (one item, or all items one at a time). It evaluates the rows and logs each decision. It lists the listings of the selected item grouped by price level (unit price, total quantity, number of listings, own marker).
+11. Buy next buys the next cheapest price level: the whole quantity at that unit price for a commodity, or the next auction for an item. It needs a ready client, a level that is not yours and a unit price at or under the maximum price. It never buys above the maximum price. Each purchase has two clicks (D26). Click 1 starts a commodity quote (`StartCommoditiesPurchase`) and the confirm box shows the server unit and total price and the quote time left. For an item, click 1 opens the confirm box with the buyout price. Click 2 buys (`ConfirmCommoditiesPurchase`, or `PlaceBid` with the buyout for an item). A quote total above the maximum price times the quantity shows in red, and the button reads "Buy anyway". Cancel, Escape, a closed Auction House or a left tab cancels the quote.
+12. Price jump warning: before it buys a level whose unit price is more than the threshold above the previous level bought in this run (or above the first level if none is bought yet), a box says "Price jumps from X to Y (+Z%). Keep buying?" with "Keep buying" and "Stop". The default threshold is 25 percent. The Buying tab edits it, and the profile saves it as `buying.jumpPercent`. "Keep buying" is the click that starts the purchase. "Stop" ends the run.
+13. After a success, the tab logs "bought N at X", reads the rows of the item again and moves to the next level. After a failure it logs the reason and reads the rows again. The check box "Dry run" (default off) only logs "would buy N at X". Result events: `COMMODITY_PURCHASE_SUCCEEDED` and `COMMODITY_PURCHASE_FAILED` for a commodity, `AUCTION_HOUSE_PURCHASE_COMPLETED` and `AUCTION_HOUSE_SHOW_ERROR` for an item.
+14. The Selling tab (Forever only) has "Scan bags", "Post next", "Skip", a "Dry run" check box (default off) and a Log view. "Scan bags" reads the bags, runs one live search for each item of a group with a selling operation, and decides with `SellingPlan.Decide`. "Post next" makes one protected post for each click (D26). A commodity is one listing. An item with several stacks needs one click for each stack; the button shows "Post next stack (2 of 4)". If the server asks for a confirm (`needsConfirmation`), Flipside shows its own confirm and calls the confirm function on Accept. The list shows the deposit and the duration. The duration hours 12, 24 and 48 map to the AH index 1, 2 and 3; this mapping is not verified yet.
+
 ### 5.5 Mail lists (reference §5.4 Mailing)
 
 - A **mail list** is a named rule set: "send group X to character Y, keep N, send up to M".
@@ -380,9 +400,9 @@ Operations and formulas (§4.2–4.3), tooltips and inventory tracking (referenc
 3. **Mail and own auctions.** Tracked in the MVP. Equipped items come later.
 4. **Characters.** All characters of the account, on every realm.
 5. **Tooltip settings.** The tooltip lines are set on a new "Tooltip" tab in the Flipside window. They are stored in the profile.
-6. **Stack total.** Shown while Alt is held. Shift is Blizzard's compare key.
+6. **Stack total.** Shown while Alt is held. Shift is Blizzard's compare key. Each entry has an `altStack` flag (changed 2026-10-14), default on, set with the check box "Hold Alt for stack value" in the Tooltip tab. An entry with the flag off shows the per-item value while Alt is held. If the price table has the flag off, its title has no "stack of N". A stored line without the flag gets the default on.
 7. **Data line.** Superseded by point 15. A custom formula line shows "Label 12g 40s", and can add " · 3 h old" and " · 9/14 days" when its age and days settings are on. The days are the days with data in the 14-day window (`ScanSamples`).
-8. **Money.** Gold and silver ("12g 40s"). Copper shows only for values below 1 silver.
+8. **Money (changed 2026-10-14).** Every non-zero unit shows: "12g 40s 7c", "3s 25c", "1g 5c". A zero unit does not show. Zero is "0c". A negative value has a minus sign: "-3s 25c". Values round half up to whole copper, and Flipside never shortens a value to one unit. Gold has thousands separators ("1,234g"). Chat, the AH tab, the Formula page and the Operations page use the same formatter.
 9. **Default lines.** The price table (point 15), group path, selling operation, and counts per character. The formula lines Market, Min and Max are no longer defaults.
 10. **Combat and missing data.** Tooltip lines show in combat too. Items without data show "invalid price".
 11. **Budget.** At most 1 ms per tooltip once the data is loaded. This is measured in game.
@@ -504,10 +524,20 @@ A row can have an item ID and no link, because the client has no item data yet. 
 2. Otherwise the engine uses the link to make the key. A row without a link waits for the refresh.
 3. After the refresh window, a row still without a link gets the item ID key if the item info says that the item cannot have a random suffix (the item class is not weapon and not armor). The diagnostics count these items as `keyedWithoutLink`.
 4. If the item info is not available and no row of the item has a link, the item ID key is also used and counted in `keyedWithoutLink`.
-5. A weapon or armor item without a link stays pending. Its rows get no key and the scan result is "partial".
+5. A weapon or armor item without a link stays pending. Its rows get no key. The item keeps its old data and the summary counts it as pending.
 6. If some rows of an item have a link, the rows without a link of a weapon or armor item are not stored.
 
 Risk: rule 4 can put a suffix item without item info under the base key. Rule 3 can also be wrong for an unusual item class. The `keyedWithoutLink` count lets the in-game check find these cases.
+
+### Forever scan retry
+The Forever backend gives `ScanRefreshSeconds()` (30 s). The engine uses the refresh loop of the TBC modes for each Forever scan:
+
+1. In each poll (once each second) the engine resets the failed item loads and asks again for the items that are still pending (a row has no link, or `hasAllInfo` is not true). It also asks for the items with an unknown commodity status. It then reads the rows of these items again by index. The replicate list stays valid after the scan.
+2. A load that ends "failed" gets a new request in the next poll.
+3. Key rule after the window: an item without a link is stored under the base key if the client says it is a commodity (or, without that answer, the maximum stack size is more than 1). Other items stay pending, for example gear without a link. A commodity item needs no retry.
+4. A pending item gets no write and keeps its old data. All keyed items get a normal snapshot (today and latest), also if other items stay pending (see §3.2 rule 9).
+5. The Forever diagnostics line shows `pending N, failed F (load failed), nilLink L, notAllInfo A, retried R, refresh S s`. `nilLink` and `notAllInfo` count the pending items by reason. `retried` counts the items that got a request in poll 2 or later. The scan DB `diag` table keeps the last 5 runs.
+6. The summary says "complete with N pending" if the read was complete and N items stay pending. It says "partial" only if the read was incomplete.
 
 ### TBC scan diagnostics
 The `legacy scan:` line and the `diag` entries of the scan DB have `mode`, `keys`, `pending`, `failed`, `keyedWithoutLink`, `refreshSeconds` and `pages` (page mode) in addition to the row counts.
@@ -678,15 +708,15 @@ TSM behaviours this spec doesn't cover yet. Change the status as each one gets s
 | --- | --- | --- | --- |
 | UI and flow | Windows, AH tabs, settings layout, contextual frames | §6 | Partly scoped (2026-10-14: AH tabs, Flipside window, size, entry points; page layouts open; Groups and Operations pages: build step 4) |
 | Onboarding | First-run steps: starter groups, presets, guild-sharing choice (D7), first scan (starter groups moved here, 2026-10-14) | §6.3 | Needs scoping |
-| One-click macro and keybinds | Bindable button for post, cancel, buy, craft next | §3, §6.2 | Needs scoping |
+| One-click macro and keybinds | Bindable button for post, cancel, buy, craft next | §3, §6.2 | Partly scoped (2026-10-14: no keybinds in v1; every buy is one click, D26) |
 | My Auctions view | Own auctions list replacing Blizzard's Auctions tab (Blizzard's Auctions tab stays; decision B) | §3 | Needs scoping |
-| Commodities vs items | Separate buy, sell and snipe paths for region commodities and individual listings | §3 | Needs scoping |
+| Commodities vs items | Separate buy, sell and snipe paths for region commodities and individual listings | §3 | Partly scoped (2026-10-14: buy unit and post size defined in the step 6 decisions; snipe open) |
 | Retail crafting details | Quality tiers and optional reagents in item identity and crafting cost | §5.3 | Needs scoping |
 | Smaller settings | Forget character (function in step 5, button later), ignore guilds, sale and purchase sounds, chat output, slash commands | §5.11, §8.3 | Needs scoping |
 | Performance budgets | Memory, SavedVariables size, login time, tooltip speed (tooltip: 1 ms, decided 2026-10-14), scan processing | §10.3 | Needs scoping |
 | Combat lockdown | What is deferred or disabled in combat | §3 | Needs scoping |
 | Localisation | String tables, number and money formats, client languages (decimal separator in formulas decided: dot only) | §10.3 | Needs scoping |
-| Error handling and recovery | Failed posts and buys, disconnects mid-scan, corrupted data | §7.6 | Needs scoping |
+| Error handling and recovery | Failed posts and buys, disconnects mid-scan, corrupted data | §7.6 | Partly scoped (2026-10-14: a buy is confirmed with the final server price, D26; failures open) |
 | Later flavours | Retail differences: AH API, professions, banks, commodities. TBC Anniversary is in scope (D11, D23–D25); its open points are the TBC spike results | §3 | Partly scoped |
 
 ## Open questions

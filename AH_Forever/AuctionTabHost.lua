@@ -1,9 +1,11 @@
 local _, ns = ...
 
--- WoW: Forever host of the Flipside tab. It owns Blizzard's AuctionHouseFrame, the tab button and the pane switch.
+-- WoW: Forever host of the Flipside tabs. It owns Blizzard's AuctionHouseFrame, the tab buttons and the pane switch.
+-- It supports many tabs (Host.multiTab). Each tab has its own core. One tab at a time is active.
 -- It only reads Blizzard's frame fields and never writes to them (taint).
 local Host = {}
 ns.AuctionTabHost = Host
+Host.multiTab = true
 
 local OWNER = "Flipside.AuctionTabHost"
 local ADDON = "Blizzard_AuctionHouseUI"
@@ -14,6 +16,11 @@ local INSETS = { top = 60, bottom = 30 }
 -- The strip is 27 px high above the frame edge: the category list ends 27 px above the bottom
 -- (Blizzard_AuctionHouseFrame.xml:76-80, height 438 in Blizzard_AuctionHouseCategoriesList.xml:61).
 local START_BAR = { left = 174, right = 8, bottom = 4, buttonWidth = 90, stopWidth = 60 }
+
+-- The attached tabs, in order. shared holds the state of the one Blizzard frame.
+local entries = {}
+local shared = {}
+local waiting = false
 
 local function indexOf(list, item)
     for index, value in ipairs(list) do
@@ -49,14 +56,21 @@ local function setPanes(frame, shown)
     return mode
 end
 
--- Create the tab button after the Blizzard tabs. The tab template can add the button to frame.Tabs itself.
-local function buildTab(state, core, frame)
-    local tabs = frame.Tabs
-    local blizzardTabs = {}
-    for index, existing in ipairs(tabs) do
-        blizzardTabs[index] = existing
+-- Returns the built tab (other than skip) whose panel is active, or nil.
+local function activeEntry(skip)
+    for _, entry in ipairs(entries) do
+        if entry ~= skip and entry.state.frame and entry.core:IsActive() then
+            return entry
+        end
     end
-    local last = blizzardTabs[#blizzardTabs]
+    return nil
+end
+
+-- Create the tab button after the last tab. The tab template can add the button to frame.Tabs itself.
+local function buildTab(entry, frame)
+    local state = entry.state
+    local tabs = frame.Tabs
+    local last = tabs[#tabs]
     local button = createTabButton(frame)
     state.tab = button
     if not indexOf(tabs, button) then
@@ -64,15 +78,14 @@ local function buildTab(state, core, frame)
     end
     state.index = indexOf(tabs, button)
     button:SetID(state.index)
-    button:SetText("Flipside")
+    button:SetText(entry.label)
     if last then
         button:SetPoint("TOPLEFT", last, "TOPRIGHT", 3, 0)
     end
     button:SetScript("OnClick", function()
-        core:Select()
+        entry.core:Select()
     end)
     PanelTemplates_SetNumTabs(frame, #tabs)
-    return blizzardTabs
 end
 
 -- Give the place of the scan bar on the browse page. The browse results frame is shown only on the Buy start page.
@@ -94,47 +107,73 @@ function Host.StartPage(frame)
     }
 end
 
-local function buildFrame(state, core, frame)
+-- Hook the Blizzard tabs and the display mode once. The hooks work on the active tab.
+local function hookFrame(frame)
+    if not shared.tabHooks then
+        for blizzardIndex, blizzardTab in ipairs(shared.blizzardTabs) do
+            blizzardTab:HookScript("OnClick", function()
+                local active = activeEntry()
+                if active then
+                    active.core:Leave(blizzardIndex)
+                end
+            end)
+        end
+        shared.tabHooks = true
+    end
+    if not shared.modeHook then
+        hooksecurefunc(frame, "SetDisplayMode", function()
+            -- Same mode again: Blizzard did nothing, so the tab click hook restores the panes.
+            local active = activeEntry()
+            if active and frame:GetDisplayMode() ~= shared.selectedMode then
+                active.core:Deselect()
+            end
+        end)
+        shared.modeHook = true
+    end
+end
+
+local function buildFrame(entry, frame)
+    local state, core = entry.state, entry.core
+    if not shared.blizzardTabs then
+        local blizzardTabs = {}
+        for index, existing in ipairs(frame.Tabs) do
+            blizzardTabs[index] = existing
+        end
+        shared.blizzardTabs = blizzardTabs
+    end
     state.frame = frame
-    local blizzardTabs = buildTab(state, core, frame)
+    buildTab(entry, frame)
     local api = {
         insets = INSETS,
         startPage = Host.StartPage(frame),
-        -- Core shows the panel: remember the Blizzard tab, hide the panes and mark the Flipside tab.
+        -- Core shows the panel: remember the Blizzard tab, hide the panes and mark this tab.
+        -- If another Flipside tab is active, it hides and the remembered tab stays.
         Enter = function(wasActive)
-            if not wasActive then
-                state.previousTab = frame.selectedTab
+            local other = activeEntry(entry)
+            if other then
+                other.core:Deselect()
+            elseif not wasActive then
+                shared.previousTab = frame.selectedTab
             end
-            state.selectedMode = setPanes(frame, false)
+            shared.selectedMode = setPanes(frame, false)
             PanelTemplates_SetTab(frame, state.index)
         end,
         -- Core left the panel: show the panes again and mark the given or the previous Blizzard tab.
         Leave = function(tabIndex)
             setPanes(frame, true)
-            local index = tabIndex or state.previousTab
+            local index = tabIndex or shared.previousTab
             if index then
                 PanelTemplates_SetTab(frame, index)
             end
         end,
     }
     core:Mount(frame, api)
-    for blizzardIndex, blizzardTab in ipairs(blizzardTabs) do
-        blizzardTab:HookScript("OnClick", function()
-            if core:IsActive() then
-                core:Leave(blizzardIndex)
-            end
-        end)
-    end
-    hooksecurefunc(frame, "SetDisplayMode", function()
-        -- Same mode again: Blizzard did nothing, so the tab click hook restores the panes.
-        if core:IsActive() and frame:GetDisplayMode() ~= state.selectedMode then
-            core:Deselect()
-        end
-    end)
+    hookFrame(frame)
 end
 
 -- Undo a failed build: hide the tab, remove it from the frame and keep no half-built state.
-local function abandon(state, core, frame)
+local function abandon(entry, frame)
+    local state = entry.state
     local tab = state.tab
     if tab then
         tab:Hide()
@@ -144,37 +183,47 @@ local function abandon(state, core, frame)
             PanelTemplates_SetNumTabs(frame, #frame.Tabs)
         end
     end
-    core:Unmount()
+    entry.core:Unmount()
     state.frame, state.tab, state.index = nil, nil, nil
 end
 
-local function build(state, core)
+local function build(entry)
     local frame = AuctionHouseFrame
-    if state.frame or not frame then
+    if entry.state.frame or not frame then
         return
     end
-    local ok, err = pcall(buildFrame, state, core, frame)
+    local ok, err = pcall(buildFrame, entry, frame)
     if not ok then
-        abandon(state, core, frame)
-        ns.ReportError("the Auction House tab is not available: " .. tostring(err))
+        abandon(entry, frame)
+        ns.ReportError("the Auction House tab " .. entry.label .. " is not available: " .. tostring(err))
     end
 end
 
--- Attach the core panel to the Auction House frame, now or when its addon loads.
+local function buildAll()
+    for _, entry in ipairs({ unpack(entries) }) do
+        build(entry)
+    end
+end
+
+-- Attach a core panel to the Auction House frame, now or when its addon loads.
 -- core needs Mount(parent, api), Unmount(), Select(), Leave(tabIndex), Deselect(), IsActive() and core.deps.bus.
+-- opts.label is the tab text (default "Flipside"). Call Attach again for more tabs.
 -- Returns a state table with frame, tab and index.
-function Host.Attach(core)
-    local state = {}
+function Host.Attach(core, opts)
+    local entry = { core = core, label = opts and opts.label or "Flipside", state = {} }
+    entries[#entries + 1] = entry
     if AuctionHouseFrame then
-        build(state, core)
-    else
+        build(entry)
+    elseif not waiting then
+        waiting = true
         local bus = core.deps.bus
         bus:Subscribe("ADDON_LOADED", OWNER, function(_, name)
             if name == ADDON then
                 bus:Unsubscribe("ADDON_LOADED", OWNER)
-                build(state, core)
+                waiting = false
+                buildAll()
             end
         end)
     end
-    return state
+    return entry.state
 end

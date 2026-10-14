@@ -208,11 +208,15 @@ local function buildScanApi()
     if client.HasCommodityCheck() then
         api.clientIsCommodity = client.ItemIsCommodity
     end
-    -- A backend with scan modes (legacy) keys rows without a link and refreshes missing links.
+    -- A backend with scan modes (legacy) also keys rows without a link.
+    -- A backend with ScanRefreshSeconds (Forever too) makes the engine retry item loads and missing links.
+    local refreshBackend = client.Backend()
+    if refreshBackend and refreshBackend.ScanRefreshSeconds then
+        api.refreshSeconds = client.ScanRefreshSeconds
+    end
     local modes = client.ScanModes()
     if modes then
         api.modes = modes
-        api.refreshSeconds = client.ScanRefreshSeconds
         api.canKeyWithoutLink = canKeyWithoutLink
         local backend = client.Backend()
         if client.CanScan() and backend and backend.ScanPageQuery then
@@ -582,6 +586,13 @@ local function openRules()
                 itemInfo = C_Container.GetContainerItemInfo,
             }, resolver, { bagIDs = ns.Flavour.bagIDs() }))
         end
+        -- The bag items with their stacks (bag and slot), for the Selling tab.
+        ns.readBagStacks = function()
+            return (ns.BagItems.Read({
+                numSlots = C_Container.GetContainerNumSlots,
+                itemInfo = C_Container.GetContainerItemInfo,
+            }, resolver, { bagIDs = ns.Flavour.bagIDs(), stacks = true }))
+        end
     end)
     if not ok then
         ns.rules, ns.customSources = nil, nil
@@ -860,6 +871,20 @@ openUI = function()
     else
         ns.ReportError("Auction House tab is not available this session: " .. tostring(result))
     end
+    if ns.AuctionTabs then
+        ns.auctionTabs = ns.AuctionTabs.AttachAll({
+            bus = ns.bus,
+            rules = ns.rules,
+            formulaRun = ns.formulaRun,
+            after = C_Timer.After,
+            db = ns.db,
+            readBags = ns.readBagStacks,
+            getRecord = function(key)
+                return ns.scanStore and ns.scanStore:Get(key) or nil
+            end,
+            now = GetServerTime,
+        })
+    end
 end
 
 local function scanCommand(argument)
@@ -910,13 +935,12 @@ local function scanCommand(argument)
     end)
 end
 
--- Money in copper as "Xg Ys Zc".
+-- Money in copper, shown with the shared formatter.
 local function formatMoney(copper)
     if type(copper) ~= "number" then
         return "-"
     end
-    copper = math.floor(copper + 0.5)
-    return string.format("%dg %ds %dc", math.floor(copper / 10000), math.floor(copper / 100) % 100, copper % 100)
+    return ns.TooltipLines.FormatMoney(copper)
 end
 
 local function priceText(name, copper)

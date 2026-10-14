@@ -29,14 +29,19 @@ local function withSeparators(n)
     return out
 end
 
--- Returns gold and silver as text; copper only below 1 silver.
+-- Returns every non-zero unit as text, such as "12g 40s 7c". Rounds half up to whole copper. "0c" for zero.
 function TooltipLines.FormatMoney(copper)
     copper = math.floor((copper or 0) + 0.5)
-    if copper < 100 then
-        return copper .. "c"
+    if copper == 0 then
+        return "0c"
+    end
+    local sign = ""
+    if copper < 0 then
+        sign, copper = "-", -copper
     end
     local gold = math.floor(copper / 10000)
     local silver = math.floor((copper % 10000) / 100)
+    local rest = copper % 100
     local parts = {}
     if gold > 0 then
         parts[#parts + 1] = withSeparators(gold) .. "g"
@@ -44,7 +49,10 @@ function TooltipLines.FormatMoney(copper)
     if silver > 0 then
         parts[#parts + 1] = silver .. "s"
     end
-    return table.concat(parts, " ")
+    if rest > 0 then
+        parts[#parts + 1] = rest .. "c"
+    end
+    return sign .. table.concat(parts, " ")
 end
 
 function TooltipLines.FormatAge(hours)
@@ -59,7 +67,7 @@ end
 
 local function dataRow(line, ctx, state)
     if line.kind == "table" then
-        return ctx.tableRow()
+        return ctx.tableRow(line)
     end
     local copper, info
     if ctx.formulaRun then
@@ -69,7 +77,7 @@ local function dataRow(line, ctx, state)
     local stack = ctx.stackCount
     local right
     if copper then
-        if ctx.stackMode and stack and stack > 1 then
+        if ctx.stackMode and line.altStack ~= false and stack and stack > 1 then
             copper = copper * stack
             label = label .. " (stack of " .. stack .. ")"
         end
@@ -152,13 +160,14 @@ function TooltipLines.Windows(record, now)
     return out
 end
 
-local function tableModel(ctx, key)
+local function tableModel(ctx, key, line)
     local record = key and ctx.getRecord and ctx.getRecord(key)
     if type(record) ~= "table" then
         return { left = NO_PRICES, right = INVALID, color = "dim" }
     end
     local windows = TooltipLines.Windows(record, ctx.now)
-    local stack = ctx.stackMode and ctx.stackCount and ctx.stackCount > 1 and ctx.stackCount or 1
+    local useAlt = ctx.stackMode and line.altStack ~= false
+    local stack = useAlt and ctx.stackCount and ctx.stackCount > 1 and ctx.stackCount or 1
     local rows, any = {}, false
     for i, w in ipairs(windows) do
         local cells = {}
@@ -265,7 +274,11 @@ function TooltipLines.Build(ctx)
     end
 
     local key = ns.ItemString and (ns.ItemString.ToExactKey(ctx.input))
-    local tableCtx = setmetatable({ tableRow = function() return tableModel(ctx, key) end }, { __index = ctx })
+    local tableCtx = setmetatable({
+        tableRow = function(line)
+            return tableModel(ctx, key, line)
+        end,
+    }, { __index = ctx })
     for _, line in ipairs(config.lines or {}) do
         if line.enabled ~= false then
             rows[#rows + 1] = dataRow(line, tableCtx, state)

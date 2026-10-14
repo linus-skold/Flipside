@@ -3,7 +3,10 @@ local _, ns = ...
 -- The one door to the auction API. A flavour file registers a backend with Use(); shared code calls only this module.
 -- Backend functions: StartScan, ScanDoneEvent, RowCount, ReadRow, RowLink, RowIsPet, ItemIsCommodity,
 -- HasCommodityCheck, NameSearch, TargetedSearch, NameResultEvent, NameResults, NameItemKeyInfo, Capture, OwnedAuctions,
--- CanReadOwned, OwnedEvent, OpenEvent, CloseEvent, CanScan. A backend leaves out what its client cannot do.
+-- CanReadOwned, OwnedEvent, OpenEvent, CloseEvent, CanScan, CanLiveSearch, LiveSearch, LiveResultEvents, LiveRows,
+-- IsReady, ReadyEvent, RefreshOwned, CanBuy, StartCommodityPurchase, ConfirmCommodityPurchase, CancelCommodityPurchase,
+-- QuoteSecondsLeft, BuyItemAuction, BuyEvents, CanPost, PostItem, PostCommodity, ConfirmPostItem, ConfirmPostCommodity,
+-- Deposit, AvailablePostCount, IsSellItemValid, PostedEvent. A backend leaves out what its client cannot do.
 local AuctionClient = {}
 ns.AuctionClient = AuctionClient
 
@@ -53,6 +56,7 @@ query("CanScan", false)
 query("HasCommodityCheck", false)
 query("CanReadOwned", false)
 query("CanTargetSearch", false)
+query("CanLiveSearch", false)
 
 -- Event names: nil without a backend function.
 query("ScanDoneEvent")
@@ -60,6 +64,7 @@ query("NameResultEvent")
 query("OwnedEvent")
 query("OpenEvent")
 query("CloseEvent")
+query("ReadyEvent")
 
 -- Optional scan helpers: ScanCanStart() gives true, or false and a text; ScanSettleSeconds() and ScanComplete()
 -- tell the engine when a multi-event scan is done; ScanDiagnostics(summary) gives a text line.
@@ -77,6 +82,46 @@ query("ScanRefreshSeconds")
 query("ScanPageQuery")
 query("CanQueryPage", false)
 query("ScanTotal")
+
+-- Live search (optional; absent on the legacy client). LiveSearch(itemID) gives true, or false and a text.
+-- LiveResultEvents() gives the commodity and the item result event names. LiveRows(itemID) gives rows
+-- { auctionID, unitPrice, quantity, isCommodity, ownerItem, timeLeft, itemLink } with the cheapest first.
+-- IsReady() tells if a throttled call is allowed. RefreshOwned() asks for a fresh owned list.
+query("LiveSearch", false)
+query("LiveResultEvents")
+query("LiveRows", {})
+query("IsReady", true)
+query("RefreshOwned")
+
+-- Buy block. CanBuy() tells if the client can buy.
+-- StartCommodityPurchase, ConfirmCommodityPurchase and BuyItemAuction are protected: call them only from a click.
+-- CancelCommodityPurchase is not protected.
+-- StartCommodityPurchase(itemID, quantity) asks for a quote; the quote event follows.
+-- ConfirmCommodityPurchase(itemID, quantity) buys at the quote.
+-- CancelCommodityPurchase() drops the quote. QuoteSecondsLeft() gives the time left of the quote.
+-- BuyItemAuction(auctionID, buyout) buys one item auction at its buyout price.
+-- BuyEvents() gives { priceUpdated, priceUnavailable, commoditySucceeded, commodityFailed,
+-- itemCompleted, itemError }.
+query("CanBuy", false)
+query("QuoteSecondsLeft")
+query("BuyEvents")
+action("StartCommodityPurchase")
+action("ConfirmCommodityPurchase")
+action("CancelCommodityPurchase")
+action("BuyItemAuction")
+
+-- Posting (optional; Forever only). The item is a bag slot. duration is in hours: 12, 24 or 48.
+-- PostItem(bag, slot, duration, quantity, bid, buyout) and PostCommodity(bag, slot, duration, quantity, unitPrice)
+-- are protected: call them only inside a click handler. They give needsConfirmation (true or false); if it is true,
+-- the confirm call with the same arguments finishes the post. Deposit(bag, slot, duration, quantity, isCommodity)
+-- gives the deposit in copper or nil. AvailablePostCount(bag, slot) gives the number of posts of this item that the
+-- client allows. IsSellItemValid(bag, slot) tells if the slot item can be posted. PostedEvent() gives the event name
+-- that follows a post.
+query("CanPost", false)
+query("Deposit")
+query("AvailablePostCount")
+query("IsSellItemValid")
+query("PostedEvent")
 
 -- Search capture: nil means capture is off.
 query("Capture")
@@ -96,3 +141,8 @@ action("TargetedSearch")
 action("NameResults")
 action("NameItemKeyInfo")
 action("OwnedAuctions")
+-- Protected post calls (see the posting block above).
+action("PostItem")
+action("PostCommodity")
+action("ConfirmPostItem")
+action("ConfirmPostCommodity")

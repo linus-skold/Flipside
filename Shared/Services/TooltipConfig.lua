@@ -10,8 +10,8 @@ local MAX_LINES = 12
 local TABLE_LABEL = "Price table"
 local VERSION = 2
 local FLAGS = { showGroup = true, showOperation = true, showCounts = true }
-local FIELDS = { label = true, formula = true, showAge = true, showSamples = true, enabled = true }
-local BOOL_FIELDS = { showAge = true, showSamples = true, enabled = true }
+local FIELDS = { label = true, formula = true, showAge = true, showSamples = true, enabled = true, altStack = true }
+local BOOL_FIELDS = { showAge = true, showSamples = true, enabled = true, altStack = true }
 
 local Config = {}
 Config.__index = Config
@@ -41,6 +41,7 @@ local function NewTableLine(id)
         showAge = false,
         showSamples = false,
         enabled = true,
+        altStack = true,
     }
 end
 
@@ -139,7 +140,8 @@ local function Validate(data, version)
             return false, "tooltip data has an invalid line"
         end
         for field in pairs(BOOL_FIELDS) do
-            if type(line[field]) ~= "boolean" then
+            local missingAlt = field == "altStack" and line[field] == nil
+            if type(line[field]) ~= "boolean" and not missingAlt then
                 return false, "tooltip data has an invalid line"
             end
         end
@@ -168,6 +170,15 @@ local function CheckFormula(compile, formula)
     return true
 end
 
+-- A stored line without altStack gets the default true.
+local function FillAltStack(data)
+    for _, line in ipairs(data.lines) do
+        if line.altStack == nil then
+            line.altStack = true
+        end
+    end
+end
+
 function Config:_Load()
     local stored = self._db:Get("profile", KEY)
     if stored == nil then
@@ -177,6 +188,7 @@ function Config:_Load()
     local ok, message = Validate(stored, stored.version == 1 and 1 or VERSION)
     if ok and stored.version == 1 then
         self._data = Migrate(stored)
+        FillAltStack(self._data)
         return
     end
     if not ok then
@@ -188,6 +200,7 @@ function Config:_Load()
         return
     end
     self._data = DeepCopy(stored)
+    FillAltStack(self._data)
 end
 
 function Config:IsReadOnly()
@@ -249,6 +262,7 @@ function Config:AddLine(label, formula)
             showAge = false,
             showSamples = false,
             enabled = true,
+            altStack = true,
         }
         data.nextID = data.nextID + 1
         return true
@@ -269,8 +283,8 @@ function Config:UpdateLine(id, fields)
             if not FIELDS[field] then
                 return nil, "unknown field " .. tostring(field)
             end
-            if line.kind == "table" and field ~= "enabled" then
-                return nil, "the price table has only an on/off setting"
+            if line.kind == "table" and field ~= "enabled" and field ~= "altStack" then
+                return nil, "the price table has only an on/off setting and an Alt setting"
             end
             if BOOL_FIELDS[field] then
                 if type(value) ~= "boolean" then
