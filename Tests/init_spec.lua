@@ -1,6 +1,13 @@
 local mock = require("Tests.wow_mock")
 
-local FILES = { "Core/EventBus.lua", "Core/Scheduler.lua", "Core/ItemString.lua", "Core/Init.lua" }
+local FILES = {
+    "Core/EventBus.lua",
+    "Core/Scheduler.lua",
+    "Core/ItemString.lua",
+    "Core/SettingsDB.lua",
+    "Core/ItemInfoCache.lua",
+    "Core/Init.lua",
+}
 
 local ns
 
@@ -190,4 +197,158 @@ describe("Init", function()
             assert.are.same({ "Flipside: client 1.60.1, build 70009, interface 16001" }, mock.messages)
         end)
     end)
-end)
+
+    describe("settings DB", function()
+        before_each(function()
+            mock.playerName = "Tester"
+            mock.realmName = "TestRealm"
+        end)
+
+        it("loads the files from the TOC in sequence", function()
+            local toc = {}
+            for line in io.lines("Flipside.toc") do
+                local path = line:match("^(Core\\.-%.lua)%s*$")
+                if path then
+                    table.insert(toc, (path:gsub("\\", "/")))
+                end
+            end
+            assert.are.same(FILES, toc)
+        end)
+
+        it("does not create ns.db before PLAYER_LOGIN", function()
+            mock.fire("ADDON_LOADED", "Flipside")
+            assert.is_nil(ns.db)
+            assert.is_nil(_G.FlipsideDB)
+        end)
+
+        it("creates a new FlipsideDB at PLAYER_LOGIN", function()
+            mock.fire("PLAYER_LOGIN")
+            assert.is_table(ns.db)
+            assert.are.equal(1, _G.FlipsideDB._schema)
+            assert.are.equal("Default", ns.db:GetProfile())
+            local found = false
+            for _, value in pairs(_G.FlipsideDB) do
+                if type(value) == "table" and value["Tester-TestRealm"] == "Default" then
+                    found = true
+                end
+            end
+            assert.is_true(found)
+            assert.are.equal(0, #mock.messages)
+        end)
+
+        it("keeps an existing FlipsideDB table and its unknown keys", function()
+            local saved = { _schema = 1, futureKey = { a = 1 } }
+            _G.FlipsideDB = saved
+            mock.fire("PLAYER_LOGIN")
+            assert.are.equal(saved, _G.FlipsideDB)
+            assert.are.same({ a = 1 }, saved.futureKey)
+            assert.are.equal(1, saved._schema)
+        end)
+
+        it("replaces a FlipsideDB that is not a table", function()
+            _G.FlipsideDB = "broken"
+            mock.fire("PLAYER_LOGIN")
+            assert.is_table(_G.FlipsideDB)
+            assert.is_table(ns.db)
+        end)
+
+        it("creates no DB and prints one line for a nil name", function()
+            mock.playerName = nil
+            mock.fire("PLAYER_LOGIN")
+            assert.is_nil(ns.db)
+            assert.is_nil(_G.FlipsideDB)
+            assert.are.equal(1, #mock.messages)
+            assert.is_true(mock.messages[1]:find("^Flipside: settings are not available") ~= nil)
+        end)
+
+        it("creates no DB and prints one line for a nil or empty realm", function()
+            mock.realmName = nil
+            mock.fire("PLAYER_LOGIN")
+            assert.is_nil(ns.db)
+            assert.are.equal(1, #mock.messages)
+            mock.messages = {}
+            mock.realmName = ""
+            mock.fire("PLAYER_LOGIN")
+            assert.is_nil(ns.db)
+            assert.are.equal(1, #mock.messages)
+        end)
+
+        it("emits Flipside.DBReady before Flipside.Login", function()
+            local order = {}
+            ns.bus:Subscribe("Flipside.DBReady", "test", function()
+                table.insert(order, "DBReady")
+            end)
+            ns.bus:Subscribe("Flipside.Login", "test", function()
+                table.insert(order, "Login:" .. tostring(ns.db ~= nil))
+            end)
+            mock.fire("PLAYER_LOGIN")
+            assert.are.same({ "DBReady", "Login:true" }, order)
+        end)
+
+        it("gives a read-only DB and one warning for a newer schema", function()
+            _G.FlipsideDB = { _schema = 99 }
+            mock.fire("PLAYER_LOGIN")
+            assert.is_table(ns.db)
+            assert.is_true(ns.db:IsReadOnly())
+            assert.are.equal(99, _G.FlipsideDB._schema)
+            assert.are.equal(1, #mock.messages)
+            assert.is_true(mock.messages[1]:find("^Flipside: ") ~= nil)
+        end)
+
+        it("prints one line and leaves ns.db nil if SettingsDB.New fails", function()
+            ns.SettingsDB.New = function()
+                error("boom", 0)
+            end
+            mock.fire("PLAYER_LOGIN")
+            assert.is_nil(ns.db)
+            assert.are.equal(1, #mock.messages)
+            assert.is_true(mock.messages[1]:find("boom", 1, true) ~= nil)
+        end)
+
+        it("shows the profile line in /flipside only if the DB exists", function()
+            _G.SlashCmdList.FLIPSIDE("")
+            assert.are.equal(3, #mock.messages)
+            mock.fire("PLAYER_LOGIN")
+            mock.messages = {}
+            _G.SlashCmdList.FLIPSIDE("")
+            assert.are.same({
+                "Flipside: addon Flipside",
+                "Flipside: profile Default",
+                "Flipside: client 1.60.1, build 70009, interface 16001",
+                "Flipside: No feature exists yet.",
+            }, mock.messages)
+        end)
+    end)
+
+    describe("item info cache", function()
+        it("registers ITEM_DATA_LOAD_RESULT on the frame", function()
+            assert.is_true(mock.isRegistered("ITEM_DATA_LOAD_RESULT"))
+        end)
+
+        it("runs a stored callback when the load result arrives", function()
+            local got
+            ns.itemCache:Request(123, function(itemID, info, state)
+                got = { itemID, info and info.name, state }
+            end)
+            assert.is_nil(got)
+            mock.itemInfo[123] = { "Sword", "link" }
+            mock.fire("ITEM_DATA_LOAD_RESULT", 123, true)
+            assert.are.same({ 123, "Sword", "loaded" }, got)
+        end)
+
+        it("calls RequestLoadItemDataByID once for two requests", function()
+            ns.itemCache:Request(55, function() end)
+            ns.itemCache:Request(55, function() end)
+            assert.are.same({ 55 }, mock.loadRequests)
+        end)
+
+        it("returns data at once if the client has the item", function()
+            mock.itemInfo[7] = { "Shield" }
+            local got
+            ns.itemCache:Request(7, function(_, info, state)
+                got = { info.name, state }
+            end)
+            assert.are.same({ "Shield", "loaded" }, got)
+            assert.are.same({}, mock.loadRequests)
+        end)
+    end)end)
