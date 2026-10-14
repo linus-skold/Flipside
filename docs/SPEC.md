@@ -104,7 +104,7 @@ Nine features come from your list, twelve are ones TSM users rely on that are ea
 | Ledger | Record sales, purchases, fees and failures; show profit | Same as Accounting; adds documented CSV export | You | MVP |
 | Sniper | Repeat searches to catch underpriced new listings | Same as Sniper; uses local scan prices for thresholds | You | Phase 2 |
 | Operations and price formulas | Reusable rules with a formula language | Same language; new local price sources; live formula preview | Added | MVP |
-| Tooltips | Prices, counts and history on every item | Adds data age and scan count to price lines | Added | MVP |
+| Tooltips | Prices, counts and history on every item (the history chart is Phase 2) | Adds data age and days with data (samples) to price lines | Added | MVP |
 | Inventory tracking | Counts per character, bank, mail, AH, guild | Same | Added | MVP |
 | Decision log and dry run | Shows why each item was posted, skipped or cancelled | New | Added | MVP |
 | Crafting and queue | Profit per recipe, restock queue, craft next | Same | Added | Phase 2 |
@@ -185,7 +185,7 @@ All steps run as coroutines that yield each frame, with a progress bar. A scan i
 - Every price carries **age** (hours since last seen) and **samples** (days with data in the window).
 - Tooltips show both, e.g. "Market 12g 40s · 3 h old · 9/14 days".
 - Operations get two safety settings: *max data age* and *min samples*. If either fails, the item is skipped with the reason "stale price" in the decision log.
-- The Dashboard shows when the last full scan ran and when the next is available.
+- The Flipside AH tab shows when the last full scan ran and when the next is available (a Dashboard comes in Phase 2).
 
 ### 3.5 Sharing scan data
 
@@ -206,6 +206,8 @@ The formula language stays as in the reference (§4.3). AuctionDB sources are re
 | `ScanQty` | Units listed in the most recent snapshot | — (new, value source) |
 | `ScanAge` | Hours since the item was last seen | — (new, value source) |
 | `ScanSamples` | Days with data in the 14-day window | — (new, value source) |
+| `ScanLow` | Lowest price (min) seen in the 14-day window, including today (decided 2026-10-14) | — (new) |
+| `ScanHigh` | Highest daily market value in the 14-day window, including today (decided 2026-10-14) | — (new) |
 | `ImportMarket` | Market value from the optional external file | `DBRegionMarketAvg` (only if imported) |
 | `SaleRate` | Your own sold ÷ (sold + expired) for the item, from the ledger | `DBRegionSaleRate` (personal, not regional) |
 
@@ -293,7 +295,7 @@ A *Full Scan* button sits on the Flipside tab of the Auction House frame with a 
 2. **Names for items without scan data.** First use the game client's item cache. If the Auction House is open, then search the AH for the name. No item database ships with Flipside.
 3. **Group page.** The page has two inner tabs: "Rules" (the operations for each type) and "Items" (add and remove items).
 4. **Drag and drop.** The player drags a group into a parent group or out of it (a move). Lists stay sorted by name. No manual order is stored. Operations sort by name.
-5. **Keep amount.** Selling and vendoring operations get a "Keep in bags" setting: a number for each item, default 0. That many units of each item stay in the bags. Until bank tracking exists (Phase 2), only the bags count. Keep-stock rules (D8) have priority over it when they exist.
+5. **Keep amount.** Selling and vendoring operations get a "Keep in bags" setting: a number for each item, default 0. That many units of each item stay in the bags. Bank counts are tracked in the MVP (see §5.10), but "Keep in bags" still counts the bags only. Keep-stock rules (D8) have priority over it when they exist.
 6. **Export and import of groups** (MVP, see §7.4). The format is a documented, readable, versioned Flipside text format. It holds a group, its sub-groups, their items, and copies of the operations they use. Import shows a summary and asks before it changes anything. It never imports TSM strings (D13). Import rules:
    - The import goes under a parent group that the player picks.
    - If a group name already exists under that parent, the new group gets the suffix " (2)".
@@ -365,6 +367,22 @@ How features use it: Banking moves to and from the bank; Mail lists send shortfa
 
 Operations and formulas (§4.2–4.3), tooltips and inventory tracking (§5.11), crafting and queue (§5.3), dashboard (§5.8), destroying (§5.9) and the Task List (§5.10) behave as in the reference, using scan sources in place of AuctionDB.
 
+**Tooltips and inventory design (decided 2026-10-14)**
+
+1. **Bank.** The bank is tracked in the MVP. Flipside saves the bank contents when the bank is open and shows the age of that count. "Keep in bags" still counts the bags only.
+2. **Guild bank.** Later, not in build step 5.
+3. **Mail and own auctions.** Tracked in the MVP. Equipped items come later.
+4. **Characters.** All characters of the account, on every realm.
+5. **Tooltip settings.** The tooltip lines are set on a new "Tooltip" tab in the Flipside window. They are stored in the profile.
+6. **Stack total.** Shown while Alt is held. Shift is Blizzard's compare key.
+7. **Data line.** The form is "Market 12g 40s · 3 h old · 9/14 days". The days are the days with data in the 14-day window (`ScanSamples`).
+8. **Money.** Gold and silver ("12g 40s"). Copper shows only for values below 1 silver.
+9. **Default lines.** Market price with age and days, lowest price, group path, selling operation, and counts per character.
+10. **Combat and missing data.** Tooltip lines show in combat too. Items without data show "invalid price".
+11. **Budget.** At most 1 ms per tooltip once the data is loaded. This is measured in game.
+12. **Dashboard.** Phase 2, as in the feature list. The scan time and cooldown stay on the AH tab.
+13. **Forget character.** A function removes only the inventory of that character. The button comes later.
+14. **Min, max and average.** In tooltips they mean the last 14 days. Min is `ScanLow`, max is `ScanHigh`, average is `ScanMarket` (§4).
 ### 5.11 Great Deals (new)
 
 Right after each full scan, before raw listings are discarded, every listing is compared with the item's `ScanMarket` from *before* this scan, so a flood of cheap listings can't lower its own benchmark.
@@ -554,8 +572,8 @@ TSM behaviours this spec doesn't cover yet. Change the status as each one gets s
 | My Auctions view | Own auctions list replacing Blizzard's Auctions tab (Blizzard's Auctions tab stays; decision B) | §3 | Needs scoping |
 | Commodities vs items | Separate buy, sell and snipe paths for region commodities and individual listings | §3 | Needs scoping |
 | Retail crafting details | Quality tiers and optional reagents in item identity and crafting cost | §5.3 | Needs scoping |
-| Smaller settings | Forget character, ignore guilds, sale and purchase sounds, chat output, slash commands | §5.11, §8.3 | Needs scoping |
-| Performance budgets | Memory, SavedVariables size, login time, tooltip speed, scan processing | §10.3 | Needs scoping |
+| Smaller settings | Forget character (function in step 5, button later), ignore guilds, sale and purchase sounds, chat output, slash commands | §5.11, §8.3 | Needs scoping |
+| Performance budgets | Memory, SavedVariables size, login time, tooltip speed (tooltip: 1 ms, decided 2026-10-14), scan processing | §10.3 | Needs scoping |
 | Combat lockdown | What is deferred or disabled in combat | §3 | Needs scoping |
 | Localisation | String tables, number and money formats, client languages (decimal separator in formulas decided: dot only) | §10.3 | Needs scoping |
 | Error handling and recovery | Failed posts and buys, disconnects mid-scan, corrupted data | §7.6 | Needs scoping |
