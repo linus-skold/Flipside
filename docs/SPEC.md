@@ -17,7 +17,7 @@ Start with Spike 0 (§8), then follow the MVP build order. Everything below appl
    - Unit tests with busted and a mocked WoW API, for the pure logic: formula compiler, market-value algorithm, selling decisions, keep-stock maths, deposit-aware maths.
    - Packaging for CurseForge and Wago via a release workflow.
 4. **Libraries.** Decide in the first task whether to use common libraries (e.g. Ace3, LibSerialize, LibDeflate) or write our own; check each licence is compatible with MIT (D12) and list them in the README. The decision is made: see D18.
-5. **Repo CLAUDE.md** containing: the link to this spec; the build order; "Decisions D1–D19 are binding — ask before changing one"; "When something gets scoped, update the Needs scoping table"; the definition of done below.
+5. **Repo CLAUDE.md** containing: the link to this spec; the build order; "Decisions D1–D22 are binding — ask before changing one"; "When something gets scoped, update the Needs scoping table"; the definition of done below.
 6. **Definition of done per feature.** Unit tests pass; luacheck is clean; the feature's in-game checklist passes on WoW: Forever; the spec section is updated if behaviour changed; the Phase dropdown and Needs scoping status reflect reality.
 7. **Open questions** at the end of this tab are not decided. If a task depends on one, stop and ask.
 
@@ -62,6 +62,9 @@ Start with Spike 0 (§8), then follow the MVP build order. Everything below appl
 | D17 | Visual style: WoW: Forever classic look in bronze and copper; Blizzard textures referenced by path, never shipped; Flipside's own art drawn at 2–4× resolution | TSM's flat dark theme | 2026-10-13 |
 | D18 | No Ace3. Flipside writes its own framework (settings DB, event bus, coroutine scheduler, slash commands) and its own UI kit. No third-party library ships in the MVP. The use of AceComm with ChatThrottleLib for guild sharing is decided again at Phase 3 | — | 2026-10-14 |
 | D19 | The UI kit is reusable for other addons: style only (theme table, frames, buttons, tabs, lists), with no Flipside logic and no reference to Flipside code or names. It lives in `UI/Kit/` in this repository and can be extracted to a library later | — | 2026-10-14 |
+| D20 | Item identity: the item key is built from item link fields: item id, suffix id and bonus ids. Enchants, gems, unique id, link level and specialization are not part of the key. Commodities (stackable items) use the item id only. Granularity (base item or exact variant) is chosen when a group or price source matches, not when data is stored. Keys never contain localised names. Flipside uses its own text form for keys, not TSM's | — | 2026-10-14 |
+| D21 | Battle pets are out of the MVP | — | 2026-10-14 |
+| D22 | Scan data is keyed by region and ruleset (refines D15). The region comes from the client. Each stored record also has a ruleset field that has one fixed value in the MVP; real rulesets (for example hardcore or self-found) can come later without a rewrite of stored data | — | 2026-10-14 |
 
 ### Improvements over TSM
 
@@ -152,7 +155,7 @@ All steps run as coroutines that yield each frame, with a progress bar. A scan i
 
 ### 3.3 History storage
 
-- Per item and realm: every daily record (min, market, quantity, scans) for at least 60 days by default; retention is a setting with 60 days as the minimum (D6). Market value still weights the last 14 days.
+- Per item, region and ruleset (D15, D22): every daily record (min, market, quantity, scans) for at least 60 days by default; retention is a setting with 60 days as the minimum (D6). Market value still weights the last 14 days.
 - Records are packed as numbers in a delimited string per item to keep SavedVariables small; decoded on demand.
 - On WoW: Forever the whole market is region-wide per ruleset (D15), so every item's history is stored once, keyed by region and ruleset. When Retail is added, commodities stay region-wide and other items are stored per connected realm.
 - Items with no listings within the retention period are pruned.
@@ -372,9 +375,16 @@ The reference model (§7–9) is kept: one account-wide SavedVariable, flat scop
 | File | Holds | Why separate |
 | --- | --- | --- |
 | Main DB | Settings, profiles, groups, operations, keep-stock rules, inventory, ledger | Small; changes every session |
-| Scan DB | Daily price history per realm and region (§3.3) | Large; can be reset or shared without touching settings |
+| Scan DB | Daily price history per region and ruleset (§3.3) | Large; can be reset or shared without touching settings |
 
 A corrupted or oversized scan DB can be wiped from settings without losing configuration. Both carry a schema version with migrations on load.
+
+**Main DB design (decided 2026-10-14)**
+
+- Scopes: account, profile and character. Keys are flat, with Flipside's own scope prefixes.
+- A map in the account scope connects each character to a profile. The default profile is named "Default". When a profile is deleted, its characters move to "Default". "Default" cannot be deleted.
+- D9: the last full-scan time is stored in the Main DB, account scope, so a Scan DB reset does not reset the cooldown timer.
+- Each DB has one integer schema version. Migrations run forward only, in sequence, on a copy of the data. A failed migration keeps the old data and loads read-only. A DB that was written by a newer Flipside version loads read-only with a warning. Unknown keys are kept, never dropped.
 
 ### 7.2 Profiles
 
@@ -417,7 +427,7 @@ The MVP is done when a player on WoW: Forever can scan, see prices in tooltips, 
 
 **Pass:** the event fires, row count is plausible for a busy market, commodities are included, processing finishes without freezing or disconnecting.
 
-**Spike 0 result** (user's test, 2026-10-14, WoW: Forever client 1.60.1, two runs)
+**Spike 0 result** (user's test, 2026-10-14, WoW: Forever client 1.60.1, three runs)
 
 - Result: pass. `C_AuctionHouse.ReplicateItems` exists and `REPLICATE_ITEM_LIST_UPDATE` fires.
 - Run 1: result ok; time to first event 11,828 ms; processing 2,420 ms in 73 frames (counting only, slices of 1,000 rows); Lua memory 132,317 KB before and 134,176 KB after (+1,859 KB); 72,968 rows; 3,071 unique items; total quantity 500,441; 72,967 rows with a buyout; 5,534 rows with missing item info; 25,252 rows whose item stacks above 1; 18,039 rows with unknown stack size; 0 empty rows.
@@ -425,6 +435,8 @@ The MVP is done when a player on WoW: Forever can scan, see prices in tooltips, 
 - Item data is incomplete directly after a scan (5,534 rows without full info, 18,039 rows without a stack size). The scan engine needs an item-load step before it uses names, links or stack sizes. The count of stackable rows is thus a lower limit.
 - Stackable items are in the results. It is not proven that "stackable" equals "commodity" on Forever (D15 is supported, not proven).
 - Run 2, a few minutes after run 1: no event in 60 s ("no response (cooldown or blocked)"). A cooldown probably exists. Its length (15 minutes) is not proven.
+- Run 3: result ok; time to first event 9,059 ms; processing 1,944 ms in 59 frames; Lua memory 114,371 KB before and 116,740 KB after (+2,369 KB); 58,739 rows; 3,010 unique items; total quantity 420,885; 58,738 rows with a buyout; 4,867 rows with missing item info; 20,696 rows whose item stacks above 1; 14,362 rows with unknown stack size; 0 empty rows. The run time is not recorded, so the run does not measure the cooldown length.
+- Saved timestamps from the SavedVariables file: run 1 at server time 1791930182 (2026-10-14 00:23:01 local), run 2 at 1791930290 (00:24:49), 108 s after run 1, no response.
 - The addon loaded with `## Interface: 16001` and without "Load out of date AddOns". `GetBuildInfo` in the user's client gives interface 16001, client build 70338 and `WOW_PROJECT_ID` 18 (login line: `ScanTest: client 1.60.1, build 70338, interface 16001, project id 18`). The interface number is confirmed.
 - The Forever client source (Ketho/wow-ui-source-forever, commit bd2470a, client 1.60.1.70009; the source check used build 70009, which is older than the user's build 70338) has no interface number in its TOC files and states no cooldown for `ReplicateItems`.
 - Not yet known: freeze or stutter during the read (the user did not report one), the SavedVariables file content, and a third run after more than 15 minutes.
