@@ -352,6 +352,19 @@ local function openFormula()
     end
 end
 
+-- Create the item name index; it needs the scan store.
+local function openNames()
+    if not (ns.ItemNameIndex and ns.scanStore) then
+        return
+    end
+    local ok, result = pcall(ns.ItemNameIndex.New, { store = ns.scanStore, itemCache = ns.itemCache })
+    if ok then
+        ns.itemNameIndex = result
+    else
+        ns.ReportError("item name search is not available this session: " .. tostring(result))
+    end
+end
+
 -- Set later in this file: attach the Auction House tab.
 local openUI
 
@@ -364,6 +377,7 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
         if ns.db then
             openScan()
         end
+        openNames()
         openFormula()
         openUI()
         ns.bus:Emit("Flipside.Login")
@@ -467,6 +481,7 @@ function ns.OpenMainWindow()
             formulaRun = ns.formulaRun,
             formulaSources = ns.formulaSources,
             itemCache = ns.itemCache,
+            itemNameIndex = ns.itemNameIndex,
             getVersionLine = ns.VersionLine,
         })
         window:Toggle()
@@ -488,6 +503,7 @@ openUI = function()
         scanStore = ns.scanStore,
         formulaLookup = ns.FormulaLookup,
         scanSources = ns.ScanSources,
+        itemNameIndex = ns.itemNameIndex,
         confirmScan = confirmScan,
         openMainWindow = ns.OpenMainWindow,
     })
@@ -570,20 +586,7 @@ local function findRecord(argument)
     return nil, nil, keys
 end
 
-local function priceCommand(argument)
-    if not ns.scanStore then
-        printLine("scan is not available this session")
-        return
-    end
-    local record, key, keys = findRecord(argument)
-    if #keys == 0 then
-        printLine("usage: /flip price <item link or item id>")
-        return
-    end
-    if not record then
-        printLine("no scan data for " .. table.concat(keys, " or "))
-        return
-    end
+local function printPrice(record, key)
     local values = ns.ScanSources.Compute(record, GetServerTime())
     printLine("key " .. key .. ": " .. priceText("ScanMin", values.scanMin) .. ", "
         .. priceText("ScanRecent", values.scanRecent))
@@ -592,6 +595,50 @@ local function priceCommand(argument)
     local age = values.scanAge and string.format("%.1f h", values.scanAge) or "-"
     printLine("ScanQty " .. tostring(values.scanQty or "-") .. ", ScanAge " .. age
         .. ", ScanSamples " .. values.scanSamples .. (values.scanPartial and ", partial" or ""))
+end
+
+-- Find an item by name: print the price of one match or a numbered list of several.
+local function priceByName(argument)
+    local result = ns.itemNameIndex:Resolve(argument)
+    if result.kind == "error" then
+        printLine(result.message)
+        return
+    end
+    local matches = result.matches or {}
+    if #matches == 0 then
+        printLine('no item named "' .. argument .. '" in the scan data')
+    elseif #matches == 1 then
+        printPrice(ns.scanStore:Get(matches[1].key), matches[1].key)
+    else
+        for position, match in ipairs(matches) do
+            printLine(position .. ". " .. ns.ItemNameIndex.Describe(match))
+        end
+        printLine("use /flip price <id>")
+    end
+    if (result.pendingCount or 0) > 0 then
+        printLine(result.pendingCount .. " item names are still loading")
+    end
+end
+
+local function priceCommand(argument)
+    if not ns.scanStore then
+        printLine("scan is not available this session")
+        return
+    end
+    local record, key, keys = findRecord(argument)
+    if #keys == 0 then
+        if ns.itemNameIndex and argument ~= "" then
+            priceByName(argument)
+        else
+            printLine("usage: /flip price <item link or item id>")
+        end
+        return
+    end
+    if not record then
+        printLine("no scan data for " .. table.concat(keys, " or "))
+        return
+    end
+    printPrice(record, key)
 end
 
 -- Split the text of /flip formula into the formula and the item argument (nil if none).

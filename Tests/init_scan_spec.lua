@@ -302,8 +302,40 @@ describe("Init scan", function()
             slash("price " .. gearLink(77, 1))
             assert.are.same({ "Flipside: no scan data for 77#b1 or 77" }, mock.messages)
             mock.messages = {}
-            slash("price nonsense")
+            slash("price")
             assert.is_true(hasMessage("usage: /flip price"))
+        end)
+
+        it("finds an item by name with /flip price", function()
+            mock.itemInfo[2001] = { "Linen Cloth" }
+            mock.itemInfo[2002] = { "Linen Bandage" }
+            mock.itemInfo[1001] = { "Crimson Sword" }
+            runScan()
+            mock.messages = {}
+            slash("price crimson")
+            assert.is_true(hasMessage("Flipside: key 1001#b6001: ScanMin 5010"))
+            mock.messages = {}
+            slash("price LINEN")
+            assert.are.same({
+                "Flipside: 1. Linen Bandage (2002)",
+                "Flipside: 2. Linen Cloth (2001)",
+                "Flipside: use /flip price <id>",
+                "Flipside: 2 item names are still loading",
+            }, mock.messages)
+            mock.messages = {}
+            slash("price nonsense")
+            assert.are.same({
+                'Flipside: no item named "nonsense" in the scan data',
+                "Flipside: 2 item names are still loading",
+            }, mock.messages)
+            mock.messages = {}
+            slash("price x")
+            assert.is_true(hasMessage("at least 2 characters"))
+        end)
+
+        it("creates the item name index at login", function()
+            login()
+            assert.is_table(ns.itemNameIndex)
         end)
 
         it("prints the cooldown for a second scan inside 15 minutes", function()

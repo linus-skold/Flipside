@@ -31,6 +31,7 @@ Services\FormulaSources.lua
 Services\FormulaLookup.lua
 Services\FormulaEval.lua
 Services\FormulaRun.lua
+Services\ItemNameIndex.lua
 UI\Kit\Theme.lua
 UI\Kit\Window.lua
 UI\Kit\Widgets.lua
