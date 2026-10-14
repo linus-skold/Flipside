@@ -113,6 +113,93 @@ function Backend.Capture()
     }
 end
 
+-- Live search (Buying tab). Doc: AuctionHouseDocumentation.lua.
+local SEARCH_LIMIT = 100 -- SendSearchQuery: 100 calls per minute (doc line 1018)
+local SEARCH_WINDOW = 60
+local searchTimes = {}
+
+function Backend.CanLiveSearch()
+    return has("SendSearchQuery") and has("MakeItemKey") and has("GetItemKeyInfo")
+end
+
+-- One targeted search for an item key (doc 1015-1028). Gives true, or false and a text if the rate guard stops it.
+function Backend.LiveSearch(itemID)
+    local now = GetTime()
+    local kept = {}
+    for _, t in ipairs(searchTimes) do
+        if now - t < SEARCH_WINDOW then
+            kept[#kept + 1] = t
+        end
+    end
+    searchTimes = kept
+    if #searchTimes >= SEARCH_LIMIT then
+        return false, "search limit, wait"
+    end
+    searchTimes[#searchTimes + 1] = now
+    call("SendSearchQuery", call("MakeItemKey", itemID), {}, true)
+    return true
+end
+
+-- Result events: COMMODITY_SEARCH_RESULTS_UPDATED (doc 1397-1405), ITEM_SEARCH_RESULTS_UPDATED (doc 1447-1456).
+function Backend.LiveResultEvents()
+    return "COMMODITY_SEARCH_RESULTS_UPDATED", "ITEM_SEARCH_RESULTS_UPDATED"
+end
+
+local function byPrice(a, b)
+    if a.unitPrice ~= b.unitPrice then
+        return a.unitPrice < b.unitPrice
+    end
+    return (a.auctionID or 0) < (b.auctionID or 0)
+end
+
+-- Rows of the last search of an item, cheapest unit price first. Commodity: GetNumCommoditySearchResults (doc 488)
+-- and GetCommoditySearchResultInfo (doc 240). Item: GetNumItemSearchResults (doc 503) and GetItemSearchResultInfo
+-- (doc 358); a row with no buyout is skipped and the unit price is buyoutAmount / quantity.
+function Backend.LiveRows(itemID)
+    local rows = {}
+    local isCommodity = Backend.ItemIsCommodity(itemID)
+    if isCommodity then
+        for i = 1, call("GetNumCommoditySearchResults", itemID) do
+            local r = call("GetCommoditySearchResultInfo", itemID, i)
+            if r and r.unitPrice and (r.quantity or 0) > 0 then
+                rows[#rows + 1] = {
+                    auctionID = r.auctionID, unitPrice = r.unitPrice, quantity = r.quantity, isCommodity = true,
+                    ownerItem = r.containsOwnerItem == true, timeLeft = r.timeLeftSeconds,
+                }
+            end
+        end
+    else
+        local key = call("MakeItemKey", itemID)
+        for i = 1, call("GetNumItemSearchResults", key) do
+            local r = call("GetItemSearchResultInfo", key, i)
+            local buyout, quantity = r and r.buyoutAmount, r and r.quantity
+            if buyout and buyout > 0 and quantity and quantity > 0 then
+                rows[#rows + 1] = {
+                    auctionID = r.auctionID, unitPrice = buyout / quantity, quantity = quantity,
+                    isCommodity = false, ownerItem = r.containsOwnerItem == true,
+                    timeLeft = r.timeLeftSeconds or r.timeLeft, itemLink = r.itemLink,
+                }
+            end
+        end
+    end
+    table.sort(rows, byPrice)
+    return rows
+end
+
+-- Doc 809-816: true when the client can send a throttled message.
+function Backend.IsReady()
+    return call("IsThrottledMessageSystemReady")
+end
+
+-- Doc 1291-1296.
+function Backend.ReadyEvent()
+    return "AUCTION_HOUSE_THROTTLED_SYSTEM_READY"
+end
+
+-- Ask for a fresh owned list (doc 898; argument: sorts table). OWNED_AUCTIONS_UPDATED follows.
+function Backend.RefreshOwned()
+    return call("QueryOwnedAuctions", {})
+end
 function Backend.CanReadOwned()
     return has("GetOwnedAuctions")
 end
