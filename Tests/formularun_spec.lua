@@ -263,4 +263,80 @@ describe("FormulaRun", function()
             assert.is_true(reads > before)
         end)
     end)
+
+    describe("custom sources", function()
+        local texts, version, crun
+
+        before_each(function()
+            texts = {}
+            version = 1
+            local real = ns.FormulaSources.New({ itemCache = {
+                Get = function(_, id)
+                    return infos[id]
+                end,
+                Request = function() end,
+            } })
+            real:SetCustom({
+                Get = function(_, name)
+                    return texts[name]
+                end,
+                Version = function()
+                    return version
+                end,
+            })
+            crun = ns.FormulaRun.New({
+                store = store,
+                sources = real,
+                serverTime = function()
+                    return now
+                end,
+            })
+        end)
+
+        it("accepts a custom name and uses its value", function()
+            infos[123] = { sellPrice = 401 }
+            texts.myprice = "max(scanmin, 1.5 * vendorsell)"
+            local copper, info = crun:Evaluate("myprice * 2", "123")
+            assert.are.equal(1800, copper)
+            assert.are.equal("ok", info.kind)
+        end)
+
+        it("rounds only at the end", function()
+            texts.half = "scanmin / 8"
+            assert.are.equal(225, (crun:Evaluate("half * 2", "123")))
+        end)
+
+        it("resolves nested custom sources", function()
+            texts.a = "b + 1"
+            texts.b = "scanmin"
+            assert.are.equal(901, (crun:Evaluate("a", "123")))
+        end)
+
+        it("gives invalid for a loop", function()
+            texts.a = "b"
+            texts.b = "a"
+            local copper, info = crun:Evaluate("a + 1", "123")
+            assert.is_nil(copper)
+            assert.are.equal("invalid", info.kind)
+        end)
+
+        it("gives a compile error for an unknown name", function()
+            local copper, info = crun:Evaluate("nothere", "123")
+            assert.is_nil(copper)
+            assert.are.equal("error", info.kind)
+        end)
+
+        it("gives a new result after a change of the version", function()
+            texts.myprice = "scanmin"
+            assert.are.equal(900, (crun:Evaluate("myprice", "123")))
+            texts.myprice = "scanmarket"
+            assert.are.equal(900, (crun:Evaluate("myprice", "123")))
+            version = 2
+            assert.are.equal(2000, (crun:Evaluate("myprice", "123")))
+        end)
+
+        it("keeps built-in results unchanged", function()
+            assert.are.equal(900, (crun:Evaluate("scanmin", "123")))
+        end)
+end)
 end)

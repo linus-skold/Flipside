@@ -94,7 +94,8 @@ function Run:Evaluate(text, input)
     end
     local version = self.store and self.store:GetVersion() or 0
     local minute = math.floor(self.serverTime() / 60)
-    local memoKey = table.concat({ text, tostring(input), version, minute }, "\0")
+    local custom = self.sources.custom and self.sources.custom:Version() or 0
+    local memoKey = table.concat({ text, tostring(input), version, minute, custom }, "\0")
     local hit = self.memo[memoKey]
     if hit then
         return hit.copper, hit.info
