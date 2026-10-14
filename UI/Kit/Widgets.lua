@@ -251,3 +251,118 @@ function Kit.Confirm(dialogName, text, onAccept)
     pendingConfirm[dialogName] = onAccept
     StaticPopup_Show(dialogName, text)
 end
+
+-- Create a multi-line text box with a scroll bar. Use it as a frame.
+-- options: onChange(text) runs on focus loss, readOnly selects all on focus and blocks edits.
+-- Methods: SetText(text), GetText(), SetFocus(), HighlightAll().
+function Kit.MultiLineInput(parent, width, height, options)
+    options = options or {}
+    local scroll = CreateFrame("ScrollFrame", nil, parent, "InputScrollFrameTemplate")
+    scroll:SetSize(width or 300, height or 100)
+    local box = scroll.EditBox
+    box:SetWidth((width or 300) - 18)
+    if scroll.CharCount then
+        scroll.CharCount:Hide()
+    end
+    local stored = ""
+    local restoring = false
+
+    box:HookScript("OnTextChanged", function(self, userInput)
+        if options.readOnly then
+            if userInput and not restoring then
+                restoring = true
+                self:SetText(stored)
+                restoring = false
+            end
+        else
+            stored = self:GetText()
+        end
+    end)
+    box:HookScript("OnEditFocusGained", function(self)
+        if options.readOnly then
+            self:HighlightText()
+        end
+    end)
+    box:HookScript("OnEditFocusLost", function(self)
+        if options.onChange and not options.readOnly then
+            options.onChange(self:GetText())
+        end
+    end)
+
+    function scroll.SetText(_, text)
+        stored = text or ""
+        box:SetText(stored)
+    end
+    function scroll.GetText()
+        return box:GetText()
+    end
+    function scroll.SetFocus()
+        box:SetFocus()
+    end
+    function scroll.HighlightAll()
+        box:SetFocus()
+        box:HighlightText()
+    end
+    return scroll
+end
+
+local editorDialogs = {}
+
+-- Create a dialog with a title, a multi-line text box and buttons. One dialog for each name.
+-- options: width, height, help (text line), readOnly (Close button only, text selected for copy).
+-- dialog:Open(title, text, onSave) shows it. Save calls onSave(text) once and closes. Cancel closes.
+function Kit.EditorDialog(name, options)
+    if editorDialogs[name] then
+        return editorDialogs[name]
+    end
+    options = options or {}
+    local pad = Kit.Theme.padding
+    local width, height = options.width or 440, options.height or 310
+    local dialog = Kit.CreateWindow(name, { width = width, height = height })
+    editorDialogs[name] = dialog
+
+    if options.help then
+        local help = Kit.Label(dialog, options.help, "small")
+        help:SetPoint("TOPLEFT", dialog, "TOPLEFT", pad + 8, -34)
+        help:SetWidth(width - 2 * pad - 16)
+    end
+    dialog.input = Kit.MultiLineInput(dialog, width - 2 * pad - 16, height - 120, { readOnly = options.readOnly })
+    dialog.input:SetPoint("TOPLEFT", dialog, "TOPLEFT", pad + 8, -72)
+
+    local function close()
+        dialog.onSave = nil
+        dialog:Hide()
+    end
+    if options.readOnly then
+        dialog.closeButton = Kit.Button(dialog, CLOSE, 100, close)
+        dialog.closeButton:SetPoint("BOTTOM", dialog, "BOTTOM", 0, pad + 4)
+    else
+        dialog.saveButton = Kit.Button(dialog, SAVE, 100, function()
+            local callback = dialog.onSave
+            dialog.onSave = nil
+            dialog:Hide()
+            if callback then
+                callback(dialog.input:GetText())
+            end
+        end)
+        dialog.saveButton:SetPoint("BOTTOM", dialog, "BOTTOM", -55, pad + 4)
+        dialog.cancelButton = Kit.Button(dialog, CANCEL, 100, close)
+        dialog.cancelButton:SetPoint("BOTTOM", dialog, "BOTTOM", 55, pad + 4)
+    end
+    dialog:HookScript("OnHide", function()
+        dialog.onSave = nil
+    end)
+
+    function dialog:Open(title, text, onSave)
+        self.onSave = onSave
+        if self.SetTitle then
+            self:SetTitle(title or "")
+        end
+        self:Show()
+        self.input:SetText(text or "")
+        if options.readOnly then
+            self.input:HighlightAll()
+        end
+    end
+    return dialog
+end

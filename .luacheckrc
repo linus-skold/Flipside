@@ -5,6 +5,9 @@ exclude_files = { "Libs/", "lua51/", ".claude/", ".lua/", ".luarocks/" }
 -- WoW API that the code reads.
 read_globals = {
     "ACCEPT",
+    "CLOSE",
+    "SAVE",
+    "GetCursorPosition",
     "AuctionHouseFrame",
     "hooksecurefunc",
     "CANCEL",

@@ -3,7 +3,8 @@
 local M = {}
 
 local GLOBAL_NAMES = {
-    "ACCEPT", "CANCEL", "C_AuctionHouse", "C_Container", "C_Item", "C_Timer", "CreateFrame", "DEFAULT_CHAT_FRAME",
+    "ACCEPT", "CANCEL", "CLOSE", "SAVE", "GetCursorPosition",
+    "C_AuctionHouse", "C_Container", "C_Item", "C_Timer", "CreateFrame", "DEFAULT_CHAT_FRAME",
     "C_GameRules", "FlipsideDB", "FlipsideScanDB", "GetBuildInfo", "GetCurrentRegionName", "GetNormalizedRealmName",
     "GetServerTime", "GetTime", "GetCurrentRegion", "IsTestBuild", "IsBetaBuild", "IsPublicTestClient",
     "SLASH_FLIPSIDE1", "SLASH_FLIPSIDE2",
@@ -33,7 +34,35 @@ function frameMethods:Show()
 end
 
 function frameMethods:Hide()
+    local wasShown = self.shown
     self.shown = false
+    if wasShown and self.scripts.OnHide then
+        self.scripts.OnHide(self)
+    end
+end
+
+function frameMethods:SetFrameStrata(strata)
+    self.strata = strata
+end
+
+function frameMethods:GetEffectiveScale()
+    return self.scale or 1
+end
+
+-- Set f.mouseOver = true in a test to place the cursor over a frame.
+function frameMethods:IsMouseOver()
+    return self.mouseOver == true
+end
+
+function frameMethods:SetFocus()
+    self.focused = true
+    if self.scripts.OnEditFocusGained then
+        self.scripts.OnEditFocusGained(self)
+    end
+end
+
+function frameMethods:HighlightText()
+    self.highlighted = true
 end
 
 function frameMethods:IsShown()
@@ -283,6 +312,12 @@ function M.reset()
 
     _G.ACCEPT = "Accept"
     _G.CANCEL = "Cancel"
+    _G.CLOSE = "Close"
+    _G.SAVE = "Save"
+    M.cursor = { 0, 0 } -- result of GetCursorPosition()
+    _G.GetCursorPosition = function()
+        return M.cursor[1], M.cursor[2]
+    end
     _G.WOW_PROJECT_ID = 99
     _G.date = os.date
     _G.time = os.time
@@ -313,6 +348,16 @@ function M.reset()
             end
         elseif template == "UICheckButtonTemplate" then
             f.Text = newObject("FontString", nil, f)
+        elseif template == "InputScrollFrameTemplate" then
+            f.EditBox = newObject("EditBox", nil, f)
+            f.CharCount = newObject("FontString", nil, f)
+        elseif template == "WowScrollBoxList" then
+            f.rowFrames = {} -- test sets the row frames that the box shows
+            f.ForEachFrame = function(self, fn)
+                for _, row in ipairs(self.rowFrames) do
+                    fn(row)
+                end
+            end
         end
         table.insert(M.frames, f)
         return f
