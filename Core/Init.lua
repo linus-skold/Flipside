@@ -333,6 +333,25 @@ local function openScan()
     startRollUp()
 end
 
+-- Create the formula sources and the formula runner; the store can be nil.
+local function openFormula()
+    if not (ns.FormulaSources and ns.FormulaRun and ns.ScanSources) then
+        return
+    end
+    local ok, result = pcall(function()
+        ns.formulaSources = ns.FormulaSources.New({ itemCache = ns.itemCache })
+        ns.formulaRun = ns.FormulaRun.New({
+            store = ns.scanStore,
+            sources = ns.formulaSources,
+            serverTime = GetServerTime,
+        })
+    end)
+    if not ok then
+        ns.formulaRun = nil
+        ns.ReportError("formulas are not available this session: " .. tostring(result))
+    end
+end
+
 eventFrame:SetScript("OnEvent", function(_, event, ...)
     if event == "ADDON_LOADED" and (...) == addonName then
         ns.bus:Emit("Flipside.Loaded")
@@ -342,6 +361,7 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
         if ns.db then
             openScan()
         end
+        openFormula()
         ns.bus:Emit("Flipside.Login")
     end
     ns.bus:Emit(event, ...)
@@ -506,6 +526,80 @@ local function priceCommand(argument)
         .. ", ScanSamples " .. values.scanSamples .. (values.scanPartial and ", partial" or ""))
 end
 
+-- Split the text of /flip formula into the formula and the item argument (nil if none).
+local function splitFormula(text)
+    local linkStart = text:find("|[cH]")
+    if linkStart then
+        return text:sub(1, linkStart - 1):match("^(.-)%s*$"), text:sub(linkStart)
+    end
+    local formula, number = text:match("^(.-)%s+(%d+)$")
+    if number then
+        return formula, number
+    end
+    return text, nil
+end
+
+-- About 10 characters of the formula around the error position.
+local function nearText(formula, pos)
+    local first = math.max(1, pos - 5)
+    local last = math.min(#formula, first + 9)
+    local text = formula:sub(first, last)
+    return (first > 1 and "..." or "") .. text .. (last < #formula and "..." or "")
+end
+
+local function printFormulaError(formula, err)
+    printLine(string.format("formula error at %d: %s", err.pos or 0, tostring(err.message)))
+    if err.pos then
+        printLine(string.format('near "%s"', nearText(formula, err.pos)))
+    end
+end
+
+local function formulaCommand(text)
+    local run = ns.formulaRun
+    if not run then
+        printLine("formulas are not available this session")
+        return
+    end
+    local formula, item = splitFormula(text)
+    if formula == "" then
+        printLine("usage: /flip formula <formula> [item link or id]")
+        printLine("example: /flip formula max(scanmin, 1.5 * vendorsell) 2589")
+        return
+    end
+    if item and not (item:match("^%d+$") or (item:match("^|[cH]") and item:find("|Hitem:", 1, true))) then
+        printLine("not an item: " .. item)
+        return
+    end
+    if not item then
+        local compiled, err = run:Compile(formula)
+        if not compiled then
+            printFormulaError(formula, err)
+        else
+            local names = #compiled.names > 0 and table.concat(compiled.names, ", ") or "none"
+            printLine("formula ok (sources: " .. names .. ")")
+        end
+        return
+    end
+    local copper, info = run:Evaluate(formula, item)
+    if info.kind == "error" and info.pos then
+        printFormulaError(formula, info)
+    elseif info.kind == "error" then
+        printLine("not an item: " .. item)
+    elseif info.kind == "ok" then
+        local label = info.key or item:match("|Hitem:(%d+)") or item
+        printLine(string.format("formula = %d (%s) for %s", copper, formatMoney(copper), label))
+    else
+        local label = info.key or item:match("|Hitem:(%d+)") or item
+        printLine("formula = invalid for " .. label)
+        if #info.missing > 0 then
+            printLine("missing: " .. table.concat(info.missing, ", "))
+        end
+        if #info.later > 0 then
+            printLine("not available yet: " .. table.concat(info.later, ", "))
+        end
+    end
+end
+
 local function printScanHelp()
     local last = ns.scanCooldown:GetLastSuccess()
     local age = "never"
@@ -516,7 +610,7 @@ local function printScanHelp()
     local cooldown = left > 0 and ns.ScanCooldown.FormatRemaining(left) or "ready"
     printLine(string.format("scan (region %s): %d items stored, last scan %s, cooldown %s",
         ns.scanStore:GetRegion(), ns.scanStore:CountItems(), age, cooldown))
-    printLine("commands: scan, scan stop, scan reset, price <item>, version")
+    printLine("commands: scan, scan stop, scan reset, price <item>, formula <text> [item], version")
 end
 
 -- Handle the text after /flipside or /flip.
@@ -532,6 +626,9 @@ function ns.HandleSlash(msg)
         return
     elseif command == "price" then
         priceCommand(rest)
+        return
+    elseif command == "formula" then
+        formulaCommand(rest)
         return
     end
     printLine("addon Flipside")

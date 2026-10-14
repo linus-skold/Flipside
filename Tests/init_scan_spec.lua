@@ -511,7 +511,7 @@ describe("Init scan", function()
                 "Flipside: profile Default",
                 "Flipside: client 1.60.1, build 70009, interface 16001",
                 "Flipside: scan (region EU): 0 items stored, last scan never, cooldown ready",
-                "Flipside: commands: scan, scan stop, scan reset, price <item>, version",
+                "Flipside: commands: scan, scan stop, scan reset, price <item>, formula <text> [item], version",
                 "Flipside: No feature exists yet.",
             }, mock.messages)
         end)

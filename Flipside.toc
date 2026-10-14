@@ -22,4 +22,10 @@ Services\ScanItemLoad.lua
 Services\ScanSources.lua
 Services\ScanEngine.lua
 Services\ScanCapture.lua
+Services\FormulaParse.lua
+Services\FormulaFunctions.lua
+Services\FormulaSources.lua
+Services\FormulaLookup.lua
+Services\FormulaEval.lua
+Services\FormulaRun.lua
 Core\Init.lua
