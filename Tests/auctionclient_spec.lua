@@ -199,4 +199,100 @@ describe("AuctionClient", function()
             assert.are.equal("AUCTION_HOUSE_CLOSED", ns.AuctionClient.CloseEvent())
         end)
     end)
+
+    describe("Forever backend live search", function()
+        before_each(function()
+            assert(loadfile(manifest.path("ForeverBackend")))("Flipside", ns)
+        end)
+
+        it("sends one targeted search for the item key", function()
+            assert.is_true(ns.AuctionClient.CanLiveSearch())
+            assert.is_true(ns.AuctionClient.LiveSearch(5))
+            assert.are.equal(5, mock.searchQueries[1].itemKey.itemID)
+            assert.is_true(mock.searchQueries[1].separate)
+        end)
+
+        it("stops after 100 searches in a minute and allows again later", function()
+            for _ = 1, 100 do
+                assert.is_true(ns.AuctionClient.LiveSearch(5))
+            end
+            local ok, text = ns.AuctionClient.LiveSearch(5)
+            assert.is_false(ok)
+            assert.are.equal("search limit, wait", text)
+            assert.are.equal(100, #mock.searchQueries)
+            mock.clock = mock.clock + 61
+            assert.is_true(ns.AuctionClient.LiveSearch(5))
+        end)
+
+        it("gives the result and ready events", function()
+            local commodity, item = ns.AuctionClient.LiveResultEvents()
+            assert.are.equal("COMMODITY_SEARCH_RESULTS_UPDATED", commodity)
+            assert.are.equal("ITEM_SEARCH_RESULTS_UPDATED", item)
+            assert.are.equal("AUCTION_HOUSE_THROTTLED_SYSTEM_READY", ns.AuctionClient.ReadyEvent())
+        end)
+
+        it("gives commodity rows sorted by unit price", function()
+            mock.commodity[5] = true
+            mock.commodityResults[5] = {
+                { auctionID = 2, unitPrice = 30, quantity = 4, timeLeftSeconds = 900 },
+                { auctionID = 1, unitPrice = 10, quantity = 20, owner = true },
+            }
+            local rows = ns.AuctionClient.LiveRows(5)
+            assert.are.equal(2, #rows)
+            assert.are.same({ auctionID = 1, unitPrice = 10, quantity = 20, isCommodity = true, ownerItem = true },
+                rows[1])
+            assert.are.equal(30, rows[2].unitPrice)
+            assert.are.equal(900, rows[2].timeLeft)
+            assert.is_false(rows[2].ownerItem)
+        end)
+
+        it("gives item rows with the unit price and skips bid-only rows", function()
+            mock.commodity[6] = false
+            mock.itemResults[6] = {
+                { auctionID = 3, link = "L3", buyout = 900, quantity = 3, timeLeft = 2 },
+                { auctionID = 4, link = "L4", buyout = nil, quantity = 1 },
+                { auctionID = 5, link = "L5", buyout = 100, quantity = 1 },
+            }
+            local rows = ns.AuctionClient.LiveRows(6)
+            assert.are.equal(2, #rows)
+            assert.are.equal(5, rows[1].auctionID)
+            assert.are.equal(300, rows[2].unitPrice)
+            assert.are.equal(3, rows[2].quantity)
+            assert.are.equal("L3", rows[2].itemLink)
+            assert.are.equal(2, rows[2].timeLeft)
+            assert.is_false(rows[2].isCommodity)
+        end)
+
+        it("reads the ready flag and asks for the owned list", function()
+            assert.is_true(ns.AuctionClient.IsReady())
+            mock.throttleReady = false
+            assert.is_false(ns.AuctionClient.IsReady())
+            ns.AuctionClient.RefreshOwned()
+            assert.are.same({ {} }, mock.ownedQueries)
+        end)
+    end)
+
+    describe("live search without support", function()
+        it("is off without a backend", function()
+            assert.is_false(ns.AuctionClient.CanLiveSearch())
+            assert.is_false(ns.AuctionClient.LiveSearch(5))
+            assert.is_nil(ns.AuctionClient.LiveResultEvents())
+            assert.are.same({}, ns.AuctionClient.LiveRows(5))
+            assert.is_nil(ns.AuctionClient.ReadyEvent())
+            assert.is_nil(ns.AuctionClient.RefreshOwned())
+        end)
+
+        it("is off on a backend without the calls (TBC legacy)", function()
+            ns.AuctionClient.Use({ CanScan = function() return true end })
+            assert.is_false(ns.AuctionClient.CanLiveSearch())
+            assert.is_false(ns.AuctionClient.LiveSearch(5))
+            assert.are.same({}, ns.AuctionClient.LiveRows(5))
+        end)
+
+        it("is off when the Forever calls are missing", function()
+            assert(loadfile(manifest.path("ForeverBackend")))("Flipside", ns)
+            _G.C_AuctionHouse.SendSearchQuery = nil
+            assert.is_false(ns.AuctionClient.CanLiveSearch())
+        end)
+    end)
 end)
