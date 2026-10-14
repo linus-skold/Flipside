@@ -60,6 +60,7 @@ Shared\UI\Pages\OperationsPage.lua
 Shared\UI\TooltipTable.lua
 Shared\UI\Pages\TooltipPage.lua
 Shared\UI\MainWindow.lua
+Shared\Features\AuctionTab\AuctionTabs.lua
 Shared\Features\AuctionTab\AuctionTab.lua
 AH_TBC\AuctionTabHost.lua
 Shared\Features\Inventory\InventoryCapture.lua
