@@ -33,6 +33,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Tag the alpha build
+        id: tag
         if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         run: |
           latest=$(git tag -l 'v*' | { grep -Ev -- '-(alpha|beta)' || true; } | sort -V | tail -n 1)
@@ -46,15 +47,30 @@ jobs:
           git tag -a "$tag" -m "Alpha build $tag" "$GITHUB_SHA"
           git push origin "refs/tags/$tag"
           echo "Created tag $tag"
-      - name: Package and release
+          echo "name=$tag" >> "$GITHUB_OUTPUT"
+      - name: Package and release (tag push)
+        if: ${{ startsWith(github.ref, 'refs/tags/') }}
         uses: BigWigsMods/packager@v2
+      - name: Package and release (alpha from main)
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: BigWigsMods/packager@v2
+        env:
+          # The packager skips a branch run when HEAD has a tag. Make this run look like the tag run.
+          GITHUB_REF: refs/tags/${{ steps.tag.outputs.name }}
+          GITHUB_REF_NAME: ${{ steps.tag.outputs.name }}
+          GITHUB_REF_TYPE: tag
+      - name: Make the alpha build a normal release
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "${{ steps.tag.outputs.name }}" --prerelease=false --latest
       - name: Delete old alpha pre-releases
         if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release list --limit 200 --json tagName,isPrerelease,createdAt \
-            --jq '[.[] | select(.isPrerelease and (.tagName | test("-alpha\\.")))] | sort_by(.createdAt) | reverse | .[10:] | .[].tagName' \
+            --jq '[.[] | select(.tagName | test("-alpha\\."))] | sort_by(.createdAt) | reverse | .[10:] | .[].tagName' \
             | while read -r tag; do
                 echo "Delete $tag"
                 gh release delete "$tag" --cleanup-tag --yes
