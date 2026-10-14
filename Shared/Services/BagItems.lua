@@ -15,8 +15,10 @@ local function KeyOf(resolver, itemID, link)
 end
 
 -- Reads all bag slots. Returns sorted items { key, itemID, link, name, count, bound } and stats.
+-- If options.stacks is true, each item also has stacks = { { bag, slot, count, link, bound } } sorted by bag, slot.
 function BagItems.Read(api, resolver, options)
     local includeBound = options ~= nil and options.includeBound == true
+    local wantStacks = options ~= nil and options.stacks == true
     local stats = { slots = 0, skipped = 0, errors = 0 }
     local byKey, list = {}, {}
 
@@ -61,6 +63,13 @@ function BagItems.Read(api, resolver, options)
                         end
                         entry.count = entry.count + (tonumber(info.stackCount) or 1)
                         entry.bound = entry.bound or info.isBound == true
+                        if wantStacks then
+                            entry.stacks = entry.stacks or {}
+                            entry.stacks[#entry.stacks + 1] = {
+                                bag = bag, slot = slot, count = tonumber(info.stackCount) or 1,
+                                link = link, bound = info.isBound == true,
+                            }
+                        end
                     end
                 end
             end
@@ -73,5 +82,15 @@ function BagItems.Read(api, resolver, options)
         end
         return a.key < b.key
     end)
+    if wantStacks then
+        for _, entry in ipairs(list) do
+            table.sort(entry.stacks, function(a, b)
+                if a.bag ~= b.bag then
+                    return a.bag < b.bag
+                end
+                return a.slot < b.slot
+            end)
+        end
+    end
     return list, stats
 end
