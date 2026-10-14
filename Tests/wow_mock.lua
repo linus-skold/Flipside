@@ -11,7 +11,7 @@ local GLOBAL_NAMES = {
     "StaticPopupDialogs", "StaticPopup_Show", "UnitName", "WOW_PROJECT_ID", "date", "debugprofilestop", "time",
     "UISpecialFrames", "UIParent", "GameTooltip", "GetMoneyString", "PanelTemplates_SetNumTabs",
     "PanelTemplates_SetTab", "InCombatLockdown", "ScrollUtil", "CreateDataProvider",
-    "CreateScrollBoxListLinearView",
+    "CreateScrollBoxListLinearView", "CreateTreeDataProvider", "CreateScrollBoxListTreeListView",
 }
 
 local frameMethods = {}
@@ -172,8 +172,71 @@ function frameMethods:SetHighlightTexture(texture, mode)
     self.highlightTexture, self.highlightMode = texture, mode
 end
 
-function frameMethods:SetDataProvider(provider)
-    self.dataProvider = provider
+function frameMethods:SetDataProvider(provider, retainScrollPosition)
+    self.dataProvider, self.retainScroll = provider, retainScrollPosition
+end
+
+function frameMethods:SetNumeric(numeric)
+    self.numeric = numeric
+end
+
+function frameMethods:SetAllPoints(target)
+    self.allPoints = target
+end
+
+function frameMethods:SetBlendMode(mode)
+    self.blendMode = mode
+end
+
+-- Menu stub: SetupMenu keeps the generator. GenerateMenu runs it against a recording root.
+-- Each entry of self.menuItems has text, value, isSelected(), pick().
+function frameMethods:SetupMenu(generator)
+    self.menuGenerator = generator
+    self:GenerateMenu()
+end
+
+function frameMethods:GenerateMenu()
+    local items = {}
+    self.menuItems = items
+    local root = {}
+    function root.CreateRadio(_, text, isSelected, setSelected, value)
+        table.insert(items, {
+            text = text, value = value,
+            isSelected = function()
+                return isSelected(value)
+            end,
+            pick = function()
+                setSelected(value)
+            end,
+        })
+    end
+    self.menuGenerator(self, root)
+end
+
+local function newTreeNode(parent, data)
+    local node = { parent = parent, data = data, nodes = {}, collapsed = false }
+    node.depth = (parent.depth or 0) + 1
+    function node:Insert(childData)
+        local child = newTreeNode(self, childData)
+        table.insert(self.nodes, child)
+        return child
+    end
+    function node:GetData()
+        return self.data
+    end
+    function node:GetDepth()
+        return self.depth
+    end
+    function node:GetNodes()
+        return self.nodes
+    end
+    function node:IsCollapsed()
+        return self.collapsed
+    end
+    function node:SetCollapsed(collapsed)
+        self.collapsed = collapsed
+    end
+    return node
 end
 
 local function newObject(kind, name, parent, template)
@@ -296,6 +359,39 @@ function M.reset()
     end
     _G.CreateScrollBoxListLinearView = function()
         local view = {}
+        function view:SetElementExtent(extent)
+            self.extent = extent
+        end
+        function view:SetElementInitializer(template, fn)
+            self.template, self.initializer = template, fn
+        end
+        return view
+    end
+    _G.CreateTreeDataProvider = function()
+        local provider = { nodes = {} }
+        function provider:Insert(data)
+            local node = newTreeNode(self, data)
+            table.insert(self.nodes, node)
+            return node
+        end
+        -- Test helper: the nodes that a view shows, in order, without collapsed children.
+        function provider:GetVisible()
+            local out = {}
+            local function walk(nodes)
+                for _, node in ipairs(nodes) do
+                    table.insert(out, node)
+                    if not node.collapsed then
+                        walk(node.nodes)
+                    end
+                end
+            end
+            walk(self.nodes)
+            return out
+        end
+        return provider
+    end
+    _G.CreateScrollBoxListTreeListView = function(indent)
+        local view = { indent = indent }
         function view:SetElementExtent(extent)
             self.extent = extent
         end
@@ -511,6 +607,14 @@ end
 -- Run the logout event as the client does.
 function M.logout()
     M.fire("PLAYER_LOGOUT")
+end
+
+function M.cancelPopup()
+    local p = M.popup
+    M.popup = nil
+    if p.dialog.OnCancel then
+        p.dialog.OnCancel()
+    end
 end
 
 function M.acceptPopup()
