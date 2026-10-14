@@ -83,7 +83,7 @@ describe("Init on TBC", function()
         assert.are.equal("tbc", f.id)
         assert.are.equal("tbc-anniversary", f.ruleset)
         assert.is_true(f.scopeIncludesRealm)
-        assert.is_false(f.captureEnabled)
+        assert.is_true(f.captureEnabled)
         assert.are.same({ 0, 1, 2, 3, 4 }, f.bagIDs())
         assert.are.same({ -1, 5, 6, 7, 8, 9, 10, 11 }, f.bankIDs())
         assert.are.same({ main = "FlipsideDB_TBC", scan = "FlipsideScanDB_TBC" }, f.savedVariables)
@@ -272,6 +272,138 @@ describe("Init on TBC", function()
                 assert.are.equal(1, count("legacy scan: rows 2, batch 2 of 2"))
             end)
         end)
+        describe("legacy capture", function()
+            local rows, queries, total
+            local names = { "CanSendAuctionQuery", "QueryAuctionItems", "GetNumAuctionItems", "GetAuctionItemInfo",
+                "GetAuctionItemLink", "hooksecurefunc" }
+            local LINEN = "|cffffffff|Hitem:2589::::::::60:::::|h[Linen Cloth]|h|r"
+
+            -- The user searches in the Blizzard window: the global call that the hook sees.
+            local function userSearch(getAll)
+                _G.QueryAuctionItems("linen", nil, nil, 0, false, 0, getAll == true, false, nil)
+            end
+
+            before_each(function()
+                rows, queries, total = {}, {}, nil
+                mock.stackSizes[2589] = 200
+                _G.CanSendAuctionQuery = function() return true, true end
+                _G.QueryAuctionItems = function(...) queries[#queries + 1] = { ... } end
+                _G.hooksecurefunc = function(name, fn)
+                    local original = _G[name]
+                    _G[name] = function(...)
+                        local results = { original(...) }
+                        fn(...)
+                        return unpack(results)
+                    end
+                end
+                _G.GetNumAuctionItems = function() return #rows, total or #rows end
+                _G.GetAuctionItemInfo = function(_, i)
+                    local r = rows[i]
+                    return "Linen Cloth", 1, r.count, 1, true, 1, 0, 0, 0, r.buyout, 0, false, "", "o", "", 0,
+                        2589, true
+                end
+                _G.GetAuctionItemLink = function(_, i) return rows[i].link end
+                login()
+                mock.fire("AUCTION_HOUSE_SHOW")
+            end)
+
+            after_each(function()
+                for _, name in ipairs(names) do
+                    _G[name] = nil
+                end
+            end)
+
+            local function fireEvents(n)
+                for _ = 1, n do
+                    mock.fire("AUCTION_ITEM_LIST_UPDATE")
+                    mock.advance(0.05)
+                end
+            end
+
+            it("is on for TBC", function()
+                assert.is_table(ns.scanCapture)
+            end)
+
+            it("stores the per-item price of a user search after the events stop", function()
+                userSearch()
+                rows[1] = { count = 20, buyout = 2000, link = LINEN }
+                rows[2] = { count = 10, buyout = 700, link = LINEN }
+                fireEvents(6)
+                assert.is_nil(ns.scanStore:Get("2589"))
+                mock.advance(1)
+                local record = ns.scanStore:Get("2589")
+                assert.is_table(record)
+                assert.are.equal(70, record.latest.min)
+                assert.are.equal(30, record.latest.qty)
+                assert.is_false(record.latest.partial)
+            end)
+
+            it("handles a page once for many events", function()
+                local captured = 0
+                local original = ns.scanCapture.OnPageResults
+                ns.scanCapture.OnPageResults = function(self, ...)
+                    captured = captured + 1
+                    return original(self, ...)
+                end
+                userSearch()
+                rows[1] = { count = 1, buyout = 100, link = LINEN }
+                fireEvents(30)
+                mock.advance(2)
+                fireEvents(2)
+                mock.advance(2)
+                assert.are.equal(1, captured)
+            end)
+
+            it("stores only the lowest price as latest for a partial page", function()
+                userSearch()
+                rows[1] = { count = 1, buyout = 100, link = LINEN }
+                total = 120
+                fireEvents(1)
+                mock.advance(1)
+                local record = ns.scanStore:Get("2589")
+                assert.are.equal(100, record.latest.min)
+                assert.is_true(record.latest.partial)
+            end)
+
+            it("keys a stackable row without a link by item ID and skips a bad row", function()
+                userSearch()
+                rows[1] = { count = 2, buyout = 300 }
+                rows[2] = { count = 1, buyout = 0, link = LINEN }
+                fireEvents(1)
+                mock.advance(1)
+                assert.are.equal(150, ns.scanStore:Get("2589").latest.min)
+            end)
+
+            it("skips a non-stackable row without a link", function()
+                mock.stackSizes[2589] = 1
+                userSearch()
+                rows[1] = { count = 1, buyout = 300 }
+                fireEvents(1)
+                mock.advance(1)
+                assert.are.equal(0, ns.scanStore:CountItems())
+            end)
+
+            it("ignores the events of a get-all search", function()
+                userSearch(true)
+                rows[1] = { count = 1, buyout = 100, link = LINEN }
+                fireEvents(2)
+                mock.advance(1)
+                assert.are.equal(0, ns.scanStore:CountItems())
+            end)
+
+            it("ignores the events of a Flipside scan and of a name search", function()
+                ns.AuctionClient.StartScan()
+                rows[1] = { count = 1, buyout = 100, link = LINEN }
+                fireEvents(2)
+                mock.advance(1)
+                assert.are.equal(0, ns.scanStore:CountItems())
+                ns.AuctionClient.NameSearch("linen")
+                fireEvents(2)
+                mock.advance(1)
+                assert.are.equal(0, ns.scanStore:CountItems())
+            end)
+        end)
+
         it("uses the TBC SavedVariables names", function()
             login()
             assert.is_table(_G.FlipsideDB_TBC)

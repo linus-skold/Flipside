@@ -1,7 +1,7 @@
 local _, ns = ...
 
 -- Saves the price of an item when the player looks at its listings in the Auction House.
--- deps: store, serverTime, api, and the optional report, onCaptured and isScanRunning.
+-- deps: store, serverTime, api, and the optional report, onCaptured, isScanRunning and keyFor(itemID, link).
 -- api: commodityNum(itemID), commodityInfo(itemID, index), commodityFull(itemID),
 --      itemNum(itemKey), itemInfo(itemKey, index), itemFull(itemKey). Result indexes start at 1.
 local ScanCapture = {}
@@ -32,6 +32,7 @@ function ScanCapture.New(deps)
         report = deps.report,
         onCaptured = deps.onCaptured,
         isScanRunning = deps.isScanRunning,
+        keyFor = deps.keyFor,
         failed = false,
     }, Capture)
 end
@@ -142,6 +143,39 @@ function Capture:_Save(key, auctions, full)
     end
     if self.store:Put(key, record) and self.onCaptured then
         self.onCaptured(key, snap, partial)
+    end
+end
+
+-- Save the rows of one legacy list page. rows: { itemID, count, buyout, link }; buyout is for the whole stack.
+-- full is true if the page holds all results of the query. A row that has no key or no buyout is skipped.
+function Capture:OnPageResults(rows, full)
+    if type(rows) ~= "table" or not self:_CanCapture() then
+        return
+    end
+    local keyFor = self.keyFor
+    local byKey = {}
+    for _, row in ipairs(rows) do
+        if type(row) == "table" and type(row.buyout) == "number" and row.buyout > 0
+            and IsPositiveInteger(row.count) and not ns.ScanKey.IsBattlePet(row.link) then
+            local key
+            if keyFor then
+                local ok, value = pcall(keyFor, row.itemID, row.link)
+                key = ok and value or nil
+            else
+                key = row.link and ns.ItemString.ToExactKey(row.link) or nil
+            end
+            if key then
+                local list = byKey[key]
+                if not list then
+                    list = {}
+                    byKey[key] = list
+                end
+                list[#list + 1] = { unitPrice = UnitPriceFromBuyout(row.buyout, row.count), count = row.count }
+            end
+        end
+    end
+    for key, auctions in pairs(byKey) do
+        self:_Save(key, auctions, full == true)
     end
 end
 

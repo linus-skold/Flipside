@@ -26,7 +26,7 @@ describe("LegacyBackend", function()
         _G.QueryAuctionItems = function(...)
             queries[#queries + 1] = { n = select("#", ...), ... }
         end
-        _G.GetNumAuctionItems = function(kind) return #lists[kind] end
+        _G.GetNumAuctionItems = function(kind) return #lists[kind], #lists[kind] end
         _G.GetAuctionItemInfo = function(kind, i) return unpack(lists[kind][i].info) end
         _G.GetAuctionItemLink = function(kind, i) return lists[kind][i].link end
         ns = {}
@@ -43,11 +43,109 @@ describe("LegacyBackend", function()
 
     local A = function() return ns.AuctionClient end
 
-    it("can scan and has no capture or commodity check", function()
+    it("can scan and has no commodity check", function()
         assert.is_true(A().CanScan())
-        assert.is_nil(A().Capture())
         assert.is_nil(A().ItemIsCommodity(1))
         assert.is_false(A().HasCommodityCheck())
+    end)
+
+    describe("capture", function()
+        local source, savedHook
+
+        -- A user search: the client global, which the hook sees.
+        local function userQuery(getAll)
+            _G.QueryAuctionItems("mage", nil, nil, 0, false, 0, getAll == true, false, nil)
+        end
+
+        local function row(id, count, buyout, link)
+            return { info = { "N", 1, count, 1, true, 1, 0, 0, 0, buyout, 0, false, "", "o", "", 0, id, true },
+                link = link }
+        end
+
+        before_each(function()
+            savedHook = _G.hooksecurefunc
+            _G.hooksecurefunc = function(name, fn)
+                local original = _G[name]
+                _G[name] = function(...)
+                    local results = { original(...) }
+                    fn(...)
+                    return unpack(results)
+                end
+            end
+            source = A().Capture()
+        end)
+
+        after_each(function()
+            _G.hooksecurefunc = savedHook
+        end)
+
+        it("gives the legacy page event and a short debounce", function()
+            assert.are.equal("AUCTION_ITEM_LIST_UPDATE", source.pageEvent)
+            assert.is_true(source.debounceSeconds > 0 and source.debounceSeconds <= 0.5)
+        end)
+
+        it("is off without the list functions", function()
+            _G.GetAuctionItemInfo = nil
+            assert.is_nil(A().Capture())
+        end)
+
+        it("reads one page of a user search with count, buyout, item ID and link", function()
+            userQuery()
+            lists.list = {
+                row(11, 5, 500, "|Hitem:11|h[A]|h"),
+                row(12, 1, 90, nil),
+            }
+            local rows, full = source.readPage()
+            assert.are.equal(2, #rows)
+            assert.are.same({ itemID = 11, count = 5, buyout = 500, link = "|Hitem:11|h[A]|h" }, rows[1])
+            assert.are.same({ itemID = 12, count = 1, buyout = 90 }, rows[2])
+            assert.is_true(full)
+        end)
+
+        it("marks a page partial when the total is larger than the page", function()
+            userQuery()
+            lists.list = { row(11, 1, 5) }
+            _G.GetNumAuctionItems = function() return 1, 80 end
+            local _, full = source.readPage()
+            assert.is_false(full)
+        end)
+
+        it("reads a page once for each query", function()
+            userQuery()
+            lists.list = { row(11, 1, 5) }
+            assert.is_table(source.readPage())
+            assert.is_nil(source.readPage())
+            userQuery()
+            assert.is_table(source.readPage())
+        end)
+
+        it("reads nothing before any query or from an empty page", function()
+            lists.list = { row(11, 1, 5) }
+            assert.is_nil(source.readPage())
+            userQuery()
+            lists.list = {}
+            assert.is_nil(source.readPage())
+        end)
+
+        it("ignores a Flipside scan, a name search and a get-all", function()
+            lists.list = { row(11, 1, 5) }
+            A().StartScan()
+            assert.is_nil(source.readPage())
+            A().NameSearch("bolt")
+            assert.is_nil(source.readPage())
+            userQuery(true)
+            assert.is_nil(source.readPage())
+            userQuery()
+            assert.is_table(source.readPage())
+        end)
+
+        it("ignores a page longer than a browse page", function()
+            userQuery()
+            for i = 1, 51 do
+                lists.list[i] = row(11, 1, 5)
+            end
+            assert.is_nil(source.readPage())
+        end)
     end)
 
     describe("name search", function()

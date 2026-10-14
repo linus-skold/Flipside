@@ -246,17 +246,48 @@ local function detectRegion()
 end
 
 
+-- Legacy list: many events come for one query. Read the page once, after the events stop for a short time.
+local function subscribePageCapture(capture, source)
+    local delay = source.debounceSeconds or 0.3
+    local lastEvent, waiting = 0, false
+    local function check()
+        local quiet = GetTime() - lastEvent
+        if quiet < delay then
+            C_Timer.After(delay - quiet, check)
+            return
+        end
+        waiting = false
+        local ok, rows, full = pcall(source.readPage)
+        if ok and rows then
+            capture:OnPageResults(rows, full)
+        elseif not ok then
+            ns.ReportError("search capture failed: " .. tostring(rows))
+        end
+    end
+    ns.bus:Subscribe(source.pageEvent, "Flipside.Capture", function()
+        lastEvent = GetTime()
+        if not waiting then
+            waiting = true
+            C_Timer.After(delay, check)
+        end
+    end)
+end
+
 -- Save the price of each item that the player searches in the Auction House.
 local function openCapture()
     local source = ns.Flavour.captureEnabled and ns.AuctionClient.Capture() or nil
-    if not (ns.ScanCapture and source) then
+    if not (ns.ScanCapture and ns.ScanKey and source) then
         return
     end
+    local resolver = ns.ScanKey.New({ clientIsCommodity = ns.AuctionClient.ItemIsCommodity, maxStack = maxStack })
     local ok, capture = pcall(ns.ScanCapture.New, {
         store = ns.scanStore,
         serverTime = GetServerTime,
         api = source.api,
         report = ns.ReportError,
+        keyFor = function(itemID, link)
+            return resolver:KeyFor(itemID, link)
+        end,
         isScanRunning = function()
             return ns.scanEngine ~= nil and ns.scanEngine:IsRunning()
         end,
@@ -266,6 +297,10 @@ local function openCapture()
         return
     end
     ns.scanCapture = capture
+    if source.pageEvent then
+        subscribePageCapture(capture, source)
+        return
+    end
     ns.bus:Subscribe(source.commodityEvent, "Flipside.Capture", function(_, itemID)
         capture:OnCommodityResults(itemID)
     end)
