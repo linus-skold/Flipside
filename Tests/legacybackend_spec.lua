@@ -43,9 +43,11 @@ describe("LegacyBackend", function()
 
     local A = function() return ns.AuctionClient end
 
-    it("keeps the full scan off", function()
-        assert.is_false(A().CanScan())
+    it("can scan and has no capture or commodity check", function()
+        assert.is_true(A().CanScan())
         assert.is_nil(A().Capture())
+        assert.is_nil(A().ItemIsCommodity(1))
+        assert.is_false(A().HasCommodityCheck())
     end)
 
     describe("name search", function()

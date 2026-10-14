@@ -60,6 +60,13 @@ query("OwnedEvent")
 query("OpenEvent")
 query("CloseEvent")
 
+-- Optional scan helpers: ScanCanStart() gives true, or false and a text; ScanSettleSeconds() and ScanComplete()
+-- tell the engine when a multi-event scan is done; ScanDiagnostics(summary) gives a text line.
+query("ScanDiagnostics")
+query("ScanSettleSeconds")
+query("ScanComplete")
+query("ScanCanStart", true)
+
 -- Search capture: nil means capture is off.
 query("Capture")
 
