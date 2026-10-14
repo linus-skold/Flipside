@@ -110,7 +110,7 @@ Nine features come from your list, twelve are ones TSM users rely on that are ea
 | Crafting and queue | Profit per recipe, restock queue, craft next | Same | Added | Phase 2 |
 | Banking | Move groups between bags, bank and warband bank | Folded into Keep stock rules | Added | Phase 2 |
 | Profiles | Swap rule sets per character | Same | Added | Phase 2 |
-| Import and export | Share groups and operations as strings | Open, documented format | Added | Phase 2 |
+| Import and export | Share groups and operations as text (MVP); mail lists and keep-stock rules later (Phase 2) | Open, documented format | Added | MVP |
 | Dashboard | Gold over time and profit summary | Same, from local ledger only | Added | Phase 2 |
 | Account sync | Share inventory, ledger and scan data across accounts | Also shares scan history (fills gaps) | Added | Phase 3 |
 | Task List | Step-by-step guide through a crafting session | Same | Added | Phase 3 |
@@ -247,6 +247,10 @@ check(
 17. The default selling minimum ships as written. `first` and `avg` skip the missing crafting value.
 18. A vendor sell price of 0 means the vendor does not buy the item. `vendorsell` is then invalid.
 
+**Feedback decisions (2026-10-14)**
+
+7. **Formulas page.** The page explains each function and each source in plain words, as a reference list. The custom source section (save a formula under a name) must be easy to find. There are no user-defined functions with parameters.
+
 ## Feature specs
 
 Each feature lists only what differs from, or is unspecified in, the TSM reference. Where nothing is said, behave as the reference section named.
@@ -278,6 +282,26 @@ A *Full Scan* button sits on the Flipside tab of the Auction House frame with a 
 12. Items are added from bags (one button reads all bags), by name search, or by link. Adding from AH search results comes with build step 6.
 13. Profiles stay "Default" only in build step 4 (profile switching is Phase 2). Rules live in the profile scope.
 
+**Feedback decisions (2026-10-14)**
+
+1. **Item search by name** (everywhere a name is searched):
+   - Enter starts the search.
+   - Items that are already in the target group are hidden from the results.
+   - The result list stays until the next search.
+   - Text in double quotes (`"Linen Cloth"`) matches that exact name only, without case sensitivity.
+   - Text without quotes matches each name that contains the text.
+2. **Names for items without scan data.** First use the game client's item cache. If the Auction House is open, then search the AH for the name. No item database ships with Flipside.
+3. **Group page.** The page has two inner tabs: "Rules" (the operations for each type) and "Items" (add and remove items).
+4. **Drag and drop.** The player drags a group into a parent group or out of it (a move). Lists stay sorted by name. No manual order is stored. Operations sort by name.
+5. **Keep amount.** Selling and vendoring operations get a "Keep in bags" setting: a number for each item, default 0. That many units of each item stay in the bags. Until bank tracking exists (Phase 2), only the bags count. Keep-stock rules (D8) have priority over it when they exist.
+6. **Export and import of groups** (MVP, see §7.4). The format is a documented, readable, versioned Flipside text format. It holds a group, its sub-groups, their items, and copies of the operations they use. Import shows a summary and asks before it changes anything. It never imports TSM strings (D13). Import rules:
+   - The import goes under a parent group that the player picks.
+   - If a group name already exists under that parent, the new group gets the suffix " (2)".
+   - If an operation has the same type, name and settings, Flipside reuses it. Otherwise it imports a copy named "<name> (imported)".
+   - Items that are in another group move to the imported group. The summary shows how many.
+   - Custom sources that imported operations use are included. They follow the same rename rule.
+8. **Operations page.** Each formula field has an expand button that opens a larger editor. Each preview line has more space below it.
+
 ### 5.3 Buying (reference §5.2 Shopping)
 
 - Search by text, filters, group, or "everything in my shopping lists".
@@ -291,6 +315,7 @@ A *Full Scan* button sits on the Flipside tab of the Auction House frame with a 
 - **Dry run:** runs the post and cancel logic without touching the AH and shows the queue with prices and reasons.
 - **Decision log:** every item gets one reason code (posting at undercut, at normal, below min, stale price, invalid price, keep-in-bags reached, post cap reached).
 - Blacklist of sellers works only from targeted searches (full scans carry no seller names).
+- **Keep in bags:** the operation has a number for each item (default 0). Posting leaves that many units of the item in the bags (see the feedback decisions in §5.2).
 
 ### 5.5 Mail lists (reference §5.4 Mailing)
 
@@ -321,6 +346,7 @@ How features use it: Banking moves to and from the bank; Mail lists send shortfa
 - Sell junk and groups marked for vendor; buy vendor reagents up to Keep stock targets.
 - **Safety:** never auto-vendor an item whose `ScanMarket` or `Destroy` value (MVP: ScanMarket only; Destroy from Phase 3) is more than a set multiple of its vendor price (default 2×); such items are listed for review instead.
 - Buyback tab with one-click undo of the last sale batch.
+- **Keep in bags:** the operation has a number for each item (default 0). Vendoring leaves that many units of the item in the bags (see the feedback decisions in §5.2).
 
 ### 5.8 Ledger (reference §5.7)
 
@@ -462,8 +488,9 @@ As in the reference §8.2 (pairing, single-writer rows, timestamp versioning, th
 
 ### 7.4 Import and export
 
-- One documented string format for groups, operations, custom sources, keep-stock rules and mail lists (recipients replaced by placeholders).
-- A version header and a human-readable preview before import, with item and operation deselection (reference §9.2).
+- One documented, readable, versioned text format for groups, operations, custom sources, keep-stock rules and mail lists (recipients replaced by placeholders).
+- **MVP (feedback decision 2026-10-14):** export and import of groups, with their sub-groups, items, the operations they use and the custom sources those operations use. Keep-stock rules and mail lists stay Phase 2. The import rules are in §5.2. D13 still applies: no TSM strings.
+- A version header and a human-readable preview before import, with item and operation deselection (reference §9.2). In the MVP the import shows a summary and asks before it changes anything.
 - Plain item lists accepted, as in the reference §9.3.
 - Ledger CSV export (§5.8).
 - Optional external price file in the import slot (D2).
@@ -474,8 +501,8 @@ The MVP is done when a player on WoW: Forever can scan, see prices in tooltips, 
 
 | Phase | Goal | Features | Done when |
 | --- | --- | --- | --- |
-| MVP | Scan → price → buy / sell → profit, one realm | Full scan, groups, operations and formulas, tooltips, inventory tracking, buying, selling with dry run and decision log, vendoring, ledger, Great Deals | A week of daily use on one realm with no errors, under 5 s of scan processing on a mid-size realm (Flipside processing time; see §3.2 scan engine design) |
-| Phase 2 | Run a multi-character business | Mail lists, keep stock, banking, crafting and queue, sniper, profiles, import/export, dashboard, price history chart, deposit-aware posting, craft profit ranking, presets and undo | A crafter-and-seller pair of alts restocks and sells through one session without manual moves |
+| MVP | Scan → price → buy / sell → profit, one realm | Full scan, groups, operations and formulas, tooltips, inventory tracking, buying, selling with dry run and decision log, vendoring, ledger, Great Deals, export and import of groups and operations | A week of daily use on one realm with no errors, under 5 s of scan processing on a mid-size realm (Flipside processing time; see §3.2 scan engine design) |
+| Phase 2 | Run a multi-character business | Mail lists, keep stock, banking, crafting and queue, sniper, profiles, import/export of mail lists and keep-stock rules, dashboard, price history chart, deposit-aware posting, craft profit ranking, presets and undo | A crafter-and-seller pair of alts restocks and sells through one session without manual moves |
 | Phase 3 | Multi-account and polish | Account sync (incl. scan data), Task List, destroying, guild scan sharing, TBC Anniversary, then Retail | Two accounts on one realm share inventory, ledger and prices |
 
 **Spike 0: full-scan test (build first).** A throwaway addon, *ScanTest*, that answers whether the full scan works on WoW: Forever before the scan engine is built.
@@ -509,8 +536,8 @@ The MVP is done when a player on WoW: Forever can scan, see prices in tooltips, 
 2. Full scan and the snapshot pipeline, then scan price sources.
 3. Formula compiler (tokenise → tree → evaluate), with live preview.
 4. Groups and operations UI.
-5. Tooltips and inventory tracking.
-6. AH tabs in Blizzard's Auction House frame: Buying, then Selling with dry run and decision log.
+5. Tooltips and inventory tracking. The tooltip price lines are configurable with the same formula language as operations. The player can show min, max and average values.
+6. AH tabs in Blizzard's Auction House frame: Buying, then Selling with dry run and decision log. Two new tabs, Selling and Buying (similar to the well-known Auctionator layout, in our own design), work from the player's groups and their operations.
 7. Mailbox parsing and the ledger; then Vendoring.
 
 **Test strategy:** the formula compiler, market-value algorithm, selling decision rules and keep-stock maths are pure functions, so they get unit tests run outside the game (plain Lua with a mocked API). In-game features get a scripted checklist per release.

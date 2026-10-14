@@ -45,9 +45,11 @@ describe("OperationSchema", function()
 
     it("lists fields in sequence with safety fields last", function()
         assert.same({ "minPrice", "normalPrice", "maxPrice", "undercut", "duration", "postCap",
-            "belowMin", "aboveMax", "cancelUndercut", "maxDataAgeHours", "minSamples" }, keys("selling"))
+            "keepInBags", "belowMin", "aboveMax", "cancelUndercut", "maxDataAgeHours",
+            "minSamples" }, keys("selling"))
         assert.same({ "maxPrice", "showAboveMax", "maxDataAgeHours", "minSamples" }, keys("buying"))
-        assert.same({ "sellToVendor", "safetyMultiple", "maxDataAgeHours", "minSamples" }, keys("vendoring"))
+        assert.same({ "sellToVendor", "keepInBags", "safetyMultiple",
+            "maxDataAgeHours", "minSamples" }, keys("vendoring"))
     end)
 
     it("errors for an unknown type", function()
@@ -60,12 +62,13 @@ describe("OperationSchema", function()
     it("gives defaults", function()
         assert.same({
             minPrice = DEFAULT, normalPrice = "scanmarket", maxPrice = "2 * scanmarket", undercut = 1,
-            duration = 24, postCap = 0, belowMin = "skip", aboveMax = "postAtMax", cancelUndercut = true,
+            duration = 24, postCap = 0, keepInBags = 0, belowMin = "skip", aboveMax = "postAtMax",
+            cancelUndercut = true,
             maxDataAgeHours = 72, minSamples = 3,
         }, S.Defaults("selling"))
         assert.same({ maxPrice = "scanmarket", showAboveMax = false, maxDataAgeHours = 72, minSamples = 3 },
             S.Defaults("buying"))
-        assert.same({ sellToVendor = false, safetyMultiple = 2, maxDataAgeHours = 72, minSamples = 3 },
+        assert.same({ sellToVendor = false, keepInBags = 0, safetyMultiple = 2, maxDataAgeHours = 72, minSamples = 3 },
             S.Defaults("vendoring"))
         assert.is_not.equal(S.Defaults("buying"), S.Defaults("buying"))
     end)
@@ -99,6 +102,14 @@ describe("OperationSchema", function()
         assert.equal(3, S.Normalize("buying").minSamples)
     end)
 
+    it("fills keepInBags in old saved settings", function()
+        local old = { sellToVendor = true, safetyMultiple = 3 }
+        assert.equal(0, S.Normalize("vendoring", old).keepInBags)
+        assert.is_nil(old.keepInBags)
+        assert.equal(0, S.Normalize("selling", { postCap = 5 }).keepInBags)
+        assert.equal(5, S.Normalize("selling", { keepInBags = 5 }).keepInBags)
+    end)
+
     describe("Validate", function()
         local function field(type, key, value)
             return S.ValidateField(type, key, value, compile)
@@ -113,6 +124,15 @@ describe("OperationSchema", function()
             assert.is_true(field("selling", "postCap", 5000))
             assert.is_false(field("selling", "postCap", 5001))
             assert.is_false(field("selling", "postCap", -1))
+        end)
+
+        it("checks keepInBags range", function()
+            for _, t in ipairs({ "selling", "vendoring" }) do
+                assert.is_true(field(t, "keepInBags", 0))
+                assert.is_true(field(t, "keepInBags", 10000))
+                assert.is_false(field(t, "keepInBags", -1))
+                assert.is_false(field(t, "keepInBags", 10001))
+            end
         end)
 
         it("checks money", function()
