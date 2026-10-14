@@ -4,9 +4,10 @@ local M = {}
 
 local GLOBAL_NAMES = {
     "ACCEPT", "CANCEL", "C_AuctionHouse", "C_Item", "C_Timer", "CreateFrame", "DEFAULT_CHAT_FRAME",
-    "FlipsideDB", "FlipsideScanDB", "GetBuildInfo", "GetServerTime", "SLASH_FLIPSIDE1", "SLASH_FLIPSIDE2",
+    "FlipsideDB", "FlipsideScanDB", "GetBuildInfo", "GetNormalizedRealmName", "GetServerTime",
+    "SLASH_FLIPSIDE1", "SLASH_FLIPSIDE2",
     "SLASH_SCANTEST1", "ScanTestDB", "SlashCmdList",
-    "StaticPopupDialogs", "StaticPopup_Show", "WOW_PROJECT_ID", "date", "debugprofilestop", "time",
+    "StaticPopupDialogs", "StaticPopup_Show", "UnitName", "WOW_PROJECT_ID", "date", "debugprofilestop", "time",
 }
 
 local frameMethods = {}
@@ -54,6 +55,10 @@ function M.reset()
     M.replicateCalls = 0
     M.rows = {} -- each row: itemID, count, buyout, hasAll
     M.stackSizes = {} -- itemID -> max stack size
+    M.playerName = nil -- result of UnitName("player")
+    M.realmName = nil -- result of GetNormalizedRealmName()
+    M.itemInfo = {} -- itemID -> array of GetItemInfo return values
+    M.loadRequests = {} -- itemIDs passed to RequestLoadItemDataByID
 
     _G.ACCEPT = "Accept"
     _G.CANCEL = "Cancel"
@@ -97,7 +102,23 @@ function M.reset()
         end,
     }
 
+    _G.UnitName = function()
+        return M.playerName, nil
+    end
+    _G.GetNormalizedRealmName = function()
+        return M.realmName
+    end
+
     _G.C_Item = {
+        GetItemInfo = function(itemID)
+            local values = M.itemInfo[itemID]
+            if values then
+                return unpack(values, 1, 17)
+            end
+        end,
+        RequestLoadItemDataByID = function(itemID)
+            table.insert(M.loadRequests, itemID)
+        end,
         GetItemMaxStackSizeByID = function(itemID)
             return M.stackSizes[itemID]
         end,

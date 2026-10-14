@@ -8,4 +8,6 @@
 Core\EventBus.lua
 Core\Scheduler.lua
 Core\ItemString.lua
+Core\SettingsDB.lua
+Core\ItemInfoCache.lua
 Core\Init.lua
