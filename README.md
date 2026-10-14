@@ -55,7 +55,7 @@ git push origin v0.1.0
 
 Use `v0.1.0-beta.1` for a beta and `v0.1.0-alpha.1` for an alpha.
 
-Each push to `main` publishes a normal GitHub release named `vX.Y.(Z+1)-alpha.N`, not a pre-release. X.Y.Z is the latest release tag. N is the workflow run number. The workflow keeps the 10 newest releases with `-alpha.` in the tag and deletes older ones with their tags. This includes an alpha tag that you push by hand. It never deletes other releases or betas.
+Each push to `main` publishes a normal GitHub release named `vX.Y.(Z+1)-alpha.N`, not a pre-release. X.Y.Z is the latest release tag. N is the workflow run number. The workflow keeps the 10 newest releases with `-alpha.` in the tag and deletes older ones with their tags. This includes an alpha tag that you push by hand. It never deletes other releases or betas. The push starts a second workflow run for the new tag. That run publishes the release.
 
 WowUp: add the GitHub repository URL. The Stable channel gets the builds from `main` and the plain release tags. Betas from `v0.1.0-beta.N` tags are pre-releases, so choose the Beta channel to get them.
 
