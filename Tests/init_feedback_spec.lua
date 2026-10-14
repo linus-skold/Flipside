@@ -143,13 +143,14 @@ describe("Init feedback", function()
             herbs = ns.rules:CreateGroup(1, "Herbs")
             groups.Refresh()
             groups.tree:Select(herbs)
-            click(groups.tabButtons.items)
+            groups.SelectTab("items")
         end)
 
         it("finds an item from the client cache by name", function()
             mock.itemInfo["linen cloth"] = { "Linen Cloth", LINEN }
-            groups.addNameInput:SetText("linen cloth")
-            click(groups.addNameButton)
+            groups.addInput:SetText("linen cloth")
+            click(groups.addButton)
+            assert.is_true(groups.popup:IsShown())
             local data = groups.nameList:GetData()
             assert.are.equal(1, #data)
             assert.are.equal("2589", data[1].key)
@@ -160,7 +161,8 @@ describe("Init feedback", function()
             mock.fire("AUCTION_HOUSE_SHOW")
             mock.browseRows = { { itemKey = { itemID = 2589, battlePetSpeciesID = 0 } } }
             mock.itemNames[2589] = "Linen Cloth"
-            groups.addNameInput:SetText("linen")
+            groups.addInput:SetText("linen")
+            click(groups.addButton)
             click(groups.ahButton)
             assert.are.equal("linen", mock.browseQueries[1].searchString)
             mock.fire("AUCTION_HOUSE_BROWSE_RESULTS_UPDATED")
@@ -171,7 +173,8 @@ describe("Init feedback", function()
         end)
 
         it("says so when the Auction House is closed", function()
-            groups.addNameInput:SetText("linen")
+            groups.addInput:SetText("linen")
+            click(groups.addButton)
             click(groups.ahButton)
             assert.are.equal("open the Auction House to search it", groups.status:GetText())
         end)
@@ -184,7 +187,12 @@ describe("Init feedback", function()
             local dest = ns.rules:CreateGroup(1, "Dest")
             groups.Refresh()
             groups.tree:Select(herbs)
-            click(groups.exportButton)
+            groups.tree.options.onRightClick(herbs, {})
+            for _, item in ipairs(mock.menu.items) do
+                if item.text == "Export" then
+                    item.onClick()
+                end
+            end
             local text = groups.exportDialog.input:GetText()
             assert.is_truthy(text:find("FLIPSIDE-RULES", 1, true))
 

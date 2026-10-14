@@ -233,6 +233,10 @@ function frameMethods:SetAllPoints(target)
     self.allPoints = target
 end
 
+function frameMethods:SetTextColor(r, g, b, a)
+    self.color = { r, g, b, a }
+end
+
 function frameMethods:SetBlendMode(mode)
     self.blendMode = mode
 end

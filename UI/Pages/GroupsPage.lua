@@ -9,11 +9,13 @@ local BASE_ID = 1
 local INHERIT = 0
 local MAX_RESULTS = 20
 local RIGHT = 260
-local PANE_Y = 56
+local TAB_Y = 24
+local LIST_Y = 46
 local DELETE_DIALOG = "FLIPSIDE_DELETE_GROUP"
 local IMPORT_CONFIRM = "FLIPSIDE_IMPORT_CONFIRM"
 local EXPORT_DIALOG = "FLIPSIDE_EXPORT_DIALOG"
 local IMPORT_DIALOG = "FLIPSIDE_IMPORT_DIALOG"
+local RESULTS_WINDOW = "FlipsideAddItemsWindow"
 local TYPE_LABELS = { selling = "Selling", buying = "Buying", vendoring = "Vendoring" }
 local SOURCE_LABELS = { scan = "scan data", client = "game cache", ah = "Auction House" }
 local AH_HINT = "This uses the Auction House search; Blizzard's Buy tab will show these results."
@@ -55,7 +57,7 @@ end
 function GroupsPage.Build(content, deps)
     local Kit = ns.Kit
     local rules, index = deps.rules, deps.itemNameIndex
-    local gap = Kit.Theme.gap
+    local gap, pad = Kit.Theme.gap, Kit.Theme.padding
     local page = { selected = BASE_ID, opRows = {}, bagEntries = {}, bagSelected = {}, results = {}, tab = "rules" }
 
     local function place(frame, x, y)
@@ -90,6 +92,18 @@ function GroupsPage.Build(content, deps)
         return count
     end
 
+    local function qualityOf(itemID)
+        local cache = deps.itemCache
+        local info = cache and itemID and cache:Get(itemID)
+        return info and info.quality
+    end
+
+    local function setQualityColor(label, quality)
+        local r, g, b = Kit.QualityColor(quality)
+        label:SetTextColor(r, g, b)
+    end
+
+    -- Return the display text of a key and the item quality (nil while the item loads).
     local function itemName(key)
         local parsed = ns.ItemString.ParseKey(key)
         local cache = deps.itemCache
@@ -97,9 +111,9 @@ function GroupsPage.Build(content, deps)
             local info = cache:Get(parsed.itemID)
             if info and info.name then
                 if key == string.format("%d", parsed.itemID) then
-                    return info.name
+                    return info.name, info.quality
                 end
-                return info.name .. " (" .. key .. ")"
+                return info.name .. " (" .. key .. ")", info.quality
             end
             if cache.Request then
                 cache:Request(parsed.itemID)
@@ -108,13 +122,21 @@ function GroupsPage.Build(content, deps)
         return key
     end
 
+    -- Show a message on the page and in the results window.
+    local function say(text)
+        page.status:SetText(text)
+        if page.popup then
+            page.popup.status:SetText(text)
+        end
+    end
+
     -- Show the store message when a call gave nil. Returns true on success.
     local function report(ok, message)
         if ok == nil then
-            page.status:SetText(tostring(message or ""))
+            say(tostring(message or ""))
             return false
         end
-        page.status:SetText("")
+        say("")
         return true
     end
 
@@ -142,10 +164,16 @@ function GroupsPage.Build(content, deps)
         refresh()
     end
 
+    local onRightClick
+
     page.tree = Kit.CreateTree(content, {
+        inset = true,
         onSelect = function(node)
             if node.id ~= page.selected then
                 page.results = {}
+                if page.popup then
+                    page.popup:Hide()
+                end
             end
             page.selected = node.id
             page.RefreshPane()
@@ -154,12 +182,15 @@ function GroupsPage.Build(content, deps)
         canDrag = function(id)
             return id ~= BASE_ID and editable()
         end,
+        onRightClick = function(id, row)
+            onRightClick(id, row)
+        end,
     })
-    page.tree.frame:SetSize(250, 270)
+    page.tree.frame:SetSize(250, 330)
     place(page.tree.frame, 0, 0)
 
-    page.nameInput = Kit.Input(content, 236, nil)
-    place(page.nameInput, 6, 278)
+    page.nameInput = Kit.Input(content, 236, nil, nil, { placeholder = "<group name>" })
+    place(page.nameInput, 6, 338)
 
     local function onNew()
         local id, message = rules:CreateGroup(page.selected, page.nameInput:GetText())
@@ -170,6 +201,10 @@ function GroupsPage.Build(content, deps)
     end
 
     local function onRename()
+        if trim(page.nameInput:GetText()) == "" then
+            say("type the new name in the box under the tree, then choose Rename")
+            return
+        end
         local ok, message = rules:RenameGroup(page.selected, page.nameInput:GetText())
         if report(ok, message) then
             page.nameInput:SetText("")
@@ -194,38 +229,19 @@ function GroupsPage.Build(content, deps)
         end)
     end
 
-    page.newButton = Kit.Button(content, "New group", 78, onNew)
-    place(page.newButton, 0, 304)
-    page.renameButton = Kit.Button(content, "Rename", 78, onRename)
-    page.renameButton:SetPoint("LEFT", page.newButton, "RIGHT", gap, 0)
-    page.deleteButton = Kit.Button(content, "Delete", 78, onDelete)
-    page.deleteButton:SetPoint("LEFT", page.renameButton, "RIGHT", gap, 0)
-
-    local moveLabel = Kit.Label(content, "Move to...", "normal")
-    place(moveLabel, 0, 336)
-    page.moveDropdown = Kit.Dropdown(content, 160, {
-        items = {},
-        onChange = function(targetID)
-            local ok, message = rules:MoveGroup(page.selected, targetID)
-            report(ok, message)
-            refresh()
-        end,
-    })
-    place(page.moveDropdown, 80, 330)
-
     -- Export and import.
 
     local function onExport()
         if not deps.customSources then
-            page.status:SetText("export is not available")
+            say("export is not available")
             return
         end
         local text, message = ns.RulesExport.Export(rules, deps.customSources, page.selected)
         if not text then
-            page.status:SetText(tostring(message or ""))
+            say(tostring(message or ""))
             return
         end
-        page.status:SetText("")
+        say("")
         page.exportDialog = Kit.EditorDialog(EXPORT_DIALOG, {
             readOnly = true,
             help = "Copy this text with Ctrl+C. Share it. Another player can import it.",
@@ -236,28 +252,28 @@ function GroupsPage.Build(content, deps)
     local function applyImport(data, parentID)
         local ok, result = ns.RulesExport.Apply(rules, deps.customSources, data, parentID, deps.compile)
         if not ok then
-            page.status:SetText(tostring(result))
+            say(tostring(result))
             refresh()
             return
         end
         page.selected = result.groupID or page.selected
         refresh()
-        page.status:SetText(string.format("Imported %d groups and %d items", result.groups, result.items))
+        say(string.format("Imported %d groups and %d items", result.groups, result.items))
     end
 
     local function onImportText(text)
         local data, message = ns.RulesExport.Parse(text)
         if not data then
-            page.status:SetText(tostring(message))
+            say(tostring(message))
             return
         end
         local parentID = page.selected
         local summary, previewMessage = ns.RulesExport.Preview(rules, deps.customSources, data, parentID)
         if not summary then
-            page.status:SetText(tostring(previewMessage))
+            say(tostring(previewMessage))
             return
         end
-        page.status:SetText("")
+        say("")
         Kit.Confirm(IMPORT_CONFIRM, describePreview(tostring(rules:Name(parentID)), summary), function()
             applyImport(data, parentID)
         end)
@@ -265,52 +281,53 @@ function GroupsPage.Build(content, deps)
 
     local function onImport()
         if not deps.customSources then
-            page.status:SetText("import is not available")
+            say("import is not available")
             return
         end
-        page.status:SetText("")
+        say("")
         page.importDialog = Kit.EditorDialog(IMPORT_DIALOG, {
             help = "Paste an export text. It is imported below the selected group.",
         })
         page.importDialog:Open("Import below " .. tostring(rules:Name(page.selected)), "", onImportText)
     end
 
-    page.exportButton = Kit.Button(content, "Export", 78, onExport)
-    place(page.exportButton, 0, 364)
-    page.importButton = Kit.Button(content, "Import", 78, onImport)
-    page.importButton:SetPoint("LEFT", page.exportButton, "RIGHT", gap, 0)
+    page.newButton = Kit.Button(content, "New group", 100, onNew)
+    place(page.newButton, 0, 364)
+    page.importButton = Kit.Button(content, "Import", 100, onImport)
+    page.importButton:SetPoint("LEFT", page.newButton, "RIGHT", gap, 0)
 
-    -- Header and inner tabs.
+    -- Right-click menu of a tree row. Rename uses the text of the name box.
+    function onRightClick(id, row)
+        page.tree:Select(id)
+        local locked = id == BASE_ID or not editable()
+        page.menu = Kit.ContextMenu(row, {
+            { text = "Rename", onClick = onRename, disabled = locked },
+            { text = "Delete", onClick = onDelete, disabled = locked },
+            { text = "Export", onClick = onExport, disabled = deps.customSources == nil },
+        }, { title = tostring(rules:Name(id)) })
+    end
+
+    -- Header and top tabs.
 
     page.header = Kit.Label(content, "", "title")
     place(page.header, RIGHT, 0)
 
-    page.tabButtons = {}
-    local function selectTab(name)
-        page.tab = name
-        page.rulesPanel:SetShown(name == "rules")
-        page.itemsPanel:SetShown(name == "items")
-        for key, button in pairs(page.tabButtons) do
-            button:SetEnabled(key ~= name)
-        end
+    local right = CreateFrame("Frame", nil, content)
+    right:SetSize(516, 400)
+    place(right, RIGHT, TAB_Y)
+    page.topTabs = Kit.CreateTopTabs(right, {
+        { key = "rules", title = "Rules" },
+        { key = "items", title = "Items" },
+    }, {
+        onSelect = function(key)
+            page.tab = key
+        end,
+    })
+    function page.SelectTab(name)
+        page.topTabs:Select(name)
     end
-    page.SelectTab = selectTab
-
-    page.tabButtons.rules = Kit.Button(content, "Rules", 90, function()
-        selectTab("rules")
-    end)
-    place(page.tabButtons.rules, RIGHT, 26)
-    page.tabButtons.items = Kit.Button(content, "Items", 90, function()
-        selectTab("items")
-    end)
-    page.tabButtons.items:SetPoint("LEFT", page.tabButtons.rules, "RIGHT", gap, 0)
-
-    page.rulesPanel = CreateFrame("Frame", nil, content)
-    page.rulesPanel:SetSize(520, 140)
-    place(page.rulesPanel, RIGHT, PANE_Y)
-    page.itemsPanel = CreateFrame("Frame", nil, content)
-    page.itemsPanel:SetSize(520, 380)
-    place(page.itemsPanel, RIGHT, PANE_Y)
+    page.rulesPanel = page.topTabs:GetContent("rules")
+    page.itemsPanel = page.topTabs:GetContent("items")
 
     -- Rules tab.
 
@@ -325,29 +342,33 @@ function GroupsPage.Build(content, deps)
         refresh()
     end
 
+    page.rulesInset = Kit.Inset(page.rulesPanel)
+    page.rulesInset:SetPoint("TOPLEFT", page.rulesPanel, "TOPLEFT", 0, 0)
+    page.rulesInset:SetPoint("TOPRIGHT", page.rulesPanel, "TOPRIGHT", 0, 0)
+    page.rulesInset:SetHeight(146)
+    local rulesBox = page.rulesInset
+
     for position, opType in ipairs(ns.OperationSchema.TYPES) do
-        local y = 4 + (position - 1) * 42
+        local y = 6 + (position - 1) * 44
         local row = {}
-        row.label = Kit.Label(page.rulesPanel, TYPE_LABELS[opType] or opType, "highlight")
-        placeIn(page.rulesPanel, row.label, 0, y + 4)
-        row.dropdown = Kit.Dropdown(page.rulesPanel, 200, {
+        row.label = Kit.Label(rulesBox, TYPE_LABELS[opType] or opType, "highlight")
+        placeIn(rulesBox, row.label, 10, y + 4)
+        row.dropdown = Kit.Dropdown(rulesBox, 200, {
             items = { { value = INHERIT, text = "(inherit)" } },
             value = INHERIT,
             onChange = function(value)
                 onOperation(opType, value)
             end,
         })
-        placeIn(page.rulesPanel, row.dropdown, 80, y)
-        row.using = Kit.Label(page.rulesPanel, "", "small")
-        placeIn(page.rulesPanel, row.using, 86, y + 24)
+        placeIn(rulesBox, row.dropdown, 90, y)
+        row.using = Kit.Label(rulesBox, "", "small")
+        placeIn(rulesBox, row.using, 96, y + 24)
         page.opRows[opType] = row
     end
 
-    -- Items tab: the items of the group.
+    -- Items tab: the add box and its buttons, then the items of the group.
 
     local itemsPanel = page.itemsPanel
-    page.itemsLabel = Kit.Label(itemsPanel, "Items", "highlight")
-    placeIn(itemsPanel, page.itemsLabel, 0, 0)
 
     local function onRemove(key)
         local ok, message = rules:RemoveItem(key)
@@ -355,37 +376,54 @@ function GroupsPage.Build(content, deps)
         refresh()
     end
 
+    page.addInput = Kit.Input(itemsPanel, 250, function()
+        page.Submit()
+    end, nil, { placeholder = "Item name, link or id" })
+    placeIn(itemsPanel, page.addInput, 6, 0)
+    page.addButton = Kit.Button(itemsPanel, "Add", 60, function()
+        page.Submit()
+    end)
+    page.addButton:SetPoint("LEFT", page.addInput, "RIGHT", gap, 0)
+    page.bagsButton = Kit.Button(itemsPanel, "Add from bags", 110, nil)
+    page.bagsButton:SetPoint("LEFT", page.addButton, "RIGHT", gap, 0)
+
+    page.itemsLabel = Kit.Label(itemsPanel, "Items", "highlight")
+    placeIn(itemsPanel, page.itemsLabel, 0, 28)
+
     page.itemList = Kit.CreateList(itemsPanel, {
+        inset = true,
         initRow = function(row, key)
             if not row.nameText then
                 row.nameText = Kit.Label(row, "", "normal")
-                row.nameText:SetPoint("LEFT", row, "LEFT", 4, 0)
-                row.nameText:SetWidth(380)
+                row.nameText:SetPoint("LEFT", row, "LEFT", 6, 0)
+                row.nameText:SetWidth(430)
                 row.nameText:SetJustifyH("LEFT")
-                row.removeButton = Kit.Button(row, "Remove", 70, nil)
+                row.removeButton = Kit.IconButton(row, "close", nil, "Remove from group")
                 row.removeButton:SetPoint("RIGHT", row, "RIGHT", -4, 0)
             end
-            row.nameText:SetText(itemName(key))
+            local text, quality = itemName(key)
+            row.nameText:SetText(text)
+            setQualityColor(row.nameText, quality)
             row.removeButton:SetEnabled(editable())
             row.removeButton:SetScript("OnClick", function()
                 onRemove(key)
             end)
         end,
     })
-    page.itemList.frame:SetSize(490, 100)
-    placeIn(itemsPanel, page.itemList.frame, 0, 18)
+    placeIn(itemsPanel, page.itemList.frame, 0, LIST_Y)
+    page.itemList.frame:SetPoint("BOTTOMRIGHT", itemsPanel, "BOTTOMRIGHT", 0, 0)
 
-    -- Add items.
+    -- Add from bags. The bag list takes the place of the item list.
 
     local bagPanel = CreateFrame("Frame", nil, itemsPanel)
-    bagPanel:SetSize(490, 100)
-    placeIn(itemsPanel, bagPanel, 0, 214)
+    placeIn(itemsPanel, bagPanel, 0, LIST_Y)
+    bagPanel:SetPoint("BOTTOMRIGHT", itemsPanel, "BOTTOMRIGHT", 0, 0)
     bagPanel:Hide()
     page.bagPanel = bagPanel
 
     local function showBags(shown)
         bagPanel:SetShown(shown)
-        page.nameList.frame:SetShown(not shown)
+        page.itemList.frame:SetShown(not shown)
     end
 
     -- Add one item to the selected group. It moves from another group.
@@ -397,15 +435,14 @@ function GroupsPage.Build(content, deps)
             if previous ~= BASE_ID and previous ~= page.selected then
                 text = "Moved " .. itemName(key) .. " from " .. tostring(rules:Name(previous))
             end
-            page.status:SetText(text)
+            say(text)
         end
         refresh()
+        return ok ~= nil
     end
 
-    page.bagsButton = Kit.Button(itemsPanel, "Add from bags", 110, nil)
-    placeIn(itemsPanel, page.bagsButton, 0, 122)
-
     page.bagList = Kit.CreateList(bagPanel, {
+        inset = true,
         initRow = function(row, entry)
             if not row.check then
                 row.check = Kit.Check(row, "", function(checked)
@@ -447,12 +484,12 @@ function GroupsPage.Build(content, deps)
             end
         end
         if #keys == 0 then
-            page.status:SetText("Select items first")
+            say("Select items first")
             return
         end
         local added, message = rules:AddItems(keys, page.selected)
         if report(added, message) then
-            page.status:SetText("Added " .. added .. " items")
+            say("Added " .. added .. " items")
             showBags(false)
         end
         refresh()
@@ -463,73 +500,16 @@ function GroupsPage.Build(content, deps)
         showBags(false)
         local entries = deps.readBags and deps.readBags() or {}
         if #entries == 0 then
-            page.status:SetText("No items found in bags")
+            say("No items found in bags")
             return
         end
-        page.status:SetText("")
+        say("")
         page.bagEntries, page.bagSelected = entries, {}
         page.bagList:SetData(entries)
         showBags(true)
     end)
 
-    -- Add by link.
-
-    local linkLabel = Kit.Label(itemsPanel, "Add by link", "normal")
-    placeIn(itemsPanel, linkLabel, 0, 154)
-    page.linkInput = Kit.Input(itemsPanel, 220, nil)
-    placeIn(itemsPanel, page.linkInput, 96, 150)
-
-    local function onAddLink()
-        showBags(false)
-        local link = trim(page.linkInput:GetText())
-        local key = deps.keyFor and deps.keyFor(link) or ns.ItemString.ToExactKey(link)
-        if not key then
-            page.status:SetText("not an item link")
-            return
-        end
-        addKey(key)
-        page.linkInput:SetText("")
-    end
-    page.addLinkButton = Kit.Button(itemsPanel, "Add", 60, onAddLink)
-    page.addLinkButton:SetPoint("LEFT", page.linkInput, "RIGHT", gap, 0)
-
-    -- Add by name. The result list stays until the next search.
-
-    local nameLabel = Kit.Label(itemsPanel, "Add by name", "normal")
-    placeIn(itemsPanel, nameLabel, 0, 184)
-    page.addNameInput = Kit.Input(itemsPanel, 220, function()
-        page.SearchName()
-    end)
-    placeIn(itemsPanel, page.addNameInput, 96, 180)
-
-    page.nameList = Kit.CreateList(itemsPanel, {
-        initRow = function(row, match)
-            if not row.nameText then
-                row.nameText = Kit.Label(row, "", "normal")
-                row.nameText:SetPoint("LEFT", row, "LEFT", 4, 0)
-                row.nameText:SetWidth(290)
-                row.nameText:SetJustifyH("LEFT")
-                row.sourceText = Kit.Label(row, "", "small")
-                row.sourceText:SetPoint("LEFT", row, "LEFT", 300, 0)
-                row.addButton = Kit.Button(row, "Add", 70, nil)
-                row.addButton:SetPoint("RIGHT", row, "RIGHT", -4, 0)
-            end
-            local inGroup = page.selected ~= BASE_ID and rules:GroupOf(match.key) == page.selected
-            local text = match.name or match.key
-            if match.key ~= string.format("%d", match.itemID or 0) then
-                text = text .. " (" .. match.key .. ")"
-            end
-            row.nameText:SetText(text)
-            row.sourceText:SetText(SOURCE_LABELS[match.source] or "")
-            row.addButton:SetText(inGroup and "Added" or "Add")
-            row.addButton:SetEnabled(editable() and page.selected ~= BASE_ID and not inGroup)
-            row.addButton:SetScript("OnClick", function()
-                addKey(match.key)
-            end)
-        end,
-    })
-    page.nameList.frame:SetSize(490, 100)
-    placeIn(itemsPanel, page.nameList.frame, 0, 214)
+    -- The results window. The list stays until the next search.
 
     local function inGroupKeys()
         local exclude = {}
@@ -539,33 +519,9 @@ function GroupsPage.Build(content, deps)
         return exclude
     end
 
-    function page.SearchName()
-        showBags(false)
-        local text = trim(page.addNameInput:GetText())
-        if not index then
-            page.status:SetText("item names are not available")
-            return
-        end
-        local matches, pending = index:Find(text, MAX_RESULTS, { exclude = inGroupKeys() })
-        page.results = matches
-        page.nameList:SetData(page.results)
-        local note = pending > 0 and ("\n" .. pending .. " item names are still loading") or ""
-        if #matches == 0 then
-            page.status:SetText('no item named "' .. ns.ItemNameIndex.ParseQuery(text).raw .. '"' .. note)
-        else
-            page.status:SetText(#matches .. " items found" .. note)
-        end
-    end
-    page.addNameButton = Kit.Button(itemsPanel, "Add", 60, function()
-        page.SearchName()
-    end)
-    page.addNameButton:SetPoint("LEFT", page.addNameInput, "RIGHT", gap, 0)
-
-    -- Auction House search, only on a click.
-
     local function onAHResults(items, err)
         if not items then
-            page.status:SetText(tostring(err or ""))
+            say(tostring(err or ""))
             return
         end
         local exclude, known = inGroupKeys(), {}
@@ -583,30 +539,155 @@ function GroupsPage.Build(content, deps)
         end
         table.sort(page.results, byName)
         page.nameList:SetData(page.results)
-        page.status:SetText(added .. " items found in the Auction House")
+        say(added .. " items found in the Auction House")
     end
 
-    page.ahButton = Kit.Button(itemsPanel, "Search the Auction House", 190, function()
+    local popup = Kit.CreateWindow(RESULTS_WINDOW, { width = 460, height = 420 })
+    popup:SetFrameStrata("DIALOG")
+    popup:SetToplevel(true)
+    page.popup = popup
+    local edge = pad + 8
+
+    page.nameList = Kit.CreateList(popup, {
+        inset = true,
+        initRow = function(row, match)
+            if not row.nameText then
+                row.nameText = Kit.Label(row, "", "normal")
+                row.nameText:SetPoint("LEFT", row, "LEFT", 6, 0)
+                row.nameText:SetWidth(240)
+                row.nameText:SetJustifyH("LEFT")
+                row.sourceText = Kit.Label(row, "", "small")
+                row.sourceText:SetPoint("LEFT", row, "LEFT", 252, 0)
+                row.addButton = Kit.Button(row, "Add", 60, nil)
+                row.addButton:SetPoint("RIGHT", row, "RIGHT", -4, 0)
+            end
+            local inGroup = page.selected ~= BASE_ID and rules:GroupOf(match.key) == page.selected
+            local text = match.name or match.key
+            if match.key ~= string.format("%d", match.itemID or 0) then
+                text = text .. " (" .. match.key .. ")"
+            end
+            row.nameText:SetText(text)
+            setQualityColor(row.nameText, qualityOf(match.itemID))
+            row.sourceText:SetText(SOURCE_LABELS[match.source] or "")
+            row.addButton:SetText(inGroup and "Added" or "Add")
+            row.addButton:SetEnabled(editable() and page.selected ~= BASE_ID and not inGroup)
+            row.addButton:SetScript("OnClick", function()
+                addKey(match.key)
+            end)
+        end,
+    })
+    page.nameList.frame:SetPoint("TOPLEFT", popup, "TOPLEFT", edge, -40)
+    page.nameList.frame:SetPoint("BOTTOMRIGHT", popup, "BOTTOMRIGHT", -edge, 124)
+
+    popup.status = Kit.Label(popup, "", "small")
+    popup.status:SetPoint("BOTTOMLEFT", popup, "BOTTOMLEFT", edge, 102)
+    popup.status:SetWidth(460 - 2 * edge)
+    popup.status:SetJustifyH("LEFT")
+
+    page.ahButton = Kit.Button(popup, "Search the Auction House", 190, function()
         if not deps.ahNameSearch then
             return
         end
-        showBags(false)
-        local query = ns.ItemNameIndex.ParseQuery(page.addNameInput:GetText())
-        if query.raw == "" then
-            page.status:SetText("type a name first")
+        local query = page.query
+        if not query or query.raw == "" then
+            say("type a name first")
             return
         end
-        page.status:SetText("")
+        say("")
         deps.ahNameSearch:Find(query.raw, onAHResults, { exact = query.exact })
     end)
-    placeIn(itemsPanel, page.ahButton, 0, 318)
-    page.ahHint = Kit.Label(itemsPanel, AH_HINT, "small")
-    placeIn(itemsPanel, page.ahHint, 0, 344)
-    page.ahHint:SetWidth(490)
+    page.ahButton:SetPoint("BOTTOMLEFT", popup, "BOTTOMLEFT", edge, 72)
+    page.ahHint = Kit.Label(popup, AH_HINT, "small")
+    page.ahHint:SetPoint("BOTTOMLEFT", popup, "BOTTOMLEFT", edge, 44)
+    page.ahHint:SetWidth(460 - 2 * edge)
     page.ahHint:SetJustifyH("LEFT")
     if not deps.ahNameSearch then
         page.ahButton:Hide()
         page.ahHint:Hide()
+    end
+
+    page.popupClose = Kit.Button(popup, CLOSE, 100, function()
+        popup:Hide()
+    end)
+    page.popupClose:SetPoint("BOTTOM", popup, "BOTTOM", 0, pad + 4)
+
+    -- Find the matches of a text and list them. Returns the matches and the count of names still loading.
+    local function find(text)
+        local matches, pending = index:Find(text, MAX_RESULTS, { exclude = inGroupKeys() })
+        local note = pending > 0 and ("\n" .. pending .. " item names are still loading") or ""
+        return matches, note
+    end
+
+    local function noMatch(text)
+        return 'no item named "' .. ns.ItemNameIndex.ParseQuery(text).raw .. '"'
+    end
+
+    local function showResults(text, matches, note)
+        local query = ns.ItemNameIndex.ParseQuery(text)
+        page.query = query
+        page.results = matches
+        page.nameList:SetData(matches)
+        if popup.SetTitle then
+            popup:SetTitle(query.raw)
+        end
+        popup:Show()
+        popup:Raise()
+        if #matches == 0 then
+            say(noMatch(text) .. note)
+        else
+            say(#matches .. " items found" .. note)
+        end
+    end
+
+    -- Work out what the player typed and act on it.
+    function page.Submit()
+        showBags(false)
+        local text = trim(page.addInput:GetText())
+        if text == "" then
+            say("type an item name, link or id")
+            return
+        end
+        if page.selected == BASE_ID then
+            say("select a group first")
+            return
+        end
+        local key
+        if ns.ItemString.IsItemLink(text) then
+            key = deps.keyFor and deps.keyFor(text) or ns.ItemString.ToExactKey(text)
+            if not key then
+                say("not an item link")
+                return
+            end
+        elseif text:match("^%d+$") then
+            key = ns.ItemString.ToBaseKey(text)
+            if not key then
+                say("not an item id")
+                return
+            end
+        end
+        if key then
+            if addKey(key) then
+                page.addInput:SetText("")
+            end
+            return
+        end
+        if not index then
+            say("item names are not available")
+            return
+        end
+        local matches, note = find(text)
+        if ns.ItemNameIndex.ParseQuery(text).exact then
+            if #matches == 1 then
+                if addKey(matches[1].key) then
+                    page.addInput:SetText("")
+                end
+                return
+            elseif #matches == 0 then
+                say(noMatch(text) .. note)
+                return
+            end
+        end
+        showResults(text, matches, note)
     end
 
     -- Status lines.
@@ -627,16 +708,6 @@ function GroupsPage.Build(content, deps)
         end
         page.tree.selected = page.selected
         page.tree:SetNodes({ nodeFor(BASE_ID) })
-    end
-
-    local function moveTargets(id)
-        local items, parentID = {}, parentOf(id)
-        rules:Walk(function(groupID)
-            if groupID ~= id and groupID ~= parentID then
-                items[#items + 1] = { value = groupID, text = table.concat(rules:Path(groupID), " > ") }
-            end
-        end)
-        return items
     end
 
     local function setEnabled(frame, enabled)
@@ -675,19 +746,11 @@ function GroupsPage.Build(content, deps)
 
         setEnabled(page.nameInput, canEdit)
         setEnabled(page.newButton, canEdit)
-        setEnabled(page.renameButton, canEdit and not isBase)
-        setEnabled(page.deleteButton, canEdit and not isBase)
-        setEnabled(page.exportButton, canShare)
         setEnabled(page.importButton, canShare and canEdit)
-        page.moveDropdown:SetItems(moveTargets(id))
-        page.moveDropdown:SetValue(nil)
-        setEnabled(page.moveDropdown, canEdit and not isBase)
         setEnabled(page.bagsButton, canAdd)
-        setEnabled(page.addNameInput, canAdd)
-        setEnabled(page.addNameButton, canAdd)
+        setEnabled(page.addInput, canAdd)
+        setEnabled(page.addButton, canAdd)
         setEnabled(page.ahButton, canAdd)
-        setEnabled(page.linkInput, canAdd)
-        setEnabled(page.addLinkButton, canAdd)
         setEnabled(page.selectAllButton, canAdd)
         setEnabled(page.addSelectedButton, canAdd)
         page.readOnlyLabel:SetShown(not canEdit)
@@ -706,13 +769,13 @@ function GroupsPage.Build(content, deps)
     local hook, insertLink = _G.hooksecurefunc, _G.ChatEdit_InsertLink
     if hook and insertLink then
         hook("ChatEdit_InsertLink", function(link)
-            if type(link) == "string" and page.linkInput:HasFocus() then
-                page.linkInput:SetText(link)
+            if type(link) == "string" and page.addInput:HasFocus() then
+                page.addInput:SetText(link)
+                page.Submit()
             end
         end)
     end
 
-    selectTab("rules")
     refresh()
     return page
 end
