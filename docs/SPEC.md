@@ -12,12 +12,12 @@ Start with Spike 0 (§8), then follow the MVP build order. Everything below appl
 2. **API source of truth.** Check every Blizzard API against the Forever client's interface code ([Ketho/wow-ui-source-forever](https://github.com/Ketho/wow-ui-source-forever)) and the API pages on [warcraft.wiki.gg](https://warcraft.wiki.gg/wiki/World_of_Warcraft_API). Forever may differ from Retail; when they disagree, the Forever source wins.
 3. **Project setup.**
    - Folder layout: `Core/` (framework), `Services/`, `Features/<Name>/`, `UI/`, `Libs/`, `Locales/`, `Tests/`.
-   - TOC with the Forever interface number taken from the client source, and both SavedVariables (Main DB, Scan DB, §7.1).
+   - TOC with the Forever interface number taken from the client source (the source has no interface number; 16001 comes from `GetBuildInfo` in the client), and both SavedVariables (Main DB, Scan DB, §7.1).
    - Lint with luacheck; WoW globals declared in its config.
    - Unit tests with busted and a mocked WoW API, for the pure logic: formula compiler, market-value algorithm, selling decisions, keep-stock maths, deposit-aware maths.
    - Packaging for CurseForge and Wago via a release workflow.
-4. **Libraries.** Decide in the first task whether to use common libraries (e.g. Ace3, LibSerialize, LibDeflate) or write our own; check each licence is compatible with MIT (D12) and list them in the README.
-5. **Repo CLAUDE.md** containing: the link to this spec; the build order; "Decisions D1–D17 are binding — ask before changing one"; "When something gets scoped, update the Needs scoping table"; the definition of done below.
+4. **Libraries.** Decide in the first task whether to use common libraries (e.g. Ace3, LibSerialize, LibDeflate) or write our own; check each licence is compatible with MIT (D12) and list them in the README. The decision is made: see D18.
+5. **Repo CLAUDE.md** containing: the link to this spec; the build order; "Decisions D1–D19 are binding — ask before changing one"; "When something gets scoped, update the Needs scoping table"; the definition of done below.
 6. **Definition of done per feature.** Unit tests pass; luacheck is clean; the feature's in-game checklist passes on WoW: Forever; the spec section is updated if behaviour changed; the Phase dropdown and Needs scoping status reflect reality.
 7. **Open questions** at the end of this tab are not decided. If a task depends on one, stop and ask.
 
@@ -60,6 +60,8 @@ Start with Spike 0 (§8), then follow the MVP build order. Everything below appl
 | D15 | WoW: Forever has one region-wide market per ruleset (mega-server), with stackables traded as commodities; all price data is keyed by region and ruleset | Per-realm AuctionDB data | 2026-10-13 |
 | D16 | The addon is called Flipside; slash commands /flipside and /flip | — | 2026-10-13 |
 | D17 | Visual style: WoW: Forever classic look in bronze and copper; Blizzard textures referenced by path, never shipped; Flipside's own art drawn at 2–4× resolution | TSM's flat dark theme | 2026-10-13 |
+| D18 | No Ace3. Flipside writes its own framework (settings DB, event bus, coroutine scheduler, slash commands) and its own UI kit. No third-party library ships in the MVP. The use of AceComm with ChatThrottleLib for guild sharing is decided again at Phase 3 | — | 2026-10-14 |
+| D19 | The UI kit is reusable for other addons: style only (theme table, frames, buttons, tabs, lists), with no Flipside logic and no reference to Flipside code or names. It lives in `UI/Kit/` in this repository and can be extracted to a library later | — | 2026-10-14 |
 
 ### Improvements over TSM
 
@@ -143,6 +145,8 @@ Full-scan facts that shape the design ([Warcraft Wiki](https://warcraft.wiki.gg/
 3. **Merge** into today's bucket for that item; keep up to 4 snapshots per day, then average. A targeted search newer than the day's full scan replaces that day's value for the searched item (D5).
 4. **Roll up** at the first scan after the server day changes (D4): today's bucket becomes one daily record.
 5. **Discard** raw listings. Only daily records and today's bucket are saved.
+
+Rows can arrive without full item info, so the pipeline loads item data before it uses names, links or stack sizes (see Spike 0 result in §8).
 
 All steps run as coroutines that yield each frame, with a progress bar. A scan interrupted by closing the AH keeps the rows processed so far, marked partial.
 
@@ -357,6 +361,7 @@ Gold, silver and copper coin amounts keep the game's own coin colours so money r
 - Use the game's own fonts (Friz Quadrata via the standard font objects) so text matches the client; ship no font without a compatible licence.
 - Borders and edges are pixel-perfect at any UI scale.
 - Frames follow the classic layout language: title bar with portrait-style icon, tabs along the bottom edge, close button top-right.
+- The kit lives in `UI/Kit/` and has no reference to Flipside code or names, so other addons can reuse it (D19).
 
 ## Storage, profiles, sync and import/export
 
@@ -412,6 +417,18 @@ The MVP is done when a player on WoW: Forever can scan, see prices in tooltips, 
 
 **Pass:** the event fires, row count is plausible for a busy market, commodities are included, processing finishes without freezing or disconnecting.
 
+**Spike 0 result** (user's test, 2026-10-14, WoW: Forever client 1.60.1, two runs)
+
+- Result: pass. `C_AuctionHouse.ReplicateItems` exists and `REPLICATE_ITEM_LIST_UPDATE` fires.
+- Run 1: result ok; time to first event 11,828 ms; processing 2,420 ms in 73 frames (counting only, slices of 1,000 rows); Lua memory 132,317 KB before and 134,176 KB after (+1,859 KB); 72,968 rows; 3,071 unique items; total quantity 500,441; 72,967 rows with a buyout; 5,534 rows with missing item info; 25,252 rows whose item stacks above 1; 18,039 rows with unknown stack size; 0 empty rows.
+- The row index of `GetReplicateItemInfo` starts at 0 (0 empty rows with indexes 0 to n-1).
+- Item data is incomplete directly after a scan (5,534 rows without full info, 18,039 rows without a stack size). The scan engine needs an item-load step before it uses names, links or stack sizes. The count of stackable rows is thus a lower limit.
+- Stackable items are in the results. It is not proven that "stackable" equals "commodity" on Forever (D15 is supported, not proven).
+- Run 2, a few minutes after run 1: no event in 60 s ("no response (cooldown or blocked)"). A cooldown probably exists. Its length (15 minutes) is not proven.
+- The addon loaded with `## Interface: 16001` and without "Load out of date AddOns". `GetBuildInfo` in the user's client gives interface 16001, client build 70338 and `WOW_PROJECT_ID` 18 (login line: `ScanTest: client 1.60.1, build 70338, interface 16001, project id 18`). The interface number is confirmed.
+- The Forever client source (Ketho/wow-ui-source-forever, commit bd2470a, client 1.60.1.70009; the source check used build 70009, which is older than the user's build 70338) has no interface number in its TOC files and states no cooldown for `ReplicateItems`.
+- Not yet known: freeze or stutter during the read (the user did not report one), the SavedVariables file content, and a third run after more than 15 minutes.
+
 **Build order inside the MVP**
 
 1. Framework: settings DB with scopes, event bus, coroutine scheduler, item-string normaliser, item info cache.
@@ -446,7 +463,8 @@ TSM behaviours this spec doesn't cover yet. Change the status as each one gets s
 ## Open questions
 
 - [ ] Check "Flipside" is free on CurseForge, Wago and GitHub, and that /flip doesn't clash with a popular addon.
-- [ ] Does the full scan work on WoW: Forever, how long does it take, and does it include commodities? Run the ScanTest addon in the beta and share its report.
+- [x] Does the full scan work on WoW: Forever, how long does it take, and does it include commodities? Answer: it works; the first event came after 11,828 ms and processing took 2,420 ms. Stackable items are included. Not proven: that "stackable" equals "commodity". See the Spike 0 result in §8.
+- [ ] Length of the full-scan cooldown, and whether a failed attempt restarts it. Run 2 got no event; the 15-minute length is not proven.
 - [ ] Full-scan size limits on the busiest realms — test for disconnects and processing time.
 - [ ] Scan DB size at 60+ days of retention — measure before fixing the storage format.
 - [ ] Guild sharing trust rule (§3.5): confirm "received data only fills gaps, never overrides your own scans".

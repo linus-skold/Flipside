@@ -87,7 +87,7 @@ local function getStackSize(itemID)
     return cached
 end
 
--- Read one row. The index base (0 to n-1) is not verified on Forever.
+-- Read one row. The index base (0 to n-1) is confirmed by the Spike 0 test.
 local function readRow(run, seen, index)
     local c = run.counts
     local _, _, count, _, _, _, _, _, _, buyout, _, _, _, _, _, _, itemID, hasAllInfo =
