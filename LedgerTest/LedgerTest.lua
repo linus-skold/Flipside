@@ -6,7 +6,8 @@
 --
 -- Test script (do each step as one action, in this order):
 --   1. Kill a mob and loot it. Do it once with auto-loot off, then once with auto-loot on.
---   2. Kill two mobs with an area attack. Loot both.
+--   2. Kill two mobs with an area attack. Loot both (tests GetLootSourceInfo with two corpses).
+--      Before the kill, target or mouse over each mob, so the name cache has its name.
 --   3. Sell an item to a vendor. Buy an item. Buy back an item. Repair.
 --   4. Turn in a quest that gives money.
 --   5. (Optional) Trade money with a second character.
@@ -16,9 +17,12 @@
 --   WTF/Account/<ACCOUNT>/SavedVariables/LedgerTestDB.lua
 --
 -- The probe uses no hooksecurefunc and writes to no Blizzard table, so it cannot taint Blizzard code.
+-- It does not register COMBAT_LOG_EVENT_UNFILTERED. The client API docs mark that event HasRestrictions,
+-- and the registration shows the "blocked from an action" popup.
+-- Mob names come from GetLootSourceInfo (GUID) and a GUID to name cache that unit events fill.
 -- Vendor, repair and mail actions show in MERCHANT_*, BAG_UPDATE_DELAYED, PLAYER_MONEY and MAIL_SUCCESS.
 -- If the "blocked from an action" popup shows again: run /console taintLog 1, repeat the action,
--- then send Logs\taint.log.
+-- then send Logs\taint.log. The taint log needs /console taintLog 1 before /reload.
 --
 -- Slash commands: /ledgertest on | off | dump | clear | stats
 --   on, off: print each entry to chat. dump: print the last 30 entries.
@@ -30,22 +34,31 @@ local ADDON_NAME = "LedgerTest"
 local CAP = 2000
 local DUMP_COUNT = 30
 local MAIL_DEBOUNCE = 0.5
+local NAME_CACHE_MAX = 200
 
 local frame = CreateFrame("Frame")
 local db
 local lastMoney
-local lastKill
-local combatGetter
-local combatChecked = false
 local mailToken = 0
+local nameCache = {}
+local nameOrder = {}
 
 local EVENTS = {
     "PLAYER_MONEY", "LOOT_OPENED", "LOOT_CLOSED", "CHAT_MSG_LOOT", "CHAT_MSG_MONEY",
-    "COMBAT_LOG_EVENT_UNFILTERED", "MERCHANT_SHOW", "MERCHANT_CLOSED", "QUEST_TURNED_IN",
+    "MERCHANT_SHOW", "MERCHANT_CLOSED", "QUEST_TURNED_IN",
     "TRADE_SHOW", "TRADE_CLOSED", "TRADE_MONEY_CHANGED", "TRADE_ACCEPT_UPDATE",
     "MAIL_SHOW", "MAIL_CLOSED", "MAIL_INBOX_UPDATE", "MAIL_SUCCESS",
     "AUCTION_HOUSE_PURCHASE_COMPLETED", "COMMODITY_PURCHASE_SUCCEEDED", "AUCTION_HOUSE_AUCTION_CREATED",
     "AUCTION_CANCELED", "CHAT_MSG_SYSTEM", "MERCHANT_UPDATE", "BAG_UPDATE_DELAYED",
+    "PLAYER_TARGET_CHANGED", "UPDATE_MOUSEOVER_UNIT", "NAME_PLATE_UNIT_ADDED", "PLAYER_SOFT_ENEMY_CHANGED",
+}
+
+-- Unit events that fill the GUID to name cache. The value is the unit token (nil: the event gives it).
+local UNIT_EVENTS = {
+    PLAYER_TARGET_CHANGED = "target",
+    UPDATE_MOUSEOVER_UNIT = "mouseover",
+    NAME_PLATE_UNIT_ADDED = false,
+    PLAYER_SOFT_ENEMY_CHANGED = "softenemy",
 }
 
 local FORMAT_GLOBALS = { "YOU_LOOT_MONEY", "LOOT_MONEY_SPLIT", "LOOT_ITEM_SELF", "LOOT_ITEM_SELF_MULTIPLE",
@@ -130,7 +143,94 @@ local function sortedEntries()
     return list
 end
 
--- Loot: every return of the slot APIs, plus the target and the last combat log kill.
+-- Give the value, or nil when it is a secret value.
+local function plain(v)
+    if type(_G.issecretvalue) == "function" and _G.issecretvalue(v) then
+        return nil
+    end
+    return v
+end
+
+-- Call a unit API and give a plain string, "<secret>" or "unknown".
+local function unitValue(name, unit)
+    local fn = _G[name]
+    if type(fn) ~= "function" then
+        return nil, "missing"
+    end
+    local ok, v = pcall(fn, unit)
+    if not ok then
+        return nil, "error: " .. tostring(v)
+    end
+    if plain(v) == nil and v ~= nil then
+        return nil, "<secret>"
+    end
+    return v
+end
+
+-- Keep the name for a GUID. Drop the oldest entry after NAME_CACHE_MAX entries.
+local function cacheName(guid, name)
+    if nameCache[guid] == nil then
+        nameOrder[#nameOrder + 1] = guid
+        if #nameOrder > NAME_CACHE_MAX then
+            nameCache[table.remove(nameOrder, 1)] = nil
+        end
+    end
+    nameCache[guid] = name
+end
+
+local function cacheUnit(event, unit)
+    if not unit then
+        return
+    end
+    local guid, guidNote = unitValue("UnitGUID", unit)
+    local name, nameNote = unitValue("UnitName", unit)
+    if guidNote or nameNote then
+        db = ensureDB()
+        db.unitNotes = db.unitNotes or {}
+        if not db.unitNotes[event] then
+            db.unitNotes[event] = true
+            log("UNIT_CACHE", join(event, unit, "guid", guidNote or "ok", "name", nameNote or "ok"))
+        end
+        return
+    end
+    if type(guid) == "string" and type(name) == "string" then
+        cacheName(guid, name)
+    end
+end
+
+-- GUID like Creature-0-1-2-3-<npcId>-<spawn>. Gives the type and the id.
+local function parseGuid(guid)
+    if type(guid) ~= "string" then
+        return "none", "none"
+    end
+    local kind, id = guid:match("^(%a+)%-%d+%-%d+%-%d+%-%d+%-(%d+)%-")
+    return kind or "other", id or "none"
+end
+
+-- One slot: all returns of GetLootSourceInfo are GUID and quantity pairs.
+local function logSource(slot)
+    local res = pack(pcall(_G.GetLootSourceInfo, slot))
+    if not res[1] then
+        log("LOOT_SOURCE", join("slot", slot, "error", tostring(res[2])))
+        return
+    end
+    log("LOOT_SOURCE", join("slot", slot, "returns", res.n - 1, join(unpack(res, 2, res.n))))
+    for i = 2, res.n, 2 do
+        local guid, qty = res[i], res[i + 1]
+        local isSecret = plain(guid) == nil and guid ~= nil
+        local name, kind, id
+        if isSecret then
+            name, kind, id = "<secret>", "<secret>", "<secret>"
+        else
+            name = nameCache[guid] or "unknown"
+            kind, id = parseGuid(guid)
+        end
+        log("LOOT_SOURCE_NAME", join("slot", slot, "guid", guid, "qty", qty, "name", name, "guidType", kind,
+            "npcId", id))
+    end
+end
+
+-- Loot: every return of the slot APIs, the source GUIDs with cached names, and the target.
 local function logLoot(autoLoot, isFromItem)
     local slots = tonumber((call("GetNumLootItems"))) or 0
     local sourceType = type(_G.GetLootSourceInfo)
@@ -140,49 +240,12 @@ local function logLoot(autoLoot, isFromItem)
         log("LOOT_SLOT", join("slot", i, "info", call("GetLootSlotInfo", i), "type", call("GetLootSlotType", i),
             "link", call("GetLootSlotLink", i)))
         if sourceType == "function" then
-            log("LOOT_SOURCE", join("slot", i, call("GetLootSourceInfo", i)))
+            logSource(i)
         end
     end
-    local kill = "none"
-    if lastKill then
-        kill = join(lastKill.sub, lastKill.srcName, lastKill.destGUID, lastKill.destName,
-            string.format("age %.3f", now() - lastKill.t))
-    end
     log("LOOT_TARGET", join("targetName", call("UnitName", "target"), "targetGUID", call("UnitGUID", "target"),
-        "lastKill", kill))
+        "cached", #nameOrder))
 end
-
-local function resolveCombatGetter()
-    combatChecked = true
-    local c = _G.C_CombatLog
-    if type(c) == "table" and type(c.GetCurrentEventInfo) == "function" then
-        combatGetter = c.GetCurrentEventInfo
-    elseif type(_G.CombatLogGetCurrentEventInfo) == "function" then
-        combatGetter = _G.CombatLogGetCurrentEventInfo
-    else
-        log("COMBAT_LOG", "missing: C_CombatLog.GetCurrentEventInfo and CombatLogGetCurrentEventInfo")
-    end
-end
-
-local function logCombat()
-    if not combatChecked then
-        resolveCombatGetter()
-    end
-    if not combatGetter then
-        return
-    end
-    local res = pack(pcall(combatGetter))
-    if not res[1] then
-        return
-    end
-    local timestamp, sub, _, sourceGUID, sourceName, _, _, destGUID, destName = unpack(res, 2, res.n)
-    if sub ~= "PARTY_KILL" and sub ~= "UNIT_DIED" then
-        return
-    end
-    lastKill = { t = now(), sub = sub, srcName = sourceName, destGUID = destGUID, destName = destName }
-    log("COMBAT_" .. sub, join(timestamp, sub, sourceGUID, sourceName, destGUID, destName))
-end
-
 local function logInbox()
     local count = tonumber((call("GetInboxNumItems"))) or 0
     log("INBOX_SCAN", join("items", call("GetInboxNumItems")))
@@ -235,7 +298,11 @@ handlers.PLAYER_MONEY = function(...)
     log("PLAYER_MONEY", join("money", money, "delta", delta, join(...)))
 end
 handlers.LOOT_OPENED = logLoot
-handlers.COMBAT_LOG_EVENT_UNFILTERED = logCombat
+for event, unit in pairs(UNIT_EVENTS) do
+    handlers[event] = function(unitArg)
+        cacheUnit(event, unit or unitArg)
+    end
+end
 handlers.MAIL_INBOX_UPDATE = onMailInboxUpdate
 handlers.MERCHANT_SHOW = function(...)
     log("MERCHANT_SHOW", join(...))
@@ -274,9 +341,7 @@ local function onLogin()
     for _, name in ipairs(FORMAT_GLOBALS) do
         log("FORMAT", join(name, tostring(_G[name])))
     end
-    log("API", join("GetLootSourceInfo", type(_G.GetLootSourceInfo), "C_CombatLog.GetCurrentEventInfo",
-        type(_G.C_CombatLog) == "table" and type(_G.C_CombatLog.GetCurrentEventInfo) or "missing",
-        "CombatLogGetCurrentEventInfo", type(_G.CombatLogGetCurrentEventInfo)))
+    log("API", join("GetLootSourceInfo", type(_G.GetLootSourceInfo)))
 end
 
 frame:SetScript("OnEvent", function(_, event, ...)
