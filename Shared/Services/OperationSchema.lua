@@ -24,7 +24,7 @@ local SAFETY = {
     {
         key = "minSamples", label = "Min samples", kind = "number",
         default = 3, min = 1, max = 60,
-        help = "Skip items with fewer price samples than this.",
+        help = "With fewer samples, the price comes from the cheapest listing, not from the market value.",
     },
 }
 
@@ -47,25 +47,26 @@ local FIELDS = {
             help = "The amount in copper to go below the lowest auction.",
         },
         {
-            key = "duration", label = "Duration", kind = "choice", default = 24,
+            key = "duration", label = "Post duration", kind = "choice", default = 24,
             choices = {
                 { value = 12, label = "12 hours" },
                 { value = 24, label = "24 hours" },
                 { value = 48, label = "48 hours" },
             },
-            help = "How long each auction runs.",
+            help = "How long each auction runs. The Auction House offers these three values.",
         },
         {
-            key = "postCap", label = "Post cap", kind = "number", default = 0, min = 0, max = 5000,
-            help = "The most auctions to post for each item. 0 means no cap.",
+            key = "postCap", label = "Post quantity", kind = "number", default = 0, min = 0, max = 5000,
+            help = "The most to have on the AH for each item: auctions for an item, units for a commodity. 0 means no cap.",
         },
         {
-            key = "stackSize", label = "Stack size", kind = "number", default = 0, min = 0, max = 1000,
-            help = "Units in each auction. 0 means a full stack. The client limit caps it.",
+            key = "stackSize", label = "Max stack size", kind = "number", default = 0, min = 0, max = 1000,
+            help = "The most units in one item auction. 0 means a full stack. The client limit caps it. "
+                .. "A commodity has no stack, so this does nothing for it.",
         },
         {
-            key = "keepInBags", label = "Keep in bags", kind = "number", default = 0, min = 0, max = 10000,
-            help = "This many of each item stay in your bags; the rest can be sold.",
+            key = "keepInBags", label = "Keep quantity", kind = "number", default = 0, min = 0, max = 10000,
+            help = "This many of each item stay in your bags. They are never posted.",
         },
         {
             key = "belowMin", label = "Below minimum", kind = "choice", default = "skip",

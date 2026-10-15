@@ -65,7 +65,7 @@ end
 -- deps.rules: RulesStore-like (GroupOf, Path, EffectiveOperation, GetOperation).
 -- deps.formulaRun: FormulaRun-like (Evaluate(text, key) returns copper and info).
 -- deps.bagItems: BagItems.Read result with stacks.
--- deps.owned: optional map key -> count of own auctions.
+-- deps.owned: optional map key -> count of own auctions. deps.ownedUnits: optional map key -> units in them.
 -- deps.dataStats: optional function(key) returning { ageHours, samples }.
 -- Returns one candidate for each bag item whose group has a selling operation, own or inherited from Base.
 function SellingPlan.Candidates(deps)
@@ -96,6 +96,7 @@ function SellingPlan.Candidates(deps)
                 operationName = op.name,
                 settings = settings,
                 owned = owned[item.key] or 0,
+                ownedUnits = (deps.ownedUnits or {})[item.key] or 0,
             }
             local needData = settings.needScanData ~= false
             local reason
@@ -157,8 +158,14 @@ function SellingPlan.Decide(candidate, rows, opts)
     if available <= 0 then
         return Skip(candidate, "keep in bags reached")
     end
+    local commodity = opts.isCommodity
+    if commodity == nil then
+        commodity = rows[1] ~= nil and rows[1].isCommodity == true
+    end
+    -- Post quantity: auctions for an item, units for a commodity.
     local cap = tonumber(s.postCap) or 0
-    local room = cap > 0 and (cap - (candidate.owned or 0)) or math.huge
+    local have = commodity and (candidate.ownedUnits or 0) or (candidate.owned or 0)
+    local room = cap > 0 and (cap - have) or math.huge
     if room <= 0 then
         return Skip(candidate, "post cap reached")
     end
@@ -207,13 +214,9 @@ function SellingPlan.Decide(candidate, rows, opts)
         return Skip(candidate, "already lowest", info)
     end
 
-    local commodity = opts.isCommodity
-    if commodity == nil then
-        commodity = rows[1] ~= nil and rows[1].isCommodity == true
-    end
     local quantity, auctions
     if commodity then
-        quantity, auctions = available, 1
+        quantity, auctions = math.min(available, room), 1
     else
         local maxStack = math.max(1, tonumber(opts.maxStack) or 1)
         local size = tonumber(s.stackSize) or 0

@@ -192,10 +192,38 @@ describe("SellingPlan", function()
         end)
 
         it("posts a commodity as one listing", function()
-            local d = SP.Decide(candidate({ postCap = 4 }), { row(4500, false, true) }, { maxStack = 20 })
+            local d = SP.Decide(candidate(), { row(4500, false, true) }, { maxStack = 20 })
             assert.equal(40, d.quantity)
             assert.equal(1, d.auctions)
             assert.is_true(d.commodity)
+        end)
+
+        it("ignores the stack size for a commodity", function()
+            local d = SP.Decide(candidate({ stackSize = 5 }), { row(4500, false, true) }, { maxStack = 20 })
+            assert.equal(40, d.quantity)
+            assert.equal(1, d.auctions)
+        end)
+
+        it("counts the post quantity of a commodity in units", function()
+            local c = candidate({ postCap = 25 })
+            c.ownedUnits = 10
+            local d = SP.Decide(c, { row(4500, false, true) }, { maxStack = 20 })
+            assert.equal(15, d.quantity)
+            c.ownedUnits = 25
+            d = SP.Decide(c, { row(4500, false, true) }, { maxStack = 20 })
+            assert.equal("skip", d.action)
+            assert.equal("post cap reached", d.reason)
+        end)
+
+        it("passes the units that own auctions hold to the candidate", function()
+            ops[11].settings = settings()
+            local out = SP.Candidates({ rules = rules, formulaRun = run, bagItems = bag, ownedUnits = { ["100"] = 7 } })
+            assert.equal(7, out[1].ownedUnits)
+        end)
+
+        it("passes the post duration of the rule to the decision", function()
+            assert.equal(12, SP.Decide(candidate({ duration = 12 }), {}, { maxStack = 20 }).duration)
+            assert.equal(48, SP.Decide(candidate({ duration = 48 }), {}, { maxStack = 20 }).duration)
         end)
 
         it("skips on a safety failure", function()
