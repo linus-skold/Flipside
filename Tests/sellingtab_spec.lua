@@ -1250,6 +1250,22 @@ describe("SellingTab", function()
             assert.are.equal(LINK .. " x60", ui.tree.list.rows[2].label.text)
         end)
 
+        it("draws the link when the item data loads, with no bag read", function()
+            local loaded = false
+            tab = mount({ itemLink = function()
+                if loaded then
+                    return LINK, 1
+                end
+            end })
+            ui = tab.ui
+            assert.are.equal("Linen Cloth x60", ui.tree.list.rows[2].label.text)
+            local reads = bagReads
+            loaded = true
+            fire("ITEM_DATA_LOAD_RESULT", 10, true)
+            assert.are.equal(LINK .. " x60", ui.tree.list.rows[2].label.text)
+            assert.are.equal(reads, bagReads)
+        end)
+
         it("colours a link that has no colour with the quality colour", function()
             mock.qualityColors[1] = { 1, 1, 1, "ff1eff00" }
             tab = mount({ itemLink = function(id)

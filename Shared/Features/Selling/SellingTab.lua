@@ -1777,6 +1777,13 @@ function Tab:Mount(parent, api)
         self:_OnBags()
     end)
     self.events[#self.events + 1] = "BAG_UPDATE_DELAYED"
+    -- Item data that loads late: draw the rows again. This makes no bag read.
+    bus:Subscribe("ITEM_DATA_LOAD_RESULT", OWNER, function()
+        if self.active and self.ui then
+            self.ui.tree:Refresh()
+        end
+    end)
+    self.events[#self.events + 1] = "ITEM_DATA_LOAD_RESULT"
     -- A group or rule change moves items to other groups: build the tree again.
     bus:Subscribe("Flipside.RulesChanged", OWNER, function()
         self:_OnRules()
