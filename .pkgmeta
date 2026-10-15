@@ -17,6 +17,7 @@ ignore:
   - .lua
   - .luarocks
   - .release
+  - scripts
 
 manual-changelog:
   filename: CHANGELOG.md
