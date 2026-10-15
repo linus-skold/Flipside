@@ -17,10 +17,25 @@ local BASE_GROUP = 1
 local ROW_HEIGHT = 22
 local TREE_INDENT = 14
 local NAME_WIDTH = 190
-local COUNT_WIDTH = 50
-local INFO_WIDTH = 230
-local TREE_TOP = -48
+local DETAILS_TOP = -28
+local DETAILS_HEIGHT = 72
+local HEADER_HEIGHT = 18
+local TREE_TOP = DETAILS_TOP - DETAILS_HEIGHT - 4 - HEADER_HEIGHT
 local BAR_HEIGHT = 34
+local RED = { 1, 0.3, 0.3 }
+local GREEN = { 0.4, 1, 0.4 }
+local WHITE = { 1, 1, 1 }
+local GREY = { 0.5, 0.5, 0.5 }
+
+-- The columns of an item row: x from the left edge of the row, the width, and the text alignment.
+local COLUMNS = {
+    { key = "price", title = "Your price", x = 250, width = 78, justify = "RIGHT" },
+    { key = "operation", title = "Operation", x = 336, width = 80, justify = "LEFT" },
+    { key = "lowest", title = "Lowest", x = 420, width = 78, justify = "RIGHT" },
+    { key = "net", title = "Net", x = 504, width = 78, justify = "RIGHT" },
+    { key = "info", title = "Info", x = 590, width = 160, justify = "LEFT" },
+}
+SellingTab.COLUMNS = COLUMNS
 
 local function money(copper)
     if ns.TooltipLines and ns.TooltipLines.FormatMoney then
@@ -169,6 +184,100 @@ function SellingTab.Describe(entry)
     return text
 end
 
+-- True if the minimum price of the candidate is the vendor price floor of the Default operation.
+local function floorIsVendor(candidate)
+    local schema = ns.OperationSchema
+    return schema ~= nil and candidate.settings ~= nil and candidate.settings.minPrice == schema.VENDOR_FLOOR
+end
+
+local SKIP_TEXT = {
+    ["keep in bags reached"] = "keep in bags reached",
+    ["post cap reached"] = "post cap reached",
+    ["already lowest"] = "you are already lowest",
+    ["no response"] = "no response from the Auction House",
+    ["skipped by user"] = "skipped by you",
+}
+
+-- The short reason of one entry, for the Info column.
+function SellingTab.InfoText(entry)
+    local status, decision, candidate = entry.status, entry.decision, entry.candidate
+    if status == "noop" then
+        return "no operation"
+    elseif status == "waiting" then
+        return candidate and candidate.reason or "not searched yet"
+    elseif status == "searching" then
+        return "searching"
+    elseif status == "failed" then
+        return "failed: " .. tostring(entry.note)
+    elseif status == "skipped" then
+        return "skipped by you"
+    elseif status == "done" then
+        return "posted"
+    elseif not decision then
+        return "not searched yet"
+    end
+    local reason = decision.reason or ""
+    if decision.action == "skip" then
+        if reason == "below minimum" then
+            return (candidate and floorIsVendor(candidate) and "below vendor price" or "below min price") .. ", skipped"
+        elseif reason:match("^no price") then
+            return "no competitor, no market value"
+        end
+        return SKIP_TEXT[reason] or reason
+    end
+    if reason == "undercut" then
+        return money((decision.competitor or 0) - decision.price) .. " under lowest"
+    elseif reason == "normal price" then
+        return "no competitor, normal price"
+    elseif reason == "above max, at max" then
+        return "capped at max price"
+    elseif reason == "above max, at normal" then
+        return "above max, at normal price"
+    elseif reason == "below min, at min" then
+        return "raised to " .. (candidate and floorIsVendor(candidate) and "vendor" or "min") .. " price"
+    end
+    return reason
+end
+
+-- The potential profit of the auctions that are left in one entry, or nil if the entry has no post left.
+-- vendorPrice is the vendor sell price of one item or nil. Returns the table of SellingPlan.Profit.
+function SellingTab.EntryProfit(entry, vendorPrice)
+    if entry.status ~= "ready" or not entry.decision or entry.decision.action ~= "post" then
+        return nil
+    end
+    local left = {}
+    for index = entry.next, #entry.units do
+        left[#left + 1] = entry.units[index]
+    end
+    if #left == 0 then
+        return nil
+    end
+    local profit = ns.SellingPlan.Profit(entry.decision.price, left, vendorPrice)
+    profit.auctions = #left
+    return profit
+end
+
+-- The values of the details pane for the next post of an entry; nil if the entry has no post left.
+function SellingTab.Details(entry, vendorPrice)
+    local profit = SellingTab.EntryProfit(entry, vendorPrice)
+    if not profit then
+        return nil
+    end
+    local decision, unit = entry.decision, entry.units[entry.next]
+    return {
+        operation = entry.candidate and entry.candidate.operationName,
+        unitPrice = decision.price,
+        buyout = decision.price * unit.quantity,
+        auctions = profit.auctions,
+        stackSize = unit.quantity,
+        duration = decision.duration,
+        deposit = profit.deposit,
+        lowest = decision.competitor,
+        net = profit.net,
+        vs = profit.vs,
+    }
+end
+
 local function defaultItemInfo(itemID)
     local name, icon
     if C_Item and C_Item.GetItemNameByID then
@@ -178,6 +287,18 @@ local function defaultItemInfo(itemID)
         icon = C_Item.GetItemIconByID(itemID)
     end
     return name or ("item " .. tostring(itemID)), icon
+end
+
+-- The vendor sell price of one item in copper (return 11 of C_Item.GetItemInfo); nil if unknown or 0.
+local function defaultVendorPrice(itemID)
+    if not (C_Item and C_Item.GetItemInfo) then
+        return nil
+    end
+    local price = select(11, C_Item.GetItemInfo(itemID))
+    if type(price) == "number" and price > 0 then
+        return price
+    end
+    return nil
 end
 
 local function defaultMaxStack(itemID)
@@ -191,6 +312,45 @@ function Tab:_Say(text)
     if self.ui then
         self.ui.message:SetText(text or "")
     end
+end
+
+-- The vendor sell price of one item of an entry, or nil. It asks the client again until it has a price.
+function Tab:_Vendor(entry)
+    if entry.vendor == nil then
+        local ok, price = pcall(self.deps.vendorPrice, entry.item.itemID or 0)
+        if ok and type(price) == "number" and price > 0 then
+            entry.vendor = price
+        end
+    end
+    return entry.vendor
+end
+
+-- The potential profit of one entry, or nil.
+function Tab:_Profit(entry)
+    return SellingTab.EntryProfit(entry, self:_Vendor(entry))
+end
+
+-- The total potential profit of the selection: { net, vs, deposit } over the auctions that are left.
+-- vs is nil if the vendor price of an item with a post is not known.
+function Tab:QueueProfit()
+    local net, vs, deposit, count = 0, 0, 0, 0
+    for _, entry in ipairs(self.selection) do
+        local profit = self:_Profit(entry)
+        if profit then
+            count = count + 1
+            net = net + profit.net
+            deposit = deposit + profit.deposit
+            if profit.vs and vs then
+                vs = vs + profit.vs
+            else
+                vs = nil
+            end
+        end
+    end
+    if count == 0 then
+        return nil
+    end
+    return { net = net, vs = vs, deposit = deposit }
 end
 
 function Tab:_Name(entry)
@@ -261,6 +421,7 @@ function Tab:_Decide(entry, rows)
                 unit.quantity, decision.commodity == true)
             if ok and type(deposit) == "number" then
                 total = (total or 0) + deposit
+                unit.deposit = deposit
             end
         end
         entry.deposit = total
@@ -610,31 +771,49 @@ function Tab:Skip()
     return true
 end
 
-local function setColor(label, grey)
-    if grey then
-        label:SetTextColor(0.5, 0.5, 0.5)
-    else
-        label:SetTextColor(1, 1, 1)
-    end
+local function paint(label, color)
+    label:SetTextColor(color[1], color[2], color[3])
 end
 
--- Draw one tree row: a group (toggle and name) or a bag item (icon, name, count and the decision).
+-- The cells of one item row: the price, operation, lowest, net and info texts and the colour of the net.
+function SellingTab.Cells(entry, vendorPrice)
+    local candidate, decision = entry.candidate, entry.decision
+    local cells = { price = "-", operation = candidate and candidate.operationName or "-", lowest = "-", net = "-",
+        info = SellingTab.InfoText(entry) }
+    local ready = entry.status == "ready"
+    if ready and decision then
+        cells.price = money(decision.price)
+        cells.lowest = decision.competitor and money(decision.competitor) or "none"
+        local profit = SellingTab.EntryProfit(entry, vendorPrice)
+        if profit then
+            cells.net = money(profit.net)
+            cells.netNegative = profit.net < 0
+        end
+    elseif entry.status == "waiting" and candidate and candidate.normalPrice then
+        cells.price = "~" .. money(candidate.normalPrice)
+    elseif decision and decision.action == "skip" and decision.competitor then
+        cells.lowest = money(decision.competitor)
+    end
+    return cells
+end
+
+-- Draw one tree row: a group (toggle and name) or a bag item (icon, name and the columns).
 function Tab:_InitTreeRow(row, node, depth, isCollapsed, hasChildren)
     local Kit = ns.Kit
     local parts = row.sellParts
     if not parts then
-        parts = {
-            icon = row:CreateTexture(nil, "ARTWORK"),
-            count = Kit.Label(row, "", "small"),
-            info = Kit.Label(row, "", "small"),
-        }
+        parts = { icon = row:CreateTexture(nil, "ARTWORK"), cells = {} }
         parts.icon:SetSize(18, 18)
-        parts.info:SetPoint("RIGHT", row, "RIGHT", -4, 0)
-        parts.info:SetWidth(INFO_WIDTH)
-        parts.info:SetJustifyH("RIGHT")
-        parts.count:SetPoint("RIGHT", row, "RIGHT", -(INFO_WIDTH + 8), 0)
-        parts.count:SetWidth(COUNT_WIDTH)
-        parts.count:SetJustifyH("RIGHT")
+        for _, column in ipairs(COLUMNS) do
+            local cell = Kit.Label(row, "", "small")
+            cell:SetPoint("LEFT", row, "LEFT", column.x, 0)
+            cell:SetWidth(column.width)
+            cell:SetJustifyH(column.justify)
+            if cell.SetWordWrap then
+                cell:SetWordWrap(false)
+            end
+            parts.cells[column.key] = cell
+        end
         row.sellParts = parts
     end
     local tree = self.ui.tree
@@ -650,10 +829,14 @@ function Tab:_InitTreeRow(row, node, depth, isCollapsed, hasChildren)
     row.label:ClearAllPoints()
     row.label:SetWidth(NAME_WIDTH)
     row.label:SetJustifyH("LEFT")
+    if row.label.SetWordWrap then
+        row.label:SetWordWrap(false)
+    end
     if node.kind == "group" then
         parts.icon:Hide()
-        parts.count:SetText("")
-        parts.info:SetText("")
+        for _, cell in pairs(parts.cells) do
+            cell:SetText("")
+        end
         row.label:SetPoint("LEFT", row.toggle, "RIGHT", 2, 0)
         row.label:SetText(node.text)
         row.label:SetTextColor(1, 0.82, 0)
@@ -666,14 +849,20 @@ function Tab:_InitTreeRow(row, node, depth, isCollapsed, hasChildren)
     parts.icon:SetPoint("LEFT", row.toggle, "RIGHT", 2, 0)
     parts.icon:Show()
     row.label:SetPoint("LEFT", parts.icon, "RIGHT", 4, 0)
-    row.label:SetText(self:_Name(entry))
-    parts.count:SetText("x" .. tostring(entry.item.count))
-    parts.info:SetText(SellingTab.Describe(entry))
+    row.label:SetText(self:_Name(entry) .. " x" .. tostring(entry.item.count))
+    local cells = SellingTab.Cells(entry, self:_Vendor(entry))
     local grey = entry.status ~= "ready"
-    setColor(row.label, entry.status == "noop" or entry.status == "done" or entry.status == "skipped"
-        or entry.status == "failed")
-    setColor(parts.count, grey)
-    setColor(parts.info, grey)
+    for _, column in ipairs(COLUMNS) do
+        local cell = parts.cells[column.key]
+        cell:SetText(cells[column.key])
+        paint(cell, grey and GREY or WHITE)
+    end
+    if cells.netNegative then
+        paint(parts.cells.net, RED)
+    end
+    local dim = entry.status == "noop" or entry.status == "done" or entry.status == "skipped"
+        or entry.status == "failed"
+    paint(row.label, dim and GREY or WHITE)
     if entry == self:_Current() then
         row.label:SetTextColor(1, 0.82, 0)
     end
@@ -721,15 +910,56 @@ end
 
 -- The label of the post button from the state.
 function Tab:PostLabel()
-    local total, done = self:_Progress()
-    local suffix = total > 0 and string.format(" (%d of %d)", math.min(done + 1, total), total) or ""
     if self.awaiting then
-        return "Confirm post" .. suffix
-    end
-    if self:_Current() then
-        return "Post" .. suffix
+        return "Confirm post"
     end
     return "Post"
+end
+
+-- The progress text: "Posting 3 of 60" while a post is left, else empty.
+function Tab:ProgressText()
+    local total, done = self:_Progress()
+    if total > 0 and (self.awaiting or self:_Current()) then
+        return string.format("Posting %d of %d", math.min(done + 1, total), total)
+    end
+    return ""
+end
+
+-- Fill the details pane from the next post of the queue.
+function Tab:_UpdateDetails()
+    local d = self.ui.details
+    local entry = self.awaiting and self.awaiting.entry or self:_Current()
+    local values = entry and SellingTab.Details(entry, self:_Vendor(entry))
+    if not values then
+        d.icon:SetTexture(nil)
+        d.name:SetText(#self.selection == 0 and "Pick a group or an item" or "Nothing to post")
+        d.operation:SetText("")
+        d.price:SetText("")
+        d.stack:SetText("")
+        d.deposit:SetText("")
+        d.lowest:SetText("")
+        d.net:SetText("")
+        d.vs:SetText("")
+        return
+    end
+    local _, icon = self.deps.itemInfo(entry.item.itemID or 0)
+    d.icon:SetTexture(icon)
+    d.name:SetText(self:_Name(entry))
+    d.operation:SetText("Operation: " .. tostring(values.operation or "-"))
+    d.price:SetText(string.format("Price %s each | buyout %s per auction", money(values.unitPrice),
+        money(values.buyout)))
+    d.stack:SetText(string.format("%d x %d | %d h", values.auctions, values.stackSize, values.duration or 0))
+    d.deposit:SetText("Deposit: " .. money(values.deposit))
+    d.lowest:SetText("Lowest: " .. (values.lowest and money(values.lowest) or "none"))
+    d.net:SetText("Net: " .. money(values.net))
+    paint(d.net, values.net < 0 and RED or WHITE)
+    if values.vs == nil then
+        d.vs:SetText("vs vendor: -")
+        paint(d.vs, WHITE)
+    else
+        d.vs:SetText("vs vendor: " .. money(values.vs))
+        paint(d.vs, values.vs < 0 and RED or (values.vs > 0 and GREEN or WHITE))
+    end
 end
 
 function Tab:_Update()
@@ -743,13 +973,26 @@ function Tab:_Update()
     ui.logButton:SetText(self.showLog and "Items" or "Log")
     ui.tree:Refresh()
     ui.tree.frame:SetShown(not self.showLog)
+    ui.headers.frame:SetShown(not self.showLog)
     ui.logList.frame:SetShown(self.showLog == true)
     local current = self:_Current()
     ui.postNext:SetText(self:PostLabel())
     ui.postNext:SetEnabled(client.CanPost() and (self.awaiting ~= nil or current ~= nil))
     ui.skip:SetEnabled(self.awaiting ~= nil or current ~= nil)
+    ui.progress:SetText(self:ProgressText())
     local _, _, deposit = self:_Progress()
     ui.deposit:SetText(deposit and ("Deposit: " .. money(deposit)) or "")
+    local queue = self:QueueProfit()
+    if queue then
+        ui.net:SetText("Queue net: " .. money(queue.net))
+        paint(ui.net, queue.net < 0 and RED or WHITE)
+        ui.vs:SetText(queue.vs ~= nil and ("vs vendor: " .. money(queue.vs)) or "vs vendor: -")
+        paint(ui.vs, queue.vs ~= nil and queue.vs < 0 and RED or WHITE)
+    else
+        ui.net:SetText("")
+        ui.vs:SetText("")
+    end
+    self:_UpdateDetails()
     if self.showLog then
         local entries = self.deps.log:List()
         local newestFirst = {}
@@ -819,10 +1062,62 @@ function Tab:_BuildContent()
         self:ToggleLog()
     end)
     ui.logButton:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, 0)
+    ui.dryRun = Kit.Check(content, "Dry run (log only)", function(checked)
+        self:SetDryRun(checked)
+    end)
+    ui.dryRun:SetPoint("TOPRIGHT", content, "TOPRIGHT", -198, 1)
     ui.message = Kit.Label(content, "", "small")
-    ui.message:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -28)
+    ui.message:SetPoint("TOPLEFT", content, "TOPLEFT", 172, -6)
     ui.message:SetJustifyH("LEFT")
-    ui.message:SetWidth(700)
+    ui.message:SetWidth(380)
+    if ui.message.SetWordWrap then
+        ui.message:SetWordWrap(false)
+    end
+
+    -- The details pane: the next post of the queue.
+    local pane = Kit.Inset(content)
+    pane:SetPoint("TOPLEFT", content, "TOPLEFT", 0, DETAILS_TOP)
+    pane:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, DETAILS_TOP)
+    pane:SetHeight(DETAILS_HEIGHT)
+    local d = { frame = pane }
+    d.icon = pane:CreateTexture(nil, "ARTWORK")
+    d.icon:SetSize(40, 40)
+    d.icon:SetPoint("TOPLEFT", pane, "TOPLEFT", 8, -8)
+    local function line(role, x, y, width)
+        local label = Kit.Label(pane, "", role)
+        label:SetPoint("TOPLEFT", pane, "TOPLEFT", x, -y)
+        label:SetWidth(width)
+        label:SetJustifyH("LEFT")
+        if label.SetWordWrap then
+            label:SetWordWrap(false)
+        end
+        return label
+    end
+    d.name = line("highlight", 56, 6, 400)
+    d.operation = line("small", 56, 24, 400)
+    d.price = line("small", 56, 38, 400)
+    d.stack = line("small", 56, 52, 400)
+    d.deposit = line("small", 470, 6, 290)
+    d.lowest = line("small", 470, 22, 290)
+    d.net = line("small", 470, 38, 290)
+    d.vs = line("small", 470, 54, 290)
+    ui.details = d
+
+    -- The column titles over the tree.
+    local headers = { frame = CreateFrame("Frame", nil, content) }
+    headers.frame:SetPoint("TOPLEFT", content, "TOPLEFT", 0, DETAILS_TOP - DETAILS_HEIGHT - 4)
+    headers.frame:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, DETAILS_TOP - DETAILS_HEIGHT - 4)
+    headers.frame:SetHeight(HEADER_HEIGHT)
+    headers.item = Kit.Label(headers.frame, "Item", "highlight")
+    headers.item:SetPoint("LEFT", headers.frame, "LEFT", 34, 0)
+    for _, column in ipairs(COLUMNS) do
+        local title = Kit.Label(headers.frame, column.title, "highlight")
+        title:SetPoint("LEFT", headers.frame, "LEFT", column.x + 4, 0)
+        title:SetWidth(column.width)
+        title:SetJustifyH(column.justify)
+        headers[column.key] = title
+    end
+    ui.headers = headers
 
     ui.tree = Kit.CreateTree(content, { rowHeight = ROW_HEIGHT, inset = true,
         initRow = function(row, node, depth, isCollapsed, hasChildren)
@@ -836,26 +1131,33 @@ function Tab:_BuildContent()
     ui.logList = Kit.CreateList(content, { rowHeight = 18, inset = true, initRow = function(row, data)
         self:_InitLogRow(row, data)
     end })
-    ui.logList.frame:SetPoint("TOPLEFT", content, "TOPLEFT", 0, TREE_TOP)
+    ui.logList.frame:SetPoint("TOPLEFT", content, "TOPLEFT", 0, DETAILS_TOP)
     ui.logList.frame:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", 0, BAR_HEIGHT)
-    -- The post button posts in its own click handler: the protected call needs the click.
-    ui.postNext = Kit.Button(content, "Post", 170, nil)
+
+    -- The bottom bar. The post button posts in its own click handler: the protected call needs the click.
+    ui.postNext = Kit.Button(content, "Post", 100, nil)
     ui.postNext:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", 0, 0)
     ui.postNext:SetScript("OnClick", function()
         self:PostNext()
     end)
-    ui.skip = Kit.Button(content, "Skip", 70, function()
+    ui.skip = Kit.Button(content, "Skip", 60, function()
         self:Skip()
     end)
     ui.skip:SetPoint("LEFT", ui.postNext, "RIGHT", 6, 0)
-    ui.deposit = Kit.Label(content, "", "small")
-    ui.deposit:SetPoint("LEFT", ui.skip, "RIGHT", 10, 0)
-    ui.deposit:SetWidth(170)
-    ui.deposit:SetJustifyH("LEFT")
-    ui.dryRun = Kit.Check(content, "Dry run (log only)", function(checked)
-        self:SetDryRun(checked)
-    end)
-    ui.dryRun:SetPoint("LEFT", ui.deposit, "RIGHT", 6, 0)
+    local function bottom(previous, gap, width)
+        local label = Kit.Label(content, "", "small")
+        label:SetPoint("LEFT", previous, "RIGHT", gap, 0)
+        label:SetWidth(width)
+        label:SetJustifyH("LEFT")
+        if label.SetWordWrap then
+            label:SetWordWrap(false)
+        end
+        return label
+    end
+    ui.progress = bottom(ui.skip, 12, 120)
+    ui.deposit = bottom(ui.progress, 4, 120)
+    ui.net = bottom(ui.deposit, 4, 160)
+    ui.vs = bottom(ui.net, 4, 170)
 end
 
 -- Build the panel in the parent frame and listen for the search events.
@@ -902,7 +1204,8 @@ end
 
 -- Create the Selling core. The host mounts it and shows it.
 -- deps: bus, rules, formulaRun, readBags() (bag items with stacks); optional after(seconds, fn), client, plan, log,
--- itemInfo, maxStack(itemID), confirm(name, text, onAccept), getRecord(key), now().
+-- itemInfo, maxStack(itemID), vendorPrice(itemID) (copper for one item, or nil), confirm(name, text, onAccept),
+-- getRecord(key), now().
 function SellingTab.New(deps)
     if type(deps) ~= "table" or type(deps.bus) ~= "table" then
         error("deps.bus must be a table", 2)
@@ -918,6 +1221,7 @@ function SellingTab.New(deps)
         client = deps.client or ns.AuctionClient,
         plan = deps.plan or ns.SellingPlan,
         itemInfo = deps.itemInfo or defaultItemInfo,
+        vendorPrice = deps.vendorPrice or defaultVendorPrice,
         maxStack = deps.maxStack or defaultMaxStack,
         confirm = deps.confirm or function(...)
             return ns.Kit.Confirm(...)

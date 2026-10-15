@@ -159,6 +159,9 @@ describe("SellingTab", function()
             maxStack = function(id)
                 return id == 10 and 20 or 1
             end,
+            vendorPrice = function(id)
+                return id == 10 and 5 or nil
+            end,
             confirm = function(name, text, onAccept)
                 confirms[#confirms + 1] = { name = name, text = text, onAccept = onAccept }
             end,
@@ -300,35 +303,54 @@ describe("SellingTab", function()
             assert.are.same({ "none" }, idsOf(tab.nodes))
         end)
 
-        it("shows the rows of the expanded groups with name, count and decision", function()
+        it("shows the rows of the expanded groups with the name, the count and the columns", function()
             local rows = ui.tree.list.rows
             assert.are.equal("[Cloth]", rows[1].label.text)
-            assert.are.equal("Linen Cloth", rows[2].label.text)
-            assert.are.equal("x60", rows[2].sellParts.count.text)
-            assert.are.equal("expected 100c", rows[2].sellParts.info.text)
+            assert.are.equal("Linen Cloth x60", rows[2].label.text)
+            local cells = rows[2].sellParts.cells
+            assert.are.equal("~100c", cells.price.text)
+            assert.are.equal("Sell", cells.operation.text)
+            assert.are.equal("-", cells.lowest.text)
+            assert.are.equal("-", cells.net.text)
+            assert.are.equal("not searched yet", cells.info.text)
             assert.are.equal("[Bolts]", rows[3].label.text)
-            assert.are.equal("Bolt of Linen", rows[4].label.text)
+            assert.are.equal("Bolt of Linen x12", rows[4].label.text)
             assert.are.equal("[Misc]", rows[5].label.text)
-            assert.are.equal("no operation", rows[6].sellParts.info.text)
+            assert.are.equal("no operation", rows[6].sellParts.cells.info.text)
+            assert.are.equal("-", rows[6].sellParts.cells.operation.text)
+        end)
+
+        it("has the columns Item, Your price, Operation, Lowest, Net and Info", function()
+            local titles = {}
+            for _, column in ipairs(ns.SellingTab.COLUMNS) do
+                titles[#titles + 1] = ui.headers[column.key].text
+            end
+            assert.are.equal("Item", ui.headers.item.text)
+            assert.are.same({ "Your price", "Operation", "Lowest", "Net", "Info" }, titles)
         end)
 
         it("collapses and expands a group", function()
             ui.tree:SetCollapsed("g2", true)
             assert.are.equal("[Misc]", ui.tree.list.rows[2].label.text)
             ui.tree:SetCollapsed("g2", false)
-            assert.are.equal("Linen Cloth", ui.tree.list.rows[2].label.text)
+            assert.are.equal("Linen Cloth x60", ui.tree.list.rows[2].label.text)
         end)
 
-        it("greys the expected price until the live result and shows the decision after it", function()
-            local info = ui.tree.list.rows[2].sellParts.info
-            assert.are.same({ 0.5, 0.5, 0.5 }, { info.color[1], info.color[2], info.color[3] })
+        it("greys the expected price until the live result and shows the columns after it", function()
+            local cells = ui.tree.list.rows[2].sellParts.cells
+            assert.are.same({ 0.5, 0.5, 0.5 }, { cells.price.color[1], cells.price.color[2], cells.price.color[3] })
             selectCloth()
-            info = ui.tree.list.rows[2].sellParts.info
-            assert.are.equal("post 3 x 20 @ 119c | 24 h", info.text)
-            assert.are.same({ 1, 1, 1 }, { info.color[1], info.color[2], info.color[3] })
-            assert.are.equal("post 12 @ 149c | 24 h", ui.tree.list.rows[4].sellParts.info.text)
+            cells = ui.tree.list.rows[2].sellParts.cells
+            assert.are.equal("119c", cells.price.text)
+            assert.are.equal("120c", cells.lowest.text)
+            assert.are.equal("6183c", cells.net.text)
+            assert.are.equal("1c under lowest", cells.info.text)
+            assert.are.same({ 1, 1, 1 }, { cells.price.color[1], cells.price.color[2], cells.price.color[3] })
+            local bolts = ui.tree.list.rows[4].sellParts.cells
+            assert.are.equal("149c", bolts.price.text)
+            assert.are.equal("150c", bolts.lowest.text)
+            assert.are.equal("1579c", bolts.net.text)
         end)
-
         it("reads the bags when the tab opens and again on demand", function()
             assert.are.equal(1, bagReads)
             tab:Select()
@@ -338,6 +360,160 @@ describe("SellingTab", function()
         end)
     end)
 
+    describe("profit and the details pane", function()
+        local function color(label)
+            return { label.color[1], label.color[2], label.color[3] }
+        end
+
+        it("shows the net of each row: price x quantity - cut - deposit", function()
+            selectCloth()
+            local rows = ui.tree.list.rows
+            -- 119c x 60 = 7140c; cut 5% = 357c; deposit 3 x 200c = 600c.
+            assert.are.equal("6183c", rows[2].sellParts.cells.net.text)
+            -- 149c x 12 = 1788c; cut 89c; deposit 120c.
+            assert.are.equal("1579c", rows[4].sellParts.cells.net.text)
+        end)
+
+        it("shows the details of the next post", function()
+            selectCloth()
+            local d = ui.details
+            assert.are.equal("Linen Cloth", d.name.text)
+            assert.are.equal("Operation: Sell", d.operation.text)
+            assert.are.equal("Price 119c each | buyout 2380c per auction", d.price.text)
+            assert.are.equal("3 x 20 | 24 h", d.stack.text)
+            assert.are.equal("Deposit: 600c", d.deposit.text)
+            assert.are.equal("Lowest: 120c", d.lowest.text)
+            assert.are.equal("Net: 6183c", d.net.text)
+            -- The vendor pays 5c each: 300c for 60 items.
+            assert.are.equal("vs vendor: 5883c", d.vs.text)
+        end)
+
+        it("shows the total net and the total vs vendor of the queue", function()
+            selectCloth()
+            assert.are.equal("Queue net: 7762c", ui.net.text)
+            -- The vendor price of the commodity is not known, so the total vs vendor is not known.
+            assert.are.equal("vs vendor: -", ui.vs.text)
+            tab.deps.vendorPrice = function()
+                return 1
+            end
+            entryOf("11").vendor = 1
+            tab:_Update()
+            assert.are.equal("vs vendor: 7450c", ui.vs.text)
+        end)
+
+        it("counts only the auctions that are left", function()
+            selectCloth()
+            click(ui.postNext)
+            assert.are.equal("Net: 4122c", ui.details.net.text)
+            assert.are.equal("2 x 20 | 24 h", ui.details.stack.text)
+            assert.are.equal("Queue net: 5701c", ui.net.text)
+            assert.are.equal("4122c", ui.tree.list.rows[2].sellParts.cells.net.text)
+        end)
+
+        it("moves the details to the next item when one is done", function()
+            selectCloth()
+            for _ = 1, 3 do
+                click(ui.postNext)
+            end
+            assert.are.equal("Bolt of Linen", ui.details.name.text)
+            assert.are.equal("Price 149c each | buyout 1788c per auction", ui.details.price.text)
+            assert.are.equal("1 x 12 | 24 h", ui.details.stack.text)
+            assert.are.equal("vs vendor: -", ui.details.vs.text)
+        end)
+
+        it("shows a negative net in red, in the row, the pane and the total", function()
+            client.Deposit = function()
+                return 100000
+            end
+            selectCloth()
+            local cells = ui.tree.list.rows[2].sellParts.cells
+            assert.is_true(cells.net.text:sub(1, 1) == "-")
+            assert.are.same({ 1, 0.3, 0.3 }, color(cells.net))
+            assert.are.same({ 1, 0.3, 0.3 }, color(ui.details.net))
+            assert.are.same({ 1, 0.3, 0.3 }, color(ui.net))
+        end)
+
+        it("shows a vendor loss in red and a vendor gain in green", function()
+            selectCloth()
+            assert.are.same({ 0.4, 1, 0.4 }, color(ui.details.vs))
+            entryOf("10").vendor = 500
+            tab:_Update()
+            assert.are.same({ 1, 0.3, 0.3 }, color(ui.details.vs))
+            assert.are.equal("vs vendor: -23817c", ui.details.vs.text)
+        end)
+
+        it("shows no profit for a skipped or waiting row, and clears the pane", function()
+            assert.are.equal("-", ui.tree.list.rows[2].sellParts.cells.net.text)
+            assert.are.equal("Pick a group or an item", ui.details.name.text)
+            assert.are.equal("", ui.net.text)
+            client.rows[10] = { row(5, 1) }
+            pick("i10")
+            fire("ITEM_RESULTS", 10)
+            assert.are.equal("-", ui.tree.list.rows[2].sellParts.cells.net.text)
+            assert.are.equal("Nothing to post", ui.details.name.text)
+        end)
+
+        it("gives the vendor price with the client call when the dependency is not set", function()
+            local seen, savedItem = nil, _G.C_Item
+            local fresh = ns.SellingTab.New({ bus = bus, rules = rules, formulaRun = run, client = client,
+                after = function() end })
+            _G.C_Item = { GetItemInfo = function(id)
+                seen = id
+                return "n", "l", 1, 1, 1, "t", "s", 1, "e", 1, 77
+            end }
+            assert.are.equal(77, fresh.deps.vendorPrice(10))
+            assert.are.equal(10, seen)
+            _G.C_Item = { GetItemInfo = function()
+                return "n", "l", 1, 1, 1, "t", "s", 1, "e", 1, 0
+            end }
+            assert.is_nil(fresh.deps.vendorPrice(10))
+            _G.C_Item = savedItem
+        end)
+    end)
+
+    describe("info texts", function()
+        local function entry(fields)
+            fields.candidate = fields.candidate or { settings = {} }
+            return fields
+        end
+
+        it("says why in short words", function()
+            local function info(status, decision, candidate)
+                return ns.SellingTab.InfoText(entry({ status = status, decision = decision, candidate = candidate }))
+            end
+            local post = function(reason, extra)
+                local d = { action = "post", reason = reason, price = 99, competitor = 100 }
+                for k, v in pairs(extra or {}) do
+                    d[k] = v
+                end
+                return d
+            end
+            assert.are.equal("1c under lowest", info("ready", post("undercut")))
+            assert.are.equal("no competitor, normal price", info("ready", post("normal price", { competitor = nil })))
+            assert.are.equal("capped at max price", info("ready", post("above max, at max")))
+            assert.are.equal("raised to min price", info("ready", post("below min, at min")))
+            assert.are.equal("below min price, skipped",
+                info("skip", { action = "skip", reason = "below minimum" }))
+            assert.are.equal("no competitor, no market value",
+                info("skip", { action = "skip", reason = "no price: no competitor and no market value" }))
+            assert.are.equal("you are already lowest", info("skip", { action = "skip", reason = "already lowest" }))
+            assert.are.equal("no operation", info("noop"))
+            assert.are.equal("searching", info("searching"))
+            assert.are.equal("posted", info("done"))
+            assert.are.equal("no data for min price", info("waiting", nil, { reason = "no data for min price" }))
+        end)
+
+        it("names the vendor price when the Default floor skips or raises", function()
+            ns.OperationSchema = { VENDOR_FLOOR = "first(vendorsell, 1)" }
+            local candidate = { settings = { minPrice = "first(vendorsell, 1)" } }
+            local skip = entry({ status = "skip", candidate = candidate,
+                decision = { action = "skip", reason = "below minimum" } })
+            assert.are.equal("below vendor price, skipped", ns.SellingTab.InfoText(skip))
+            local raise = entry({ status = "ready", candidate = candidate,
+                decision = { action = "post", reason = "below min, at min", price = 5 } })
+            assert.are.equal("raised to vendor price", ns.SellingTab.InfoText(raise))
+        end)
+    end)
     describe("selection", function()
         it("selects a group and its subgroups", function()
             pick("g2")
@@ -462,12 +638,12 @@ describe("SellingTab", function()
     describe("the post queue of a group", function()
         it("posts one auction for each click and counts them in the button", function()
             selectCloth()
-            assert.are.equal("Post (1 of 4)", ui.postNext.text)
+            assert.are.equal("Posting 1 of 4", ui.progress.text)
             click(ui.postNext)
-            assert.are.equal("Post (2 of 4)", ui.postNext.text)
+            assert.are.equal("Posting 2 of 4", ui.progress.text)
             click(ui.postNext)
             click(ui.postNext)
-            assert.are.equal("Post (4 of 4)", ui.postNext.text)
+            assert.are.equal("Posting 4 of 4", ui.progress.text)
             assert.are.equal(3, #client.posts)
             click(ui.postNext)
             assert.are.equal(4, #client.posts)
@@ -508,7 +684,7 @@ describe("SellingTab", function()
         it("posts only the selected item", function()
             selectCloth()
             pick("i10")
-            assert.are.equal("Post (1 of 3)", ui.postNext.text)
+            assert.are.equal("Posting 1 of 3", ui.progress.text)
             click(ui.postNext)
             click(ui.postNext)
             click(ui.postNext)
@@ -588,7 +764,8 @@ describe("SellingTab", function()
             assert.are.equal(0, #client.confirmed)
             assert.are.equal(1, #confirms)
             assert.matches("Post 12 x Bolt of Linen at 149c each", confirms[1].text)
-            assert.are.equal("Confirm post (1 of 1)", ui.postNext.text)
+            assert.are.equal("Confirm post", ui.postNext.text)
+            assert.are.equal("Posting 1 of 1", ui.progress.text)
             confirms[1].onAccept()
             assert.are.equal("commodity", client.confirmed[1].kind)
             assert.are.same({ 0, 4, 24, 12, 149 }, { unpack(client.confirmed[1]) })
@@ -636,7 +813,7 @@ describe("SellingTab", function()
             assert.are.equal("failed", entryOf("10").status)
             assert.are.equal("failed: no auction house", ns.SellingTab.Describe(entryOf("10")))
             assert.are.equal(entryOf("11"), tab:_Current())
-            assert.are.equal("Post (1 of 1)", ui.postNext.text)
+            assert.are.equal("Posting 1 of 1", ui.progress.text)
             local list = ns.SellingPlan.Log:List()
             assert.are.equal("failed", list[#list].decision)
         end)
@@ -662,7 +839,7 @@ describe("SellingTab", function()
             selectCloth()
             click(ui.skip)
             assert.are.equal(0, #client.posts)
-            assert.are.equal("Post (2 of 4)", ui.postNext.text)
+            assert.are.equal("Posting 2 of 4", ui.progress.text)
             assert.are.equal(2, entryOf("10").next)
             local list = ns.SellingPlan.Log:List()
             assert.are.equal("skipped by user", list[#list].reason)

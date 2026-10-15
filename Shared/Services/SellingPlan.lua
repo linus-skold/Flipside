@@ -229,6 +229,35 @@ function SellingPlan.Decide(candidate, rows, opts)
     }
 end
 
+-- The Auction House cut: the share of the sale price that the house keeps. UNVERIFIED: the Forever client
+-- source has no constant or API for it (the sale invoice mail shows the real cut after a sale). 5% is the usual rate.
+SellingPlan.AH_CUT = 0.05
+
+-- Returns the cut of a sale in copper.
+function SellingPlan.Cut(gross)
+    return math.floor(gross * SellingPlan.AH_CUT + 0.5)
+end
+
+-- Potential profit of some auctions. Each unit is { quantity, deposit } (deposit can be nil).
+-- price is the copper for one item. vendorPrice is the vendor sell price of one item, or nil if not known.
+-- Returns { gross, cut, deposit, net, vendor, vs, quantity }. net = gross - cut - deposit.
+-- vs = net - vendor (the vendor value of the same items); nil if the vendor price is not known.
+function SellingPlan.Profit(price, units, vendorPrice)
+    local quantity, deposit = 0, 0
+    for _, unit in ipairs(units) do
+        quantity = quantity + (unit.quantity or 0)
+        deposit = deposit + (unit.deposit or 0)
+    end
+    local gross = price * quantity
+    local cut = SellingPlan.Cut(gross)
+    local net = gross - cut - deposit
+    local vendor = vendorPrice and vendorPrice * quantity or nil
+    return {
+        gross = gross, cut = cut, deposit = deposit, net = net, quantity = quantity,
+        vendor = vendor, vs = vendor and (net - vendor) or nil,
+    }
+end
+
 local Log = {}
 Log.__index = Log
 
