@@ -21,8 +21,10 @@ local GRAPH_EMPTY_TEXT = "No balance to show."
 local HEADER_HEIGHT = 18
 local TOTALS_HEIGHT = 22
 local ROW_HEIGHT = 18
+local STRIP_HEIGHT = 46
 
 LedgerPage.TABS = {
+    { key = "overview", title = "Overview" },
     { key = "sales", title = "Sales" },
     { key = "purchases", title = "Purchases" },
     { key = "auctions", title = "Auctions" },
@@ -74,6 +76,37 @@ function LedgerPage.SourceLabel(source)
     return SOURCE_LABELS[source] or tostring(source)
 end
 
+-- The short label of the Type column of the Overview, by source. A log record has no source.
+local TYPE_LABELS = {
+    ahSale = "AH sale",
+    ahPurchase = "AH purchase",
+    ahPost = "AH post",
+    ahDeposit = "Deposit",
+    ahDepositRefund = "Deposit refund",
+    ahOutbidRefund = "Outbid refund",
+    ahExpired = "AH expired",
+    ahCancelled = "AH cancelled",
+    loot = "Loot",
+    vendorSale = "Vendor sale",
+    vendorPurchase = "Vendor purchase",
+    repair = "Repair",
+    mailMoney = "Mail money",
+    trade = "Trade",
+    quest = "Quest",
+    unknown = "Unknown",
+}
+LedgerPage.TYPE_LABELS = TYPE_LABELS
+
+function LedgerPage.TypeLabel(source, dryRun)
+    if source == nil then
+        return dryRun and "Dry run" or "Log"
+    end
+    return TYPE_LABELS[source] or tostring(source)
+end
+
+local MINUS = "\226\136\146"
+local GREEN, RED = "|cff40ff40", "|cffff4040"
+
 local function money(copper)
     if copper < 0 then
         return "-" .. GetMoneyString(-copper)
@@ -83,6 +116,16 @@ end
 
 local function direction(recordType)
     return ns.LedgerRecord and ns.LedgerRecord.Direction(recordType) or nil
+end
+
+-- The text of a signed money flow: a green plus for money in, a red minus for money out. Zero is empty.
+function LedgerPage.FlowText(flow)
+    if flow > 0 then
+        return GREEN .. "+" .. money(flow) .. "|r"
+    elseif flow < 0 then
+        return RED .. MINUS .. money(-flow) .. "|r"
+    end
+    return ""
 end
 
 -- Returns the first second of the range, or nil for no start. now is the server time.
@@ -104,6 +147,9 @@ local TAB_TYPES = {
 }
 
 local function recordInTab(tab, record)
+    if tab == "overview" then
+        return true
+    end
     if tab == "auctions" then
         local t = record.type
         return t == "post" or t == "expired" or t == "cancelled" or t == "log"
@@ -114,6 +160,9 @@ end
 
 -- Which tab shows a daily sum. A sum has a source but no type.
 local function sumInTab(tab, sum)
+    if tab == "overview" then
+        return true
+    end
     local types = typesOf(sum.source)
     if tab == "auctions" then
         return types.post or types.expired or types.cancelled or (types.purchase and true) or false
@@ -163,7 +212,9 @@ end
 
 -- The detail text of a full record for a tab.
 local function detailOf(tab, record, log)
-    if tab == "sales" or tab == "purchases" then
+    if tab == "overview" then
+        return record.counterparty or record.mob or ""
+    elseif tab == "sales" or tab == "purchases" then
         return record.counterparty or (tab == "purchases" and LedgerPage.SourceLabel(record.source)) or ""
     elseif tab == "loot" then
         return record.mob or ""
@@ -173,6 +224,8 @@ local function detailOf(tab, record, log)
     end
     return auctionDetail(record, log)
 end
+
+local dryRunRow
 
 -- Builds the row of a full record. Money in or out follows the record type.
 local function recordRow(tab, record, log)
@@ -189,10 +242,30 @@ local function recordRow(tab, record, log)
         value = tab == "loot" and record.value and record.value * math.max(qty, 1) or nil,
         detail = detailOf(tab, record, log),
         source = record.source,
+        kind = tab == "overview" and LedgerPage.TypeLabel(record.source) or nil,
+        flow = tab == "overview" and (dir == "in" and (record.money or 0) or dir == "out" and -(record.money or 0)
+            or 0) or nil,
     }
 end
 
-local function dryRunRow(log)
+-- The Overview row of a decision log record (dry run or not).
+local function logRow(log)
+    local row = dryRunRow(log)
+    row.kind = LedgerPage.TypeLabel(nil, log.dryRun)
+    row.flow = 0
+    if not log.dryRun then
+        local parts = {}
+        for _, part in ipairs({ log.action, log.reason }) do
+            if part then
+                parts[#parts + 1] = tostring(part)
+            end
+        end
+        row.detail = table.concat(parts, ", ")
+    end
+    return row
+end
+
+function dryRunRow(log)
     return {
         time = log.time,
         char = log.char,
@@ -224,6 +297,8 @@ local function sumRow(tab, sum, char)
         detail = detail,
         source = sum.source,
         daily = true,
+        kind = tab == "overview" and LedgerPage.TypeLabel(sum.source) or nil,
+        flow = tab == "overview" and (sum.moneyIn - sum.moneyOut) or nil,
     }
 end
 
@@ -252,7 +327,9 @@ function LedgerPage.Rows(store, tab, filter, now)
     for _, record in ipairs(records) do
         if recordInTab(tab, record) then
             if record.type == "log" then
-                if record.dryRun then
+                if tab == "overview" then
+                    rows[#rows + 1] = logRow(record)
+                elseif record.dryRun then
                     rows[#rows + 1] = dryRunRow(record)
                 end
             else
@@ -295,6 +372,19 @@ end
 -- The Money columns are owned: the page draws them with the Kit money widget.
 function LedgerPage.Columns(tab, showChar, formatters)
     formatters = formatters or {}
+    if tab == "overview" then
+        return {
+            { key = "time", title = "Date", width = 104, format = formatters.time },
+            { key = "char", title = "Character", width = 110, hidden = not showChar },
+            { key = "kind", title = "Type", width = 100 },
+            { key = "item", title = "Item", format = formatters.item },
+            { key = "qty", title = "Qty", width = 36, number = true, format = function(v)
+                return v and v > 0 and tostring(v) or ""
+            end },
+            { key = "flow", title = "Money", width = 110, number = true, owned = true },
+            { key = "detail", title = "Detail", width = 150 },
+        }
+    end
     local detailTitle = ({ sales = "Buyer", purchases = "Seller", loot = "Mob", expenses = "Type" })[tab] or "Detail"
     return {
         { key = "time", title = "Date", width = 104, format = formatters.time },
@@ -355,7 +445,10 @@ function LedgerPage.Build(content, deps)
     -- Item text: a quality-coloured link if the client knows the item, else a name or the key.
     local function itemText(key, tab)
         if key == nil or key == "" then
-            return tab == "loot" and "Money" or "-"
+            if tab == "overview" then
+            return ""
+        end
+        return tab == "loot" and "Money" or "-"
         end
         local parsed = ns.ItemString and ns.ItemString.ParseKey(key)
         if not (parsed and deps.itemCache) then
@@ -520,7 +613,7 @@ function LedgerPage.Build(content, deps)
                     row.cells = Kit.CreateColumnCells(row, view.columns, view.options)
                     row.money = {}
                     for _, key in ipairs(view.moneyKeys) do
-                        row.money[key] = Kit.Money(row, money)
+                        row.money[key] = Kit.Money(row, key == "flow" and LedgerPage.FlowText or money)
                         row.cells[key] = row.money[key]
                     end
                 end
@@ -533,6 +626,9 @@ function LedgerPage.Build(content, deps)
                             value = nil
                         end
                         cell:SetCopper(value)
+                        if value == nil and tab == "overview" then
+                            cell:SetText("")
+                        end
                     elseif cell then
                         cell:SetText(Kit.ColumnText(column, data))
                     end
@@ -542,10 +638,33 @@ function LedgerPage.Build(content, deps)
         })
         local edge = view.list.contentInsets
         view.options.left, view.options.right = edge.left, edge.right
+        -- The summary strip of the Overview: three large values above the list.
+        local stripHeight = 0
+        if tab == "overview" then
+            stripHeight = STRIP_HEIGHT
+            view.strip = { frame = CreateFrame("Frame", nil, panel) }
+            placeAcross(view.strip.frame, panel, 0)
+            view.strip.frame:SetHeight(STRIP_HEIGHT)
+            local previous
+            for _, name in ipairs({ "moneyIn", "moneyOut", "net" }) do
+                local title = ({ moneyIn = "Money in", moneyOut = "Money out", net = "Net" })[name]
+                local caption = Kit.Label(view.strip.frame, title, "small")
+                local value = Kit.Money(view.strip.frame, money)
+                value:SetFontObject(Kit.Font("title"))
+                if previous then
+                    caption:SetPoint("TOPLEFT", previous, "TOPRIGHT", 40, 0)
+                else
+                    caption:SetPoint("TOPLEFT", view.strip.frame, "TOPLEFT", 8, -4)
+                end
+                value:SetPoint("TOPLEFT", caption, "BOTTOMLEFT", 0, -2)
+                view.strip[name] = value
+                previous = value
+            end
+        end
         view.header = Kit.CreateColumnHeader(panel, view.columns, view.options)
-        placeAcross(view.header.frame, panel, 0)
+        placeAcross(view.header.frame, panel, -stripHeight)
         view.header.frame:SetHeight(HEADER_HEIGHT)
-        view.list.frame:SetPoint("TOPLEFT", panel, "TOPLEFT", 0, -HEADER_HEIGHT - 2)
+        view.list.frame:SetPoint("TOPLEFT", panel, "TOPLEFT", 0, -stripHeight - HEADER_HEIGHT - 2)
         view.list.frame:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", 0, TOTALS_HEIGHT + 4)
         view.empty = Kit.Label(panel, EMPTY_TEXT, "disabled")
         view.empty:SetPoint("CENTER", view.list.frame, "CENTER", 0, 0)
@@ -696,6 +815,18 @@ function LedgerPage.Build(content, deps)
         view.totals.moneyIn:SetCopper(totals.moneyIn)
         view.totals.moneyOut:SetCopper(totals.moneyOut)
         view.totals.net:SetCopper(totals.net)
+        if view.strip then
+            view.strip.moneyIn:SetCopper(totals.moneyIn)
+            view.strip.moneyOut:SetCopper(totals.moneyOut)
+            view.strip.net:SetCopper(totals.net)
+            if totals.net > 0 then
+                view.strip.net:SetTextColor(0.25, 1, 0.25)
+            elseif totals.net < 0 then
+                view.strip.net:SetTextColor(1, 0.25, 0.25)
+            else
+                view.strip.net:SetTextColor(1, 1, 1)
+            end
+        end
         view.totals.count:SetText(totals.count .. (totals.count == 1 and " row" or " rows"))
         page.DrawGraph()
         showStatus("")

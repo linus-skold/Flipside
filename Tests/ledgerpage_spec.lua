@@ -124,7 +124,8 @@ describe("LedgerPage", function()
         itemCache = nil
     end
 
-    local function build(extra)
+    -- Builds the page. The tests of the record tabs start on Sales; stay = true keeps the default tab.
+    local function build(extra, stay)
         local deps = {
             ledgerLoader = loader,
             bus = bus,
@@ -139,6 +140,9 @@ describe("LedgerPage", function()
             deps[k] = v
         end
         page = ns.LedgerPage.Build(CreateFrame("Frame", nil, UIParent), deps)
+        if not stay then
+            page.topTabs:Select("sales")
+        end
         return page
     end
 
@@ -262,17 +266,21 @@ describe("LedgerPage", function()
             build()
         end)
 
-        it("has the five inner tabs and no Income by source", function()
+        it("has the six inner tabs and no Income by source", function()
             local titles = {}
             for _, tab in ipairs(ns.LedgerPage.TABS) do
                 titles[#titles + 1] = tab.title
             end
-            assert.are.same({ "Sales", "Purchases", "Auctions", "Loot", "Expenses" }, titles)
-            assert.are.equal(5, #page.topTabs.buttons)
+            assert.are.same({ "Overview", "Sales", "Purchases", "Auctions", "Loot", "Expenses" }, titles)
+            assert.are.equal(6, #page.topTabs.buttons)
             assert.is_nil(ns.LedgerPage.IncomeRows)
         end)
 
         it("builds only the visible tab", function()
+            build(nil, true)
+            assert.is_truthy(page.views.overview)
+            assert.is_nil(page.views.sales)
+            select("sales")
             assert.is_truthy(page.views.sales)
             assert.is_nil(page.views.loot)
             select("loot")
@@ -802,4 +810,214 @@ describe("LedgerPage", function()
             assert.are.equal("TOPLEFT", left[1])
             assert.are.equal("TOPRIGHT", right[1])
         end)
-    end)end)
+    end)
+
+    describe("overview", function()
+        local function build_overview()
+            return build(nil, true)
+        end
+
+        -- Expected totals, read from the store with no page code: full records by direction, plus daily sums.
+        local function expected(char)
+            local current = loader:Store()
+            local totalIn, totalOut = 0, 0
+            for _, record in ipairs(current:Records({ char = char })) do
+                local dir = ns.LedgerRecord.Direction(record.type)
+                if dir == "in" then
+                    totalIn = totalIn + record.money
+                elseif dir == "out" then
+                    totalOut = totalOut + record.money
+                end
+            end
+            for _, sum in ipairs(current:Sums({ char = char })) do
+                totalIn, totalOut = totalIn + sum.moneyIn, totalOut + sum.moneyOut
+            end
+            return totalIn, totalOut
+        end
+        before_each(function()
+            setup()
+        end)
+
+        it("is the first and default tab", function()
+            build_overview()
+            assert.are.equal("overview", ns.LedgerPage.TABS[1].key)
+            assert.are.equal("overview", page.tab)
+            assert.are.equal("overview", page.topTabs:GetSelected())
+            assert.is_truthy(page.views.overview)
+            assert.is_nil(page.views.sales)
+        end)
+
+        it("shows Money in, Money out and Net in the strip", function()
+            build_overview()
+            pick(page.rangeDropdown, "all")
+            local totalIn, totalOut = expected(ME)
+            local strip = page.views.overview.strip
+            assert.are.equal(totalIn .. "c", strip.moneyIn:GetText())
+            assert.are.equal(totalOut .. "c", strip.moneyOut:GetText())
+            local net = totalIn - totalOut
+            assert.are.equal(net .. "c", strip.net:GetText())
+            local view = page.views.overview
+            assert.are.equal(strip.moneyIn:GetText(), view.totals.moneyIn:GetText())
+            assert.are.equal(strip.moneyOut:GetText(), view.totals.moneyOut:GetText())
+            assert.are.equal(strip.net:GetText(), view.totals.net:GetText())
+        end)
+
+        it("counts every source, the daily sums and unknown", function()
+            saved.sums = { EU = { standard = { [ME] = {
+                { day = 100, source = "vendorSale", item = "", count = 2, qty = 0, moneyIn = 90, moneyOut = 0 },
+                { day = 101, source = "unknown", item = "", count = 1, qty = 0, moneyIn = 0, moneyOut = 33 },
+                { day = 102, source = "trade", item = "", count = 2, qty = 0, moneyIn = 20, moneyOut = 5 },
+                { day = 103, source = "ahDeposit", item = "", count = 1, qty = 0, moneyIn = 0, moneyOut = 8 },
+                { day = 104, source = "ahExpired", item = "100", count = 4, qty = 4, moneyIn = 0, moneyOut = 0 },
+            } } } }
+            build_overview()
+            pick(page.rangeDropdown, "all")
+            local totalIn, totalOut = expected(ME)
+            assert.is_true(totalIn >= 90 + 20 and totalOut >= 33 + 5 + 8)
+            local totals = ns.LedgerPage.Totals(page.views.overview.rows)
+            assert.are.equal(totalIn, totals.moneyIn)
+            assert.are.equal(totalOut, totals.moneyOut)
+            assert.are.equal(totalIn - totalOut, totals.net)
+        end)
+
+        it("agrees with the other tabs for the money that they show", function()
+            build_overview()
+            pick(page.rangeDropdown, "all")
+            local overview = ns.LedgerPage.Totals(page.views.overview.rows)
+            local sum = { moneyIn = 0, moneyOut = 0 }
+            -- Sales, Loot and Expenses hold no shared record. Income records (vendor, quest, mail, trade, refund)
+            -- have no tab; the Overview adds them.
+            for _, tab in ipairs({ "sales", "loot", "expenses" }) do
+                select(tab)
+                local totals = ns.LedgerPage.Totals(page.views[tab].rows)
+                sum.moneyIn = sum.moneyIn + totals.moneyIn
+                sum.moneyOut = sum.moneyOut + totals.moneyOut
+            end
+            select("purchases")
+            local purchases = ns.LedgerPage.Totals(page.views.purchases.rows)
+            sum.moneyOut = sum.moneyOut + purchases.moneyOut
+            local income = 0
+            for _, record in ipairs(saved.records.EU.standard[ME]) do
+                if record.type == "income" then
+                    income = income + record.money
+                end
+            end
+            assert.are.equal(sum.moneyIn + income, overview.moneyIn)
+            assert.are.equal(sum.moneyOut, overview.moneyOut)
+        end)
+
+        it("colours the net green when positive and red when negative", function()
+            build_overview()
+            local net = page.views.overview.strip.net
+            assert.is_true(net.color[2] == 1 and net.color[1] < 0.5)
+            pick(page.rangeDropdown, "today")
+            -- Only money out in range: a negative net.
+            saved.records.EU.standard[ME] = { { time = NOW - 60, char = ME, type = "expense", source = "repair",
+                money = 90, item = "", qty = 0 } }
+            setup({ saved = saved })
+            build_overview()
+            net = page.views.overview.strip.net
+            assert.are.equal("-90c", net.text)
+            assert.is_true(net.color[1] == 1 and net.color[2] < 0.5)
+        end)
+
+        it("lists every record newest first with the type labels", function()
+            build_overview()
+            local list = rows("overview")
+            for index = 2, #list do
+                assert.is_true(list[index - 1].time >= list[index].time)
+            end
+            assert.are.equal("AH sale", list[#list].kind)
+            local seen = {}
+            for _, row in ipairs(list) do
+                seen[row.kind] = true
+            end
+            for _, label in ipairs({ "AH sale", "AH purchase", "AH post", "Deposit", "Deposit refund", "AH expired",
+                "AH cancelled", "Loot", "Vendor sale", "Vendor purchase", "Repair", "Mail money", "Trade", "Quest",
+                "Unknown", "Log", "Dry run" }) do
+                assert.is_true(seen[label], label)
+            end
+        end)
+
+        it("shows records without money with an empty Money cell", function()
+            build_overview()
+            local init = initializers[page.views.overview.list.box].initializer
+            local found = 0
+            for _, data in ipairs(rows("overview")) do
+                if data.kind == "AH expired" or data.kind == "AH cancelled" or data.kind == "AH post"
+                    or data.kind == "Log" or data.kind == "Dry run" then
+                    found = found + 1
+                    local row = CreateFrame("Button", nil, UIParent)
+                    init(row, data)
+                    assert.are.equal("", row.money.flow:GetText())
+                end
+            end
+            assert.are.equal(5, found)
+        end)
+
+        it("draws a green plus for money in and a red minus for money out", function()
+            build_overview()
+            local init = initializers[page.views.overview.list.box].initializer
+            local function cell(kind)
+                for _, data in ipairs(rows("overview")) do
+                    if data.kind == kind then
+                        local row = CreateFrame("Button", nil, UIParent)
+                        init(row, data)
+                        return row.money.flow:GetText()
+                    end
+                end
+            end
+            assert.are.equal("|cff40ff40+5000c|r", cell("AH sale"))
+            assert.are.equal("|cffff4040\226\136\14625c|r", cell("Vendor purchase"))
+        end)
+
+        it("shows the detail and the item", function()
+            build_overview()
+            local list = rows("overview")
+            local sale = list[#list]
+            for _, row in ipairs(list) do
+                if row.kind == "Loot" then
+                    assert.are.equal("Boar", row.detail)
+                end
+                if row.kind == "AH sale" and row.qty == 2 then
+                    sale = row
+                end
+            end
+            assert.are.equal("Buyer", sale.detail)
+            assert.are.equal("100", sale.item)
+        end)
+
+        it("marks a daily sum", function()
+            build_overview()
+            pick(page.rangeDropdown, "all")
+            local list = rows("overview")
+            local daily = list[#list]
+            assert.is_true(daily.daily)
+            assert.are.equal("daily total (1)", daily.detail)
+            assert.are.equal("AH sale", daily.kind)
+            assert.are.equal(400, daily.flow)
+        end)
+
+        it("shows the Character column only for all characters", function()
+            build_overview()
+            local view = page.views.overview
+            assert.are.same({ "time", "kind", "item", "qty", "flow", "detail" }, keys(view.columns, true))
+            pick(page.charDropdown, "all")
+            assert.are.same({ "time", "char", "kind", "item", "qty", "flow", "detail" }, keys(view.columns, true))
+            local alt = 0
+            for _, row in ipairs(rows("overview")) do
+                if row.char == ALT then
+                    alt = alt + 1
+                end
+            end
+            assert.are.equal(1, alt)
+        end)
+
+        it("keeps the graph above the tabs on every tab", function()
+            build_overview()
+            assert.is_true(page.graph:IsShown())
+            select("loot")
+            assert.is_true(page.graph:IsShown())
+        end)
+    end)
+end)
