@@ -378,18 +378,15 @@ describe("BuyingTab", function()
             assert.are.equal(10, list[1].itemID)
         end)
 
-        it("shows the log list with the Log toggle", function()
+        it("has no Log button and still records the decision", function()
             client.rows[10] = { row(40, 2) }
             tab:Select_("10")
             tab:Search()
             fire("COMMODITY_RESULTS", 10)
-            assert.is_true(ui.rowsList.frame:IsShown())
-            tab:ToggleLog()
-            assert.is_false(ui.rowsList.frame:IsShown())
-            assert.is_true(ui.logList.frame:IsShown())
-            assert.matches("would buy 2 at 40c", ui.logList.rows[1].parts.text)
-            tab:ToggleLog()
-            assert.is_true(ui.rowsList.frame:IsShown())
+            assert.is_nil(ui.logButton)
+            assert.is_nil(tab.ToggleLog)
+            local list = ns.BuyingPlan.Log:List()
+            assert.matches("would buy 2 at 40c", list[#list].decision)
         end)
     end)
 
@@ -441,6 +438,7 @@ describe("BuyingTab", function()
         local function searchItem(rows)
             client.rows[10] = rows
             tab:Select_("10")
+            tab.amount = nil -- all units; the default of 1 has its own test
             tab:Search()
             fire("COMMODITY_RESULTS", 10)
         end
@@ -830,6 +828,7 @@ describe("BuyingTab", function()
         local function search(rows)
             client.rows[10] = rows
             tab:Select_("10")
+            tab.amount = nil
             tab:Search()
             fire("ITEM_RESULTS", 10)
         end
@@ -837,13 +836,15 @@ describe("BuyingTab", function()
         local function pick(index)
             local level = ui.rowsList.rows[index]
             level.scripts.OnClick(level)
+            tab.amount = nil
+            tab:_Update()
         end
 
         it("selects a row with the highlight and names the button", function()
             search({ auction(1, 30), auction(2, 40) })
             assert.are.equal("Buy next", ui.buyNext.text)
             pick(2)
-            assert.are.equal("Buy selected", ui.buyNext.text)
+            assert.are.equal("Buy", ui.buyNext.text)
             assert.is_true(ui.rowsList.rows[2].selection:IsShown())
             assert.is_false(ui.rowsList.rows[1].selection:IsShown())
             assert.is_true(ui.buyNext.enabled)
@@ -929,7 +930,7 @@ describe("BuyingTab", function()
             tab:Search()
             fire("ITEM_RESULTS", 10)
             assert.are.equal(40, tab.levelSel)
-            assert.are.equal("Buy selected", ui.buyNext.text)
+            assert.are.equal("Buy", ui.buyNext.text)
             assert.is_true(ui.rowsList.rows[1].selection:IsShown())
         end)
 
@@ -964,6 +965,7 @@ describe("BuyingTab", function()
         local function searchCommodity(rows)
             client.rows[10] = rows or { row(50, 3), row(60, 2), row(70, 4), row(150, 1) }
             tab:Select_("10")
+            tab.amount = nil
             tab:Search()
             fire("COMMODITY_RESULTS", 10)
         end
@@ -1087,7 +1089,8 @@ describe("BuyingTab", function()
             searchCommodity({ row(50, 3), row(60, 2, true), row(70, 4) })
             pick(3)
             assert.is_false(ui.buyNext.enabled)
-            assert.are.equal("own listing below the selected level", ui.message.text)
+            local _, _, _, reason = tab:_NextBuy()
+            assert.are.equal("own listing below the selected level", reason)
         end)
 
         it("moves the run on only after a whole level is bought", function()

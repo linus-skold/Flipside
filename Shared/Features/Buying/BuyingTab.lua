@@ -16,6 +16,9 @@ local DEFAULT_JUMP = 25
 local JUMP_KEY = "buying.jumpPercent"
 local RED = { 1, 0.2, 0.2 }
 -- The text for the amount box when the input is not a positive whole number.
+-- The units that a buy takes at first: one.
+local DEFAULT_AMOUNT = 1
+
 local AMOUNT_TEXT = "amount must be a whole number above 0"
 
 local function money(copper)
@@ -550,7 +553,7 @@ function Tab:Select_(key)
     if key ~= self.selectedKey then
         self.run = nil
         self.levelSel = nil
-        self.amount, self.amountBad, self.amountEdit = nil, false, false
+        self.amount, self.amountBad, self.amountEdit = DEFAULT_AMOUNT, false, false
     end
     self.selectedKey = key
     self:_Update()
@@ -786,7 +789,7 @@ function Tab:SelectLevel(price)
         return false, "pick an item first"
     end
     self.levelSel = (self.levelSel ~= price) and price or nil
-    self.amount, self.amountBad, self.amountEdit = nil, false, false
+    self.amount, self.amountBad, self.amountEdit = DEFAULT_AMOUNT, false, false
     self:_Update()
     if self.levelSel then
         local _, _, _, reason = self:_NextBuy()
@@ -824,7 +827,7 @@ local function coverPlan(levels, first, target, amount, isItem)
     return plan
 end
 
--- Find the level that Buy next or Buy selected buys. With a selected level, it is that level.
+-- Find the level that Buy next or Buy buys. With a selected level, it is that level.
 -- Returns entry, level, levels, a reason if the level cannot be bought, and the cover plan of the purchase.
 function Tab:_NextBuy()
     local entry = self:_Selected()
@@ -1178,11 +1181,6 @@ function Tab:_OnItemError(code)
     end
 end
 
-function Tab:ToggleLog()
-    self.showLog = not self.showLog
-    self:_Update()
-end
-
 local function setColor(label, grey)
     if grey then
         label:SetTextColor(0.5, 0.5, 0.5)
@@ -1427,23 +1425,6 @@ function Tab:_InitLevelRow(row, data)
     end)
 end
 
-function Tab:_InitLogRow(row, data)
-    local Kit = ns.Kit
-    local label = row.parts
-    if not label then
-        label = Kit.Label(row, "", "small")
-        label:SetPoint("LEFT", row, "LEFT", 4, 0)
-        label:SetWidth(330)
-        label:SetJustifyH("LEFT")
-        row.parts = label
-    end
-    local text = self:_ItemName(data) .. ": " .. tostring(data.decision)
-    if data.reason then
-        text = text .. " (" .. data.reason .. ")"
-    end
-    label:SetText(text)
-end
-
 -- Update the source buttons, the search list controls and the place of the list.
 function Tab:_UpdateLeft()
     local ui, lists = self.ui, self.deps.searchLists
@@ -1483,34 +1464,11 @@ function Tab:_Update()
     local canSearch = client.CanLiveSearch()
     local selected = self:_Selected()
     ui.stop:SetShown(self.queue ~= nil)
-    ui.logButton:SetText(self.showLog and "Items" or "Log")
     self.nodes = BuyingTab.BuildNodes(self.deps.rules, self.list, function(entry)
         return self:_ItemName(entry)
     end)
     ui.tree.selected = nodeID(self.selectedKey)
     ui.tree:SetNodes(self.nodes)
-    ui.rowsList.frame:SetShown(not self.showLog)
-    ui.levelHeader.frame:SetShown(not self.showLog)
-    ui.logList.frame:SetShown(self.showLog == true)
-    ui.itemName:SetShown(not self.showLog)
-    ui.summary:SetShown(not self.showLog)
-    ui.buyNext:SetShown(not self.showLog)
-    ui.dryRun:SetShown(not self.showLog)
-    ui.jump:SetShown(not self.showLog)
-    ui.jumpLabel:SetShown(not self.showLog)
-    ui.amount:SetShown(not self.showLog)
-    ui.amountLabel:SetShown(not self.showLog)
-    ui.amountTotal:SetShown(not self.showLog)
-    if self.showLog then
-        ui.totals:Hide()
-        local entries = self.deps.log:List()
-        local newestFirst = {}
-        for index = #entries, 1, -1 do
-            newestFirst[#newestFirst + 1] = entries[index]
-        end
-        ui.logList:SetData(newestFirst)
-        return
-    end
     if not selected then
         ui.itemName:SetText("")
         local text = canSearch and "Pick an item of the list." or "Live search is not available."
@@ -1542,7 +1500,7 @@ function Tab:_Update()
         end
     end
     local _, nextLevel, _, reason, cover = self:_NextBuy()
-    local verb = self.levelSel and "Buy selected" or "Buy next"
+    local verb = self.levelSel and "Buy" or "Buy next"
     -- The amount box does not apply to an item: an item buy is one auction.
     local isItem = done ~= nil and done.rows[1] ~= nil and done.rows[1].isCommodity == false
     ui.amount:SetEnabled(not isItem)
@@ -1688,10 +1646,6 @@ function Tab:_BuildContent()
     ui.stop = place(Kit.Button(content, "Stop", 60, function()
         self:Stop()
     end), 268, 0)
-    ui.logButton = Kit.Button(content, "Log", 70, function()
-        self:ToggleLog()
-    end)
-    ui.logButton:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, 0)
     ui.message = place(Kit.Label(content, "", "small"), 0, -28)
     ui.message:SetJustifyH("LEFT")
     ui.message:SetWidth(LIST_WIDTH)
@@ -1718,20 +1672,20 @@ function Tab:_BuildContent()
     ui.rowsList = Kit.CreateList(content, { rowHeight = 18, inset = true, initRow = function(row, data)
         self:_InitLevelRow(row, data)
     end })
-    ui.rowsList.frame:SetPoint("TOPLEFT", content, "TOPLEFT", rightX, -118)
-    ui.rowsList.frame:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", 0, 56)
+    ui.rowsList.frame:SetPoint("TOPLEFT", content, "TOPLEFT", rightX, -62)
+    ui.rowsList.frame:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", 0, 78)
     -- The column titles over the price level list.
     local edge = ui.rowsList.contentInsets or { left = 0, right = 0 }
     ui.levelHeader = Kit.CreateColumnHeader(content, LEVEL_COLUMNS,
         { gap = LEVEL_OPTIONS.gap, left = edge.left, right = edge.right })
-    ui.levelHeader.frame:SetPoint("TOPLEFT", content, "TOPLEFT", rightX, -82)
-    ui.levelHeader.frame:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, -82)
+    ui.levelHeader.frame:SetPoint("TOPLEFT", content, "TOPLEFT", rightX, -44)
+    ui.levelHeader.frame:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, -44)
     ui.levelHeader.frame:SetHeight(18)
-    -- The totals row: same columns as the list, above all other rows. It is not a list row, so it is not selectable.
+    -- The totals row: same columns as the list, below the list. It is not a list row, so it is not selectable.
     local options = { gap = LEVEL_OPTIONS.gap, left = edge.left, right = edge.right, role = "highlight" }
     ui.totals = CreateFrame("Frame", nil, content)
-    ui.totals:SetPoint("TOPLEFT", content, "TOPLEFT", rightX, -100)
-    ui.totals:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, -100)
+    ui.totals:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", rightX, 58)
+    ui.totals:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", 0, 58)
     ui.totals:SetHeight(18)
     ui.totals:EnableMouse(true)
     ui.totalsBackground = ui.totals:CreateTexture(nil, "BACKGROUND")
@@ -1740,15 +1694,11 @@ function Tab:_BuildContent()
     ui.totalsBackground:SetAlpha(0.6)
     ui.totalsBackground:SetAllPoints(ui.totals)
     ui.totalCells = Kit.CreateColumnCells(ui.totals, LEVEL_COLUMNS, options)
+    ui.totalLabel = Kit.Label(ui.totals, "Total", "highlight")
+    ui.totalLabel:SetPoint("LEFT", ui.totals, "LEFT", edge.left + 4, 0)
     Kit.Tooltip(ui.totals, "Total to buy", { "All units and the cost of all price levels that you can buy.",
         "Your own levels and levels above the max price are not in the total." })
     ui.totals:Hide()
-    ui.logList = Kit.CreateList(content, { rowHeight = 18, inset = true, initRow = function(row, data)
-        self:_InitLogRow(row, data)
-    end })
-    ui.logList.frame:SetPoint("TOPLEFT", content, "TOPLEFT", rightX, -28)
-    ui.logList.frame:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", 0, 30)
-
     ui.buyNext = Kit.Button(content, "Buy next", 100, function()
         self:BuyNext()
     end)
@@ -1778,6 +1728,7 @@ function Tab:_BuildContent()
         self:SetJumpPercent(number)
     end })
     ui.jump:SetPoint("LEFT", ui.jumpLabel, "RIGHT", 6, 0)
+    ui.jump:SetJustifyH("CENTER")
     ui.jump:SetNumber(self:GetJumpPercent())
 end
 
@@ -1900,7 +1851,7 @@ function BuyingTab.New(deps)
     resolved.log = deps.log or resolved.plan.Log
     return setmetatable({
         deps = resolved, list = {}, results = {}, events = {}, active = false, token = 0, dryRun = false,
-        source = "groups",
+        source = "groups", amount = DEFAULT_AMOUNT,
     }, Tab)
 end
 
