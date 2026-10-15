@@ -54,6 +54,7 @@ Shared\Services\LedgerBuffer.lua
 Shared\Services\LedgerStore.lua
 Shared\Services\LedgerLoader.lua
 Shared\Services\LedgerMoney.lua
+Shared\Services\LedgerBalance.lua
 Shared\UI\Kit\Theme.lua
 Shared\UI\Kit\Window.lua
 Shared\UI\Kit\Widgets.lua
@@ -62,6 +63,7 @@ Shared\UI\Kit\List.lua
 Shared\UI\Kit\Columns.lua
 Shared\UI\Kit\Tree.lua
 Shared\UI\Kit\Combat.lua
+Shared\UI\Kit\Graph.lua
 Shared\UI\Kit\MinimapButton.lua
 Shared\UI\Pages\FormulaPage.lua
 Shared\UI\Pages\GroupsPage.lua

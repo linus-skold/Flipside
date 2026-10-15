@@ -242,6 +242,40 @@ function frameMethods:SetNumeric(numeric)
     self.numeric = numeric
 end
 
+-- GetWidth and GetHeight are set per object in newObject; UIParent has none, as specs for the window rely on it.
+local function getWidth(self)
+    return self.width or 0
+end
+
+local function getHeight(self)
+    return self.height or 0
+end
+
+-- Set f.left in a test to place the frame on the screen.
+function frameMethods:GetLeft()
+    return self.left or 0
+end
+
+function frameMethods:SetColorTexture(r, g, b, a)
+    self.colorTexture = { r, g, b, a }
+end
+
+function frameMethods:SetVertexColor(r, g, b, a)
+    self.vertexColor = { r, g, b, a }
+end
+
+function frameMethods:SetThickness(thickness)
+    self.thickness = thickness
+end
+
+function frameMethods:SetStartPoint(point, relativeTo, x, y)
+    self.startPoint = { point, relativeTo, x, y }
+end
+
+function frameMethods:SetEndPoint(point, relativeTo, x, y)
+    self.endPoint = { point, relativeTo, x, y }
+end
+
 function frameMethods:SetAllPoints(target)
     self.allPoints = target
 end
@@ -335,6 +369,12 @@ local function newObject(kind, name, parent, template)
         events = {}, scripts = {}, shown = true, points = {},
         kind = kind, name = name, parent = parent, template = template,
     }, frameMethods)
+    if M.objects then
+        table.insert(M.objects, f)
+    end
+    if name ~= "UIParent" then
+        f.GetWidth, f.GetHeight = getWidth, getHeight
+    end
     f.CreateFontString = function(self, fsName, layer, font)
         local fs = newObject("FontString", fsName, self)
         fs.layer, fs.fontObject = layer, font
@@ -345,6 +385,14 @@ local function newObject(kind, name, parent, template)
         tex.layer = layer
         return tex
     end
+    -- A flag in a test (mock.noLines = true) removes CreateLine, as on a client without it.
+    if not M.noLines then
+        f.CreateLine = function(self, lineName, layer)
+            local line = newObject("Line", lineName, self)
+            line.layer = layer
+            return line
+        end
+    end
     return f
 end
 -- options.flavour = "tbc" removes the Forever-only globals and sets the TBC bag constants.
@@ -353,6 +401,7 @@ function M.reset(options)
     M.serverBase = 1000000
     M.timers = {}
     M.frames = {}
+    M.objects = {} -- every frame, font string, texture and line that was made
     M.invalidEvents = {} -- event names that RegisterEvent rejects
     M.messages = {}
     M.popup = nil -- last popup: { which, text, dialog }
@@ -369,6 +418,7 @@ function M.reset(options)
     M.stackSizes = {} -- itemID -> max stack size
     M.playerName = nil -- result of UnitName("player")
     M.money = 0 -- result of GetMoney()
+    M.noLines = false -- true removes CreateLine from the frames that are made after it
     M.realmName = nil -- result of GetNormalizedRealmName()
     M.itemInfo = {} -- itemID -> array of GetItemInfo return values
     M.loadRequests = {} -- itemIDs passed to RequestLoadItemDataByID

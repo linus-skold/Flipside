@@ -1,7 +1,7 @@
 local manifest = require("Tests.manifest")
 local mock = require("Tests.wow_mock")
 
-local FILES = { "Theme", "Window", "Widgets", "Tabs", "List", "Columns", "Tree", "Combat" }
+local FILES = { "Theme", "Window", "Widgets", "Tabs", "List", "Columns", "Tree", "Combat", "Graph" }
 
 local function loadKit()
     local ns = {}

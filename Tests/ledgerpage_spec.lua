@@ -1,8 +1,11 @@
 local manifest = require("Tests.manifest")
 local mock = require("Tests.wow_mock")
 
-local KIT = { "Theme", "Window", "Widgets", "Tabs", "List", "Columns", "Combat" }
-local CORE = { "EventBus", "ItemString", "SettingsDB", "LedgerRecord", "LedgerBuffer", "LedgerStore", "LedgerLoader" }
+local KIT = { "Theme", "Window", "Widgets", "Tabs", "List", "Columns", "Combat", "Graph" }
+local CORE = {
+    "EventBus", "ItemString", "SettingsDB", "LedgerRecord", "LedgerBuffer", "LedgerStore", "LedgerLoader",
+    "LedgerBalance",
+}
 
 local DAY = 86400
 local NOW = 400 * DAY + 7200
@@ -678,4 +681,177 @@ describe("LedgerPage", function()
             assert.are.equal(1, requests)
         end)
     end)
-end)
+
+    describe("balance graph", function()
+        local MONEY = 5000
+
+        -- Day 400 is today. Money changes: +1000 today, -300 yesterday, +500 two days ago.
+        local function graphData()
+            local function rec(time, kind, source, money, char)
+                return {
+                    time = time, char = char or ME, type = kind, source = source, money = money, item = "", qty = 0,
+                }
+            end
+            return { records = { EU = { standard = {
+                [ME] = {
+                    rec(NOW - 3600, "income", "quest", 1000),
+                    rec(NOW - DAY, "expense", "unknown", 300),
+                    rec(NOW - 2 * DAY, "sale", "ahSale", 500),
+                },
+                [ALT] = { rec(NOW - 2 * DAY, "sale", "ahSale", 1000, ALT) },
+            } } } }
+        end
+
+        local function ys()
+            local out = {}
+            for _, point in ipairs(page.series.points) do
+                out[#out + 1] = point.y
+            end
+            return out
+        end
+
+        local function buildGraph(extra)
+            local deps = {
+                getMoney = function()
+                    return MONEY
+                end,
+                ledgerBuffer = ns.LedgerBuffer.New(db, {}),
+            }
+            for k, v in pairs(extra or {}) do
+                deps[k] = v
+            end
+            return build(deps)
+        end
+
+        before_each(function()
+            setup({ saved = graphData() })
+            MONEY = 5000
+            db:Set("character", "ledger.view.range", "7")
+        end)
+
+        it("draws one point for each day of the range from the live money", function()
+            buildGraph()
+            assert.are.equal("days", page.series.mode)
+            assert.are.same({ 3800, 3800, 3800, 3800, 4300, 4000, 5000 }, ys())
+            assert.are.equal(7, #page.graph:GetLayout())
+        end)
+
+        it("sets the y axis from 0 to a clean value above the highest balance", function()
+            buildGraph()
+            local view = page.graph:GetView()
+            assert.are.equal(0, view.yMin)
+            assert.are.equal(6000, page.graphScale.max)
+            assert.are.equal(6000, view.yMax)
+            assert.are.equal("s", page.graphScale.unit)
+            assert.are.same({ 0, 2000, 4000, 6000 }, page.graphScale.ticks)
+        end)
+
+        it("follows the range filter", function()
+            buildGraph()
+            pick(page.rangeDropdown, "today")
+            assert.are.equal("records", page.series.mode)
+            assert.are.same({ 4000, 5000, 5000 }, ys())
+            pick(page.rangeDropdown, "30")
+            assert.are.equal(30, #page.series.points)
+        end)
+
+        it("uses the saved balance of another character", function()
+            db:SetFor(ALT, "ledger.balance", { copper = 2000, time = NOW - 100 })
+            buildGraph()
+            pick(page.charDropdown, ALT)
+            assert.are.same({ 1000, 1000, 1000, 1000, 2000, 2000, 2000 }, ys())
+            assert.are.equal("", page.graphNote:GetText())
+        end)
+
+        it("leaves out a character without a balance and says so", function()
+            buildGraph()
+            pick(page.charDropdown, ALT)
+            assert.are.equal(0, #page.series.points)
+            assert.is_truthy(page.graphNote:GetText():find(ALT, 1, true))
+        end)
+
+        it("adds the characters for \"All characters\" and notes the missing one", function()
+            buildGraph()
+            pick(page.charDropdown, "all")
+            assert.are.same({ 3800, 3800, 3800, 3800, 4300, 4000, 5000 }, ys())
+            assert.is_truthy(page.graphNote:GetText():find(ALT, 1, true))
+            db:SetFor(ALT, "ledger.balance", { copper = 2000, time = NOW - 100 })
+            page.graphSignature = nil
+            page.Draw()
+            assert.are.same({ 4800, 4800, 4800, 4800, 6300, 6000, 7000 }, ys())
+            assert.are.equal("", page.graphNote:GetText())
+        end)
+
+        it("does not compute the points again if nothing changed", function()
+            buildGraph()
+            local calls = 0
+            local real = page.graph.SetPoints
+            page.graph.SetPoints = function(...)
+                calls = calls + 1
+                return real(...)
+            end
+            page.Draw()
+            page.Draw()
+            assert.are.equal(0, calls)
+            pick(page.rangeDropdown, "30")
+            assert.are.equal(1, calls)
+            MONEY = 6000
+            page.Draw()
+            assert.are.equal(2, calls)
+        end)
+
+        it("counts the records that wait in the buffer", function()
+            buildGraph()
+            local buffer = ns.LedgerBuffer.New(db, {})
+            buffer:Add({ time = NOW - 60, char = ME, type = "income", source = "mailMoney", money = 40 })
+            page.Draw()
+            assert.are.equal(3960, page.series.points[6].y)
+        end)
+
+        it("shows the date and the balance when the mouse is over a point", function()
+            buildGraph()
+            page.graph:SetWidth(780)
+            page.graph:Redraw()
+            local layout = page.graph:GetLayout()
+            assert.are.equal(7, page.graph:HoverAt(layout[7].x))
+            assert.are.equal(os.date("!%Y-%m-%d", 400 * DAY), mock.tooltip.title)
+            assert.are.same({ "Balance: 5000c" }, mock.tooltip.lines)
+            assert.are.equal(5, page.graph:HoverAt(layout[5].x - 3))
+            assert.are.equal(os.date("!%Y-%m-%d", 398 * DAY), mock.tooltip.title)
+        end)
+
+        it("labels the y axis with the money text", function()
+            buildGraph()
+            local labels = {}
+            for _, object in ipairs(mock.objects) do
+                if object.kind == "FontString" and object.parent == page.graph and object.text then
+                    labels[object.text] = true
+                end
+            end
+            assert.is_true(labels["0c"])
+            assert.is_true(labels["2000c"])
+            assert.is_true(labels["6000c"])
+            assert.is_true(labels[os.date("!%Y-%m-%d", 394 * DAY)])
+            assert.is_true(labels[os.date("!%Y-%m-%d", 400 * DAY)])
+        end)
+
+        it("hides the graph, moves the list up and saves the choice", function()
+            buildGraph()
+            assert.is_true(page.graph:IsShown())
+            page.graphToggle.scripts.OnClick(page.graphToggle)
+            assert.is_false(page.graph:IsShown())
+            assert.is_false(page.graphNote:IsShown())
+            assert.are.equal(false, db:Get("character", "ledger.view.graph"))
+            assert.are.equal("Show graph", page.graphToggle:GetText())
+            local again = buildGraph()
+            assert.is_false(again.graph:IsShown())
+        end)
+
+        it("makes the graph 130 high and as wide as the page", function()
+            buildGraph()
+            assert.are.equal(130, page.graph.height)
+            local left, right = page.graph.points[1], page.graph.points[2]
+            assert.are.equal("TOPLEFT", left[1])
+            assert.are.equal("TOPRIGHT", right[1])
+        end)
+    end)end)

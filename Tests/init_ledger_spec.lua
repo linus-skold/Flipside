@@ -101,4 +101,14 @@ describe("Init ledger", function()
             assert.is_nil(frame.events and frame.events.COMBAT_LOG_EVENT_UNFILTERED)
         end
     end)
-end)
+
+    it("saves the gold balance at login and at logout", function()
+        mock.money = 4200
+        login()
+        local saved = ns.LedgerBalance.ReadSnapshot(ns.db, "Tester-TestRealm")
+        assert.are.equal(4200, saved.copper)
+        assert.are.equal(mock.serverBase, saved.time)
+        mock.money = 9900
+        mock.fire("PLAYER_LOGOUT")
+        assert.are.equal(9900, ns.LedgerBalance.ReadSnapshot(ns.db, "Tester-TestRealm").copper)
+    end)end)

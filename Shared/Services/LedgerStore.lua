@@ -35,6 +35,11 @@ function Store:_Slot(section)
     return ensure(ensure(ensure(self._saved, section), self._region), self._ruleset)
 end
 
+-- Returns a number that grows when records are moved in or compacted. A page uses it to know when to draw again.
+function Store:Revision()
+    return self._revision
+end
+
 function Store:IsReadOnly()
     return self._readOnly
 end
@@ -61,6 +66,7 @@ function Store:Move(records)
             count = count + 1
         end
     end
+    self._revision = self._revision + count
     return count
 end
 
@@ -237,6 +243,7 @@ function Store:Compact(now, options)
         end
     end
     self._saved.lastCompact = today
+    self._revision = self._revision + total
     return total
 end
 
@@ -256,6 +263,7 @@ function LedgerStore.New(saved, options)
         _region = options.region,
         _ruleset = options.ruleset,
         _readOnly = false,
+        _revision = 0,
     }, Store)
     local stored = saved._schema
     if stored == nil then
