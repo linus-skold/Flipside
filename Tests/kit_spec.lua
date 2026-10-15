@@ -291,6 +291,95 @@ describe("Kit", function()
             assert.is_true(list.rows[1]:IsShown())
             assert.is_false(list.rows[2]:IsShown())
         end)
+
+        describe("multi-select", function()
+            local list, changes, shift
+
+            before_each(function()
+                _G.ScrollUtil = nil
+                changes, shift = 0, false
+                _G.IsShiftKeyDown = function()
+                    return shift
+                end
+                list = Kit.CreateList(CreateFrame("Frame"), {
+                    multiSelect = true,
+                    keyOf = function(data)
+                        return data.id
+                    end,
+                    onSelectionChange = function()
+                        changes = changes + 1
+                    end,
+                })
+                list:SetData({ { id = "a" }, { id = "b" }, { id = "c" }, { id = "d" } })
+            end)
+
+            after_each(function()
+                _G.IsShiftKeyDown = nil
+            end)
+
+            local function ids()
+                local found = {}
+                for _, data in ipairs(list:GetSelected()) do
+                    found[#found + 1] = data.id
+                end
+                return found
+            end
+
+            local function click(index)
+                list.rows[index].scripts.OnClick(list.rows[index])
+            end
+
+            it("toggles a row on click and shows the selection highlight", function()
+                click(2)
+                assert.are.same({ "b" }, ids())
+                assert.is_true(list.rows[2].kitSelect:IsShown())
+                assert.is_false(list.rows[1].kitSelect:IsShown())
+                click(4)
+                assert.are.same({ "b", "d" }, ids())
+                click(2)
+                assert.are.same({ "d" }, ids())
+                assert.is_false(list.rows[2].kitSelect:IsShown())
+                assert.are.equal(3, changes)
+            end)
+
+            it("selects the range from the last clicked row on Shift-click, in both directions", function()
+                click(2)
+                shift = true
+                click(4)
+                assert.are.same({ "b", "c", "d" }, ids())
+                click(1)
+                assert.are.same({ "a", "b", "c", "d" }, ids())
+            end)
+
+            it("treats a Shift-click as a plain click when no row was clicked before", function()
+                shift = true
+                click(3)
+                assert.are.same({ "c" }, ids())
+            end)
+
+            it("clears the selection", function()
+                click(1)
+                list:ClearSelection()
+                assert.are.same({}, ids())
+                assert.is_false(list.rows[1].kitSelect:IsShown())
+            end)
+
+            it("drops selected rows that leave the data", function()
+                click(1)
+                click(2)
+                list:SetData({ { id = "b" }, { id = "z" } })
+                assert.are.same({ "b" }, ids())
+                assert.is_true(list.rows[1].kitSelect:IsShown())
+                assert.is_false(list.rows[2].kitSelect:IsShown())
+            end)
+
+            it("keeps plain lists free of selection", function()
+                local plain = Kit.CreateList(CreateFrame("Frame"), {})
+                plain:SetData({ "x" })
+                assert.is_nil(plain.rows[1].kitSelect)
+                assert.are.same({}, plain:GetSelected())
+            end)
+        end)
     end)
 
     describe("Input focus lost", function()
