@@ -12,7 +12,7 @@ local SEARCH_TIMEOUT = 10
 local RETRY_SECONDS = 5
 local SECONDS_PER_HOUR = 3600
 
-local NONE_ID = "none"
+local DIALOG_ALL = "FLIPSIDE_CONFIRM_POST_ALL"
 local BASE_GROUP = 1
 local ROW_HEIGHT = 22
 local TREE_INDENT = 14
@@ -20,11 +20,11 @@ local ITEM_WIDTH = 244
 local ITEM_LEAD = 18
 local ICON_LEAD = 22
 local COLUMN_GAP = 6
-local DETAILS_TOP = -28
+local ACTION_TOP = -28
+local DETAILS_TOP = -56
 local DETAILS_HEIGHT = 72
 local HEADER_HEIGHT = 18
 local TREE_TOP = DETAILS_TOP - DETAILS_HEIGHT - 4 - HEADER_HEIGHT
-local BAR_HEIGHT = 34
 local RED = { 1, 0.3, 0.3 }
 local GREEN = { 0.4, 1, 0.4 }
 local WHITE = { 1, 1, 1 }
@@ -37,8 +37,6 @@ local DEFAULT_DURATION = 24
 -- Client arrow textures (pet battle strong and weak badges: a green arrow up and a red arrow down).
 local ARROW_UP = "|TInterface\\PetBattles\\BattleBar-AbilityBadge-Strong:14:14|t"
 local ARROW_DOWN = "|TInterface\\PetBattles\\BattleBar-AbilityBadge-Weak:14:14|t"
-local LOWEST_TIP = "The lowest unit price of another seller in the live search of this item. "
-    .. "Your own auctions do not count. It reads \"none\" when no other seller has an auction."
 
 -- The columns of the item list (Kit.ColumnLayout): the header and every row share them.
 -- The item cell (icon and name) is drawn by the row itself. The Info column fills the rest.
@@ -54,7 +52,6 @@ local COLUMN_OPTIONS = { gap = COLUMN_GAP }
 SellingTab.COLUMNS = COLUMNS
 SellingTab.ARROW_UP = ARROW_UP
 SellingTab.ARROW_DOWN = ARROW_DOWN
-SellingTab.LOWEST_TIP = LOWEST_TIP
 
 local function money(copper)
     if ns.TooltipLines and ns.TooltipLines.FormatMoney then
@@ -122,7 +119,7 @@ function SellingTab.PriceText(copper)
 end
 
 -- Build the tree nodes from the entries. A group node shows only if it holds a bag item, directly or deeper.
--- Items first (bag order), then the subgroups. Items of no group go to the last node "[No group]".
+-- Items first (bag order), then the subgroups. The one root is the Base group: loose items sit directly in it.
 -- Group node: { id = "g<ID>", kind = "group", groupID, text, children }.
 -- Item node: { id = "i<key>", kind = "item", entry, text }.
 function SellingTab.BuildNodes(rules, entries)
@@ -130,6 +127,8 @@ function SellingTab.BuildNodes(rules, entries)
     for _, entry in ipairs(entries) do
         -- An item that is posted for real is on the AH now, so the list does not show it.
         if not (entry.status == "done" and entry.real) then
+            -- Ask for the group each time: a group change moves the item.
+            entry.groupID = rules:GroupOf(entry.key)
             local list = byGroup[entry.groupID]
             if not list then
                 list = {}
@@ -159,18 +158,8 @@ function SellingTab.BuildNodes(rules, entries)
         return { id = "g" .. groupID, kind = "group", groupID = groupID,
             text = "[" .. tostring(rules:Name(groupID)) .. "]", children = children }
     end
-    local roots = {}
-    for _, childID in ipairs(rules:Children(BASE_GROUP)) do
-        local node = build(childID)
-        if node then
-            roots[#roots + 1] = node
-        end
-    end
-    local loose = itemNodes(BASE_GROUP)
-    if #loose > 0 then
-        roots[#roots + 1] = { id = NONE_ID, kind = "group", text = "[No group]", children = loose }
-    end
-    return roots
+    local base = build(BASE_GROUP)
+    return base and { base } or {}
 end
 
 -- Add the entries below a node, in tree order, to out.
@@ -426,8 +415,9 @@ end
 
 local warnDialog
 
--- The warning box: a square Kit window with a text and two buttons. onYes runs in the click of the yes button.
-local function openWarning(title, text, yesLabel, onYes)
+-- The warning box: a square Kit window with a text and the buttons Post, Skip and Cancel.
+-- onPost runs in the click of the Post button, so the post keeps its hardware event.
+local function openWarning(title, text, onPost, onSkip, onCancel)
     local Kit = ns.Kit
     if not warnDialog then
         local pad = Kit.Theme.padding
@@ -453,23 +443,26 @@ local function openWarning(title, text, yesLabel, onYes)
         dialog.text:SetPoint("TOP", dialog.textFrame, "TOP", 0, 0)
         dialog.text:SetWidth(textWidth)
         dialog.text:SetJustifyH("CENTER")
-        dialog.yesButton = Kit.Button(dialog, "", 130, function()
-            local callback = dialog.onYes
-            dialog.onYes = nil
-            dialog:Hide()
-            if callback then
-                callback()
+        -- Close the box, then run the callback of the button that was clicked.
+        local function answer(key)
+            return function()
+                local callback = dialog[key]
+                dialog.onPost, dialog.onSkip, dialog.onCancel = nil, nil, nil
+                dialog:Hide()
+                if callback then
+                    callback()
+                end
             end
-        end)
-        dialog.yesButton:SetPoint("BOTTOM", dialog, "BOTTOM", -70, pad + 4)
-        dialog.noButton = Kit.Button(dialog, "Cancel", 100, function()
-            dialog.onYes = nil
-            dialog:Hide()
-        end)
-        dialog.noButton:SetPoint("BOTTOM", dialog, "BOTTOM", 70, pad + 4)
+        end
+        dialog.yesButton = Kit.Button(dialog, "Post", 90, answer("onPost"))
+        dialog.yesButton:SetPoint("BOTTOM", dialog, "BOTTOM", -100, pad + 4)
+        dialog.skipButton = Kit.Button(dialog, "Skip", 90, answer("onSkip"))
+        dialog.skipButton:SetPoint("BOTTOM", dialog, "BOTTOM", 0, pad + 4)
+        dialog.noButton = Kit.Button(dialog, "Cancel", 90, answer("onCancel"))
+        dialog.noButton:SetPoint("BOTTOM", dialog, "BOTTOM", 100, pad + 4)
     end
     local dialog = warnDialog
-    dialog.onYes = onYes
+    dialog.onPost, dialog.onSkip, dialog.onCancel = onPost, onSkip, onCancel
     if dialog.SetTitle then
         dialog:SetTitle(title or "")
     end
@@ -478,7 +471,6 @@ local function openWarning(title, text, yesLabel, onYes)
     dialog.textFrame:SetHeight(textHeight)
     dialog:SetHeight(math.max(150, 40 + textHeight + 20 + 22 + Kit.Theme.padding + 8))
     dialog.text:SetTextColor(ORANGE[1], ORANGE[2], ORANGE[3])
-    dialog.yesButton:SetText(yesLabel or "OK")
     dialog:Show()
     dialog:Raise()
 end
@@ -501,34 +493,6 @@ function Tab:_Vendor(entry)
         end
     end
     return entry.vendor
-end
-
--- The potential profit of one entry, or nil.
-function Tab:_Profit(entry)
-    return SellingTab.EntryProfit(entry, self:_Vendor(entry))
-end
-
--- The total potential profit of the selection: { net, vs, deposit } over the auctions that are left.
--- vs is nil if the vendor price of an item with a post is not known.
-function Tab:QueueProfit()
-    local net, vs, deposit, count = 0, 0, 0, 0
-    for _, entry in ipairs(self.selection) do
-        local profit = self:_Profit(entry)
-        if profit then
-            count = count + 1
-            net = net + profit.net
-            deposit = deposit + profit.deposit
-            if profit.vs and vs then
-                vs = vs + profit.vs
-            else
-                vs = nil
-            end
-        end
-    end
-    if count == 0 then
-        return nil
-    end
-    return { net = net, vs = vs, deposit = deposit }
 end
 
 function Tab:_Name(entry)
@@ -708,7 +672,7 @@ function Tab:RefreshBags()
     local bagItems = deps.readBags()
     local byKey = self:_CandidatesByKey(bagItems)
     self.entries, self.selection, self.selectedId, self.postedCount = {}, {}, nil, 0
-    self.priceEntry = nil
+    self.priceEntry, self.allRun = nil, nil
     for _, item in ipairs(bagItems) do
         self.entries[#self.entries + 1] = self:_NewEntry(item, byKey[item.key])
     end
@@ -901,6 +865,7 @@ function Tab:SelectNode(node)
     self.selection = SellingTab.CollectEntries(node, {})
     self.postedCount = 0
     self.priceEntry = nil
+    self.allRun = nil
     local list = {}
     for _, entry in ipairs(self.selection) do
         if entry.status == "waiting" then
@@ -954,6 +919,12 @@ function Tab:_OnBags()
     self:SyncBags()
 end
 
+-- The groups or the rules changed: build the tree again with the new group of each item. The selection stays.
+function Tab:_OnRules()
+    self:_RebuildNodes()
+    self:_Reselect(false)
+end
+
 function Tab:ToggleLog()
     self.showLog = not self.showLog
     self:_Update()
@@ -986,9 +957,10 @@ end
 -- Update the view. If the selection has no post left and no search runs, say so and read the bags again.
 function Tab:_AfterStep()
     self:_Update()
-    if self:_Current() or self.pending or self.queue then
+    if self:_Focus(false) or self.pending or self.queue then
         return
     end
+    self.allRun = nil
     self:_Say(self.postedCount > 0 and "all posted" or "nothing left to post")
     if not self.dryRun then
         local say = self.ui and self.ui.message:GetText()
@@ -1004,18 +976,53 @@ function Tab:_Advance(entry, posted)
         entry.posted = entry.posted + 1
         self.postedCount = self.postedCount + 1
     end
+    local following
     if entry.next > #entry.units then
         entry.status = entry.posted > 0 and "done" or "skipped"
         local client = self.deps.client
         if entry.posted > 0 and client.IsReady() then
             pcall(client.RefreshOwned)
         end
+        following = self.selectedId == "i" .. entry.key and self:_EntriesAfter(entry) or nil
         -- A real post puts the item on the AH: the list drops it now.
         if entry.status == "done" and entry.real then
             self:_RebuildNodes()
         end
     end
+    if following then
+        self:_MoveOn(following)
+    end
     self:_AfterStep()
+end
+
+-- The entries below an entry in tree order.
+function Tab:_EntriesAfter(entry)
+    local all, after, seen = SellingTab.CollectEntries({ children = self.nodes }, {}), {}, false
+    for _, each in ipairs(all) do
+        if seen then
+            after[#after + 1] = each
+        elseif each == entry then
+            seen = true
+        end
+    end
+    return after
+end
+
+-- One item is finished and it was the selection: select the next item in the list that can still be worked on.
+function Tab:_MoveOn(following)
+    for _, entry in ipairs(following) do
+        local status = entry.status
+        local node = (status == "waiting" or status == "searching" or status == "ready" or status == "skip")
+            and findNode(self.nodes, "i" .. entry.key)
+        if node then
+            if self.ui then
+                self.ui.tree.selected = node.id
+                self.ui.tree:Refresh()
+            end
+            self:SelectNode(node)
+            return
+        end
+    end
 end
 
 function Tab:_ConfirmText()
@@ -1048,7 +1055,11 @@ end
 
 -- The item as a link in the quality colour; nil while the client has no link yet.
 function Tab:_ItemLink(entry)
-    local link, quality = self.deps.itemLink(entry.item.itemID or 0)
+    local link, quality = entry.item.link, nil
+    if not (link and link:find("^|c")) then
+        local found, foundQuality = self.deps.itemLink(entry.item.itemID or 0)
+        link, quality = link or found, foundQuality
+    end
     if not link then
         return nil
     end
@@ -1133,38 +1144,56 @@ function Tab:_PostPrice(entry)
 end
 
 -- The warning lines for the next post of an entry at a price. An empty list means no warning.
--- Post all gives no vendor warning: the vendorSkip rule already chose the entries of its queue.
-function Tab:_Warnings(entry, price, all)
+-- A line shows if the rule skips the item, if the price is under the minimum price or over the maximum price,
+-- or if the vendor pays more than the net of the post (this covers a price under the vendor price).
+function Tab:_Warnings(entry, price)
     local lines = {}
     local unit
+    local skipReason
     if entry.status == "ready" then
         unit = entry.units[entry.next]
     else
-        local reason = entry.decision and entry.decision.reason or "no decision"
-        lines[1] = "The rule skips this item: " .. (SKIP_TEXT[reason] or reason) .. "."
+        skipReason = entry.decision and entry.decision.reason or "no decision"
+        lines[1] = "The rule skips this item: " .. (SKIP_TEXT[skipReason] or skipReason) .. "."
         unit = select(2, self:_ManualPlan(entry, price))[1]
     end
-    local vendor, net
-    if not (all and entry.status == "ready") then
-        vendor, net = SellingTab.VendorBetter(price, unit, self:_Vendor(entry))
+    local candidate = entry.candidate or {}
+    if candidate.minPrice and price < candidate.minPrice and skipReason ~= "below minimum" then
+        lines[#lines + 1] = "The price is below the minimum price: " .. money(candidate.minPrice) .. "."
     end
+    if candidate.maxPrice and price > candidate.maxPrice then
+        lines[#lines + 1] = "The price is above the maximum price: " .. money(candidate.maxPrice) .. "."
+    end
+    local vendor, net = SellingTab.VendorBetter(price, unit, self:_Vendor(entry))
     if vendor then
         lines[#lines + 1] = "Sells for more at a vendor: " .. money(vendor) .. " (net on the AH: " .. money(net) .. ")."
     end
     return lines, unit
 end
 
--- Show the warning box. The post runs in the click of the yes button, so it keeps its hardware event.
+-- Show the warning box with Post, Skip and Cancel. The post runs in the click of the Post button, so it keeps
+-- its hardware event. Skip leaves the whole item. Cancel makes no post and ends a Post all run.
 function Tab:_AskWarning(entry, price, lines, unit, all)
     local text = string.format("Post %d x %s at %s each?", unit and unit.quantity or 0,
         self:_ItemLink(entry) or self:_Name(entry), money(price))
     text = text .. "\n\n" .. table.concat(lines, "\n")
-    self.deps.warn("Post anyway?", text, "Post anyway", function()
-        if self.awaiting or self:_Focus(all) ~= entry then
+    local function stale()
+        return self.awaiting ~= nil or self:_Focus(all) ~= entry
+    end
+    self.deps.warn("Check the price", text, function()
+        if stale() then
             return
         end
         entry.warned = true
         self:_PostStep(all)
+    end, function()
+        if stale() then
+            return
+        end
+        self:SkipItem(entry)
+    end, function()
+        self.allRun = nil
+        self:_Say("stopped")
     end)
 end
 
@@ -1175,8 +1204,26 @@ function Tab:PostNext()
 end
 
 -- The same for the button "Post all": the queue of the selection, with no entry that the rule skips.
+-- The first click of a run asks for a confirm with the total deposit. The accept click makes the first post.
+-- The later clicks of the run post at once. A dry run asks nothing.
 function Tab:PostAll()
-    return self:_PostStep(true)
+    if self.awaiting or self.allRun or self.dryRun then
+        return self:_PostStep(true)
+    end
+    if not self:_Focus(true) then
+        self:_Say("nothing to post")
+        return false, "nothing to post"
+    end
+    local total, done, deposit = self:_Progress()
+    self.deps.confirm(DIALOG_ALL, string.format("Post %d auctions? Total deposit: %s.", total - done,
+        money(deposit or 0)), function()
+        if self.awaiting or not self:_Focus(true) then
+            return
+        end
+        self.allRun = true
+        self:_PostStep(true)
+    end)
+    return true
 end
 
 function Tab:_PostStep(all)
@@ -1195,7 +1242,7 @@ function Tab:_PostStep(all)
         return false, why
     end
     if not self.dryRun and not entry.warned then
-        local lines, unit = self:_Warnings(entry, price, all)
+        local lines, unit = self:_Warnings(entry, price)
         if #lines > 0 then
             self:_AskWarning(entry, price, lines, unit, all)
             return true
@@ -1260,7 +1307,7 @@ end
 
 -- Leave the next auction of the queue without a post. Makes no protected call.
 function Tab:Skip()
-    local entry = self.awaiting and self.awaiting.entry or self:_Current()
+    local entry = self.awaiting and self.awaiting.entry or self:_Focus(false)
     if not entry then
         return false, "nothing to skip"
     end
@@ -1268,6 +1315,13 @@ function Tab:Skip()
     self.deps.log:Add(entry.candidate, { action = "skip", reason = "skipped by user" })
     self:_Advance(entry, false)
     return true
+end
+
+-- Leave all the auctions that are left of one item (the Skip button of the warning box). No protected call.
+function Tab:SkipItem(entry)
+    self.deps.log:Add(entry.candidate, { action = "skip", reason = "skipped by user" })
+    entry.next = #entry.units
+    self:_Advance(entry, false)
 end
 
 local function paint(label, color)
@@ -1296,12 +1350,41 @@ function SellingTab.Cells(entry, vendorPrice)
     return cells
 end
 
+-- Make an item row a link: the mouse shows the item tooltip, a shift-click puts the link in the chat box.
+-- A row without a link (a group row) loses both. The tree sets the OnClick script again each time it draws a row.
+function Tab._LinkRow(_, row, link)
+    local payload = link and link:match("|H(.-)|h")
+    if not payload then
+        row:SetScript("OnEnter", nil)
+        row:SetScript("OnLeave", nil)
+        return
+    end
+    row:SetScript("OnEnter", function(frame)
+        GameTooltip:SetOwner(frame, "ANCHOR_RIGHT")
+        GameTooltip:SetHyperlink(payload)
+        GameTooltip:Show()
+    end)
+    row:SetScript("OnLeave", function()
+        GameTooltip:Hide()
+    end)
+    local onSelect = row:GetScript("OnClick")
+    row:SetScript("OnClick", function(frame, button, ...)
+        local insert, modified = ChatEdit_InsertLink, _G.IsModifiedClick
+        if button ~= "RightButton" and insert and modified and modified("CHATLINK") and insert(link) then
+            return
+        end
+        if onSelect then
+            onSelect(frame, button, ...)
+        end
+    end)
+end
+
 -- Draw one tree row: a group (toggle and name) or a bag item (icon, name and the columns).
 function Tab:_InitTreeRow(row, node, depth, isCollapsed, hasChildren)
     local Kit = ns.Kit
     local parts = row.sellParts
     if not parts then
-        parts = { icon = row:CreateTexture(nil, "ARTWORK") }
+        parts = { icon = row:CreateTexture(nil, "ARTWORK"), shift = 0 }
         parts.icon:SetSize(18, 18)
         parts.cells = Kit.CreateColumnCells(row, COLUMNS, COLUMN_OPTIONS)
         row.sellParts = parts
@@ -1323,7 +1406,14 @@ function Tab:_InitTreeRow(row, node, depth, isCollapsed, hasChildren)
     if row.label.SetWordWrap then
         row.label:SetWordWrap(false)
     end
+    -- The view indents a row, so the cells shift back: they line up with the header at every depth.
+    local shift = tree.box and (depth - 1) * TREE_INDENT or 0
+    if parts.shift ~= shift then
+        parts.shift = shift
+        Kit.LayoutColumnLabels(parts.cells, row, COLUMNS, { gap = COLUMN_GAP, left = -shift })
+    end
     if node.kind == "group" then
+        self:_LinkRow(row, nil)
         parts.icon:Hide()
         for _, cell in pairs(parts.cells) do
             cell:SetText("")
@@ -1340,7 +1430,9 @@ function Tab:_InitTreeRow(row, node, depth, isCollapsed, hasChildren)
     parts.icon:SetPoint("LEFT", row.toggle, "RIGHT", 2, 0)
     parts.icon:Show()
     row.label:SetPoint("LEFT", parts.icon, "RIGHT", 4, 0)
-    row.label:SetText(self:_Name(entry) .. " x" .. tostring(entry.item.count))
+    local link = self:_ItemLink(entry)
+    row.label:SetText((link or self:_Name(entry)) .. " x" .. tostring(entry.item.count))
+    self:_LinkRow(row, link)
     local cells = SellingTab.Cells(entry, self:_Vendor(entry))
     local grey = entry.status ~= "ready"
     Kit.SetColumnCells(parts.cells, COLUMNS, cells)
@@ -1438,9 +1530,7 @@ local function clearDetails(d)
     d.price:SetText("")
     d.stack:SetText("")
     d.deposit:SetText("")
-    d.lowest:SetText("")
     d.net:SetText("")
-    d.vs:SetText("")
     d.warn:SetText("")
 end
 
@@ -1484,17 +1574,9 @@ function Tab:_UpdateDetails()
     d.price:SetText("Buyout " .. money(values.buyout) .. " per auction")
     d.stack:SetText(string.format("%d x %d", values.auctions, values.stackSize))
     d.deposit:SetText("Deposit: " .. money(values.deposit))
-    d.lowest:SetText("Lowest on AH: " .. (values.lowest and money(values.lowest) or "none"))
     local netText, netColor = SellingTab.NetStyle(values.net)
     d.net:SetText(netText)
     paint(d.net, netColor)
-    if values.vs == nil then
-        d.vs:SetText("vs vendor: -")
-        paint(d.vs, WHITE)
-    else
-        d.vs:SetText("vs vendor: " .. money(values.vs))
-        paint(d.vs, values.vs < 0 and RED or (values.vs > 0 and GREEN or WHITE))
-    end
     -- One line for a problem: a bad price first, then the vendor warning for the next post.
     if not typed then
         d.warn:SetText("Invalid price: " .. why)
@@ -1528,20 +1610,8 @@ function Tab:_Update()
     ui.postNext:SetEnabled(client.CanPost() and (self.awaiting ~= nil or self:_Focus(false) ~= nil))
     ui.postAll:SetText(self:PostAllLabel())
     ui.postAll:SetEnabled(client.CanPost() and self.awaiting == nil and current ~= nil)
-    ui.skip:SetEnabled(self.awaiting ~= nil or current ~= nil)
+    ui.skip:SetEnabled(self.awaiting ~= nil or self:_Focus(false) ~= nil)
     ui.progress:SetText(self:ProgressText())
-    local _, _, deposit = self:_Progress()
-    ui.deposit:SetText(deposit and ("Deposit: " .. money(deposit)) or "")
-    local queue = self:QueueProfit()
-    if queue then
-        ui.net:SetText("Queue net: " .. money(queue.net))
-        paint(ui.net, queue.net < 0 and RED or WHITE)
-        ui.vs:SetText(queue.vs ~= nil and ("vs vendor: " .. money(queue.vs)) or "vs vendor: -")
-        paint(ui.vs, queue.vs ~= nil and queue.vs < 0 and RED or WHITE)
-    else
-        ui.net:SetText("")
-        ui.vs:SetText("")
-    end
     self:_UpdateDetails()
     if self.showLog then
         local entries = self.deps.log:List()
@@ -1668,18 +1738,8 @@ function Tab:_BuildContent()
     d.price = line("small", 246, 40, 210)
     d.warn = line("small", 56, 56, 400)
     d.deposit = line("small", 470, 6, 290)
-    d.lowest = line("small", 470, 22, 290)
-    d.net = line("small", 470, 38, 290)
-    d.vs = line("small", 470, 54, 290)
-    -- A hit frame over the lowest line shows what the number means.
-    d.lowestHit = CreateFrame("Frame", nil, pane)
-    d.lowestHit:SetPoint("TOPLEFT", pane, "TOPLEFT", 470, -20)
-    d.lowestHit:SetSize(290, 16)
-    d.lowestHit:EnableMouse(true)
-    Kit.Tooltip(d.lowestHit, "Lowest on AH", { LOWEST_TIP })
+    d.net = line("small", 470, 22, 290)
     ui.details = d
-
-
 
     ui.tree = Kit.CreateTree(content, { rowHeight = ROW_HEIGHT, inset = true,
         initRow = function(row, node, depth, isCollapsed, hasChildren)
@@ -1689,7 +1749,7 @@ function Tab:_BuildContent()
             self:SelectNode(node)
         end })
     ui.tree.frame:SetPoint("TOPLEFT", content, "TOPLEFT", 0, TREE_TOP)
-    ui.tree.frame:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", 0, BAR_HEIGHT)
+    ui.tree.frame:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", 0, 0)
     -- The column titles over the tree.
     local edge = ui.tree.contentInsets
     local headers = Kit.CreateColumnHeader(content, COLUMNS,
@@ -1702,11 +1762,12 @@ function Tab:_BuildContent()
         self:_InitLogRow(row, data)
     end })
     ui.logList.frame:SetPoint("TOPLEFT", content, "TOPLEFT", 0, DETAILS_TOP)
-    ui.logList.frame:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", 0, BAR_HEIGHT)
+    ui.logList.frame:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", 0, 0)
 
-    -- The bottom bar. The post button posts in its own click handler: the protected call needs the click.
+    -- The action row above the list. The post button posts in its own click handler: the protected call needs
+    -- the click.
     ui.postNext = Kit.Button(content, "Post", 100, nil)
-    ui.postNext:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", 0, 0)
+    ui.postNext:SetPoint("TOPLEFT", content, "TOPLEFT", 0, ACTION_TOP)
     ui.postNext:SetScript("OnClick", function()
         self:PostNext()
     end)
@@ -1720,20 +1781,13 @@ function Tab:_BuildContent()
         self:Skip()
     end)
     ui.skip:SetPoint("LEFT", ui.postAll, "RIGHT", 6, 0)
-    local function bottom(previous, gap, width)
-        local label = Kit.Label(content, "", "small")
-        label:SetPoint("LEFT", previous, "RIGHT", gap, 0)
-        label:SetWidth(width)
-        label:SetJustifyH("LEFT")
-        if label.SetWordWrap then
-            label:SetWordWrap(false)
-        end
-        return label
+    ui.progress = Kit.Label(content, "", "small")
+    ui.progress:SetPoint("LEFT", ui.skip, "RIGHT", 8, 0)
+    ui.progress:SetWidth(160)
+    ui.progress:SetJustifyH("LEFT")
+    if ui.progress.SetWordWrap then
+        ui.progress:SetWordWrap(false)
     end
-    ui.progress = bottom(ui.skip, 8, 100)
-    ui.deposit = bottom(ui.progress, 4, 110)
-    ui.net = bottom(ui.deposit, 4, 150)
-    ui.vs = bottom(ui.net, 4, 150)
 end
 
 -- Build the panel in the parent frame and listen for the search events.
@@ -1768,6 +1822,11 @@ function Tab:Mount(parent, api)
         self:_OnBags()
     end)
     self.events[#self.events + 1] = "BAG_UPDATE_DELAYED"
+    -- A group or rule change moves items to other groups: build the tree again.
+    bus:Subscribe("Flipside.RulesChanged", OWNER, function()
+        self:_OnRules()
+    end)
+    self.events[#self.events + 1] = "Flipside.RulesChanged"
     self:_Update()
 end
 
@@ -1786,7 +1845,7 @@ end
 -- Create the Selling core. The host mounts it and shows it.
 -- deps: bus, rules, formulaRun, readBags() (bag items with stacks); optional after(seconds, fn), client, plan, log,
 -- itemInfo, maxStack(itemID), vendorPrice(itemID) (copper for one item, or nil), confirm(name, text, onAccept),
--- getRecord(key), now(), itemLink(itemID) (link, quality), warn(title, text, yesLabel, onYes).
+-- getRecord(key), now(), itemLink(itemID) (link, quality), warn(title, text, onPost, onSkip, onCancel).
 function SellingTab.New(deps)
     if type(deps) ~= "table" or type(deps.bus) ~= "table" then
         error("deps.bus must be a table", 2)
