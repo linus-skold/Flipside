@@ -407,14 +407,21 @@ local function openWarning(title, text, onPost, onSkip, onCancel)
         dialog.text:SetPoint("TOP", dialog.textFrame, "TOP", 0, 0)
         dialog.text:SetWidth(textWidth)
         dialog.text:SetJustifyH("CENTER")
-        -- Close the box, then run the callback of the button that was clicked.
+        -- Run the callback of the button that was clicked, then close the box. The callback runs first and in the
+        -- click, so the protected post is the first action of the click. A callback that opens the box again keeps it.
         local function answer(key)
             return function()
                 local callback = dialog[key]
                 dialog.onPost, dialog.onSkip, dialog.onCancel = nil, nil, nil
-                dialog:Hide()
+                local ok, err = true, nil
                 if callback then
-                    callback()
+                    ok, err = pcall(callback)
+                end
+                if not (dialog.onPost or dialog.onSkip or dialog.onCancel) then
+                    dialog:Hide()
+                end
+                if not ok then
+                    error(err, 0)
                 end
             end
         end
