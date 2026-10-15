@@ -12,10 +12,10 @@ Start with Spike 0 (§8), then follow the MVP build order. Everything below appl
 2. **API source of truth.** Check every Blizzard API against the Forever client's interface code ([Ketho/wow-ui-source-forever](https://github.com/Ketho/wow-ui-source-forever)) and the API pages on [warcraft.wiki.gg](https://warcraft.wiki.gg/wiki/World_of_Warcraft_API). Forever may differ from Retail; when they disagree, the Forever source wins.
 3. **Project setup.**
    - Folder layout: `Shared/Core/` (framework), `Shared/Services/`, `Shared/Features/<Name>/`, `Shared/UI/`, `Shared/Libs/`, `Shared/Locales/`, `Tests/`.
-   - TOC with the Forever interface number taken from the client source (the source has no interface number; 16001 comes from `GetBuildInfo` in the client), and both SavedVariables (Main DB, Scan DB, §7.1).
+   - TOC with the Forever interface number taken from the client source (the source has no interface number; 16001 comes from `GetBuildInfo` in the client), and the SavedVariables of Flipside (Main DB, Scan DB, §7.1). The ledger is a second addon, `Flipside_Ledger`, with its own TOC and SavedVariables (D25, §5.8).
    - Lint with luacheck; WoW globals declared in its config.
    - Unit tests with busted and a mocked WoW API, for the pure logic: formula compiler, market-value algorithm, selling decisions, keep-stock maths, deposit-aware maths.
-   - Packaging for CurseForge and Wago via a release workflow.
+   - Packaging for CurseForge and Wago via a release workflow. The release has two addon folders: `Flipside` and `Flipside_Ledger`. The TOC of `Flipside_Ledger` has `## LoadOnDemand: 1` and `## Dependencies: Flipside`.
 4. **Libraries.** Decide in the first task whether to use common libraries (e.g. Ace3, LibSerialize, LibDeflate) or write our own; check each licence is compatible with MIT (D12) and list them in the README. The decision is made: see D18.
 5. **Repo CLAUDE.md** containing: the link to this spec; the build order; "Decisions D1–D25 are binding — ask before changing one"; "When something gets scoped, update the Needs scoping table"; the definition of done below.
 6. **Definition of done per feature.** Unit tests pass; luacheck is clean; the feature's in-game checklist passes on WoW: Forever; the spec section is updated if behaviour changed; the Phase dropdown and Needs scoping status reflect reality.
@@ -67,7 +67,7 @@ Start with Spike 0 (§8), then follow the MVP build order. Everything below appl
 | D22 | Scan data is keyed by region and ruleset (refines D15). The region comes from the client. Each stored record also has a ruleset field that has one fixed value in the MVP; real rulesets (for example hardcore or self-found) can come later without a rewrite of stored data | — | 2026-10-14 |
 | D23 | Flavour separation. Each flavour has its own TOC: `Flipside.toc` for Forever and `Flipside_TBC.toc` for TBC Anniversary. One release zip holds both TOCs. Shared code lives in `Shared/` (`Shared/Core`, `Shared/Services`, `Shared/Features`, `Shared/UI`, `Shared/UI/Kit`, `Shared/UI/Pages`). Flavour code lives in `Core_<Flavour>/` (flavour config `Flavour.lua`, tooltip hook) and `AH_<Flavour>/` (all auction API calls and the AH tab host). Only AuctionClient backends call the auction API. Shared code reads `ns.Flavour` and never checks the flavour name. The TOC selects the flavour folders | One TOC with flavour checks in shared code | 2026-10-14 |
 | D24 | TBC scan data is keyed by region, realm and ruleset. The ruleset value is "tbc-anniversary" (refines D15 and D22). Forever stays region + "standard". The realm part can be removed later if a test shows that TBC auctions are shared across realms | Region and ruleset only | 2026-10-14 |
-| D25 | TBC uses its own SavedVariables names: `FlipsideDB_TBC` and `FlipsideScanDB_TBC`. These are the names in `Flipside.toc` plus `_TBC` | Shared SavedVariables | 2026-10-14 |
+| D25 | TBC uses its own SavedVariables names: `FlipsideDB_TBC` and `FlipsideScanDB_TBC`. These are the names in `Flipside.toc` plus `_TBC`. The ledger is a separate load-on-demand addon, `Flipside_Ledger`, with the SavedVariables `FlipsideLedgerDB` (TBC: `FlipsideLedgerDB_TBC`). It is no longer a part of the Main DB. See §5.8 | Shared SavedVariables | 2026-10-14 (changed 2026-10-15) |
 | D26 | Buying and Selling make one protected AH call for each click. Every buy asks for confirmation in v1 and shows the final server price. Flipside never buys without a click | Automatic buying of listed rows | 2026-10-14 |
 
 ### Improvements over TSM
@@ -214,7 +214,7 @@ The formula language stays as in the reference (§4.3). AuctionDB sources are re
 | `ScanLow` | Lowest price (min) seen in the 14-day window, including today (decided 2026-10-14) | — (new) |
 | `ScanHigh` | Highest daily market value in the 14-day window, including today (decided 2026-10-14) | — (new) |
 | `ImportMarket` | Market value from the optional external file | `DBRegionMarketAvg` (only if imported) |
-| `SaleRate` | Your own sold ÷ (sold + expired) for the item, from the ledger | `DBRegionSaleRate` (personal, not regional) |
+| `SaleRate` | Your own sold ÷ (sold + expired) for the item, from the ledger (loads `Flipside_Ledger`; §5.8) | `DBRegionSaleRate` (personal, not regional) |
 
 Carried over: `avgBuy`, `avgSell`, `SmartAvgBuy`, `min`/`maxBuy`, `min`/`maxSell`, `Crafting`, `matPrice`, `Destroy`, `vendorBuy`, `vendorSell`, and the operation sources.
 
@@ -337,7 +337,7 @@ The user decided points 1 to 4. Points 5 to 9 are defaults from the study recomm
 5. Items below the minimum price are skipped (the `belowMin` default, §5.4).
 6. No keybinds in v1.
 7. TBC Buying and Selling come later. Step 6 starts on WoW: Forever only.
-8. The decision log is a table for the session. Flipside does not save it.
+8. The decision log is a table for the session. From step 7 PR9 Flipside also saves it in the ledger (§5.8, changed 2026-10-15). Before PR9 it is not saved. The Ledger page shows each saved entry as the detail of the matching row in its Auctions tab. A dry run shows as a row with the mark "dry run".
 9. The buying plan (`BuyingPlan`) is pure logic. It lists the items of all groups that have a Buying operation, with the maximum price for each item. It shows the buyable rows of live search results, and it stops with a reason: "above max price", "own auction only", "no results" or "no max price". For a commodity, the buy unit is a quantity at a quoted unit price. For an item, the buy unit is one auction. The option `showAboveMax` lets the UI show rows above the maximum, but never buy them.
 10. The Forever host can add many Flipside tabs (`ns.AuctionTabs.Register`). The Buying tab shows the shopping list and runs live searches (one item, or all items one at a time). It evaluates the rows and logs each decision. It lists the listings of the selected item grouped by price level (unit price, total quantity, number of listings, own marker). The Stack Price column follows the flavour flag `hasCommodityMarket` (true on Forever, false on TBC and on the other legacy flavours). If the flag is true and the selected item is a commodity, the list has no Stack Price column: the header and the cells are hidden, and the Status column takes the space. In all other cases, Stack Price is the unit price times the quantity of the listing that Buy next buys. On a legacy client every listing is a stack with a stack buyout, so every level shows a Stack Price.
 11. Buy next buys the next cheapest price level: the whole quantity at that unit price for a commodity, or the next auction for an item. It needs a ready client, a level that is not yours and a unit price at or under the maximum price. It never buys above the maximum price. Each purchase has two clicks (D26). Click 1 starts a commodity quote (`StartCommoditiesPurchase`) and the confirm box shows the server unit and total price and the quote time left. For an item, click 1 opens the confirm box with the buyout price. Click 2 buys (`ConfirmCommoditiesPurchase`, or `PlaceBid` with the buyout for an item). A quote total above the maximum price times the quantity shows in red, and the button reads "Buy anyway". Cancel, Escape, a closed Auction House or a left tab cancels the quote.
@@ -356,7 +356,8 @@ The user decided points 1 to 4. Points 5 to 9 are defaults from the study recomm
 18. **Potential profit (user request, 2026-10-15).** For the auctions that are left in the queue:
     - Net = post price x quantity - AH cut - deposit. The deposit is the client quote for each auction (`Deposit`); an unknown quote counts as 0.
     - vs vendor = Net - vendor sell price x quantity. The vendor price is the sell price of the item (`C_Item.GetItemInfo`, return 11, `sellPrice`). If it is unknown or 0, vs vendor shows "-".
-    - AH cut = 5% of the sale price, rounded to the nearest copper (`SellingPlan.AH_CUT`). **Unverified:** the Forever client source has no constant or API for the cut (searched 2026-10-15; the sale invoice mail returns the real cut after a sale). The rate is a Needs scoping item. A custom source `ahtax = 0.95` in the user's data uses the same rate.
+    - AH cut = 5% of the sale price, rounded to the nearest copper (`SellingPlan.AH_CUT`). This is an estimate for the time before a sale. The Forever client source has no constant or API for the cut (searched 2026-10-15). A custom source `ahtax = 0.95` in the user's data uses the same rate.
+    - Decided 2026-10-15: the estimate stays at 5%. The ledger does not use the estimate. It uses the real cut from the sale invoice: payout = bid + deposit - consignment (Forever `MailFrame.lua` lines 827-831). The cut is the `consignment` value (§5.8).
     - A negative value shows in red. A vs vendor gain shows in green. Each row shows Net; the bottom bar shows the total Net and the total vs vendor of the queue. If one item of the queue has no vendor price, the total vs vendor shows "-".
 19. **Selling tab layout (user request, 2026-10-15; own design).** The panel has four parts, from top to bottom (sizes for the 800 x 538 Forever Auction House frame; the panel needs about 780 x 440):
     - Toolbar (24 px): "Refresh bags", "Stop", the status message, the "Dry run (log only)" box and "Log".
@@ -384,7 +385,7 @@ s.searchLists keeps the request (:Requested() gives { id, autoSearch }, :ClearRe
 - A **mail list** is a named rule set: "send group X to character Y, keep N, send up to M".
 - Recipients can be saved once and reused across lists (alt names, Name-Realm).
 - One button sends everything due at this mailbox; a summary shows what will be sent before sending.
-- Inbox: open all, open by type, with a running gold total; opening feeds the ledger.
+- Inbox: open by type, with a running gold total. There is no open-all button in the MVP. When the user opens the mail, Flipside reads the invoices and feeds the ledger (§5.8, decided 2026-10-15).
 - Unlike TSM, mail lists *can* be exported, with recipient names stripped and replaced by placeholders.
 
 ### 5.6 Keep stock (new, unifies reference restock settings)
@@ -415,7 +416,111 @@ How features use it: Banking moves to and from the bank; Mail lists send shortfa
 - Same record types and views (sales, purchases, other income and expenses, expired, cancelled, resale).
 - **CSV export** of any view, in a documented column format.
 - `SaleRate` per item from your own sold and expired counts (§4).
-- Retention: full records for 180 days, then daily summaries per item (configurable).
+- Retention: full records for 180 days, then daily sums (configurable). See the ledger design below.
+- The ledger also records the source of each money or item change, and the money that comes in from each source (decided 2026-10-15).
+
+**Ledger design (decided 2026-10-15)**
+
+The user approved points 1 to 10 on 2026-10-15. They are binding. The idea is similar to the Journalator addon. Flipside copies no name, code or string format from it.
+
+1. **Storage (changes D25).**
+   - The ledger lives in the load-on-demand addon `Flipside_Ledger`. Its SavedVariables are `FlipsideLedgerDB` (TBC: `FlipsideLedgerDB_TBC`).
+   - During play, Flipside writes each new record to a buffer in the Main DB (`ledger.buffer`).
+   - Flipside loads the addon (`C_AddOns.LoadAddOn`) and moves the buffer into `FlipsideLedgerDB` in these cases: the user opens the Ledger page, a feature needs the ledger (for example `SaleRate`), the buffer reaches the cap, or the next login finds a buffer that is not empty.
+   - The cap is 500 records (setting `ledger.bufferCap`). The Main DB is saved at logout, so the buffer is not lost.
+   - At the cap Flipside forces the load and the move. It does this out of combat only. If the player is in combat, it waits until combat ends.
+   - Safe default: Flipside does not merge at logout. It is not verified that an addon that loads during `PLAYER_LOGOUT` saves its variables.
+   - If the load fails (the addon is missing or disabled), the buffer grows to a hard limit of 2,000 records. Then Flipside drops the oldest record for each new record, counts the drops, and shows one warning in chat for each session.
+   - The Main DB holds no ledger records after the move.
+2. **Retention.**
+   - Full records are kept for 180 days (setting `ledger.retentionDays`). This is the retention rule that §5.8 already gave.
+   - After that, a daily sum replaces them for each character, source and item key. The daily sum holds the day number, a record count, the quantity, the money in and the money out.
+   - The roll-up runs when the ledger addon loads, and once for each day. The daily sums stay, so `SaleRate` still works after 180 days.
+3. **Scope and key.**
+   - Records are for each character (`Name-Realm`). The page has a filter for one character or for all characters.
+   - The key format follows D22. `FlipsideLedgerDB` stores `records[region][ruleset][Name-Realm]`. The region is the client region text. The ruleset is "standard" on Forever.
+   - The ledger needs no extra realm key (D24). `Name-Realm` already holds the realm. The ruleset keeps a later split of the data possible without a rewrite.
+4. **Loot.**
+   - Flipside writes one record for each drop (all detail): one for each item and one for the looted money.
+   - The mob is the name of the last kill of the player in the combat log. If there is no kill in the last 60 s (setting `ledger.mobWindow`), the mob is "unknown".
+   - `GetLootSourceInfo` does not exist in the Forever client (checked against Ketho/wow-ui-source-forever commit bd2470a). Flipside does not use it.
+   - Looted money is recorded with its mob.
+   - The item value in the record is the vendor price at loot time. The `ScanMarket` value is computed when the user views the page. It is never stored.
+5. **Mail.**
+   - Flipside reads the invoices when the user opens the mail. There is no open-all button in the MVP (§5.5).
+   - The mail indexes shift when mail leaves the inbox. A mail is therefore never found again by its index.
+   - Each mail gets a fingerprint: sender, subject, money, attached item keys and quantities, and the invoice values. Two equal mails in one read get an occurrence number.
+   - Flipside saves the fingerprints for 31 days. A fingerprint that is already saved is not recorded again.
+   - Risk: a new sale that is equal to an older sale in the saved window (same buyer, item, quantity and price) can be missed. A check in PR3 looks at this risk.
+6. **Deposit and cut.**
+   - A deposit is an expense when the auction is posted. A sale refunds the deposit.
+   - The cut comes from the sale invoice: payout = bid + deposit - consignment (Forever `MailFrame.lua` lines 827-831).
+   - The estimate before a sale can still use 5% (§5.4 point 18). The ledger uses the real invoice cut.
+   - A sale gives two records: a sale (money = bid, cut = consignment) and a deposit refund (money = deposit). Their sum is the payout, so no money is counted twice.
+7. **Day boundary.** A ledger day starts at 00:00 UTC by the server clock (`GetServerTime`). Day number = floor(server time / 86,400). This is the same as D4 and `ScanClock`.
+8. **Decision logs.**
+   - The Buying and Selling decision logs are saved in the ledger (type `log`). This changes §5.4 point 8.
+   - A log record holds the time, character, tab, action (dry run, buy next or post next), item key, reason code, price, quantity and `dryRun`. It has the `ctx` of the trade it explains.
+   - Flipside writes the log records of a run when the run ends. It keeps them for 30 days (setting `ledger.logDays`) and then deletes them, with no daily sum. The user decided this on 2026-10-15.
+   - Decision log records have no tab of their own. The Ledger page shows them as the detail of the matching Auctions row (point 9).
+9. **Ledger page.**
+   - The page is in the Flipside window (`/flip`). It has these inner tabs: Sales, Purchases, Auctions, Income by source, Loot and Expenses (deposits, repairs, vendor purchases).
+   - Each tab has a totals row, a date range filter and the character filter.
+   - The Auctions tab shows the Auction House activity of the character: posts (item, quantity, price, deposit), cancels, expired auctions and purchases at the Auction House.
+   - A row of a post or purchase has a detail line (or a tooltip) with the matching log record: action and reason. The match uses `ctx`.
+   - A dry run has no trade. Its log record is a row of its own in the Auctions tab, with the mark "dry run".
+   - A row older than the log retention has no detail line.
+   - CSV export stays in scope (build step 7 PR8, with a documented column format).
+10. **Money tracking.**
+    - Flipside keeps the last value of `GetMoney()`. On `PLAYER_MONEY` it computes the change and labels it with the open context: merchant, loot, trade, mail, quest or Auction House.
+    - A change with no open context gets the source "unknown".
+    - A module that already wrote a record for a change (for example an invoice) claims the amount. The tracker then writes no second record for it.
+    - Known risk: `PLAYER_MONEY` has no payload. The order of the events (money event against the context event) is not verified.
+    - An in-game probe checks the risks (build step 7 PR0).
+
+**Sources and record types**
+
+The `source` field is one of these values. The `type` field sets the view.
+
+| Source | Type | Written by |
+| --- | --- | --- |
+| `ahSale` | `sale` | Sale invoice (PR3) |
+| `ahPurchase` | `purchase` | Auction House context (PR2) |
+| `ahPost` | `post` | Auction House context (PR2); item, quantity, buyout price and deposit; no money change |
+| `ahDeposit` | `expense` | Auction House context (PR2) |
+| `log` | `log` | Decision log (PR9); no money change |
+| `ahDepositRefund` | `income` | Sale invoice (PR3) |
+| `ahExpired`, `ahCancelled` | `expired`, `cancelled` | Mail (PR3); no money; used by `SaleRate` |
+| `loot` | `loot` | Loot window (PR4); one record for each item and one for money |
+| `vendorSale` | `income` | Merchant context (PR5) |
+| `vendorPurchase` | `expense` | Merchant context (PR5) |
+| `repair` | `expense` | Merchant context (PR5) |
+| `mailMoney` | `income` | Mail from players (PR3) |
+| `trade` | `income` or `expense` | Trade context (PR6) |
+| `quest` | `income` | Quest context (PR6) |
+| `unknown` | `income` or `expense` | Money tracker (PR2) |
+
+**Record fields**
+
+| Field | Meaning |
+| --- | --- |
+| `time` | Server time in UTC, whole seconds |
+| `char` | Character, `Name-Realm` |
+| `type` | `sale`, `purchase`, `post`, `income`, `expense`, `loot`, `expired`, `cancelled` or `log` |
+| `action`, `reason`, `tab`, `dryRun` | Log records only: the action (dry run, buy next or post next), the reason code, the tab (Buying or Selling) and the dry run flag |
+| `source` | Value from the source table |
+| `item` | Item key (D20); empty for money only |
+| `qty` | Item quantity; 0 for money only |
+| `money` | Whole copper, never negative; the type gives the direction |
+| `mob` | Mob name for loot; "unknown" if no kill matches |
+| `ctx` | Context id: the kind and a number for each session, for example `loot:12`; records of one event share it |
+| `fp` | Mail fingerprint (mail records only) |
+| `invoiceType`, `counterparty`, `bid`, `buyout`, `deposit`, `cut` | The fields that the invoice gives: the invoice type, the other player, the bid, the buyout, the deposit and the cut (`consignment`) |
+| `value` | Vendor price at loot time (loot items only) |
+
+Flipside checks the exact order of the invoice fields of `GetInboxInvoiceInfo` in the Forever source in PR3.
+
+**Packaging.** The release has two addon folders: `Flipside` and `Flipside_Ledger`. The TOC of `Flipside_Ledger` has `## LoadOnDemand: 1` and `## Dependencies: Flipside`.
 
 ### 5.9 Sniper (reference §5.2)
 
@@ -482,7 +587,7 @@ Right after each full scan, before raw listings are discarded, every listing is 
 
 ### 5.13 Deposit-aware posting (new)
 
-On Retail the deposit is returned on sale and lost on expiry; the AH keeps a 5% cut of the sale.
+On Retail the deposit is returned on sale and lost on expiry; the AH keeps a cut of the sale (the estimate is 5%; see §5.4 point 18).
 
 - Before posting, estimate expected value per auction: `P(sale) × (price × 0.95) − (1 − P(sale)) × deposit`.
 - `P(sale)` = your `SaleRate` for the item; if fewer than 5 past auctions, use a setting (default 30%) and say so in the decision log.
@@ -654,10 +759,11 @@ The reference model (§7–9) is kept: one account-wide SavedVariable, flat scop
 
 | File | Holds | Why separate |
 | --- | --- | --- |
-| Main DB | Settings, profiles, groups, operations, keep-stock rules, inventory, ledger | Small; changes every session |
+| Main DB | Settings, profiles, groups, operations, keep-stock rules, inventory, the small ledger buffer (§5.8) | Small; changes every session |
 | Scan DB | Daily price history per region and ruleset (§3.3) | Large; can be reset or shared without touching settings |
+| Ledger DB (`FlipsideLedgerDB`, addon `Flipside_Ledger`, changed 2026-10-15) | Ledger records and daily sums (§5.8) | Large; loads only on demand; can be reset without touching settings |
 
-A corrupted or oversized scan DB can be wiped from settings without losing configuration. Both carry a schema version with migrations on load.
+A corrupted or oversized scan DB or ledger DB can be wiped from settings without losing configuration. All three carry a schema version with migrations on load. The Main DB holds only the ledger buffer (at most the cap in §5.8), not the ledger.
 
 **Main DB design (decided 2026-10-14)**
 
@@ -730,7 +836,22 @@ The MVP is done when a player on WoW: Forever can scan, see prices in tooltips, 
 4. Groups and operations UI.
 5. Tooltips and inventory tracking. The tooltip price lines are configurable with the same formula language as operations. The player can show min, max and average values.
 6. AH tabs in Blizzard's Auction House frame: Buying, then Selling with dry run and decision log. Two new tabs, Selling and Buying (similar to the well-known Auctionator layout, in our own design), work from the player's groups and their operations.
-7. Mailbox parsing and the ledger; then Vendoring.
+7. Mailbox parsing and the ledger; then Vendoring. The ledger design is in §5.8. The work is split into pull requests (decided 2026-10-15):
+
+| PR | Content | Depends on |
+| --- | --- | --- |
+| PR0 | In-game probe: `PLAYER_MONEY` and context event order, combat log kill event, invoice fields, mail index shift | None |
+| PR1 | Ledger store and the `Flipside_Ledger` addon, with the buffer, the cap and the daily sums | None |
+| PR2 | Money tracker, with the Auction House purchase and deposit records | PR0, PR1 |
+| PR3 | Mail invoices: sales, deposit refunds, expired, mail money, fingerprints | PR0, PR1, PR2 |
+| PR4 | Loot: items, money and the mob | PR0, PR1, PR2 |
+| PR5 | Vendor and repair | PR0, PR1, PR2 |
+| PR6 | Trade and quest | PR0, PR1, PR2 |
+| PR7 | Ledger page with the inner tabs (Sales, Purchases, Auctions, Income by source, Loot, Expenses) and the filters | PR1; the tabs show the sources of PR2 to PR6 that exist |
+| PR8 | CSV export | PR7 |
+| PR9 | Decision logs of Buying and Selling saved in the ledger, and shown as the detail of the Auctions rows (dry run rows included) | PR1, PR2, PR7 and the step 6 tabs |
+
+PR3 to PR6 can go in any order after PR2.
 
 **Test strategy:** the formula compiler, market-value algorithm, selling decision rules and keep-stock maths are pure functions, so they get unit tests run outside the game (plain Lua with a mocked API). In-game features get a scripted checklist per release.
 
@@ -745,7 +866,8 @@ TSM behaviours this spec doesn't cover yet. Change the status as each one gets s
 | One-click macro and keybinds | Bindable button for post, cancel, buy, craft next | §3, §6.2 | Partly scoped (2026-10-14: no keybinds in v1; every buy is one click, D26) |
 | My Auctions view | Own auctions list replacing Blizzard's Auctions tab (Blizzard's Auctions tab stays; decision B) | §3 | Needs scoping |
 | Commodities vs items | Separate buy, sell and snipe paths for region commodities and individual listings | §3 | Partly scoped (2026-10-14: buy unit and post size defined in the step 6 decisions; snipe open) |
-| Auction House cut | The real cut rate in Forever for the profit estimate (§5.4 point 18); today 5% is a constant that no client source confirms | §5.4 | Needs scoping (2026-10-15: 5% used, unverified) |
+| Auction House cut | The real cut rate in Forever for the profit estimate (§5.4 point 18) | §5.4 | Scoped (2026-10-15: the estimate before a sale uses 5%; the ledger uses the real cut from the sale invoice, §5.8) |
+| Ledger | Storage, retention, record types, money tracking, loot, mail, page, build step 7 PR split | §5.7 | Scoped (2026-10-15; §5.8; Phase stays MVP) |
 | Retail crafting details | Quality tiers and optional reagents in item identity and crafting cost | §5.3 | Needs scoping |
 | Smaller settings | Forget character (function in step 5, button later), ignore guilds, sale and purchase sounds, chat output, slash commands | §5.11, §8.3 | Needs scoping |
 | Performance budgets | Memory, SavedVariables size, login time, tooltip speed (tooltip: 1 ms, decided 2026-10-14), scan processing | §10.3 | Needs scoping |
@@ -763,4 +885,4 @@ TSM behaviours this spec doesn't cover yet. Change the status as each one gets s
 - [ ] Scan DB size at 60+ days of retention — measure before fixing the storage format.
 - [ ] Guild sharing trust rule (§3.5): confirm "received data only fills gaps, never overrides your own scans".
 - [ ] Default thresholds: Great Deals (60% of market, 5 samples, 50g saving — likely too high for Forever's economy) and deposit-aware fallback sale rate (30%).
-- [ ] Features possibly forgotten — check against your play: crafting order fulfilment, trade-window tracking, item-level price buckets for gear, BMAH watch list (Forever has a BMAH), gold tracking per character.
+- [ ] Features possibly forgotten — check against your play: crafting order fulfilment, item-level price buckets for gear, BMAH watch list (Forever has a BMAH). Trade and gold tracking are in the ledger (§5.8).
