@@ -847,21 +847,28 @@ describe("LedgerPage", function()
             assert.is_nil(page.views.sales)
         end)
 
-        it("shows Money in, Money out and Net in the strip", function()
+        it("has no summary strip and keeps the totals row", function()
             build_overview()
             pick(page.rangeDropdown, "all")
             local totalIn, totalOut = expected(ME)
-            local strip = page.views.overview.strip
-            assert.are.equal(totalIn .. "c", strip.moneyIn:GetText())
-            assert.are.equal(totalOut .. "c", strip.moneyOut:GetText())
-            local net = totalIn - totalOut
-            assert.are.equal(net .. "c", strip.net:GetText())
             local view = page.views.overview
-            assert.are.equal(strip.moneyIn:GetText(), view.totals.moneyIn:GetText())
-            assert.are.equal(strip.moneyOut:GetText(), view.totals.moneyOut:GetText())
-            assert.are.equal(strip.net:GetText(), view.totals.net:GetText())
+            assert.is_nil(view.strip)
+            assert.are.equal(totalIn .. "c", view.totals.moneyIn:GetText())
+            assert.are.equal(totalOut .. "c", view.totals.moneyOut:GetText())
+            assert.are.equal((totalIn - totalOut) .. "c", view.totals.net:GetText())
         end)
 
+        it("gives the header the list insets and the cells none", function()
+            build_overview()
+            for _, tab in ipairs({ "overview", "sales" }) do
+                select(tab)
+                local view = page.views[tab]
+                assert.is_nil(view.options.left)
+                assert.is_nil(view.options.right)
+                assert.are.equal(view.list.contentInsets.left, view.headerOptions.left)
+                assert.are.equal(view.list.contentInsets.right, view.headerOptions.right)
+            end
+        end)
         it("counts every source, the daily sums and unknown", function()
             saved.sums = { EU = { standard = { [ME] = {
                 { day = 100, source = "vendorSale", item = "", count = 2, qty = 0, moneyIn = 90, moneyOut = 0 },
@@ -908,7 +915,7 @@ describe("LedgerPage", function()
 
         it("colours the net green when positive and red when negative", function()
             build_overview()
-            local net = page.views.overview.strip.net
+            local net = page.views.overview.totals.net
             assert.is_true(net.color[2] == 1 and net.color[1] < 0.5)
             pick(page.rangeDropdown, "today")
             -- Only money out in range: a negative net.
@@ -916,7 +923,7 @@ describe("LedgerPage", function()
                 money = 90, item = "", qty = 0 } }
             setup({ saved = saved })
             build_overview()
-            net = page.views.overview.strip.net
+            net = page.views.overview.totals.net
             assert.are.equal("-90c", net.text)
             assert.is_true(net.color[1] == 1 and net.color[2] < 0.5)
         end)
