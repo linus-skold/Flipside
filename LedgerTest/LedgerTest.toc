@@ -1,0 +1,7 @@
+## Interface: 16001
+## Title: LedgerTest
+## Notes: Throwaway probe of the money events for the Flipside ledger. Do not ship.
+## SavedVariables: LedgerTestDB
+# The interface number 16001 is the same as ScanTest (WoW: Forever).
+
+LedgerTest.lua

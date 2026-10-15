@@ -62,10 +62,12 @@ read_globals = {
 globals = {
     "FlipsideDB",
     "FlipsideScanDB",
+    "LedgerTestDB",
     "ScanTestDB",
     "SlashCmdList",
     "SLASH_FLIPSIDE1",
     "SLASH_FLIPSIDE2",
+    "SLASH_LEDGERTEST1",
     "SLASH_SCANTEST1",
     "StaticPopupDialogs",
     "UISpecialFrames",

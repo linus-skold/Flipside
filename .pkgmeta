@@ -5,6 +5,7 @@ ignore:
   - docs
   - ScanTest
   - ScanTest.lua*
+  - LedgerTest
   - lua51
   - .claude
   - .github
