@@ -12,16 +12,18 @@ local ADDON = "Blizzard_AuctionUI"
 local TAB_TEMPLATE = "AuctionTabTemplate"
 -- Same overlap as the Blizzard tab anchors.
 local TAB_GAP = -8
--- The legacy frame is 832 x 447. The panel sits below the title bar, above the tab row and the money frame.
-local INSETS = { left = 14, right = 40, top = 60, bottom = 40 }
--- The plain Auctions art, without the search bar of the Browse art.
+-- The legacy frame is 832 x 447. The panel covers the header strip, the list panel and the bottom bar of the Bids art
+-- (sort buttons at y 52, list panel y 74 to 409 and x 23 to 798, Blizzard buttons at 14 above the bottom edge).
+local INSETS = { left = 22, right = 34, top = 52, bottom = 14 }
+-- The Bids art: a full-width list panel, with no filter column and no boxes. Blizzard sets these textures for the
+-- Bids tab in AuctionFrameTab_OnClick. It sets all six again on the next tab click, so the art is restored.
 local ART = {
-    { "AuctionFrameTopLeft", "TopLeft" },
-    { "AuctionFrameTop", "Top" },
-    { "AuctionFrameTopRight", "TopRight" },
-    { "AuctionFrameBotLeft", "BotLeft" },
-    { "AuctionFrameBot", "Bot" },
-    { "AuctionFrameBotRight", "BotRight" },
+    { "AuctionFrameTopLeft", "Bid-TopLeft" },
+    { "AuctionFrameTop", "Auction-Top" },
+    { "AuctionFrameTopRight", "Auction-TopRight" },
+    { "AuctionFrameBotLeft", "Bid-BotLeft" },
+    { "AuctionFrameBot", "Auction-Bot" },
+    { "AuctionFrameBotRight", "Bid-BotRight" },
 }
 
 -- Start page scan bar: the top strip of the Browse page, right of the title and left of the close button.
@@ -37,7 +39,7 @@ local function setArt()
     for _, pair in ipairs(ART) do
         local texture = _G[pair[1]]
         if texture then
-            texture:SetTexture("Interface\\AuctionFrame\\UI-AuctionFrame-Auction-" .. pair[2])
+            texture:SetTexture("Interface\\AuctionFrame\\UI-AuctionFrame-" .. pair[2])
         end
     end
 end

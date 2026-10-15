@@ -268,6 +268,8 @@ A *Full Scan* button sits on the Flipside tab of the Auction House frame with a 
 
 The scan buttons also show on the start page of the Blizzard Auction House: a small bar with the same scan buttons, a Stop button and one status text. On Forever the bar sits in the bottom strip of the Buy page. On TBC Anniversary it sits in the top strip of the Browse page. It follows the Blizzard page. The profile setting `ui.startPageScanBar` (default on) hides it. A check box on the Flipside tab changes the setting.
 
+On TBC Anniversary the Flipside tab uses the Bids art of the Blizzard frame (full-width list panel, no filter column, no boxes). The tab has three parts. The header strip holds the scan buttons (80 x 22, same style), the Stop button in its own slot after them, and a progress bar to the right. The bar fills from the page of a running page scan. The status text sits on the bar. The body has two halves: the scan data (region, items stored, last scan, last result) on the left and the price lookup with its result on the right. The bottom bar holds the start page check box, Reset cooldown and Open Flipside. Blizzard sets all six art textures again on the next tab click, so the art of the other tabs returns when the user leaves the Flipside tab. The Forever tab layout does not change.
+
 ### 5.2 Item groups (reference §4.1)
 
 - Same tree model, exclusive membership and item-string granularity.
