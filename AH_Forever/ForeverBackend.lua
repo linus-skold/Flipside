@@ -288,6 +288,14 @@ function Backend.BuyItemAuction(auctionID, buyout)
     return call("PlaceBid", auctionID, buyout)
 end
 
+-- Info of one auction by id (doc 132): itemKey, itemLink, buyoutAmount. Nil if the client has none.
+function Backend.AuctionInfo(auctionID)
+    if not has("GetAuctionInfoByID") then
+        return nil
+    end
+    local ok, info = pcall(call, "GetAuctionInfoByID", auctionID)
+    return ok and info or nil
+end
 function Backend.BuyEvents()
     return {
         priceUpdated = "COMMODITY_PRICE_UPDATED",

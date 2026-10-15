@@ -6,7 +6,8 @@ local _, ns = ...
 -- CanReadOwned, OwnedEvent, OpenEvent, CloseEvent, CanScan, CanLiveSearch, LiveSearch, LiveResultEvents, LiveRows,
 -- IsReady, ReadyEvent, RefreshOwned, CanBuy, StartCommodityPurchase, ConfirmCommodityPurchase, CancelCommodityPurchase,
 -- QuoteSecondsLeft, BuyItemAuction, BuyEvents, CanPost, PostItem, PostCommodity, ConfirmPostItem, ConfirmPostCommodity,
--- Deposit, AvailablePostCount, IsSellItemValid, PostedEvent. A backend leaves out what its client cannot do.
+-- Deposit, AvailablePostCount, IsSellItemValid, PostedEvent, AuctionInfo. A backend leaves out what its client
+-- cannot do.
 local AuctionClient = {}
 ns.AuctionClient = AuctionClient
 
@@ -124,6 +125,9 @@ query("IsSellItemValid")
 query("PostedEvent")
 
 -- Search capture: nil means capture is off.
+-- AuctionInfo(auctionID) gives a table with itemLink, buyoutAmount and maybe quantity, or nil.
+query("AuctionInfo")
+
 query("Capture")
 
 -- Commodity flag of an item id: true, false, or nil if unknown.
@@ -146,3 +150,25 @@ action("PostItem")
 action("PostCommodity")
 action("ConfirmPostItem")
 action("ConfirmPostCommodity")
+
+-- Call listeners (the ledger). OnCall(fn) adds fn. The buy and post calls below tell each listener their name and
+-- arguments before the backend call. A listener error never stops the call. This is a plain Lua wrap: no hook.
+local listeners = {}
+
+function AuctionClient.OnCall(fn)
+    if type(fn) ~= "function" then
+        error("listener must be a function", 2)
+    end
+    listeners[#listeners + 1] = fn
+end
+
+for _, name in ipairs({ "ConfirmCommodityPurchase", "BuyItemAuction", "PostItem", "PostCommodity",
+    "ConfirmPostItem", "ConfirmPostCommodity" }) do
+    local inner = AuctionClient[name]
+    AuctionClient[name] = function(...)
+        for _, fn in ipairs(listeners) do
+            pcall(fn, name, ...)
+        end
+        return inner(...)
+    end
+end

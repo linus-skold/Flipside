@@ -5,12 +5,13 @@ local LedgerRecord = {}
 ns.LedgerRecord = LedgerRecord
 
 -- The record types. The type sets the view.
-LedgerRecord.TYPES = { "sale", "purchase", "income", "expense", "loot", "expired", "cancelled", "log" }
+LedgerRecord.TYPES = { "sale", "purchase", "post", "income", "expense", "loot", "expired", "cancelled", "log" }
 
 -- The sources, with the types that each source can have.
 local SOURCE_TYPES = {
     ahSale = { sale = true },
     ahPurchase = { purchase = true },
+    ahPost = { post = true },
     ahDeposit = { expense = true },
     ahDepositRefund = { income = true },
     ahExpired = { expired = true },
@@ -59,6 +60,7 @@ local DEFAULTS = {
     ["ledger.retentionDays"] = 180,
     ["ledger.mobWindow"] = 60,
     ["ledger.logDays"] = 30,
+    ["ledger.debug"] = false,
 }
 
 -- Returns a new table with the setting defaults.

@@ -712,6 +712,44 @@ local function openLedger()
     end
 end
 
+-- Create the money tracker; it needs the ledger buffer. It reads money changes and client events only.
+local function openLedgerMoney()
+    if not (ns.db and ns.ledgerBuffer and ns.LedgerMoney and type(GetMoney) == "function") then
+        return
+    end
+    local ok, err = pcall(function()
+        local client = ns.AuctionClient
+        ns.ledgerMoney = ns.LedgerMoney.Attach({
+            bus = ns.bus,
+            buffer = ns.ledgerBuffer,
+            getMoney = GetMoney,
+            now = GetTime,
+            serverTime = GetServerTime,
+            character = characterKey,
+            after = C_Timer.After,
+            report = ns.ReportError,
+            isSecret = type(issecretvalue) == "function" and issecretvalue or nil,
+            setting = function(key)
+                return ns.db:Get("account", key)
+            end,
+            itemKey = function(input, isCommodity)
+                return input ~= nil and ns.ItemString.ToKey(input, isCommodity) or nil
+            end,
+            client = client,
+            commodityMarket = ns.Flavour.hasCommodityMarket,
+            auctionInfo = client.AuctionInfo,
+            bagLink = function(bag, slot)
+                local info = C_Container.GetContainerItemInfo(bag, slot)
+                return info and info.hyperlink or nil
+            end,
+            deposit = client.Deposit,
+        })
+    end)
+    if not ok then
+        ns.ledgerMoney = nil
+        ns.ReportError("the money tracker is not available this session: " .. tostring(err))
+    end
+end
 -- Create the tooltip settings and attach the tooltip lines; they need the settings DB.
 local function openTooltip()
     if not (ns.db and ns.TooltipConfig and ns.Tooltip and ns.TooltipLines) then
@@ -772,6 +810,7 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
         openSearchLists()
         openInventory()
         openLedger()
+        openLedgerMoney()
         openTooltip()
         openUI()
         if ns.RecipeSearch then
@@ -1259,6 +1298,24 @@ local function tooltipStatsCommand()
         stats.count, stats.max, stats.total / stats.count))
 end
 
+-- Print the last 30 lines of the money tracker event ring, and its counters.
+local function ledgerDebugCommand()
+    local tracker = ns.ledgerMoney
+    if not tracker then
+        printLine("the money tracker is not available this session")
+        return
+    end
+    local stats = tracker:Stats()
+    printLine(string.format("ledger money: %d records, %d skipped, %d claimed, %d rejected, %d unpaired",
+        stats.records, stats.skipped, stats.claimed, stats.rejected, stats.unpaired))
+    local lines = tracker:DebugLines(30)
+    if #lines == 0 then
+        printLine("no events in the ring; set ledger.debug to true to fill it")
+    end
+    for _, line in ipairs(lines) do
+        printLine(line)
+    end
+end
 -- Remove the saved inventory of one character.
 local function forgetCommand(character)
     if not ns.holdings then
@@ -1306,6 +1363,9 @@ function ns.HandleSlash(msg)
         return
     elseif command == "forget" then
         forgetCommand(rest)
+        return
+    elseif command == "ledgerdebug" then
+        ledgerDebugCommand()
         return
     elseif command == "" then
         ns.OpenMainWindow()
