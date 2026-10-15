@@ -65,6 +65,7 @@ Shared\UI\Pages\GroupsPage.lua
 Shared\UI\Pages\OperationsPage.lua
 Shared\UI\TooltipTable.lua
 Shared\UI\Pages\TooltipPage.lua
+Shared\UI\Pages\LedgerPage.lua
 Shared\UI\MainWindow.lua
 Shared\Features\AuctionTab\AuctionTabs.lua
 Shared\Features\AuctionTab\ScanBar.lua

@@ -905,6 +905,12 @@ function ns.OpenMainWindow()
                 return ns.scanStore and ns.scanStore:Get(key) or nil
             end,
             buildPreview = ns.BuildTooltipPreview,
+            ledgerLoader = ns.ledgerLoader,
+            bus = ns.bus,
+            db = ns.db,
+            character = characterKey(),
+            now = GetServerTime,
+            after = C_Timer.After,
             getVersionLine = ns.VersionLine,
         })
         window:Toggle()
