@@ -15,6 +15,11 @@
 --   Then type /reload and send this file:
 --   WTF/Account/<ACCOUNT>/SavedVariables/LedgerTestDB.lua
 --
+-- The probe uses no hooksecurefunc and writes to no Blizzard table, so it cannot taint Blizzard code.
+-- Vendor, repair and mail actions show in MERCHANT_*, BAG_UPDATE_DELAYED, PLAYER_MONEY and MAIL_SUCCESS.
+-- If the "blocked from an action" popup shows again: run /console taintLog 1, repeat the action,
+-- then send Logs\taint.log.
+--
 -- Slash commands: /ledgertest on | off | dump | clear | stats
 --   on, off: print each entry to chat. dump: print the last 30 entries.
 --   clear: delete all entries. stats: count of entries for each event.
@@ -29,7 +34,6 @@ local MAIL_DEBOUNCE = 0.5
 local frame = CreateFrame("Frame")
 local db
 local lastMoney
-local merchantOpen = false
 local lastKill
 local combatGetter
 local combatChecked = false
@@ -41,14 +45,12 @@ local EVENTS = {
     "TRADE_SHOW", "TRADE_CLOSED", "TRADE_MONEY_CHANGED", "TRADE_ACCEPT_UPDATE",
     "MAIL_SHOW", "MAIL_CLOSED", "MAIL_INBOX_UPDATE", "MAIL_SUCCESS",
     "AUCTION_HOUSE_PURCHASE_COMPLETED", "COMMODITY_PURCHASE_SUCCEEDED", "AUCTION_HOUSE_AUCTION_CREATED",
-    "AUCTION_CANCELED", "CHAT_MSG_SYSTEM",
+    "AUCTION_CANCELED", "CHAT_MSG_SYSTEM", "MERCHANT_UPDATE", "BAG_UPDATE_DELAYED",
 }
 
 local FORMAT_GLOBALS = { "YOU_LOOT_MONEY", "LOOT_MONEY_SPLIT", "LOOT_ITEM_SELF", "LOOT_ITEM_SELF_MULTIPLE",
     "ERR_AUCTION_SOLD_S" }
 
-local MERCHANT_HOOKS = { "BuyMerchantItem", "BuybackItem", "RepairAllItems", "SellCursorItem" }
-local MAIL_HOOKS = { "TakeInboxMoney", "TakeInboxItem" }
 
 local function now()
     if type(_G.GetTimePreciseSec) == "function" then
@@ -68,7 +70,12 @@ end
 local function join(...)
     local parts = {}
     for i = 1, select("#", ...) do
-        parts[i] = tostring((select(i, ...)))
+        local v = (select(i, ...))
+        if type(_G.issecretvalue) == "function" and _G.issecretvalue(v) then
+            parts[i] = "<secret>"
+        else
+            parts[i] = tostring(v)
+        end
     end
     return table.concat(parts, " | ")
 end
@@ -231,11 +238,9 @@ handlers.LOOT_OPENED = logLoot
 handlers.COMBAT_LOG_EVENT_UNFILTERED = logCombat
 handlers.MAIL_INBOX_UPDATE = onMailInboxUpdate
 handlers.MERCHANT_SHOW = function(...)
-    merchantOpen = true
     log("MERCHANT_SHOW", join(...))
 end
 handlers.MERCHANT_CLOSED = function(...)
-    merchantOpen = false
     log("MERCHANT_CLOSED", join(...))
 end
 handlers.CHAT_MSG_SYSTEM = function(text, ...)
@@ -246,50 +251,6 @@ end
 for _, event in ipairs({ "TRADE_SHOW", "TRADE_CLOSED", "TRADE_MONEY_CHANGED", "TRADE_ACCEPT_UPDATE" }) do
     handlers[event] = function(...)
         log(event, join(join(...), tradeMoney()))
-    end
-end
-
-local function installHook(target, name, label, shouldLog)
-    local function hook(...)
-        if not shouldLog or shouldLog() then
-            log("HOOK_" .. label, join(...))
-        end
-    end
-    local ok, err
-    if name then
-        ok, err = pcall(hooksecurefunc, target, name, hook)
-    else
-        ok, err = pcall(hooksecurefunc, target, hook)
-    end
-    log("HOOK_INSTALL", join(label, ok and "ok" or ("error: " .. tostring(err))))
-end
-
-local function installHooks()
-    if type(_G.hooksecurefunc) ~= "function" then
-        log("HOOK_INSTALL", "missing: hooksecurefunc")
-        return
-    end
-    for _, name in ipairs(MERCHANT_HOOKS) do
-        if type(_G[name]) == "function" then
-            installHook(name, nil, name)
-        else
-            log("HOOK_INSTALL", join(name, "missing"))
-        end
-    end
-    for _, name in ipairs(MAIL_HOOKS) do
-        if type(_G[name]) == "function" then
-            installHook(name, nil, name)
-        else
-            log("HOOK_INSTALL", join(name, "missing"))
-        end
-    end
-    local container = _G.C_Container
-    if type(container) == "table" and type(container.UseContainerItem) == "function" then
-        installHook(container, "UseContainerItem", "UseContainerItem", function()
-            return merchantOpen
-        end)
-    else
-        log("HOOK_INSTALL", "C_Container.UseContainerItem missing")
     end
 end
 
@@ -316,7 +277,6 @@ local function onLogin()
     log("API", join("GetLootSourceInfo", type(_G.GetLootSourceInfo), "C_CombatLog.GetCurrentEventInfo",
         type(_G.C_CombatLog) == "table" and type(_G.C_CombatLog.GetCurrentEventInfo) or "missing",
         "CombatLogGetCurrentEventInfo", type(_G.CombatLogGetCurrentEventInfo)))
-    installHooks()
 end
 
 frame:SetScript("OnEvent", function(_, event, ...)
