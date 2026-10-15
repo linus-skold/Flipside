@@ -777,6 +777,40 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
             assert.are.equal(1, #client.posts)
         end)
     end)
+    describe("the sample fallback", function()
+        local function remount(samples)
+            tab = mount({
+                getRecord = function() return { latest = { time = 0 }, days = { { scans = samples } } } end,
+                now = function() return 3600 end,
+            })
+            ui = tab.ui
+        end
+
+        it("posts at the cheapest listing when the scan has too few samples", function()
+            remount(1)
+            selectCloth()
+            local entry = entryOf("10")
+            assert.are.equal("ready", entry.status)
+            assert.are.equal(119, entry.decision.price)
+            assert.are.equal("few samples, using the cheapest listing", entry.decision.reason)
+            assert.are.equal("few samples, using the cheapest listing", ns.SellingTab.InfoText(entry))
+        end)
+
+        it("skips with the old reason when no listing exists", function()
+            remount(1)
+            client.rows[10] = {}
+            pick("i10")
+            fire("ITEM_RESULTS", 10)
+            assert.are.equal("skip", entryOf("10").status)
+            assert.are.equal("too few samples: 1 of 3", entryOf("10").decision.reason)
+        end)
+
+        it("posts as before with enough samples", function()
+            remount(3)
+            selectCloth()
+            assert.are.equal("undercut", entryOf("10").decision.reason)
+        end)
+    end)
     describe("the bag sync after a post", function()
         it("drops an item from the list after its last post", function()
             selectCloth()

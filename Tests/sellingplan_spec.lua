@@ -96,13 +96,26 @@ describe("SellingPlan", function()
             assert.equal("no data for max price: scanmarket missing, scan again", candidate().reason)
         end)
 
-        it("sets a reason for stale data and few samples", function()
+        it("sets a reason for stale data", function()
             stats = { ageHours = 100, samples = 10 }
             assert.matches("stale", candidate().reason)
-            stats = { ageHours = 1, samples = 2 }
-            assert.matches("few samples", candidate().reason)
             stats = { ageHours = 1, samples = 3 }
             assert.is_nil(candidate().reason)
+            assert.is_nil(candidate().fewSamples)
+        end)
+
+        it("marks few samples and does not block the candidate", function()
+            stats = { ageHours = 1, samples = 2 }
+            local c = candidate()
+            assert.is_nil(c.reason)
+            assert.equal("too few samples: 2 of 3", c.fewSamples)
+            stats = { ageHours = 100, samples = 2 }
+            assert.matches("stale", candidate().reason)
+        end)
+
+        it("does not check the samples when the operation needs no scan data", function()
+            stats = { ageHours = 1, samples = 0 }
+            assert.is_nil(candidate({ needScanData = false }).fewSamples)
         end)
     end)
 
@@ -224,6 +237,49 @@ describe("SellingPlan", function()
         it("passes the post duration of the rule to the decision", function()
             assert.equal(12, SP.Decide(candidate({ duration = 12 }), {}, { maxStack = 20 }).duration)
             assert.equal(48, SP.Decide(candidate({ duration = 48 }), {}, { maxStack = 20 }).duration)
+        end)
+
+        describe("with too few samples", function()
+            before_each(function()
+                stats = { ageHours = 1, samples = 2 }
+            end)
+
+            it("prices from the cheapest listing minus the undercut, with a reason", function()
+                local d = SP.Decide(candidate({ undercut = 50 }), { row(4500), row(4800) }, { maxStack = 20 })
+                assert.equal("post", d.action)
+                assert.equal(4450, d.price)
+                assert.equal("few samples, using the cheapest listing", d.reason)
+            end)
+
+            it("uses the cheapest listing of another seller", function()
+                local d = SP.Decide(candidate(), { row(4500), row(5000, true) }, { maxStack = 20 })
+                assert.equal(4499, d.price)
+                local own = SP.Decide(candidate(), { row(4000, true), row(4500) }, { maxStack = 20 })
+                assert.equal("already lowest", own.reason)
+            end)
+
+            it("still keeps the minimum and maximum price of the rule", function()
+                local low = SP.Decide(candidate(), { row(500) }, { maxStack = 20 })
+                assert.equal("skip", low.action)
+                assert.equal("below minimum", low.reason)
+                local high = SP.Decide(candidate(), { row(20000) }, { maxStack = 20 })
+                assert.equal(9000, high.price)
+                assert.equal("above max, at max", high.reason)
+            end)
+
+            it("skips with the old reason when there is no listing", function()
+                local d = SP.Decide(candidate(), {}, { maxStack = 20 })
+                assert.equal("skip", d.action)
+                assert.equal("too few samples: 2 of 3", d.reason)
+            end)
+
+            it("posts at the market value with enough samples", function()
+                stats = { ageHours = 1, samples = 3 }
+                local d = SP.Decide(candidate(), {}, { maxStack = 20 })
+                assert.equal("post", d.action)
+                assert.equal(5000, d.price)
+                assert.equal("undercut", SP.Decide(candidate(), { row(4500) }, { maxStack = 20 }).reason)
+            end)
         end)
 
         it("skips on a safety failure", function()
