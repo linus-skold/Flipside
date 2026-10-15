@@ -36,11 +36,82 @@ local function validPosition(saved)
     return saved
 end
 
+-- The screen size, or nil when UIParent has no size yet.
+local function screenSize()
+    local width = UIParent.GetWidth and UIParent:GetWidth()
+    local height = UIParent.GetHeight and UIParent:GetHeight()
+    if type(width) == "number" and width > 0 and type(height) == "number" and height > 0 then
+        return width, height
+    end
+    return nil
+end
+
+local function clamp(value, low, high)
+    return math.max(low, math.min(high, value))
+end
+
+-- Make a window resizable with a grip in the bottom-right corner. See Kit.CreateWindow for the options.
+-- Newer clients have SetResizeBounds; older clients have SetMinResize and SetMaxResize.
+function Kit.MakeResizable(window, options)
+    local minWidth, minHeight = options.minWidth or 100, options.minHeight or 100
+    local function bounds()
+        local screenWidth, screenHeight = screenSize()
+        local maxWidth = options.maxWidth or screenWidth or 4096
+        local maxHeight = options.maxHeight or screenHeight or 4096
+        return minWidth, minHeight, math.max(minWidth, maxWidth), math.max(minHeight, maxHeight)
+    end
+    local function applyBounds()
+        local lowW, lowH, highW, highH = bounds()
+        if window.SetResizeBounds then
+            window:SetResizeBounds(lowW, lowH, highW, highH)
+        else
+            if window.SetMinResize then
+                window:SetMinResize(lowW, lowH)
+            end
+            if window.SetMaxResize then
+                window:SetMaxResize(highW, highH)
+            end
+        end
+        return lowW, lowH, highW, highH
+    end
+    window:SetResizable(true)
+    local lowW, lowH, highW, highH = applyBounds()
+    local saved = options.get and options.get()
+    if type(saved) == "table" and type(saved.width) == "number" and type(saved.height) == "number"
+        and saved.width == saved.width and saved.height == saved.height then
+        window:SetSize(clamp(saved.width, lowW, highW), clamp(saved.height, lowH, highH))
+    end
+    window:HookScript("OnShow", applyBounds)
+
+    local grip = CreateFrame("Button", nil, window)
+    grip:SetSize(16, 16)
+    grip:SetPoint("BOTTOMRIGHT", window, "BOTTOMRIGHT", -4, 4)
+    grip:SetFrameLevel(window:GetFrameLevel() + 10)
+    grip:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
+    grip:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
+    grip:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
+    grip:SetScript("OnMouseDown", function()
+        applyBounds()
+        window:StartSizing("BOTTOMRIGHT")
+    end)
+    grip:SetScript("OnMouseUp", function()
+        window:StopMovingOrSizing()
+        if options.set then
+            options.set({ width = window:GetWidth(), height = window:GetHeight() })
+        end
+    end)
+    window.ResizeGrip = grip
+    return grip
+end
+
 -- Create a hidden, movable window from a client frame template.
 -- options: width, height, title, portrait (texture path or nil), strata (default "MEDIUM"),
 -- square (true gives the plain square frame with no portrait and no round ring),
 -- savePosition ({ get = fn, set = fn }: get() gives the saved { point, relativePoint, x, y } or nil;
--- set(position) saves it when a drag stops, and set(nil) clears it).
+-- set(position) saves it when a drag stops, and set(nil) clears it),
+-- resize ({ minWidth, minHeight, maxWidth, maxHeight, get, set }: a grip in the bottom-right corner resizes the window.
+-- The maximum is the screen size unless given. get() gives the saved { width, height } or nil; set(size) saves it
+-- when the drag stops).
 function Kit.CreateWindow(name, options)
     options = options or {}
     local window, hasPortrait = createFrame(name)
@@ -71,6 +142,10 @@ function Kit.CreateWindow(name, options)
         if window.SetPortraitShown then
             window:SetPortraitShown(false)
         end
+    end
+
+    if options.resize then
+        Kit.MakeResizable(window, options.resize)
     end
 
     window:SetFrameStrata(options.strata or "MEDIUM")
