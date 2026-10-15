@@ -25,6 +25,7 @@ local ACTION_TOP = -28
 local DETAILS_TOP = -56
 local DETAILS_HEIGHT = 72
 local HEADER_HEIGHT = 18
+local TOP_ROOM = 28 -- height that the lower part gains when the Stop button and the message line are empty
 local TREE_TOP = DETAILS_TOP - DETAILS_HEIGHT - 4 - HEADER_HEIGHT
 local RED = { 1, 0.3, 0.3 }
 local GREEN = { 0.4, 1, 0.4 }
@@ -450,8 +451,33 @@ Tab.__index = Tab
 
 function Tab:_Say(text)
     if self.ui then
-        self.ui.message:SetText(text or "")
+        text = text or ""
+        self.ui.message:SetText(text)
+        self.ui.message:SetShown(text ~= "")
+        self:_Layout()
     end
+end
+
+-- Move the action row, the details pane and the list up when the top row is empty. The list bottom stays.
+function Tab:_Layout()
+    local ui = self.ui
+    if not (ui and ui.postNext) then
+        return
+    end
+    local up = (ui.message:IsShown() or ui.stop:IsShown()) and 0 or TOP_ROOM
+    local content = self.content
+    local headerTop = DETAILS_TOP - DETAILS_HEIGHT - 4 + up
+    ui.postNext:ClearAllPoints()
+    ui.postNext:SetPoint("TOPLEFT", content, "TOPLEFT", 0, ACTION_TOP + up)
+    ui.details.frame:ClearAllPoints()
+    ui.details.frame:SetPoint("TOPLEFT", content, "TOPLEFT", 0, DETAILS_TOP + up)
+    ui.details.frame:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, DETAILS_TOP + up)
+    ui.headers.frame:ClearAllPoints()
+    ui.headers.frame:SetPoint("TOPLEFT", content, "TOPLEFT", 0, headerTop)
+    ui.headers.frame:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, headerTop)
+    ui.tree.frame:ClearAllPoints()
+    ui.tree.frame:SetPoint("TOPLEFT", content, "TOPLEFT", 0, headerTop - HEADER_HEIGHT)
+    ui.tree.frame:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", 0, 0)
 end
 
 -- The vendor sell price of one item of an entry, or nil. It asks the client again until it has a price.
@@ -614,7 +640,7 @@ function Tab:_Next()
         local entry = queue.list[queue.pos + 1]
         if not entry then
             self.queue = nil
-            self:_Say("search finished")
+            self:_Say("")
             self:_Update()
             return
         end
@@ -1721,6 +1747,7 @@ function Tab:_Update()
     end
     local client = self.deps.client
     ui.stop:SetShown(self.queue ~= nil)
+    self:_Layout()
     ui.tree:Refresh()
     local current = self:_Current()
     ui.postNext:SetText(self:PostLabel())
@@ -1907,6 +1934,9 @@ function Tab:_BuildContent()
     if ui.progress.SetWordWrap then
         ui.progress:SetWordWrap(false)
     end
+    ui.message:Hide()
+    ui.stop:Hide()
+    self:_Layout()
 end
 
 -- Build the panel in the parent frame and listen for the search events.
