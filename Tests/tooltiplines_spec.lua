@@ -122,6 +122,90 @@ describe("TooltipLines", function()
         end)
     end)
 
+    describe("FormatMoney with the client formatter", function()
+        local saved, colorblind
+
+        local function sep(n)
+            local s = tostring(n)
+            local prev
+            repeat
+                prev = s
+                s = s:gsub("^(-?%d+)(%d%d%d)", "%1,%2")
+            until s == prev
+            return s
+        end
+
+        -- Same rules as the client GetMoneyString in Blizzard_SharedXML/FormattingUtil.lua.
+        local function fake(money, separate)
+            local g, s, c = math.floor(money / 10000), math.floor((money % 10000) / 100), money % 100
+            local gt, st, ct
+            if colorblind then
+                gt, st, ct = (separate and sep(g) or g) .. "g", s .. "s", c .. "c"
+            else
+                gt = (separate and sep(g) or g) .. "|Gold|"
+                st, ct = s .. "|Silver|", c .. "|Copper|"
+            end
+            local out = {}
+            if g > 0 then out[#out + 1] = gt end
+            if s > 0 then out[#out + 1] = st end
+            if c > 0 or #out == 0 then out[#out + 1] = ct end
+            return table.concat(out, " ")
+        end
+
+        before_each(function()
+            saved = _G.GetMoneyString
+            colorblind = false
+            _G.GetMoneyString = fake
+        end)
+
+        after_each(function()
+            _G.GetMoneyString = saved
+        end)
+
+        it("uses coin icons by default", function()
+            assert.are.equal("12|Gold| 40|Silver| 7|Copper|", TL.FormatMoney(124007))
+            assert.are.equal("1,234|Gold| 5|Silver|", TL.FormatMoney(12340500))
+            assert.are.equal("1|Gold| 5|Copper|", TL.FormatMoney(10005))
+        end)
+
+        it("uses letters in colorblind mode", function()
+            colorblind = true
+            assert.are.equal("12g 40s 7c", TL.FormatMoney(124007))
+            assert.are.equal("1,234g 5s", TL.FormatMoney(12340500))
+            assert.are.equal("1g 5c", TL.FormatMoney(10005))
+        end)
+
+        it("follows a change of the setting at run time", function()
+            assert.are.equal("3|Silver| 25|Copper|", TL.FormatMoney(325))
+            colorblind = true
+            assert.are.equal("3s 25c", TL.FormatMoney(325))
+            colorblind = false
+            assert.are.equal("3|Silver| 25|Copper|", TL.FormatMoney(325))
+        end)
+
+        it("handles zero, negative values and rounding in both modes", function()
+            assert.are.equal("0|Copper|", TL.FormatMoney(0))
+            assert.are.equal("-3|Silver| 25|Copper|", TL.FormatMoney(-325))
+            assert.are.equal("2|Copper|", TL.FormatMoney(1.5))
+            colorblind = true
+            assert.are.equal("0c", TL.FormatMoney(0))
+            assert.are.equal("-3s 25c", TL.FormatMoney(-325))
+            assert.are.equal("-1c", TL.FormatMoney(-1))
+            assert.are.equal("2c", TL.FormatMoney(1.5))
+        end)
+
+        it("keeps every coin unit and the Alt stack value in both modes", function()
+            for _, mode in ipairs({ false, true }) do
+                colorblind = mode
+                local single = TL.FormatMoney(10101)
+                local stack = TL.FormatMoney(10101 * 5)
+                assert.are.equal(3, select(2, single:gsub("%S+", "")))
+                assert.are.equal(3, select(2, stack:gsub("%S+", "")))
+                assert.are_not.equal(single, stack)
+            end
+        end)
+    end)
+
     describe("FormatAge", function()
         it("formats hours and days", function()
             assert.are.equal("< 1 h", TL.FormatAge(0.4))

@@ -29,15 +29,20 @@ local function withSeparators(n)
     return out
 end
 
--- Returns every non-zero unit as text, such as "12g 40s 7c". Rounds half up to whole copper. "0c" for zero.
+-- Returns every non-zero unit as coin icons, or as letters such as "12g 40s 7c" in colorblind mode.
+-- The client GetMoneyString reads the colorblind setting at each call. Rounds half up to whole copper.
+-- Without the client function (tests, tools) it returns letters. Zero is one copper unit.
 function TooltipLines.FormatMoney(copper)
     copper = math.floor((copper or 0) + 0.5)
-    if copper == 0 then
-        return "0c"
-    end
     local sign = ""
     if copper < 0 then
         sign, copper = "-", -copper
+    end
+    if type(GetMoneyString) == "function" then
+        return sign .. GetMoneyString(copper, true)
+    end
+    if copper == 0 then
+        return "0c"
     end
     local gold = math.floor(copper / 10000)
     local silver = math.floor((copper % 10000) / 100)
