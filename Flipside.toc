@@ -49,6 +49,10 @@ Shared\Services\Holdings.lua
 Shared\Services\HoldingsRead.lua
 Shared\Services\TooltipConfig.lua
 Shared\Services\TooltipLines.lua
+Shared\Services\LedgerRecord.lua
+Shared\Services\LedgerBuffer.lua
+Shared\Services\LedgerStore.lua
+Shared\Services\LedgerLoader.lua
 Shared\UI\Kit\Theme.lua
 Shared\UI\Kit\Window.lua
 Shared\UI\Kit\Widgets.lua

@@ -14,7 +14,8 @@ local GLOBAL_NAMES = {
     "PanelTemplates_SetTab", "InCombatLockdown", "ScrollUtil", "CreateDataProvider",
     "CreateScrollBoxListLinearView", "CreateTreeDataProvider", "CreateScrollBoxListTreeListView", "MenuUtil",
     "Enum", "TooltipDataProcessor", "IsAltKeyDown", "GetInboxNumItems", "GetInboxItemLink", "GetInboxItem",
-    "FlipsideDB_TBC", "FlipsideScanDB_TBC", "NUM_BAG_SLOTS", "NUM_BANKBAGSLOTS", "BANK_CONTAINER",
+    "FlipsideDB_TBC", "FlipsideScanDB_TBC", "FlipsideLedgerDB", "FlipsideLedgerDB_TBC", "C_AddOns", "LoadAddOn",
+    "NUM_BAG_SLOTS", "NUM_BANKBAGSLOTS", "BANK_CONTAINER",
 }
 
 local frameMethods = {}
@@ -417,6 +418,15 @@ function M.reset(options)
     M.tabCalls = {} -- PanelTemplates_SetNumTabs and PanelTemplates_SetTab calls
     M.tooltip = { shown = false, title = nil, lines = {} }
     M.scrollInit = nil -- last ScrollUtil.InitScrollBoxListWithScrollBar call
+
+    M.addOnLoads = {} -- names that C_AddOns.LoadAddOn was called with
+    M.addOnLoadResult = { true } -- loaded, reason
+    _G.C_AddOns = {
+        LoadAddOn = function(name)
+            M.addOnLoads[#M.addOnLoads + 1] = name
+            return M.addOnLoadResult[1], M.addOnLoadResult[2]
+        end,
+    }
 
     _G.UISpecialFrames = {}
     _G.UIParent = newObject("Frame", "UIParent")

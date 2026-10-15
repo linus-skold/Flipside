@@ -16,7 +16,7 @@ ns.Flavour = {
     scopeIncludesRealm = false,
     captureEnabled = true,
     hasCommodityMarket = true, -- stackables trade as commodities (D15)
-    savedVariables = { main = "FlipsideDB", scan = "FlipsideScanDB" },
+    savedVariables = { main = "FlipsideDB", scan = "FlipsideScanDB", ledger = "FlipsideLedgerDB" },
     -- Bag and bank container ids; each call returns a new list.
     bagIDs = function()
         return range(0, 5)
