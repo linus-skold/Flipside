@@ -108,4 +108,27 @@ describe("Kit columns", function()
         assert.are.equal("text", cells.c.text)
         assert.are.equal(header.labels.b.justify, cells.b.justify)
     end)
+
+    it("leaves a hidden column out of the layout and the anchors", function()
+        local cols = { { key = "a", width = 100 }, { key = "b", width = 50, hidden = true }, { key = "c" } }
+        local layout = Kit.ColumnLayout(cols, 400, { gap = 10 })
+        assert.are.equal(2, #layout)
+        assert.are.equal(290, layout[2].width)
+        local anchors = Kit.ColumnAnchors(cols, { gap = 10 })
+        assert.are.same({ "a", "c" }, { anchors[1].key, anchors[2].key })
+        assert.are.equal(110, anchors[2].x)
+    end)
+
+    it("hides and shows the labels with the hidden flag", function()
+        local cols = { { key = "a", title = "A", width = 100 }, { key = "b", title = "B", width = 50 }, { key = "c" } }
+        local header = Kit.CreateColumnHeader(CreateFrame("Frame"), cols, { gap = 10 })
+        assert.is_true(header.labels.b.shown)
+        cols[2].hidden = true
+        Kit.LayoutColumnLabels(header.labels, header.frame, cols, { gap = 10 })
+        assert.is_false(header.labels.b.shown)
+        assert.is_true(header.labels.c.shown)
+        cols[2].hidden = false
+        Kit.LayoutColumnLabels(header.labels, header.frame, cols, { gap = 10 })
+        assert.is_true(header.labels.b.shown)
+    end)
 end)

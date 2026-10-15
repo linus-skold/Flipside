@@ -337,9 +337,9 @@ The user decided points 1 to 4. Points 5 to 9 are defaults from the study recomm
 5. Items below the minimum price are skipped (the `belowMin` default, §5.4).
 6. No keybinds in v1.
 7. TBC Buying and Selling come later. Step 6 starts on WoW: Forever only.
-8. The decision log is a table for the session. From step 7 PR9 Flipside also saves it in the ledger (§5.8, changed 2026-10-15). Before PR9 it is not saved.
+8. The decision log is a table for the session. From step 7 PR9 Flipside also saves it in the ledger (§5.8, changed 2026-10-15). Before PR9 it is not saved. The Ledger page shows each saved entry as the detail of the matching row in its Auctions tab. A dry run shows as a row with the mark "dry run".
 9. The buying plan (`BuyingPlan`) is pure logic. It lists the items of all groups that have a Buying operation, with the maximum price for each item. It shows the buyable rows of live search results, and it stops with a reason: "above max price", "own auction only", "no results" or "no max price". For a commodity, the buy unit is a quantity at a quoted unit price. For an item, the buy unit is one auction. The option `showAboveMax` lets the UI show rows above the maximum, but never buy them.
-10. The Forever host can add many Flipside tabs (`ns.AuctionTabs.Register`). The Buying tab shows the shopping list and runs live searches (one item, or all items one at a time). It evaluates the rows and logs each decision. It lists the listings of the selected item grouped by price level (unit price, total quantity, number of listings, own marker). The Stack Price column follows the flavour flag `hasCommodityMarket` (true on Forever, false on TBC and on the other legacy flavours). If the flag is true and the level is a commodity, the cell is empty. In all other cases, Stack Price is the unit price times the quantity of the listing that Buy next buys. On a legacy client every listing is a stack with a stack buyout, so every level shows a Stack Price.
+10. The Forever host can add many Flipside tabs (`ns.AuctionTabs.Register`). The Buying tab shows the shopping list and runs live searches (one item, or all items one at a time). It evaluates the rows and logs each decision. It lists the listings of the selected item grouped by price level (unit price, total quantity, number of listings, own marker). The Stack Price column follows the flavour flag `hasCommodityMarket` (true on Forever, false on TBC and on the other legacy flavours). If the flag is true and the selected item is a commodity, the list has no Stack Price column: the header and the cells are hidden, and the Status column takes the space. In all other cases, Stack Price is the unit price times the quantity of the listing that Buy next buys. On a legacy client every listing is a stack with a stack buyout, so every level shows a Stack Price.
 11. Buy next buys the next cheapest price level: the whole quantity at that unit price for a commodity, or the next auction for an item. It needs a ready client, a level that is not yours and a unit price at or under the maximum price. It never buys above the maximum price. Each purchase has two clicks (D26). Click 1 starts a commodity quote (`StartCommoditiesPurchase`) and the confirm box shows the server unit and total price and the quote time left. For an item, click 1 opens the confirm box with the buyout price. Click 2 buys (`ConfirmCommoditiesPurchase`, or `PlaceBid` with the buyout for an item). A quote total above the maximum price times the quantity shows in red, and the button reads "Buy anyway". Cancel, Escape, a closed Auction House or a left tab cancels the quote.
 12. Price jump warning: before it buys a level whose unit price is more than the threshold above the previous level bought in this run (or above the first level if none is bought yet), a box says "Price jumps from X to Y (+Z%). Keep buying?" with "Keep buying" and "Stop". The default threshold is 25 percent. The Buying tab edits it, and the profile saves it as `buying.jumpPercent`. "Keep buying" is the click that starts the purchase. "Stop" ends the run.
 13. After a success, the tab logs "bought N at X", reads the rows of the item again and moves to the next level. After a failure it logs the reason and reads the rows again. The check box "Dry run" (default off) only logs "would buy N at X". Result events: `COMMODITY_PURCHASE_SUCCEEDED` and `COMMODITY_PURCHASE_FAILED` for a commodity, `AUCTION_HOUSE_PURCHASE_COMPLETED` and `AUCTION_HOUSE_SHOW_ERROR` for an item.
@@ -377,7 +377,10 @@ s.SearchLists.New(db, { bus, isAuctionHouseOpen });
 s.searchLists is the live object. Methods: :List() gives { { id, name, count } } sorted by name; :Get(id) gives { id, name, items = { { itemID, key, name } } }; :Create(name, items) gives the id; :Upsert(name, items) replaces the items of the list with that name or makes it, and gives the id; :Rename(id, name); :Delete(id); :AddItem(id, item); :RemoveItem(id, index). A failed call gives nil and a text. A change emits the bus event Flipside.SearchListsChanged.
 23. **Open a search list (contract for other features).** The bus event Flipside.SearchListOpen with (listID, autoSearch) makes the Buying tab select that list. If the Auction House is open and autoSearch is true, the tab starts "Search all". If the Auction House is closed, 
 s.searchLists keeps the request (:Requested() gives { id, autoSearch }, :ClearRequested() clears it) and the tab applies it the next time it opens, with the search if autoSearch is true.
-24. **Buying tab layout (user request, 2026-10-15).** The left side has two sources: "Groups" (the shopping list of the groups) and "Search lists". The Search lists source shows a list picker with New, Rename and Delete (Delete asks to confirm), a name box for New and Rename, the item box with Add, and the items of the selected list. Each item row has a remove button. The right side (price levels, Buy next, dry run, jump warning, confirm) is the same for both sources. Lists hold items only, no quantities.### 5.5 Mail lists (reference §5.4 Mailing)
+24. **Buying tab layout (user request, 2026-10-15).** The left side has two sources: "Groups" (the shopping list of the groups) and "Search lists". The Search lists source shows a list picker with New, Rename and Delete (Delete asks to confirm), a name box for New and Rename, the item box with Add, and the items of the selected list. Each item row has a remove button. The right side (price levels, Buy next, dry run, jump warning, confirm) is the same for both sources. Lists hold items only, no quantities.
+25. **Buying item tree (user request, 2026-10-15).** The item list on the left side is a tree. The group nodes (the same groups as in the Selling tab) hold the item nodes. A group node shows only if it holds an item, directly or in a subgroup. An item that is in no group goes under the last node "Not in a group". An item is in one group only. A click on a group node collapses or expands it and does not select it. The rows are 22 pixels high: a small icon, the name and the maximum price. The selected item row keeps the Kit highlight. A click on an item row selects the item and starts its search at once. This is a read, not a buy, so D26 does not change. If a search runs, the tab holds the new search and starts it when the first search ends. It starts the held search only if the item is still selected. The tab makes no search if live search is not available. The tab has no "Refresh", "Search" or "Search all" button. The tab builds the list again each time it opens or when the source or the search list changes. "Search all" still runs for a search list that another feature opens with autoSearch (point 23). "Stop" shows while such a run is active. The source buttons are on the top row, and the lists and the price levels use the free space.
+
+### 5.5 Mail lists (reference §5.4 Mailing)
 
 - A **mail list** is a named rule set: "send group X to character Y, keep N, send up to M".
 - Recipients can be saved once and reused across lists (alt names, Name-Realm).
@@ -430,7 +433,6 @@ The user approved points 1 to 10 on 2026-10-15. They are binding. The idea is si
    - If the load fails (the addon is missing or disabled), the buffer grows to a hard limit of 2,000 records. Then Flipside drops the oldest record for each new record, counts the drops, and shows one warning in chat for each session.
    - The Main DB holds no ledger records after the move.
    - Access point (decided 2026-10-15, PR1): `Flipside_Ledger` has no Lua code and no shared table. All ledger code is in `Flipside` (`LedgerBuffer`, `LedgerStore`, `LedgerLoader`). After `LoadAddOn` returns, the client has put the saved table in the global `FlipsideLedgerDB` (TBC: `FlipsideLedgerDB_TBC`), and `LedgerStore` works on that table. No new global exists. The TBC ledger TOC is `Flipside_Ledger_TBC.toc`.
-   - Buffer settings (account scope): `ledger.buffer`, `ledger.bufferCap` 500, `ledger.hardLimit` 2000, `ledger.retentionDays` 180, `ledger.mobWindow` 60, `ledger.logDays` 30.
 2. **Retention.**
    - Full records are kept for 180 days (setting `ledger.retentionDays`). This is the retention rule that §5.8 already gave.
    - After that, a daily sum replaces them for each character, source and item key. The daily sum holds the day number, a record count, the quantity, the money in and the money out.
@@ -459,11 +461,16 @@ The user approved points 1 to 10 on 2026-10-15. They are binding. The idea is si
 7. **Day boundary.** A ledger day starts at 00:00 UTC by the server clock (`GetServerTime`). Day number = floor(server time / 86,400). This is the same as D4 and `ScanClock`.
 8. **Decision logs.**
    - The Buying and Selling decision logs are saved in the ledger (type `log`). This changes §5.4 point 8.
-   - A log record holds the time, character, tab, item key, reason code, price and quantity, and whether the run was a dry run.
-   - Proposed default (not decided by the user): Flipside writes the log records of a run when the run ends. It keeps them for 30 days (setting `ledger.logDays`) and then deletes them, with no daily sum.
+   - A log record holds the time, character, tab, action (dry run, buy next or post next), item key, reason code, price, quantity and `dryRun`. It has the `ctx` of the trade it explains.
+   - Flipside writes the log records of a run when the run ends. It keeps them for 30 days (setting `ledger.logDays`) and then deletes them, with no daily sum. The user decided this on 2026-10-15.
+   - Decision log records have no tab of their own. The Ledger page shows them as the detail of the matching Auctions row (point 9).
 9. **Ledger page.**
-   - The page is in the Flipside window (`/flip`). It has inner tabs: Sales, Purchases, Income by source, Loot and Expenses (deposits, repairs, vendor purchases).
+   - The page is in the Flipside window (`/flip`). It has these inner tabs: Sales, Purchases, Auctions, Income by source, Loot and Expenses (deposits, repairs, vendor purchases).
    - Each tab has a totals row, a date range filter and the character filter.
+   - The Auctions tab shows the Auction House activity of the character: posts (item, quantity, price, deposit), cancels, expired auctions and purchases at the Auction House.
+   - A row of a post or purchase has a detail line (or a tooltip) with the matching log record: action and reason. The match uses `ctx`.
+   - A dry run has no trade. Its log record is a row of its own in the Auctions tab, with the mark "dry run".
+   - A row older than the log retention has no detail line.
    - CSV export stays in scope (build step 7 PR8, with a documented column format).
 10. **Money tracking.**
     - Flipside keeps the last value of `GetMoney()`. On `PLAYER_MONEY` it computes the change and labels it with the open context: merchant, loot, trade, mail, quest or Auction House.
@@ -480,7 +487,9 @@ The `source` field is one of these values. The `type` field sets the view.
 | --- | --- | --- |
 | `ahSale` | `sale` | Sale invoice (PR3) |
 | `ahPurchase` | `purchase` | Auction House context (PR2) |
+| `ahPost` | `post` | Auction House context (PR2); item, quantity, buyout price and deposit; no money change |
 | `ahDeposit` | `expense` | Auction House context (PR2) |
+| `log` | `log` | Decision log (PR9); no money change |
 | `ahDepositRefund` | `income` | Sale invoice (PR3) |
 | `ahExpired`, `ahCancelled` | `expired`, `cancelled` | Mail (PR3); no money; used by `SaleRate` |
 | `loot` | `loot` | Loot window (PR4); one record for each item and one for money |
@@ -498,7 +507,8 @@ The `source` field is one of these values. The `type` field sets the view.
 | --- | --- |
 | `time` | Server time in UTC, whole seconds |
 | `char` | Character, `Name-Realm` |
-| `type` | `sale`, `purchase`, `income`, `expense`, `loot`, `expired`, `cancelled` or `log` |
+| `type` | `sale`, `purchase`, `post`, `income`, `expense`, `loot`, `expired`, `cancelled` or `log` |
+| `action`, `reason`, `tab`, `dryRun` | Log records only: the action (dry run, buy next or post next), the reason code, the tab (Buying or Selling) and the dry run flag |
 | `source` | Value from the source table |
 | `item` | Item key (D20); empty for money only |
 | `qty` | Item quantity; 0 for money only |
@@ -838,9 +848,9 @@ The MVP is done when a player on WoW: Forever can scan, see prices in tooltips, 
 | PR4 | Loot: items, money and the mob | PR0, PR1, PR2 |
 | PR5 | Vendor and repair | PR0, PR1, PR2 |
 | PR6 | Trade and quest | PR0, PR1, PR2 |
-| PR7 | Ledger page with the inner tabs and the filters | PR1; the tabs show the sources of PR2 to PR6 that exist |
+| PR7 | Ledger page with the inner tabs (Sales, Purchases, Auctions, Income by source, Loot, Expenses) and the filters | PR1; the tabs show the sources of PR2 to PR6 that exist |
 | PR8 | CSV export | PR7 |
-| PR9 | Decision logs of Buying and Selling saved in the ledger | PR1 and the step 6 tabs |
+| PR9 | Decision logs of Buying and Selling saved in the ledger, and shown as the detail of the Auctions rows (dry run rows included) | PR1, PR2, PR7 and the step 6 tabs |
 
 PR3 to PR6 can go in any order after PR2.
 

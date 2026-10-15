@@ -587,6 +587,7 @@ function Tab:_Start(entry, silent)
             self.deps.log:Add(entry, "no response")
             self:_Say("no response for " .. self:_ItemName(entry))
             self:_Update()
+            self:_RunHeldSearch()
             self:_Next()
         end
     end)
@@ -679,6 +680,7 @@ function Tab:_OnResult(arg)
     self.pending = nil
     self:_Finish(pending.entry, self.deps.client.LiveRows(pending.itemID), pending.silent)
     self:_Say("")
+    self:_RunHeldSearch()
     self:_Next()
 end
 
@@ -1043,39 +1045,137 @@ local function setColor(label, grey)
     end
 end
 
-function Tab:_InitListRow(row, entry)
+local ROW_HEIGHT = 22
+local TREE_INDENT = 14
+local NAME_WIDTH = 140
+local PRICE_WIDTH = 96
+local NONE_ID = "none"
+local BASE_GROUP = 1
+
+-- Build the tree nodes from the entries. Items first, then the subgroups; an empty group does not show.
+-- An item with no group goes to the last node "Not in a group".
+-- Group node: { id = "g<ID>", kind = "group", text, children }.
+-- Item node: { id = "i<key>", kind = "item", entry, text }.
+function BuyingTab.BuildNodes(rules, entries, nameOf)
+    local byGroup, placed = {}, {}
+    for _, entry in ipairs(entries) do
+        local groupID = entry.groupID or BASE_GROUP
+        byGroup[groupID] = byGroup[groupID] or {}
+        table.insert(byGroup[groupID], entry)
+    end
+    local function itemNodes(groupID)
+        local nodes = {}
+        for _, entry in ipairs(byGroup[groupID] or {}) do
+            placed[entry] = true
+            nodes[#nodes + 1] = { id = "i" .. entry.key, kind = "item", entry = entry, text = nameOf(entry) }
+        end
+        return nodes
+    end
+    local function build(groupID)
+        local children = itemNodes(groupID)
+        for _, childID in ipairs(rules:Children(groupID)) do
+            local node = build(childID)
+            if node then
+                children[#children + 1] = node
+            end
+        end
+        if #children == 0 then
+            return nil
+        end
+        return { id = "g" .. groupID, kind = "group", text = tostring(rules:Name(groupID)), children = children }
+    end
+    local roots = {}
+    for _, childID in ipairs(rules:Children(BASE_GROUP)) do
+        local node = build(childID)
+        if node then
+            roots[#roots + 1] = node
+        end
+    end
+    local loose = itemNodes(BASE_GROUP)
+    for _, entry in ipairs(entries) do
+        if not placed[entry] then
+            placed[entry] = true
+            loose[#loose + 1] = { id = "i" .. entry.key, kind = "item", entry = entry, text = nameOf(entry) }
+        end
+    end
+    if #loose > 0 then
+        roots[#roots + 1] = { id = NONE_ID, kind = "group", text = "Not in a group", children = loose }
+    end
+    return roots
+end
+
+local function makeItemParts(row)
     local Kit = ns.Kit
+    local parts = {
+        icon = row:CreateTexture(nil, "ARTWORK"),
+        price = Kit.Label(row, "", "highlight"),
+    }
+    parts.icon:SetSize(16, 16)
+    parts.price:SetWidth(PRICE_WIDTH)
+    parts.price:SetJustifyH("RIGHT")
+    parts.remove = Kit.IconButton(row, "close", nil, "Remove from the list")
+    parts.remove:SetSize(16, 16)
+    parts.remove:SetPoint("RIGHT", row, "RIGHT", -2, 0)
+    return parts
+end
+
+-- Draw one tree row: a group (toggle and name) or an item (icon, name and max price).
+function Tab:_InitTreeRow(row, node, depth, isCollapsed, hasChildren)
     local parts = row.parts
     if not parts then
-        parts = {
-            icon = row:CreateTexture(nil, "ARTWORK"),
-            name = Kit.Label(row, "", "normal"),
-            price = Kit.Label(row, "", "highlight"),
-            sub = Kit.Label(row, "", "small"),
-        }
-        parts.icon:SetSize(24, 24)
-        parts.icon:SetPoint("LEFT", row, "LEFT", 2, 0)
-        parts.name:SetPoint("TOPLEFT", row, "TOPLEFT", 32, -3)
-        parts.name:SetWidth(210)
-        parts.name:SetJustifyH("LEFT")
-        parts.price:SetPoint("TOPRIGHT", row, "TOPRIGHT", -4, -3)
-        parts.price:SetWidth(120)
-        parts.price:SetJustifyH("RIGHT")
-        parts.sub:SetPoint("BOTTOMLEFT", row, "BOTTOMLEFT", 32, 3)
-        parts.sub:SetWidth(310)
-        parts.sub:SetJustifyH("LEFT")
-        parts.remove = Kit.IconButton(row, "close", nil, "Remove from the list")
-        parts.remove:SetPoint("BOTTOMRIGHT", row, "BOTTOMRIGHT", -2, 2)
+        parts = makeItemParts(row)
         row.parts = parts
     end
-    parts.remove:SetShown(self.source == "lists" and entry.listIndex ~= nil)
+    local tree = self.ui.tree
+    local indent = tree.box == nil and (depth - 1) * TREE_INDENT or 0
+    row.toggle:ClearAllPoints()
+    row.toggle:SetPoint("LEFT", row, "LEFT", indent, 0)
+    row.toggle:SetShown(hasChildren)
+    row.toggle.glyph:SetText(isCollapsed and "+" or "-")
+    row.toggle:SetScript("OnClick", function()
+        tree:SetCollapsed(node.id, not isCollapsed)
+    end)
+    row.selection:SetShown(node.kind == "item" and tree.selected ~= nil and tree.selected == node.id)
+    row.label:ClearAllPoints()
+    row.label:SetJustifyH("LEFT")
+    if row.label.SetWordWrap then
+        row.label:SetWordWrap(false)
+    end
+    if node.kind == "group" then
+        -- A click on a group only collapses or expands it.
+        row:SetScript("OnClick", function()
+            tree:SetCollapsed(node.id, not isCollapsed)
+        end)
+        parts.icon:Hide()
+        parts.price:SetText("")
+        parts.remove:Hide()
+        row.label:SetWidth(NAME_WIDTH + PRICE_WIDTH)
+        row.label:SetPoint("LEFT", row.toggle, "RIGHT", 2, 0)
+        row.label:SetText(node.text)
+        row.label:SetTextColor(1, 0.82, 0)
+        return
+    end
+    local entry = node.entry
+    local _, icon = self.deps.itemInfo(entry.itemID or 0)
+    parts.icon:SetTexture(icon)
+    parts.icon:ClearAllPoints()
+    parts.icon:SetPoint("LEFT", row.toggle, "RIGHT", 2, 0)
+    parts.icon:Show()
+    row.label:SetWidth(math.max(20, NAME_WIDTH - (depth - 1) * TREE_INDENT))
+    row.label:SetPoint("LEFT", parts.icon, "RIGHT", 4, 0)
+    row.label:SetText(node.text)
+    if node.id == tree.selected then
+        row.label:SetTextColor(1, 0.82, 0)
+    else
+        row.label:SetTextColor(1, 1, 1)
+    end
+    local removable = self.source == "lists" and entry.listIndex ~= nil
+    parts.remove:SetShown(removable)
     parts.remove:SetScript("OnClick", function()
         self:RemoveListItem(entry.listIndex)
     end)
-    local _, icon = self.deps.itemInfo(entry.itemID or 0)
-    parts.icon:SetTexture(icon)
-    parts.name:SetText(self:_ItemName(entry))
-    setColor(parts.name, false)
+    parts.price:ClearAllPoints()
+    parts.price:SetPoint("RIGHT", row, "RIGHT", removable and -20 or -4, 0)
     if entry.noMax then
         parts.price:SetText("no max")
         setColor(parts.price, false)
@@ -1086,21 +1186,38 @@ function Tab:_InitListRow(row, entry)
         parts.price:SetText(entry.reason or "no data")
         setColor(parts.price, true)
     end
-    local sub = entry.groupPath or ""
-    if type(sub) == "table" then
-        sub = table.concat(sub, "/")
+end
+
+-- The tree id of an entry.
+local function nodeID(key)
+    return key and ("i" .. key) or nil
+end
+
+-- A click on an item selects it and starts its search at once. A busy search holds the new one until it ends.
+function Tab:_OnTreeSelect(node)
+    if node.kind ~= "item" then
+        return
     end
-    local done = self.results[entry.key]
-    if done then
-        sub = sub .. "  |  " .. tostring(BuyingTab.DescribeDecision(done.result))
+    self:Select_(node.entry.key)
+    if not self.deps.client.CanLiveSearch() then
+        return
     end
-    parts.sub:SetText(sub)
-    if entry.key == self.selectedKey then
-        parts.name:SetTextColor(1, 0.82, 0)
+    if self.pending then
+        self.nextSearchKey = node.entry.key
+        self:_Say("search queued: " .. self:_ItemName(node.entry))
+        return
     end
-    row:SetScript("OnClick", function()
-        self:Select_(entry.key)
-    end)
+    self.nextSearchKey = nil
+    self:Search()
+end
+
+-- Start the search that a click held while another search ran.
+function Tab:_RunHeldSearch()
+    local key = self.nextSearchKey
+    self.nextSearchKey = nil
+    if key and key == self.selectedKey and not self.pending then
+        self:Search()
+    end
 end
 
 -- The columns of the price level list. The header and the row cells use the same definition.
@@ -1121,6 +1238,7 @@ local LEVEL_COLUMNS = {
         end },
 }
 local LEVEL_OPTIONS = { gap = 6 }
+local STACK_COLUMN = LEVEL_COLUMNS[2]
 
 local function initRowsRow(row, data)
     local Kit = ns.Kit
@@ -1128,6 +1246,10 @@ local function initRowsRow(row, data)
     if not cells then
         cells = Kit.CreateColumnCells(row, LEVEL_COLUMNS, LEVEL_OPTIONS)
         row.cells = cells
+    end
+    if row.cellsHidden ~= STACK_COLUMN.hidden then
+        row.cellsHidden = STACK_COLUMN.hidden
+        Kit.LayoutColumnLabels(cells, row, LEVEL_COLUMNS, LEVEL_OPTIONS)
     end
     Kit.SetColumnCells(cells, LEVEL_COLUMNS, data)
     setColor(cells.unitPrice, data.state == "above")
@@ -1176,9 +1298,9 @@ function Tab:_UpdateLeft()
     end
     if self.placedFor ~= isLists then
         self.placedFor = isLists
-        ui.list.frame:ClearAllPoints()
-        ui.list.frame:SetPoint("TOPLEFT", ui.content, "TOPLEFT", 0, isLists and -152 or -74)
-        ui.list.frame:SetPoint("BOTTOMLEFT", ui.content, "BOTTOMLEFT", 0, 0)
+        ui.tree.frame:ClearAllPoints()
+        ui.tree.frame:SetPoint("TOPLEFT", ui.content, "TOPLEFT", 0, isLists and -122 or -44)
+        ui.tree.frame:SetPoint("BOTTOMLEFT", ui.content, "BOTTOMLEFT", 0, 0)
     end
 end
 
@@ -1190,14 +1312,15 @@ function Tab:_Update()
     end
     self:_UpdateLeft()
     local client = self.deps.client
-    local busy = self.pending ~= nil
     local canSearch = client.CanLiveSearch()
     local selected = self:_Selected()
-    ui.search:SetEnabled(canSearch and selected ~= nil and not busy)
-    ui.searchAll:SetEnabled(canSearch and #self.list > 0 and not busy and not self.queue)
     ui.stop:SetShown(self.queue ~= nil)
     ui.logButton:SetText(self.showLog and "Items" or "Log")
-    ui.list:SetData(self.list)
+    self.nodes = BuyingTab.BuildNodes(self.deps.rules, self.list, function(entry)
+        return self:_ItemName(entry)
+    end)
+    ui.tree.selected = nodeID(self.selectedKey)
+    ui.tree:SetNodes(self.nodes)
     ui.rowsList.frame:SetShown(not self.showLog)
     ui.levelHeader.frame:SetShown(not self.showLog)
     ui.logList.frame:SetShown(self.showLog == true)
@@ -1241,7 +1364,21 @@ function Tab:_Update()
     ui.summary:SetText(table.concat(lines, "\n"))
     ui.buyNext:SetEnabled(nextLevel ~= nil and reason == nil)
     local levels = done and self.deps.plan.PriceLevels(done.rows) or {}
+    self:_ShowStackColumn(not (levels[1] and BuyingTab.StackSize(levels[1]) == nil))
     ui.rowsList:SetData(BuyingTab.DescribeLevels(selected, levels, selected.showAboveMax))
+end
+
+-- Show or hide the Stack Price column (header and cells). A commodity level has no stack price.
+function Tab:_ShowStackColumn(show)
+    local Kit, ui = ns.Kit, self.ui
+    local hide = not show
+    if (STACK_COLUMN.hidden or false) == hide then
+        return
+    end
+    STACK_COLUMN.hidden = hide
+    local edge = ui.rowsList.contentInsets or { left = 0, right = 0 }
+    Kit.LayoutColumnLabels(ui.levelHeader.labels, ui.levelHeader.frame, LEVEL_COLUMNS,
+        { gap = LEVEL_OPTIONS.gap, left = edge.left, right = edge.right })
 end
 
 function Tab:IsActive()
@@ -1287,10 +1424,10 @@ function Tab:_BuildLeft(content, place)
     local ui = self.ui
     ui.groupsButton = place(Kit.Button(content, "Groups", 90, function()
         self:SetSource("groups")
-    end), 0, -48)
+    end), 0, 0)
     ui.listsButton = place(Kit.Button(content, "Search lists", 100, function()
         self:SetSource("lists")
-    end), 94, -48)
+    end), 94, 0)
     ui.listControls = {}
     local function control(widget, x, y)
         ui.listControls[#ui.listControls + 1] = place(widget, x, y)
@@ -1298,13 +1435,13 @@ function Tab:_BuildLeft(content, place)
     end
     ui.picker = control(Kit.Dropdown(content, 160, { onChange = function(id)
         self:SelectList(id)
-    end }), 0, -74)
+    end }), 0, -44)
     ui.newList = control(Kit.Button(content, "New", 50, function()
         self:NewList(ui.nameInput:GetText())
-    end), 164, -74)
+    end), 164, -44)
     ui.rename = control(Kit.Button(content, "Rename", 64, function()
         self:RenameList(ui.nameInput:GetText())
-    end), 218, -74)
+    end), 218, -44)
     ui.delete = control(Kit.Button(content, "Delete", 56, function()
         local saved = self.listID and self.deps.searchLists:Get(self.listID)
         if saved then
@@ -1312,14 +1449,14 @@ function Tab:_BuildLeft(content, place)
                 self:DeleteList()
             end)
         end
-    end), 286, -74)
-    ui.nameInput = control(Kit.Input(content, 250, nil, nil, { placeholder = "name of the list" }), 6, -102)
+    end), 286, -44)
+    ui.nameInput = control(Kit.Input(content, 250, nil, nil, { placeholder = "name of the list" }), 6, -72)
     ui.itemInput = control(Kit.Input(content, 250, function(text)
         self:AddItem(text)
-    end, nil, { placeholder = "item name, ID, link or key" }), 6, -128)
+    end, nil, { placeholder = "item name, ID, link or key" }), 6, -98)
     ui.addItem = control(Kit.Button(content, "Add", 50, function()
         self:AddItem(ui.itemInput:GetText())
-    end), 262, -126)
+    end), 262, -96)
 end
 
 function Tab:_BuildContent()
@@ -1344,15 +1481,6 @@ function Tab:_BuildContent()
         widget:SetPoint("TOPLEFT", content, "TOPLEFT", x, y)
         return widget
     end
-    ui.refresh = place(Kit.Button(content, "Refresh", 80, function()
-        self:RefreshList()
-    end), 0, 0)
-    ui.search = place(Kit.Button(content, "Search", 80, function()
-        self:Search()
-    end), 86, 0)
-    ui.searchAll = place(Kit.Button(content, "Search all", 90, function()
-        self:SearchAll()
-    end), 172, 0)
     ui.stop = place(Kit.Button(content, "Stop", 60, function()
         self:Stop()
     end), 268, 0)
@@ -1362,39 +1490,43 @@ function Tab:_BuildContent()
     ui.logButton:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, 0)
     ui.message = place(Kit.Label(content, "", "small"), 0, -28)
     ui.message:SetJustifyH("LEFT")
-    ui.message:SetWidth(700)
+    ui.message:SetWidth(LIST_WIDTH)
 
-    ui.list = Kit.CreateList(content, { rowHeight = 32, inset = true, initRow = function(row, entry)
-        self:_InitListRow(row, entry)
-    end })
+    ui.tree = Kit.CreateTree(content, { rowHeight = ROW_HEIGHT, inset = true,
+        initRow = function(row, node, depth, isCollapsed, hasChildren)
+            self:_InitTreeRow(row, node, depth, isCollapsed, hasChildren)
+        end,
+        onSelect = function(node)
+            self:_OnTreeSelect(node)
+        end })
     ui.content = content
-    ui.list.frame:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -74)
-    ui.list.frame:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", 0, 0)
-    ui.list.frame:SetWidth(LIST_WIDTH)
+    ui.tree.frame:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -44)
+    ui.tree.frame:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", 0, 0)
+    ui.tree.frame:SetWidth(LIST_WIDTH)
     self:_BuildLeft(content, place)
 
     local rightX = LIST_WIDTH + padding
-    ui.itemName = place(Kit.Label(content, "", "normal"), rightX, -52)
+    ui.itemName = place(Kit.Label(content, "", "normal"), rightX, -4)
     ui.itemName:SetJustifyH("LEFT")
-    ui.summary = place(Kit.Label(content, "", "small"), rightX, -72)
+    ui.summary = place(Kit.Label(content, "", "small"), rightX, -24)
     ui.summary:SetJustifyH("LEFT")
     ui.summary:SetWidth(330)
     ui.rowsList = Kit.CreateList(content, { rowHeight = 18, inset = true, initRow = function(row, data)
         initRowsRow(row, data)
     end })
-    ui.rowsList.frame:SetPoint("TOPLEFT", content, "TOPLEFT", rightX, -148)
+    ui.rowsList.frame:SetPoint("TOPLEFT", content, "TOPLEFT", rightX, -100)
     ui.rowsList.frame:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", 0, 30)
     -- The column titles over the price level list.
     local edge = ui.rowsList.contentInsets or { left = 0, right = 0 }
     ui.levelHeader = Kit.CreateColumnHeader(content, LEVEL_COLUMNS,
         { gap = LEVEL_OPTIONS.gap, left = edge.left, right = edge.right })
-    ui.levelHeader.frame:SetPoint("TOPLEFT", content, "TOPLEFT", rightX, -130)
-    ui.levelHeader.frame:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, -130)
+    ui.levelHeader.frame:SetPoint("TOPLEFT", content, "TOPLEFT", rightX, -82)
+    ui.levelHeader.frame:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, -82)
     ui.levelHeader.frame:SetHeight(18)
     ui.logList = Kit.CreateList(content, { rowHeight = 18, inset = true, initRow = function(row, data)
         self:_InitLogRow(row, data)
     end })
-    ui.logList.frame:SetPoint("TOPLEFT", content, "TOPLEFT", rightX, -48)
+    ui.logList.frame:SetPoint("TOPLEFT", content, "TOPLEFT", rightX, -28)
     ui.logList.frame:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", 0, 30)
 
     ui.buyNext = Kit.Button(content, "Buy next", 90, function()
