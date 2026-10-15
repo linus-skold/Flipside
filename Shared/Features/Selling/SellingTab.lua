@@ -29,6 +29,16 @@ local RED = { 1, 0.3, 0.3 }
 local GREEN = { 0.4, 1, 0.4 }
 local WHITE = { 1, 1, 1 }
 local GREY = { 0.5, 0.5, 0.5 }
+local ORANGE = { 1, 0.6, 0.2 }
+local MAX_PRICE = 100000000000
+local COPPER_PER_SILVER = 100
+local COPPER_PER_GOLD = 10000
+local DEFAULT_DURATION = 24
+-- Client arrow textures (pet battle strong and weak badges: a green arrow up and a red arrow down).
+local ARROW_UP = "|TInterface\\PetBattles\\BattleBar-AbilityBadge-Strong:14:14|t"
+local ARROW_DOWN = "|TInterface\\PetBattles\\BattleBar-AbilityBadge-Weak:14:14|t"
+local LOWEST_TIP = "The lowest unit price of another seller in the live search of this item. "
+    .. "Your own auctions do not count. It reads \"none\" when no other seller has an auction."
 
 -- The columns of the item list (Kit.ColumnLayout): the header and every row share them.
 -- The item cell (icon and name) is drawn by the row itself. The Info column fills the rest.
@@ -36,18 +46,79 @@ local COLUMNS = {
     { key = "item", title = "Item", width = ITEM_WIDTH, owned = true },
     { key = "price", title = "Your price", width = 78, number = true },
     { key = "operation", title = "Operation", width = 80 },
-    { key = "lowest", title = "Lowest", width = 78, number = true },
+    { key = "lowest", title = "Lowest on AH", width = 92, number = true },
     { key = "net", title = "Net", width = 78, number = true },
     { key = "info", title = "Info" },
 }
 local COLUMN_OPTIONS = { gap = COLUMN_GAP }
 SellingTab.COLUMNS = COLUMNS
+SellingTab.ARROW_UP = ARROW_UP
+SellingTab.ARROW_DOWN = ARROW_DOWN
+SellingTab.LOWEST_TIP = LOWEST_TIP
 
 local function money(copper)
     if ns.TooltipLines and ns.TooltipLines.FormatMoney then
         return ns.TooltipLines.FormatMoney(copper)
     end
     return GetMoneyString(math.floor((copper or 0) + 0.5))
+end
+
+-- Read a price that the user typed. "1g 20s 5c", "120s" and "1g20s" work. A plain number is copper.
+-- Each unit (g, s, c) can show once, from big to small. Returns the copper, or nil and a reason.
+function SellingTab.ParsePrice(text)
+    if type(text) ~= "string" then
+        return nil, "type a price, for example 1g 20s"
+    end
+    local s = text:lower():match("^%s*(.-)%s*$")
+    if s == "" then
+        return nil, "type a price, for example 1g 20s"
+    end
+    local total = 0
+    if s:match("^%d+$") then
+        total = tonumber(s)
+    else
+        local factor = { g = COPPER_PER_GOLD, s = COPPER_PER_SILVER, c = 1 }
+        local rank = { g = 3, s = 2, c = 1 }
+        local last, pos = 4, 1
+        while pos <= #s do
+            local _, stop, number, unit = s:find("^(%d+)%s*([gsc])%s*", pos)
+            if not stop then
+                return nil, "use whole numbers with g, s or c, for example 1g 20s 5c"
+            end
+            if rank[unit] >= last then
+                return nil, "write g, then s, then c, and use each one once"
+            end
+            last = rank[unit]
+            total = total + tonumber(number) * factor[unit]
+            pos = stop + 1
+        end
+    end
+    if total < 1 then
+        return nil, "the price must be at least 1c"
+    end
+    if total > MAX_PRICE then
+        return nil, "the price is too large"
+    end
+    return total
+end
+
+-- The price as text for the price box, for example 1g 20s 5c. ParsePrice reads it back.
+function SellingTab.PriceText(copper)
+    copper = math.floor((copper or 0) + 0.5)
+    local gold = math.floor(copper / COPPER_PER_GOLD)
+    local silver = math.floor((copper % COPPER_PER_GOLD) / COPPER_PER_SILVER)
+    local rest = copper % COPPER_PER_SILVER
+    local parts = {}
+    if gold > 0 then
+        parts[#parts + 1] = gold .. "g"
+    end
+    if silver > 0 then
+        parts[#parts + 1] = silver .. "s"
+    end
+    if rest > 0 or #parts == 0 then
+        parts[#parts + 1] = rest .. "c"
+    end
+    return table.concat(parts, " ")
 end
 
 -- Build the tree nodes from the entries. A group node shows only if it holds a bag item, directly or deeper.
@@ -57,12 +128,15 @@ end
 function SellingTab.BuildNodes(rules, entries)
     local byGroup = {}
     for _, entry in ipairs(entries) do
-        local list = byGroup[entry.groupID]
-        if not list then
-            list = {}
-            byGroup[entry.groupID] = list
+        -- An item that is posted for real is on the AH now, so the list does not show it.
+        if not (entry.status == "done" and entry.real) then
+            local list = byGroup[entry.groupID]
+            if not list then
+                list = {}
+                byGroup[entry.groupID] = list
+            end
+            list[#list + 1] = entry
         end
-        list[#list + 1] = entry
     end
     local function itemNodes(groupID)
         local nodes = {}
@@ -247,7 +321,8 @@ end
 
 -- The potential profit of the auctions that are left in one entry, or nil if the entry has no post left.
 -- vendorPrice is the vendor sell price of one item or nil. Returns the table of SellingPlan.Profit.
-function SellingTab.EntryProfit(entry, vendorPrice)
+-- price is optional: the price per item that the user typed instead of the suggested price.
+function SellingTab.EntryProfit(entry, vendorPrice, price)
     if entry.status ~= "ready" or not entry.decision or entry.decision.action ~= "post" then
         return nil
     end
@@ -258,22 +333,24 @@ function SellingTab.EntryProfit(entry, vendorPrice)
     if #left == 0 then
         return nil
     end
-    local profit = ns.SellingPlan.Profit(entry.decision.price, left, vendorPrice)
+    local profit = ns.SellingPlan.Profit(price or entry.decision.price, left, vendorPrice)
     profit.auctions = #left
     return profit
 end
 
 -- The values of the details pane for the next post of an entry; nil if the entry has no post left.
-function SellingTab.Details(entry, vendorPrice)
-    local profit = SellingTab.EntryProfit(entry, vendorPrice)
+-- price is optional: the price per item that the user typed.
+function SellingTab.Details(entry, vendorPrice, price)
+    local profit = SellingTab.EntryProfit(entry, vendorPrice, price)
     if not profit then
         return nil
     end
     local decision, unit = entry.decision, entry.units[entry.next]
+    price = price or decision.price
     return {
         operation = entry.candidate and entry.candidate.operationName,
-        unitPrice = decision.price,
-        buyout = decision.price * unit.quantity,
+        unitPrice = price,
+        buyout = price * unit.quantity,
         auctions = profit.auctions,
         stackSize = unit.quantity,
         duration = decision.duration,
@@ -282,6 +359,29 @@ function SellingTab.Details(entry, vendorPrice)
         net = profit.net,
         vs = profit.vs,
     }
+end
+
+-- The text of the net line and its colour: green with an up arrow above 0, red with a down arrow below 0.
+function SellingTab.NetStyle(net)
+    if net > 0 then
+        return "Net: " .. ARROW_UP .. " " .. money(net), GREEN
+    elseif net < 0 then
+        return "Net: " .. ARROW_DOWN .. " " .. money(net), RED
+    end
+    return "Net: " .. money(net), WHITE
+end
+
+-- Tell if the vendor pays more than the AH for the next post. Returns the vendor total and the net, or nil.
+-- unit is { quantity, deposit }; price is per item; vendorPrice is per item or nil.
+function SellingTab.VendorBetter(price, unit, vendorPrice)
+    if not vendorPrice or not unit or not price then
+        return nil
+    end
+    local profit = ns.SellingPlan.Profit(price, { unit }, vendorPrice)
+    if profit.vendor and profit.vendor > profit.net then
+        return profit.vendor, profit.net
+    end
+    return nil
 end
 
 local function defaultItemInfo(itemID)
@@ -309,6 +409,77 @@ end
 
 local function defaultMaxStack(itemID)
     return C_Item and C_Item.GetItemMaxStackSizeByID and C_Item.GetItemMaxStackSizeByID(itemID) or 1
+end
+
+-- The item link and the quality of an item; nil while the client has no data yet.
+local function defaultItemLink(itemID)
+    if not (C_Item and C_Item.GetItemInfo) then
+        return nil
+    end
+    local _, link, quality = C_Item.GetItemInfo(itemID)
+    if not link and C_Item.RequestLoadItemDataByID then
+        C_Item.RequestLoadItemDataByID(itemID)
+    end
+    return link, quality
+end
+
+local warnDialog
+
+-- The warning box: a square Kit window with a text and two buttons. onYes runs in the click of the yes button.
+local function openWarning(title, text, yesLabel, onYes)
+    local Kit = ns.Kit
+    if not warnDialog then
+        local pad = Kit.Theme.padding
+        local dialog = Kit.CreateWindow("FlipsideSellWarning", { width = 380, height = 190, square = true })
+        warnDialog = dialog
+        dialog:SetFrameStrata("FULLSCREEN_DIALOG")
+        dialog:SetToplevel(true)
+        local textWidth = 380 - 2 * pad - 16
+        -- The text frame takes hyperlinks, so an item link shows the item tooltip.
+        dialog.textFrame = CreateFrame("Frame", nil, dialog)
+        dialog.textFrame:SetPoint("TOP", dialog, "TOP", 0, -40)
+        dialog.textFrame:SetSize(textWidth, 20)
+        dialog.textFrame:SetHyperlinksEnabled(true)
+        dialog.textFrame:SetScript("OnHyperlinkEnter", function(frame, link)
+            GameTooltip:SetOwner(frame, "ANCHOR_CURSOR")
+            GameTooltip:SetHyperlink(link)
+            GameTooltip:Show()
+        end)
+        dialog.textFrame:SetScript("OnHyperlinkLeave", function()
+            GameTooltip:Hide()
+        end)
+        dialog.text = Kit.Label(dialog.textFrame, "", "normal")
+        dialog.text:SetPoint("TOP", dialog.textFrame, "TOP", 0, 0)
+        dialog.text:SetWidth(textWidth)
+        dialog.text:SetJustifyH("CENTER")
+        dialog.yesButton = Kit.Button(dialog, "", 130, function()
+            local callback = dialog.onYes
+            dialog.onYes = nil
+            dialog:Hide()
+            if callback then
+                callback()
+            end
+        end)
+        dialog.yesButton:SetPoint("BOTTOM", dialog, "BOTTOM", -70, pad + 4)
+        dialog.noButton = Kit.Button(dialog, "Cancel", 100, function()
+            dialog.onYes = nil
+            dialog:Hide()
+        end)
+        dialog.noButton:SetPoint("BOTTOM", dialog, "BOTTOM", 70, pad + 4)
+    end
+    local dialog = warnDialog
+    dialog.onYes = onYes
+    if dialog.SetTitle then
+        dialog:SetTitle(title or "")
+    end
+    dialog.text:SetText(text or "")
+    local textHeight = dialog.text.GetStringHeight and dialog.text:GetStringHeight() or 14
+    dialog.textFrame:SetHeight(textHeight)
+    dialog:SetHeight(math.max(150, 40 + textHeight + 20 + 22 + Kit.Theme.padding + 8))
+    dialog.text:SetTextColor(ORANGE[1], ORANGE[2], ORANGE[3])
+    dialog.yesButton:SetText(yesLabel or "OK")
+    dialog:Show()
+    dialog:Raise()
 end
 
 local Tab = {}
@@ -401,6 +572,21 @@ function Tab:_OwnedCounts(bagItems)
     return owned
 end
 
+-- Ask the client for the deposit of each unit of an entry and store the sum.
+function Tab:_Quote(entry)
+    local decision = entry.decision
+    local total
+    for _, unit in ipairs(entry.units) do
+        local ok, deposit = pcall(self.deps.client.Deposit, unit.bag, unit.slot, decision.duration,
+            unit.quantity, decision.commodity == true)
+        if ok and type(deposit) == "number" then
+            total = (total or 0) + deposit
+            unit.deposit = deposit
+        end
+    end
+    entry.deposit = total
+end
+
 -- Store the decision of one entry and log a skip.
 function Tab:_Decide(entry, rows)
     local deps = self.deps
@@ -412,6 +598,7 @@ function Tab:_Decide(entry, rows)
         maxStack = deps.maxStack(itemID),
     })
     entry.decision = decision
+    entry.market = { commodity = okCommodity and commodity == true, maxStack = deps.maxStack(itemID) }
     entry.units, entry.next = {}, 1
     if decision.action == "post" then
         entry.units = SellingTab.BuildUnits(candidate, decision)
@@ -421,16 +608,7 @@ function Tab:_Decide(entry, rows)
     end
     if entry.decision.action == "post" then
         entry.status = "ready"
-        local total
-        for _, unit in ipairs(entry.units) do
-            local ok, deposit = pcall(deps.client.Deposit, unit.bag, unit.slot, decision.duration,
-                unit.quantity, decision.commodity == true)
-            if ok and type(deposit) == "number" then
-                total = (total or 0) + deposit
-                unit.deposit = deposit
-            end
-        end
-        entry.deposit = total
+        self:_Quote(entry)
     else
         entry.status = "skip"
         deps.log:Add(candidate, entry.decision)
@@ -520,6 +698,25 @@ function Tab:RefreshBags()
     local deps = self.deps
     self.queue = nil
     local bagItems = deps.readBags()
+    local byKey = self:_CandidatesByKey(bagItems)
+    self.entries, self.selection, self.selectedId, self.postedCount = {}, {}, nil, 0
+    self.priceEntry = nil
+    for _, item in ipairs(bagItems) do
+        self.entries[#self.entries + 1] = self:_NewEntry(item, byKey[item.key])
+    end
+    self.nodes = SellingTab.BuildNodes(deps.rules, self.entries)
+    if self.ui then
+        self.ui.tree.selected = nil
+        self.ui.tree:SetNodes(self.nodes)
+    end
+    self:_Say(#self.entries == 0 and "no tradable item in the bags" or "pick a group or an item")
+    self:_Update()
+    return true
+end
+
+-- The selling candidates of the bag items, by item key.
+function Tab:_CandidatesByKey(bagItems)
+    local deps = self.deps
     local candidates = deps.plan.Candidates({
         rules = deps.rules,
         formulaRun = deps.formulaRun,
@@ -533,22 +730,150 @@ function Tab:RefreshBags()
     for _, candidate in ipairs(candidates) do
         byKey[candidate.key] = candidate
     end
-    self.entries, self.selection, self.selectedId, self.postedCount = {}, {}, nil, 0
-    for _, item in ipairs(bagItems) do
-        local candidate = byKey[item.key]
-        self.entries[#self.entries + 1] = {
-            item = item, key = item.key, candidate = candidate, groupID = deps.rules:GroupOf(item.key),
-            status = candidate and "waiting" or "noop", next = 1, posted = 0, units = {},
-        }
+    return byKey
+end
+
+function Tab:_NewEntry(item, candidate)
+    return {
+        item = item, key = item.key, candidate = candidate, groupID = self.deps.rules:GroupOf(item.key),
+        status = candidate and "waiting" or "noop", next = 1, posted = 0, units = {},
+    }
+end
+
+-- Find a node by id in a node list.
+local function findNode(nodes, id)
+    for _, node in ipairs(nodes) do
+        if node.id == id then
+            return node
+        end
+        local found = node.children and findNode(node.children, id)
+        if found then
+            return found
+        end
     end
-    self.nodes = SellingTab.BuildNodes(deps.rules, self.entries)
+    return nil
+end
+
+-- Build the tree nodes again from the entries. The selection stays as it is, so the queue keeps its count.
+function Tab:_RebuildNodes()
+    self.nodes = SellingTab.BuildNodes(self.deps.rules, self.entries)
     if self.ui then
-        self.ui.tree.selected = nil
-        self.ui.tree:SetNodes(self.nodes)
+        local tree = self.ui.tree
+        tree.selected = findNode(self.nodes, self.selectedId or "") and self.selectedId or nil
+        tree:SetNodes(self.nodes)
     end
-    self:_Say(#self.entries == 0 and "no tradable item in the bags" or "pick a group or an item")
-    self:_Update()
+end
+
+-- Take the units that are left of a ready entry from the new bag stacks. A post that ran changed the stacks.
+function Tab._Restack(_, entry, item)
+    local candidate, decision = entry.candidate, entry.decision
+    entry.item = item
+    candidate.stacks, candidate.count = item.stacks, item.count
+    if entry.status ~= "ready" then
+        return
+    end
+    local left = #entry.units - (entry.next - 1)
+    local old = {}
+    for index = entry.next, #entry.units do
+        old[#old + 1] = entry.units[index]
+    end
+    for index = #entry.units, entry.next, -1 do
+        entry.units[index] = nil
+    end
+    local fresh = SellingTab.BuildUnits(candidate, { quantity = decision.quantity, auctions = left,
+        commodity = decision.commodity })
+    for index, unit in ipairs(fresh) do
+        unit.deposit = old[index] and old[index].deposit
+        entry.units[#entry.units + 1] = unit
+    end
+    local total
+    for _, unit in ipairs(entry.units) do
+        if unit.deposit then
+            total = (total or 0) + unit.deposit
+        end
+    end
+    entry.deposit = total
+    if entry.next > #entry.units then
+        entry.status = entry.posted > 0 and "done" or "skipped"
+        entry.real = entry.posted > 0
+    end
+end
+
+-- Read the bags again after a post, with no wait for a tab switch. It keeps the decisions of the entries.
+-- An item that is posted leaves the list. If part of the stack stays in the bags, the rest shows as a new entry.
+function Tab:SyncBags()
+    if self.awaiting or self.dryRun or not self.ui or not self.loaded then
+        return false
+    end
+    local bagItems = self.deps.readBags()
+    local byKey = self:_CandidatesByKey(bagItems)
+    local oldByKey = {}
+    for _, entry in ipairs(self.entries) do
+        oldByKey[entry.key] = entry
+    end
+    local entries, fresh = {}, false
+    for _, item in ipairs(bagItems) do
+        local old = oldByKey[item.key]
+        local candidate = byKey[item.key]
+        local used = old and item.count < old.item.count
+        if old and old.status == "done" and old.real and used then
+            old = nil
+        end
+        if old and old.candidate then
+            if used then
+                self:_Restack(old, item)
+            elseif item.count ~= old.item.count then
+                old.item = item
+                old.candidate.stacks, old.candidate.count = item.stacks, item.count
+            end
+            entries[#entries + 1] = old
+        elseif old then
+            old.item = item
+            entries[#entries + 1] = old
+        else
+            local entry = self:_NewEntry(item, candidate)
+            entries[#entries + 1] = entry
+            fresh = fresh or entry.status == "waiting"
+        end
+    end
+    self.entries = entries
+    self:_RebuildNodes()
+    self:_Reselect(fresh)
     return true
+end
+
+-- After a bag sync: pick the selection again from its node. Search the entries that are new.
+function Tab:_Reselect(search)
+    local node = self.selectedId and findNode(self.nodes, self.selectedId)
+    if not node then
+        local kept = {}
+        for _, entry in ipairs(self.selection) do
+            for _, current in ipairs(self.entries) do
+                if current == entry then
+                    kept[#kept + 1] = entry
+                end
+            end
+        end
+        self.selection = kept
+        if #kept == 0 then
+            self.selectedId = nil
+        end
+    else
+        self.selection = SellingTab.CollectEntries(node, {})
+    end
+    if search and not self.queue then
+        local list = {}
+        for _, entry in ipairs(self.selection) do
+            if entry.status == "waiting" then
+                list[#list + 1] = entry
+            end
+        end
+        if #list > 0 then
+            self.queue = { list = list, pos = 0 }
+            self:_Next()
+        end
+    end
+    self:_Update()
 end
 
 -- Select a tree node: the group and its subgroups, or one item. Start the live searches of the entries that
@@ -565,6 +890,7 @@ function Tab:SelectNode(node)
     self.selectedId = node.id
     self.selection = SellingTab.CollectEntries(node, {})
     self.postedCount = 0
+    self.priceEntry = nil
     local list = {}
     for _, entry in ipairs(self.selection) do
         if entry.status == "waiting" then
@@ -611,6 +937,11 @@ end
 
 function Tab:_OnPosted()
     self:_Say("auction created")
+    self:SyncBags()
+end
+
+function Tab:_OnBags()
+    self:SyncBags()
 end
 
 function Tab:ToggleLog()
@@ -624,10 +955,10 @@ function Tab:SetDryRun(value)
 end
 
 -- Log one post (or one dry run post) of a unit.
-function Tab:_Record(entry, quantity, kind)
+function Tab:_Record(entry, quantity, kind, price)
     local decision = entry.decision
     self.deps.log:Add(entry.candidate, {
-        action = kind, reason = decision.reason, price = decision.price, quantity = quantity, auctions = 1,
+        action = kind, reason = decision.reason, price = price or decision.price, quantity = quantity, auctions = 1,
     })
 end
 
@@ -669,6 +1000,10 @@ function Tab:_Advance(entry, posted)
         if entry.posted > 0 and client.IsReady() then
             pcall(client.RefreshOwned)
         end
+        -- A real post puts the item on the AH: the list drops it now.
+        if entry.status == "done" and entry.real then
+            self:_RebuildNodes()
+        end
     end
     self:_AfterStep()
 end
@@ -676,7 +1011,7 @@ end
 function Tab:_ConfirmText()
     local awaiting = self.awaiting
     return string.format("Post %d x %s at %s each?", awaiting.quantity, self:_Name(awaiting.entry),
-        money(awaiting.entry.decision.price))
+        money(awaiting.price))
 end
 
 function Tab:_ShowConfirm()
@@ -696,26 +1031,155 @@ function Tab:_Confirmed()
     if not ok then
         return self:_Fail(awaiting.entry, tostring(err))
     end
-    self:_Record(awaiting.entry, awaiting.quantity, "post")
+    awaiting.entry.real = true
+    self:_Record(awaiting.entry, awaiting.quantity, "post", awaiting.price)
     self:_Advance(awaiting.entry, true)
+end
+
+-- The item as a link in the quality colour; nil while the client has no link yet.
+function Tab:_ItemLink(entry)
+    local link, quality = self.deps.itemLink(entry.item.itemID or 0)
+    if not link then
+        return nil
+    end
+    if link:find("^|c") then
+        return link
+    end
+    local _, _, _, hex = ns.Kit.QualityColor(quality)
+    return "|c" .. hex .. link .. "|r"
+end
+
+-- The entry that a click on Post works on. Post all works only on the ready entries of the selection.
+-- Post can also work on one selected item that the rule skips, after a warning.
+function Tab:_Focus(all)
+    local current = self:_Current()
+    if current or all then
+        return current
+    end
+    local only = #self.selection == 1 and self.selectedId and self.selectedId:sub(1, 1) == "i" and self.selection[1]
+    if only and only.status == "skip" and only.market and only.candidate
+        and #(only.candidate.stacks or {}) > 0 then
+        return only
+    end
+    return nil
+end
+
+-- The decision and the units of a manual post of an item that the rule skips: one auction.
+function Tab._ManualPlan(_, entry, price)
+    local candidate, market = entry.candidate, entry.market or {}
+    local stacks = candidate.stacks
+    local commodity = market.commodity == true
+    local quantity
+    if commodity then
+        quantity = candidate.count or stacks[1].count
+    else
+        quantity = math.min(math.max(1, market.maxStack or 1), stacks[1].count)
+    end
+    local settings = candidate.settings or {}
+    local decision = { action = "post", price = price, quantity = quantity, auctions = 1, commodity = commodity,
+        reason = "manual post", key = candidate.key, duration = tonumber(settings.duration) or DEFAULT_DURATION }
+    return decision, SellingTab.BuildUnits(candidate, decision)
+end
+
+-- Turn a skipped entry into a ready entry with one manual post.
+function Tab:_ForcePlan(entry, price)
+    local decision, units = self:_ManualPlan(entry, price)
+    entry.skipDecision = entry.decision
+    entry.decision, entry.units, entry.next = decision, units, 1
+    entry.status, entry.manual = "ready", true
+    self:_Quote(entry)
+end
+
+-- The price per item for a click: the text of the price box for the shown entry, else the suggested price.
+-- Returns the copper, or nil and a reason.
+function Tab:_PostPrice(entry)
+    if self.ui and self.priceEntry == entry then
+        local price, why = SellingTab.ParsePrice(self.ui.details.priceInput:GetText())
+        if not price then
+            return nil, "invalid price: " .. why
+        end
+        return price
+    end
+    local decision = entry.decision
+    local suggested = decision and (decision.action == "post" and decision.price or decision.suggested)
+    if suggested then
+        return suggested
+    end
+    return nil, "type a price first"
+end
+
+-- The warning lines for the next post of an entry at a price. An empty list means no warning.
+function Tab:_Warnings(entry, price)
+    local lines = {}
+    local unit
+    if entry.status == "ready" then
+        unit = entry.units[entry.next]
+    else
+        local reason = entry.decision and entry.decision.reason or "no decision"
+        lines[1] = "The rule skips this item: " .. (SKIP_TEXT[reason] or reason) .. "."
+        unit = select(2, self:_ManualPlan(entry, price))[1]
+    end
+    local vendor, net = SellingTab.VendorBetter(price, unit, self:_Vendor(entry))
+    if vendor then
+        lines[#lines + 1] = "Sells for more at a vendor: " .. money(vendor) .. " (net on the AH: " .. money(net) .. ")."
+    end
+    return lines, unit
+end
+
+-- Show the warning box. The post runs in the click of the yes button, so it keeps its hardware event.
+function Tab:_AskWarning(entry, price, lines, unit, all)
+    local text = string.format("Post %d x %s at %s each?", unit and unit.quantity or 0,
+        self:_ItemLink(entry) or self:_Name(entry), money(price))
+    text = text .. "\n\n" .. table.concat(lines, "\n")
+    self.deps.warn("Post anyway?", text, "Post anyway", function()
+        if self.awaiting or self:_Focus(all) ~= entry then
+            return
+        end
+        entry.warned = true
+        self:_PostStep(all)
+    end)
 end
 
 -- Post the next unit of the first ready entry. Call it only from the click of the post button.
 -- One call makes one protected post. Returns true, or false and a text.
 function Tab:PostNext()
+    return self:_PostStep(false)
+end
+
+-- The same for the button "Post all": the queue of the selection, with no entry that the rule skips.
+function Tab:PostAll()
+    return self:_PostStep(true)
+end
+
+function Tab:_PostStep(all)
     if self.awaiting then
         self:_ShowConfirm()
         return true
     end
-    local entry = self:_Current()
+    local entry = self:_Focus(all)
     if not entry then
         self:_Say("nothing to post")
         return false, "nothing to post"
     end
+    local price, why = self:_PostPrice(entry)
+    if not price then
+        self:_Say(why)
+        return false, why
+    end
+    if not self.dryRun and not entry.warned then
+        local lines, unit = self:_Warnings(entry, price)
+        if #lines > 0 then
+            self:_AskWarning(entry, price, lines, unit, all)
+            return true
+        end
+    end
+    if entry.status ~= "ready" then
+        self:_ForcePlan(entry, price)
+    end
     local unit = entry.units[entry.next]
     local decision = entry.decision
     if self.dryRun then
-        self:_Record(entry, unit.quantity, "dry run")
+        self:_Record(entry, unit.quantity, "dry run", price)
         self:_Say("dry run: no post was made")
         self:_Advance(entry, true)
         return true
@@ -736,13 +1200,13 @@ function Tab:PostNext()
     local call, confirm
     if decision.commodity then
         call = function()
-            return client.PostCommodity(unit.bag, unit.slot, decision.duration, quantity, decision.price)
+            return client.PostCommodity(unit.bag, unit.slot, decision.duration, quantity, price)
         end
         confirm = function()
-            return client.ConfirmPostCommodity(unit.bag, unit.slot, decision.duration, quantity, decision.price)
+            return client.ConfirmPostCommodity(unit.bag, unit.slot, decision.duration, quantity, price)
         end
     else
-        local buyout = decision.price * quantity
+        local buyout = price * quantity
         call = function()
             return client.PostItem(unit.bag, unit.slot, decision.duration, quantity, nil, buyout)
         end
@@ -755,12 +1219,13 @@ function Tab:PostNext()
         return self:_Fail(entry, tostring(needsConfirmation))
     end
     if needsConfirmation then
-        self.awaiting = { entry = entry, unit = unit, quantity = quantity, confirm = confirm }
+        self.awaiting = { entry = entry, unit = unit, quantity = quantity, confirm = confirm, price = price }
         self:_ShowConfirm()
         self:_Update()
         return true
     end
-    self:_Record(entry, quantity, "post")
+    entry.real = true
+    self:_Record(entry, quantity, "post", price)
     self:_Advance(entry, true)
     return true
 end
@@ -922,40 +1387,98 @@ function Tab:ProgressText()
     return ""
 end
 
--- Fill the details pane from the next post of the queue.
+-- The label of the post all button from the state: "Post all (3/12)" is the done count and the total of the queue.
+function Tab:PostAllLabel()
+    local total, done = self:_Progress()
+    if total > 0 and self:_Current() and not self.awaiting then
+        return string.format("Post all (%d/%d)", done, total)
+    end
+    return "Post all"
+end
+
+-- Put a suggested price in the price box. The box belongs to the entry until another entry shows.
+function Tab:_FillPrice(entry, copper)
+    self.priceEntry = entry
+    self.filling = true
+    self.ui.details.priceInput:SetText(copper and SellingTab.PriceText(copper) or "")
+    self.filling = false
+end
+
+local function clearDetails(d)
+    d.icon:SetTexture(nil)
+    d.operation:SetText("")
+    d.price:SetText("")
+    d.stack:SetText("")
+    d.deposit:SetText("")
+    d.lowest:SetText("")
+    d.net:SetText("")
+    d.vs:SetText("")
+    d.warn:SetText("")
+end
+
+-- Fill the details pane from the next post of the queue (or the one item that the rule skips).
 function Tab:_UpdateDetails()
     local d = self.ui.details
-    local entry = self.awaiting and self.awaiting.entry or self:_Current()
-    local values = entry and SellingTab.Details(entry, self:_Vendor(entry))
-    if not values then
-        d.icon:SetTexture(nil)
+    local entry = self.awaiting and self.awaiting.entry or self:_Focus(false)
+    if not entry then
+        clearDetails(d)
         d.name:SetText(#self.selection == 0 and "Pick a group or an item" or "Nothing to post")
-        d.operation:SetText("")
-        d.price:SetText("")
-        d.stack:SetText("")
-        d.deposit:SetText("")
-        d.lowest:SetText("")
-        d.net:SetText("")
-        d.vs:SetText("")
+        if self.priceEntry ~= nil then
+            self.priceEntry = nil
+            self.filling = true
+            d.priceInput:SetText("")
+            self.filling = false
+        end
+        d.priceInput:SetEnabled(false)
         return
     end
+    local decision = entry.decision
+    local ready = entry.status == "ready"
+    if self.priceEntry ~= entry then
+        self:_FillPrice(entry, ready and decision.price or decision.suggested)
+    end
+    d.priceInput:SetEnabled(true)
+    local typed, why = SellingTab.ParsePrice(d.priceInput:GetText())
     local _, icon = self.deps.itemInfo(entry.item.itemID or 0)
     d.icon:SetTexture(icon)
     d.name:SetText(self:_Name(entry))
-    d.operation:SetText("Operation: " .. tostring(values.operation or "-"))
-    d.price:SetText(string.format("Price %s each | buyout %s per auction", money(values.unitPrice),
-        money(values.buyout)))
-    d.stack:SetText(string.format("%d x %d | %d h", values.auctions, values.stackSize, values.duration or 0))
+    d.operation:SetText("Operation: " .. tostring(entry.candidate and entry.candidate.operationName or "-"))
+    local values = ready and SellingTab.Details(entry, self:_Vendor(entry), typed)
+    if not values then
+        clearDetails(d)
+        d.icon:SetTexture(icon)
+        d.operation:SetText("Operation: " .. tostring(entry.candidate and entry.candidate.operationName or "-"))
+        local reason = decision.reason or "no decision"
+        d.warn:SetText("The rule skips this item: " .. (SKIP_TEXT[reason] or reason) .. ". Post asks you first.")
+        paint(d.warn, ORANGE)
+        return
+    end
+    d.price:SetText("Buyout " .. money(values.buyout) .. " per auction")
+    d.stack:SetText(string.format("%d x %d", values.auctions, values.stackSize))
     d.deposit:SetText("Deposit: " .. money(values.deposit))
-    d.lowest:SetText("Lowest: " .. (values.lowest and money(values.lowest) or "none"))
-    d.net:SetText("Net: " .. money(values.net))
-    paint(d.net, values.net < 0 and RED or WHITE)
+    d.lowest:SetText("Lowest on AH: " .. (values.lowest and money(values.lowest) or "none"))
+    local netText, netColor = SellingTab.NetStyle(values.net)
+    d.net:SetText(netText)
+    paint(d.net, netColor)
     if values.vs == nil then
         d.vs:SetText("vs vendor: -")
         paint(d.vs, WHITE)
     else
         d.vs:SetText("vs vendor: " .. money(values.vs))
         paint(d.vs, values.vs < 0 and RED or (values.vs > 0 and GREEN or WHITE))
+    end
+    -- One line for a problem: a bad price first, then the vendor warning for the next post.
+    if not typed then
+        d.warn:SetText("Invalid price: " .. why)
+        paint(d.warn, RED)
+        return
+    end
+    local vendor, net = SellingTab.VendorBetter(typed, entry.units[entry.next], self:_Vendor(entry))
+    if vendor then
+        d.warn:SetText("Sells for more at a vendor: " .. money(vendor) .. " (net on the AH: " .. money(net) .. ")")
+        paint(d.warn, ORANGE)
+    else
+        d.warn:SetText("")
     end
 end
 
@@ -974,7 +1497,9 @@ function Tab:_Update()
     ui.logList.frame:SetShown(self.showLog == true)
     local current = self:_Current()
     ui.postNext:SetText(self:PostLabel())
-    ui.postNext:SetEnabled(client.CanPost() and (self.awaiting ~= nil or current ~= nil))
+    ui.postNext:SetEnabled(client.CanPost() and (self.awaiting ~= nil or self:_Focus(false) ~= nil))
+    ui.postAll:SetText(self:PostAllLabel())
+    ui.postAll:SetEnabled(client.CanPost() and self.awaiting == nil and current ~= nil)
     ui.skip:SetEnabled(self.awaiting ~= nil or current ~= nil)
     ui.progress:SetText(self:ProgressText())
     local _, _, deposit = self:_Progress()
@@ -1091,13 +1616,39 @@ function Tab:_BuildContent()
         return label
     end
     d.name = line("highlight", 56, 6, 400)
-    d.operation = line("small", 56, 24, 400)
-    d.price = line("small", 56, 38, 400)
-    d.stack = line("small", 56, 52, 400)
+    d.operation = line("small", 56, 22, 190)
+    d.stack = line("small", 250, 22, 150)
+    -- The price box: the user can type the price for each item, for example 1g 20s 5c.
+    d.priceLabel = line("small", 56, 40, 66)
+    d.priceLabel:SetText("Price each:")
+    d.priceInput = Kit.Input(pane, 110, function()
+        self:_UpdateDetails()
+    end, function()
+        self:_UpdateDetails()
+    end)
+    d.priceInput:SetPoint("TOPLEFT", pane, "TOPLEFT", 126, -36)
+    if d.priceInput.SetMaxLetters then
+        d.priceInput:SetMaxLetters(24)
+    end
+    d.priceInput:HookScript("OnTextChanged", function()
+        if not self.filling then
+            self:_UpdateDetails()
+        end
+    end)
+    Kit.Tooltip(d.priceInput, "Price for each item", { "Type gold, silver and copper, for example 1g 20s 5c or 120s.",
+        "A plain number is copper. Post uses this price." })
+    d.price = line("small", 246, 40, 210)
+    d.warn = line("small", 56, 56, 400)
     d.deposit = line("small", 470, 6, 290)
     d.lowest = line("small", 470, 22, 290)
     d.net = line("small", 470, 38, 290)
     d.vs = line("small", 470, 54, 290)
+    -- A hit frame over the lowest line shows what the number means.
+    d.lowestHit = CreateFrame("Frame", nil, pane)
+    d.lowestHit:SetPoint("TOPLEFT", pane, "TOPLEFT", 470, -20)
+    d.lowestHit:SetSize(290, 16)
+    d.lowestHit:EnableMouse(true)
+    Kit.Tooltip(d.lowestHit, "Lowest on AH", { LOWEST_TIP })
     ui.details = d
 
 
@@ -1131,10 +1682,16 @@ function Tab:_BuildContent()
     ui.postNext:SetScript("OnClick", function()
         self:PostNext()
     end)
+    -- Post all is a queue: each click posts one auction, the next one of the selection. The post needs the click.
+    ui.postAll = Kit.Button(content, "Post all", 120, nil)
+    ui.postAll:SetPoint("LEFT", ui.postNext, "RIGHT", 6, 0)
+    ui.postAll:SetScript("OnClick", function()
+        self:PostAll()
+    end)
     ui.skip = Kit.Button(content, "Skip", 60, function()
         self:Skip()
     end)
-    ui.skip:SetPoint("LEFT", ui.postNext, "RIGHT", 6, 0)
+    ui.skip:SetPoint("LEFT", ui.postAll, "RIGHT", 6, 0)
     local function bottom(previous, gap, width)
         local label = Kit.Label(content, "", "small")
         label:SetPoint("LEFT", previous, "RIGHT", gap, 0)
@@ -1145,10 +1702,10 @@ function Tab:_BuildContent()
         end
         return label
     end
-    ui.progress = bottom(ui.skip, 12, 120)
-    ui.deposit = bottom(ui.progress, 4, 120)
-    ui.net = bottom(ui.deposit, 4, 160)
-    ui.vs = bottom(ui.net, 4, 170)
+    ui.progress = bottom(ui.skip, 8, 100)
+    ui.deposit = bottom(ui.progress, 4, 110)
+    ui.net = bottom(ui.deposit, 4, 150)
+    ui.vs = bottom(ui.net, 4, 150)
 end
 
 -- Build the panel in the parent frame and listen for the search events.
@@ -1178,6 +1735,11 @@ function Tab:Mount(parent, api)
         end)
         self.events[#self.events + 1] = posted
     end
+    -- The bags change after a post: read them again so that a posted item leaves the list.
+    bus:Subscribe("BAG_UPDATE_DELAYED", OWNER, function()
+        self:_OnBags()
+    end)
+    self.events[#self.events + 1] = "BAG_UPDATE_DELAYED"
     self:_Update()
 end
 
@@ -1196,7 +1758,7 @@ end
 -- Create the Selling core. The host mounts it and shows it.
 -- deps: bus, rules, formulaRun, readBags() (bag items with stacks); optional after(seconds, fn), client, plan, log,
 -- itemInfo, maxStack(itemID), vendorPrice(itemID) (copper for one item, or nil), confirm(name, text, onAccept),
--- getRecord(key), now().
+-- getRecord(key), now(), itemLink(itemID) (link, quality), warn(title, text, yesLabel, onYes).
 function SellingTab.New(deps)
     if type(deps) ~= "table" or type(deps.bus) ~= "table" then
         error("deps.bus must be a table", 2)
@@ -1217,6 +1779,8 @@ function SellingTab.New(deps)
         confirm = deps.confirm or function(...)
             return ns.Kit.Confirm(...)
         end,
+        itemLink = deps.itemLink or defaultItemLink,
+        warn = deps.warn or openWarning,
     }
     resolved.log = deps.log or resolved.plan.Log
     return setmetatable({
