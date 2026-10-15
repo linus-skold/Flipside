@@ -11,7 +11,7 @@ local function createFrame(name)
 end
 
 -- Create a hidden, movable window from a client frame template.
--- options: width, height, title, portrait (texture path or nil).
+-- options: width, height, title, portrait (texture path or nil), strata (default "MEDIUM").
 function Kit.CreateWindow(name, options)
     options = options or {}
     local window, hasPortrait = createFrame(name)
@@ -28,6 +28,11 @@ function Kit.CreateWindow(name, options)
         end
     end
 
+    window:SetFrameStrata(options.strata or "MEDIUM")
+    window:SetToplevel(true)
+    window:HookScript("OnShow", function(self)
+        self:Raise()
+    end)
     window:SetMovable(true)
     window:SetClampedToScreen(true)
     window:EnableMouse(true)
