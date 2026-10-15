@@ -30,6 +30,7 @@ read_globals = {
     "Enum",
     "GetInboxHeaderInfo",
     "GetInboxInvoiceInfo",
+    "GetInboxText",
     "GetInboxItem",
     "GetInboxItemLink",
     "GetInboxNumItems",

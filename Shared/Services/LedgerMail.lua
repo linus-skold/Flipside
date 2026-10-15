@@ -1,9 +1,10 @@
 local _, ns = ...
 
 -- The mail reader of the ledger (SPEC 5.8 points 5 and 6). It reads the inbox with read-only calls on MAIL_SHOW and
--- MAIL_INBOX_UPDATE and keeps a snapshot. It never calls GetInboxText (that call marks a mail as read). It adds no
--- hook and registers no restricted event. When the money tracker sees a gain in the mail context, this module
--- matches it with a mail whose money went down, and writes the sale, refund or mail money record.
+-- MAIL_INBOX_UPDATE and keeps a snapshot. For a mail with money and no invoice it reads the mail text through
+-- api.text first (that call marks the mail as read), then reads the invoice again. It adds no hook and registers
+-- no restricted event. When the money tracker sees a gain in the mail context, this module matches it with a mail
+-- whose money went down, and writes the sale, refund or mail money record.
 local LedgerMail = {}
 ns.LedgerMail = LedgerMail
 
@@ -130,6 +131,12 @@ function Mail:_Read()
         local header = api.header(index)
         if type(header) == "table" then
             local invoice = self._invoices and api.invoice(index) or nil
+            if self._invoices and invoice == nil and api.text and count(header.money) and header.money > 0
+                and not self:_AnySecret(header) then
+                -- The client gives the invoice only after the mail text is read (this marks the mail as read).
+                api.text(index)
+                invoice = api.invoice(index)
+            end
             if self:_AnySecret(header) or self:_AnySecret(invoice) then
                 self._stats.skipped = self._stats.skipped + 1
             else
@@ -506,7 +513,8 @@ end
 
 -- deps: bus, buffer (Add), tracker (LedgerMoney: Context, Claim, SetMailMatcher, HeldMail, ReleaseHeldMail, Note),
 -- api (numItems(), header(index) -> { sender, subject, money, itemCount, itemQuantity, itemLink },
--- invoice(index) -> { type, itemName, player, bid, buyout, deposit, consignment, count } or nil), now (seconds),
+-- invoice(index) -> { type, itemName, player, bid, buyout, deposit, consignment, count } or nil, text(index) optional:
+-- reads the mail text so that the invoice becomes available), now (seconds),
 -- serverTime, character (function), after, itemKey(link), fingerprints (a saved table of fingerprint -> time) and
 -- saveFingerprints(table). Optional: isSecret, strings(name) -> client global string, itemKeyByName(name),
 -- invoices (false turns the invoice read off), report.

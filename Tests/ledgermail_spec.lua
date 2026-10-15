@@ -161,6 +161,67 @@ describe("LedgerMail", function()
         mail = attach()
     end)
 
+    describe("an invoice that needs the mail text", function()
+        local textCalls
+
+        -- The invoice shows only after text(index), as in the client. The subject matches no pattern.
+        local function hiddenMail(invoice)
+            textCalls = 0
+            local entry = { sender = "AH", subject = "Mystery", money = 9050, itemCount = 0, hidden = invoice }
+            inbox[1] = entry
+            mail = attach({
+                api = {
+                    numItems = function()
+                        return #inbox
+                    end,
+                    header = function(index)
+                        return inbox[index]
+                    end,
+                    invoice = function(index)
+                        return inbox[index].invoice
+                    end,
+                    text = function(index)
+                        textCalls = textCalls + 1
+                        inbox[index].invoice = inbox[index].hidden
+                    end,
+                },
+            })
+        end
+
+        it("gives an ahSale record when the invoice is there after the text read", function()
+            hiddenMail({ type = "seller", itemName = "Linen Cloth", player = "Rich", bid = 9500, buyout = 9500,
+                deposit = 100, consignment = 550, count = 20 })
+            open()
+            assert.are.equal(1, textCalls)
+            inbox[1].money = 0
+            change(9050)
+            advance(2)
+            assert.are.equal(1, #records)
+            assert.are.equal("ahSale", records[1].source)
+            assert.are.equal(9050, records[1].money)
+            assert.are.equal("Rich", records[1].counterparty)
+            assert.are.equal(0, #bySource("mailMoney"))
+        end)
+
+        it("still gives mailMoney when there is no invoice and no subject match", function()
+            hiddenMail(nil)
+            open()
+            assert.is_true(textCalls >= 1)
+            inbox[1].money = 0
+            change(9050)
+            advance(2)
+            assert.are.equal(0, #bySource("ahSale"))
+            assert.are.equal(1, #bySource("mailMoney"))
+        end)
+
+        it("does not read the text of a mail without money", function()
+            hiddenMail({ type = "seller", itemName = "Linen Cloth", player = "Rich" })
+            inbox[1].money = 0
+            open()
+            assert.are.equal(0, textCalls)
+        end)
+    end)
+
     describe("a sale invoice", function()
         it("gives one ahSale record and no mailMoney when the update comes first", function()
             inbox[1] = saleMail("Rich", 9500, 100, 550)
