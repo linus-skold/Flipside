@@ -140,7 +140,16 @@ describe("SellingTab", function()
         bus:Emit(event, ...)
     end
 
+    local delays = {}
+
     local function click(button)
+        if button == ui.postAll then
+            local list = delays
+            delays = {}
+            for _, fn in ipairs(list) do
+                fn()
+            end
+        end
         button.scripts.OnClick(button)
     end
 
@@ -148,6 +157,10 @@ describe("SellingTab", function()
         local deps = {
             bus = bus, rules = rules, formulaRun = run, client = client,
             after = function(seconds, fn)
+                if seconds == ns.SellingTab.POST_DELAY then
+                    delays[#delays + 1] = fn
+                    return
+                end
                 timers[#timers + 1] = { seconds = seconds, fn = fn }
             end,
             itemInfo = function(id)
