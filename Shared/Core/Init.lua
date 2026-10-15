@@ -792,7 +792,7 @@ local function openTooltip()
 end
 
 -- Set later in this file: attach the Auction House tab.
-local openUI
+local openUI, openMinimapButton
 
 eventFrame:SetScript("OnEvent", function(_, event, ...)
     if event == "ADDON_LOADED" and (...) == addonName then
@@ -813,6 +813,7 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
         openLedgerMoney()
         openTooltip()
         openUI()
+        openMinimapButton()
         if ns.RecipeSearch then
             ns.RecipeSearch.Attach()
         end
@@ -915,13 +916,21 @@ local function confirmScan(onAccept)
 end
 
 -- The Flipside window is created on first use.
-function ns.OpenMainWindow()
+local function withMainWindow(action)
     if not ns.MainWindow then
         printLine("the window is not available this session")
         return
     end
     local ok, err = pcall(function()
         local window = ns.MainWindow.Create({
+            windowPosition = ns.db and {
+                get = function()
+                    return ns.db:Get("account", "ui.windowPosition")
+                end,
+                set = function(position)
+                    ns.db:Set("account", "ui.windowPosition", position)
+                end,
+            } or nil,
             formulaRun = ns.formulaRun,
             formulaSources = ns.formulaSources,
             itemCache = ns.itemCache,
@@ -952,11 +961,83 @@ function ns.OpenMainWindow()
             after = C_Timer.After,
             getVersionLine = ns.VersionLine,
         })
-        window:Toggle()
+        action(window)
     end)
     if not ok then
         ns.ReportError("window is not available this session: " .. tostring(err))
     end
+end
+
+function ns.OpenMainWindow()
+    withMainWindow(function(window)
+        window:Toggle()
+    end)
+end
+
+-- The minimap button: hide the window if it shows the Ledger page; otherwise show the Ledger page.
+function ns.ToggleLedgerWindow()
+    withMainWindow(function(window)
+        if window:IsShown() and window:GetSelectedPage() == "ledger" then
+            window:Hide()
+        else
+            window:Show()
+            window:SelectPage("ledger")
+        end
+    end)
+end
+
+-- Create the minimap button; it needs the settings DB and the minimap frame.
+openMinimapButton = function()
+    if not (ns.db and ns.Kit and ns.Kit.CreateMinimapButton and Minimap) then
+        return
+    end
+    local ok, result = pcall(ns.Kit.CreateMinimapButton, "FlipsideMinimapButton", {
+        parent = Minimap,
+        icon = "Interface\\Icons\\INV_Misc_Coin_02",
+        title = "Flipside",
+        lines = { "Left click: open the ledger", "Drag: move this button around the minimap" },
+        angle = ns.db:Get("account", "ui.minimapAngle"),
+        hidden = ns.db:Get("account", "ui.minimapHidden") == true,
+        onClick = function(_, mouseButton)
+            if mouseButton == nil or mouseButton == "LeftButton" then
+                ns.ToggleLedgerWindow()
+            end
+        end,
+        onAngleChanged = function(angle)
+            ns.db:Set("account", "ui.minimapAngle", angle)
+        end,
+    })
+    if ok then
+        ns.minimapButton = result
+    else
+        ns.ReportError("minimap button is not available this session: " .. tostring(result))
+    end
+end
+
+-- Toggle the minimap button and save the choice.
+local function minimapCommand()
+    if not (ns.minimapButton and ns.db) then
+        printLine("the minimap button is not available this session")
+        return
+    end
+    local hidden = ns.db:Get("account", "ui.minimapHidden") ~= true
+    if not ns.db:Set("account", "ui.minimapHidden", hidden) then
+        printLine("settings are read-only; the choice was not saved")
+    end
+    ns.minimapButton:SetHidden(hidden)
+    printLine(hidden and "minimap button hidden" or "minimap button shown")
+end
+
+-- Put the window back in the centre of the screen and forget the saved position.
+local function resetPositionCommand()
+    if ns.db then
+        ns.db:Set("account", "ui.windowPosition", nil)
+    end
+    local window = ns.MainWindow and ns.MainWindow.Get()
+    if window then
+        window:ResetPosition()
+    end
+    printLine("window position reset")
 end
 
 openUI = function()
@@ -1366,6 +1447,12 @@ function ns.HandleSlash(msg)
         return
     elseif command == "ledgerdebug" then
         ledgerDebugCommand()
+        return
+    elseif command == "minimap" then
+        minimapCommand()
+        return
+    elseif command == "resetpos" then
+        resetPositionCommand()
         return
     elseif command == "" then
         ns.OpenMainWindow()
