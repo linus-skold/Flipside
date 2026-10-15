@@ -57,6 +57,7 @@ read_globals = {
     "PanelTemplates_SetNumTabs",
     "ButtonFrameTemplate_HidePortrait",
     "PanelTemplates_SetTab",
+    "PanelTemplates_TabResize",
     "ScrollUtil",
     "StaticPopup_Show",
     "UIParent",
