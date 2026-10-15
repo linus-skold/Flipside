@@ -11,6 +11,7 @@ end
 
 -- Create a list. options: rowHeight, initRow(rowFrame, data), inset (true gives the client inset background).
 -- Use list.frame to place the list. Call list:SetData(array) to fill it.
+-- list.contentInsets = { left, right } is the space between the list frame and the rows (for a header row).
 function Kit.CreateList(parent, options)
     options = options or {}
     local rowHeight = options.rowHeight or Kit.Theme.rowHeight
@@ -37,12 +38,14 @@ function Kit.CreateList(parent, options)
         end)
         ScrollUtil.InitScrollBoxListWithScrollBar(box, bar, view)
         list.box = box
+        list.contentInsets = { left = pad, right = 16 + pad }
         function list:SetData(array)
             self.data = array or {}
             box:SetDataProvider(CreateDataProvider(self.data))
         end
     else
         list.rows = {}
+        list.contentInsets = { left = pad, right = pad }
         function list:SetData(array)
             self.data = array or {}
             for index, data in ipairs(self.data) do
