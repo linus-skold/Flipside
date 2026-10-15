@@ -337,7 +337,7 @@ The user decided points 1 to 4. Points 5 to 9 are defaults from the study recomm
 5. Items below the minimum price are skipped (the `belowMin` default, §5.4).
 6. No keybinds in v1.
 7. TBC Buying and Selling come later. Step 6 starts on WoW: Forever only.
-8. The decision log is a table for the session. From step 7 PR9 Flipside also saves it in the ledger (§5.8, changed 2026-10-15). Before PR9 it is not saved.
+8. The decision log is a table for the session. From step 7 PR9 Flipside also saves it in the ledger (§5.8, changed 2026-10-15). Before PR9 it is not saved. The Ledger page shows each saved entry as the detail of the matching row in its Auctions tab. A dry run shows as a row with the mark "dry run".
 9. The buying plan (`BuyingPlan`) is pure logic. It lists the items of all groups that have a Buying operation, with the maximum price for each item. It shows the buyable rows of live search results, and it stops with a reason: "above max price", "own auction only", "no results" or "no max price". For a commodity, the buy unit is a quantity at a quoted unit price. For an item, the buy unit is one auction. The option `showAboveMax` lets the UI show rows above the maximum, but never buy them.
 10. The Forever host can add many Flipside tabs (`ns.AuctionTabs.Register`). The Buying tab shows the shopping list and runs live searches (one item, or all items one at a time). It evaluates the rows and logs each decision. It lists the listings of the selected item grouped by price level (unit price, total quantity, number of listings, own marker). The Stack Price column follows the flavour flag `hasCommodityMarket` (true on Forever, false on TBC and on the other legacy flavours). If the flag is true and the level is a commodity, the cell is empty. In all other cases, Stack Price is the unit price times the quantity of the listing that Buy next buys. On a legacy client every listing is a stack with a stack buyout, so every level shows a Stack Price.
 11. Buy next buys the next cheapest price level: the whole quantity at that unit price for a commodity, or the next auction for an item. It needs a ready client, a level that is not yours and a unit price at or under the maximum price. It never buys above the maximum price. Each purchase has two clicks (D26). Click 1 starts a commodity quote (`StartCommoditiesPurchase`) and the confirm box shows the server unit and total price and the quote time left. For an item, click 1 opens the confirm box with the buyout price. Click 2 buys (`ConfirmCommoditiesPurchase`, or `PlaceBid` with the buyout for an item). A quote total above the maximum price times the quantity shows in red, and the button reads "Buy anyway". Cancel, Escape, a closed Auction House or a left tab cancels the quote.
@@ -457,11 +457,16 @@ The user approved points 1 to 10 on 2026-10-15. They are binding. The idea is si
 7. **Day boundary.** A ledger day starts at 00:00 UTC by the server clock (`GetServerTime`). Day number = floor(server time / 86,400). This is the same as D4 and `ScanClock`.
 8. **Decision logs.**
    - The Buying and Selling decision logs are saved in the ledger (type `log`). This changes §5.4 point 8.
-   - A log record holds the time, character, tab, item key, reason code, price and quantity, and whether the run was a dry run.
-   - Proposed default (not decided by the user): Flipside writes the log records of a run when the run ends. It keeps them for 30 days (setting `ledger.logDays`) and then deletes them, with no daily sum.
+   - A log record holds the time, character, tab, action (dry run, buy next or post next), item key, reason code, price, quantity and `dryRun`. It has the `ctx` of the trade it explains.
+   - Flipside writes the log records of a run when the run ends. It keeps them for 30 days (setting `ledger.logDays`) and then deletes them, with no daily sum. The user decided this on 2026-10-15.
+   - Decision log records have no tab of their own. The Ledger page shows them as the detail of the matching Auctions row (point 9).
 9. **Ledger page.**
-   - The page is in the Flipside window (`/flip`). It has inner tabs: Sales, Purchases, Income by source, Loot and Expenses (deposits, repairs, vendor purchases).
+   - The page is in the Flipside window (`/flip`). It has these inner tabs: Sales, Purchases, Auctions, Income by source, Loot and Expenses (deposits, repairs, vendor purchases).
    - Each tab has a totals row, a date range filter and the character filter.
+   - The Auctions tab shows the Auction House activity of the character: posts (item, quantity, price, deposit), cancels, expired auctions and purchases at the Auction House.
+   - A row of a post or purchase has a detail line (or a tooltip) with the matching log record: action and reason. The match uses `ctx`.
+   - A dry run has no trade. Its log record is a row of its own in the Auctions tab, with the mark "dry run".
+   - A row older than the log retention has no detail line.
    - CSV export stays in scope (build step 7 PR8, with a documented column format).
 10. **Money tracking.**
     - Flipside keeps the last value of `GetMoney()`. On `PLAYER_MONEY` it computes the change and labels it with the open context: merchant, loot, trade, mail, quest or Auction House.
@@ -478,7 +483,9 @@ The `source` field is one of these values. The `type` field sets the view.
 | --- | --- | --- |
 | `ahSale` | `sale` | Sale invoice (PR3) |
 | `ahPurchase` | `purchase` | Auction House context (PR2) |
+| `ahPost` | `post` | Auction House context (PR2); item, quantity, buyout price and deposit; no money change |
 | `ahDeposit` | `expense` | Auction House context (PR2) |
+| `log` | `log` | Decision log (PR9); no money change |
 | `ahDepositRefund` | `income` | Sale invoice (PR3) |
 | `ahExpired`, `ahCancelled` | `expired`, `cancelled` | Mail (PR3); no money; used by `SaleRate` |
 | `loot` | `loot` | Loot window (PR4); one record for each item and one for money |
@@ -496,7 +503,8 @@ The `source` field is one of these values. The `type` field sets the view.
 | --- | --- |
 | `time` | Server time in UTC, whole seconds |
 | `char` | Character, `Name-Realm` |
-| `type` | `sale`, `purchase`, `income`, `expense`, `loot`, `expired`, `cancelled` or `log` |
+| `type` | `sale`, `purchase`, `post`, `income`, `expense`, `loot`, `expired`, `cancelled` or `log` |
+| `action`, `reason`, `tab`, `dryRun` | Log records only: the action (dry run, buy next or post next), the reason code, the tab (Buying or Selling) and the dry run flag |
 | `source` | Value from the source table |
 | `item` | Item key (D20); empty for money only |
 | `qty` | Item quantity; 0 for money only |
@@ -836,9 +844,9 @@ The MVP is done when a player on WoW: Forever can scan, see prices in tooltips, 
 | PR4 | Loot: items, money and the mob | PR0, PR1, PR2 |
 | PR5 | Vendor and repair | PR0, PR1, PR2 |
 | PR6 | Trade and quest | PR0, PR1, PR2 |
-| PR7 | Ledger page with the inner tabs and the filters | PR1; the tabs show the sources of PR2 to PR6 that exist |
+| PR7 | Ledger page with the inner tabs (Sales, Purchases, Auctions, Income by source, Loot, Expenses) and the filters | PR1; the tabs show the sources of PR2 to PR6 that exist |
 | PR8 | CSV export | PR7 |
-| PR9 | Decision logs of Buying and Selling saved in the ledger | PR1 and the step 6 tabs |
+| PR9 | Decision logs of Buying and Selling saved in the ledger, and shown as the detail of the Auctions rows (dry run rows included) | PR1, PR2, PR7 and the step 6 tabs |
 
 PR3 to PR6 can go in any order after PR2.
 
