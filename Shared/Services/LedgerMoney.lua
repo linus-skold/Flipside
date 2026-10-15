@@ -249,8 +249,46 @@ function Tracker:_FlushHeld(held)
         return
     end
     held.done = true
+    if held.kind == "mail" then
+        -- No mail invoice claimed the money, so it is mail money.
+        self:_WriteKind("mail", held.delta, held.ctx)
+        return
+    end
     self._stats.unpaired = self._stats.unpaired + 1
     self:_WriteUnknown(held.delta, held.ctx)
+end
+
+-- LedgerMail sets a function that gets each money gain in the mail context. It returns true if it wrote the records.
+function Tracker:SetMailMatcher(matcher)
+    self._mailMatcher = matcher
+end
+
+-- Returns the amounts of the mail gains that wait for a mail match (copper), oldest first.
+function Tracker:HeldMail()
+    local amounts = {}
+    for _, held in ipairs(self._held) do
+        if not held.done and held.kind == "mail" then
+            amounts[#amounts + 1] = held.delta
+        end
+    end
+    return amounts
+end
+
+-- LedgerMail wrote the records for a held mail gain of this amount. Returns true if there was one.
+function Tracker:ReleaseHeldMail(amount)
+    for _, held in ipairs(self._held) do
+        if not held.done and held.kind == "mail" and held.delta == amount then
+            held.done = true
+            self._stats.claimed = self._stats.claimed + 1
+            return true
+        end
+    end
+    return false
+end
+
+-- Add a line to the debug ring for another module. Does nothing if the debug setting is off.
+function Tracker:Note(name, ...)
+    self:_Ring(name, ...)
 end
 
 function Tracker:_Hold(kind, delta, ctx)
@@ -326,6 +364,13 @@ function Tracker:_Process(delta)
             end
         else
             self:_WriteUnknown(delta, ctx)
+        end
+    elseif kind == "mail" and delta > 0 and self._mailMatcher then
+        -- The mail module may know this money (an invoice). Its inbox update can come after the money change.
+        if self._mailMatcher(delta) then
+            self._stats.claimed = self._stats.claimed + 1
+        else
+            self:_Hold("mail", delta, ctx)
         end
     elseif kind then
         self:_WriteKind(kind, delta, ctx)

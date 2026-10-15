@@ -14,6 +14,7 @@ local SOURCE_TYPES = {
     ahPost = { post = true },
     ahDeposit = { expense = true },
     ahDepositRefund = { income = true },
+    ahOutbidRefund = { income = true },
     ahExpired = { expired = true },
     ahCancelled = { cancelled = true },
     loot = { loot = true },
@@ -93,6 +94,7 @@ local CHECKS = {
         return SOURCE_TYPES[v] ~= nil
     end,
     item = isText,
+    itemName = isText,
     qty = isCount,
     money = isCount,
     mob = isText,
@@ -140,7 +142,7 @@ function LedgerRecord.Validate(record)
             return false, "source " .. record.source .. " cannot have type " .. record.type
         end
     end
-    if (record.qty or 0) > 0 and (record.item or "") == "" then
+    if (record.qty or 0) > 0 and (record.item or "") == "" and (record.itemName or "") == "" then
         return false, "qty needs an item"
     end
     return true

@@ -496,7 +496,7 @@ The user approved points 1 to 10 on 2026-10-15. They are binding. The idea is si
    - A deposit is an expense when the auction is posted. A sale refunds the deposit.
    - The cut comes from the sale invoice: payout = bid + deposit - consignment (Forever `MailFrame.lua` lines 827-831).
    - The estimate before a sale can still use 5% (§5.4 point 18). The ledger uses the real invoice cut.
-   - A sale gives two records: a sale (money = bid, cut = consignment) and a deposit refund (money = deposit). Their sum is the payout, so no money is counted twice.
+   - A sale gives one record (decided 2026-10-15, PR3, changes the first text): source `ahSale`, `money` = the payout that arrived, `bid`, `deposit` (the refund) and `cut` (consignment) as fields. A second record for the deposit would count the payout twice or split it wrong, because bid + deposit is not the payout. The source `ahDepositRefund` is not written; it stays valid for old data.
 7. **Day boundary.** A ledger day starts at 00:00 UTC by the server clock (`GetServerTime`). Day number = floor(server time / 86,400). This is the same as D4 and `ScanClock`.
 8. **Decision logs.**
    - The Buying and Selling decision logs are saved in the ledger (type `log`). This changes §5.4 point 8.
@@ -504,7 +504,7 @@ The user approved points 1 to 10 on 2026-10-15. They are binding. The idea is si
    - Flipside writes the log records of a run when the run ends. It keeps them for 30 days (setting `ledger.logDays`) and then deletes them, with no daily sum. The user decided this on 2026-10-15.
    - Decision log records have no tab of their own. The Ledger page shows them as the detail of the matching Auctions row (point 9).
 9. **Ledger page.**
-   - The page is in the Flipside window (`/flip`). It has these inner tabs: Sales, Purchases, Auctions, Income by source, Loot and Expenses (deposits, repairs, vendor purchases).
+   - The page is in the Flipside window (`/flip`). It has these inner tabs: Sales, Purchases, Auctions, Loot and Expenses (deposits, repairs, vendor purchases). The tab "Income by source" was removed on 2026-10-15 (user decision): money from Auction House sales belongs in Sales. `LedgerStore:SumsBySource` stays in the store.
    - Each tab has a totals row, a date range filter and the character filter.
    - The Auctions tab shows the Auction House activity of the character: posts (item, quantity, price, deposit), cancels, expired auctions and purchases at the Auction House.
    - A row of a post or purchase has a detail line (or a tooltip) with the matching log record: action and reason. The match uses `ctx`.
@@ -516,7 +516,6 @@ The user approved points 1 to 10 on 2026-10-15. They are binding. The idea is si
    - Each tab builds its rows only when it shows. The list is virtual. Rows are newest first. The time shows in local time. A daily sum shows as one row with the mark "daily total (count)" and the UTC date.
    - Columns of the record tabs. All have Date, Item, Qty and Money. The Character column shows only for All characters. The last column is Buyer (Sales), Seller (Purchases), Detail (Auctions), Mob (Loot) or Type (Expenses). Loot also has a Value column (vendor price × quantity).
    - Tab contents: Sales shows type `sale`. Purchases shows type `purchase`. Expenses shows type `expense`. Loot shows type `loot`. Auctions shows `post`, `expired`, `cancelled`, AH `purchase` and dry run logs.
-   - Income by source has the columns Source, Count, Money in, Money out and Net. It has one row for each source with money flow, largest flow first. Sources with no money (for example `ahExpired`) have no row.
    - Each tab has a totals row with money in, money out and net of the visible rows, and the row count.
    - If no record matches, the tab shows "No records yet. The ledger records money from loot, vendors, mail, trades, quests and the Auction House."
    - **Balance graph (decided 2026-10-15).** The page shows a line graph of the gold balance above the inner tabs. The graph is 130 px high and as wide as the page. The button "Hide graph" or "Show graph" in the filter row hides it. The list then gets the room. Flipside saves the choice in the character scope (`ledger.view.graph`, default shown).
@@ -528,7 +527,7 @@ The user approved points 1 to 10 on 2026-10-15. They are binding. The idea is si
    - Y axis: it starts at 0 and ends at a clean value above the highest balance. It has 3 to 5 labels. The step is 1, 2 or 5 times a power of 10 in the unit. The unit is copper, silver or gold. It is the largest unit that fits the highest balance at least twice. The labels use the money formatter. The X axis has the date at the start, the middle and the end. The date is the UTC ledger day. For "Today" it is the local time.
    - Hover: the mouse over the graph shows a tooltip with the date and the balance of the nearest point.
    - Flipside computes the points again only when the character, the range, the stored records, the buffered records or the live money change. It also computes them again after each minute.
-   - Open point for the mail step (PR3): the sale record has `money` = bid and `cut` = consignment. The graph uses `money` only. If the mail step stores the bid, the graph is too high by the cut. The mail step must store the amount that really arrives, or the graph must subtract `cut`.
+   - Closed point (PR3, decided 2026-10-15): the sale record stores in `money` the amount that really arrives (bid + deposit - consignment, the mail money). The fields `bid`, `deposit` and `cut` are detail only. The graph uses `money` only, so it counts a sale once and at the real value.
 10. **Money tracking.**
     - Flipside keeps the last value of `GetMoney()`. On `PLAYER_MONEY` it computes the change and labels it with the open context: merchant, loot, trade, mail, quest or Auction House.
     - A change with no open context gets the source "unknown".
@@ -546,7 +545,7 @@ The user approved points 1 to 10 on 2026-10-15. They are binding. The idea is si
     - Labels: merchant gives `vendorSale` (gain) or `vendorPurchase` (spend); PR5 splits out `repair`. Loot gives `loot` (gain only). Trade gives `trade`. Mail gives `mailMoney` (gain only). A change that does not fit its context (for example a spend in a loot window) is "unknown".
     - Secret values: Flipside checks each payload and `GetMoney()` with `issecretvalue` when the function exists. If a needed value is secret, Flipside writes no record and counts one skip. The count shows in `/flip ledgerdebug`.
     - Claim: another module can call `Claim(amount, direction)`. The next change of that amount and direction inside `CLAIM_SECONDS` = 5 s gets no record.
-    - Context for later PRs: `Context(kind)` gives the open context id. PR3 to PR6 write their item records with that `ctx`. The tracker still writes the money record. A PR that writes its own money record must claim the amount.
+    - Context for later PRs: `Context(kind)` gives the open context id. PR3 to PR6 write their item records with that `ctx`. The tracker still writes the money record. A PR that writes its own money record must claim the amount. Mail is the exception: `LedgerMail` sets a matcher that the tracker calls first for a gain in the mail context (see "Mail invoices").
     - Auction House merge rule. The money change is the truth and gives the amount. The events and the calls only add detail (item, quantity). Flipside writes one record for each money change. `AuctionClient.OnCall` tells `LedgerMoney` about each buy or post call of Flipside (a plain wrap, no hook). A call makes a hint. The events `COMMODITY_PURCHASE_SUCCEEDED`, `COMMODITY_PURCHASED` and `AUCTION_HOUSE_PURCHASE_COMPLETED` confirm the hint, or make one for a buy in Blizzard's own tab. A spend in the Auction House context takes the oldest hint, and a confirmed hint comes first. If it finds no hint, it waits `QUEST_WINDOW_SECONDS` for one. If none comes, the record is "unknown" and Flipside counts it as unpaired. A hint ends after `HINT_SECONDS` = 10 s, because the server can be slow. The quote total is never a second record.
     - A buy gives one `ahPurchase` record. The item auction gives the quantity only when `GetAuctionInfoByID` has it; otherwise the quantity is 0.
     - A post gives two records with the same `ctx`: `ahPost` (type `post`, no money, with item, quantity, buyout and the deposit from the client estimate) at `AUCTION_HOUSE_AUCTION_CREATED`, and `ahDeposit` (an expense with the real deposit) at the money change. A confirm call replaces the post call of the same post.
@@ -557,12 +556,13 @@ The `source` field is one of these values. The `type` field sets the view.
 
 | Source | Type | Written by |
 | --- | --- | --- |
-| `ahSale` | `sale` | Sale invoice (PR3) |
+| `ahSale` | `sale` | Sale invoice (PR3); money = the payout that arrived |
 | `ahPurchase` | `purchase` | Auction House context (PR2) |
 | `ahPost` | `post` | Auction House context (PR2); item, quantity, buyout price and deposit; no money change |
 | `ahDeposit` | `expense` | Auction House context (PR2) |
 | `log` | `log` | Decision log (PR9); no money change |
-| `ahDepositRefund` | `income` | Sale invoice (PR3) |
+| `ahDepositRefund` | `income` | Not written (the refund is a field of `ahSale`, PR3); valid for old data |
+| `ahOutbidRefund` | `income` | Mail with the outbid subject (PR3); the bid that returns |
 | `ahExpired`, `ahCancelled` | `expired`, `cancelled` | Mail (PR3); no money; used by `SaleRate` |
 | `loot` | `loot` | Loot window (PR4); one record for each item and one for money |
 | `vendorSale` | `income` | Merchant context (PR5) |
@@ -583,6 +583,7 @@ The `source` field is one of these values. The `type` field sets the view.
 | `action`, `reason`, `tab`, `dryRun` | Log records only: the action (dry run, buy next or post next), the reason code, the tab (Buying or Selling) and the dry run flag |
 | `source` | Value from the source table |
 | `item` | Item key (D20); empty for money only |
+| `itemName` | Item name, only when a mail gave a name and no item key could be found (PR3) |
 | `qty` | Item quantity; 0 for money only |
 | `money` | Whole copper, never negative; the type gives the direction |
 | `mob` | Mob name for loot; "unknown" if no kill matches |
@@ -591,7 +592,19 @@ The `source` field is one of these values. The `type` field sets the view.
 | `invoiceType`, `counterparty`, `bid`, `buyout`, `deposit`, `cut` | The fields that the invoice gives: the invoice type, the other player, the bid, the buyout, the deposit and the cut (`consignment`) |
 | `value` | Vendor price at loot time (loot items only) |
 
-Flipside checks the exact order of the invoice fields of `GetInboxInvoiceInfo` in the Forever source in PR3.
+**Mail invoices (decided 2026-10-15, PR3).** The code is `LedgerMail`.
+- Invoice fields. Forever `Blizzard_MailFrame/MailFrame.lua` (lines 575 and 785) reads `GetInboxInvoiceInfo(index)` as: invoiceType, itemName, playerName, bid, buyout, deposit, consignment, moneyDelay, etaHour, etaMin, count, commerceAuction. The types are `seller`, `buyer` and `seller_temp_invoice`. The payout of a `seller` invoice is bid + deposit - consignment (lines 827-831). For a sale with count > 1 the client shows bid / count as the unit price, so `bid` is the total. `GetInboxHeaderInfo` gives: packageIcon, stationeryIcon, sender, subject, money, CODAmount, daysLeft, itemCount, wasRead, wasReturned, textCreated, canReply, isGM, firstItemQuantity, firstItemLink (lines 340 and 761).
+- `GetInboxText` is never called. The client calls it for the open mail (lines 572 and 776), and it is known to mark the mail as read. The Forever API documents have no entry for `GetInboxText` or `GetInboxInvoiceInfo`, so it is not verified whether the invoice fields are available before the client opens the mail. In game check: see the checklist of the PR. If a sale subject comes without invoice fields, the sale still gets a record from the mail money, with the item name from the subject, and the counter `without invoice` goes up.
+- Events: `MAIL_SHOW` (new snapshot), `MAIL_INBOX_UPDATE` (debounced read, `DEBOUNCE_SECONDS` = 0.1) and `MAIL_CLOSED` (snapshot ends). No `hooksecurefunc` on `TakeInboxMoney`, `TakeInboxItem`, `AutoLootMailItem` or any `C_` function. No restricted event.
+- Snapshot: for each mail the index, sender, subject, money, item count, first item, invoice fields and the fingerprint. A new read is matched with the old snapshot by sender and subject and no less money (the index is not used). Money that left a mail (the money went down, or the mail is gone) is a "drop".
+- Which mail is an Auction House mail. The invoice type decides first: `seller` is a sale, `seller_temp_invoice` is a pending sale (no record, the payout comes in a later `seller` mail), `buyer` is a purchase. Without an invoice, the subject is compared with the patterns that `LedgerMail` builds from the client global strings `AUCTION_SOLD_MAIL_SUBJECT`, `AUCTION_EXPIRED_MAIL_SUBJECT`, `AUCTION_REMOVED_MAIL_SUBJECT` (cancelled), `AUCTION_OUTBID_MAIL_SUBJECT` and `AUCTION_WON_MAIL_SUBJECT`. These names are not in the Forever source dump (the global strings are not in it), so they are not verified. A missing global turns off only its own kind. The module never matches English text.
+- Claim order (both orders of `PLAYER_MONEY` and `MAIL_INBOX_UPDATE` are handled). When `PLAYER_MONEY` gives a gain in the mail context, the tracker calls the mail matcher before it labels the gain. The matcher reads the inbox at once. (a) If the drop is already known, `LedgerMail` writes the record and the tracker writes none. (b) If no drop matches, the tracker holds the gain for `QUEST_WINDOW_SECONDS`. `LedgerMail` settles held gains when it reads the inbox, and releases the held gain (`ReleaseHeldMail`). (c) If no mail claims the gain in that time, the tracker writes `mailMoney`. (d) A drop that gets no money change in `PENDING_SECONDS` = 10: a sale invoice still gets its record and `Claim(amount, "in")`, so a late money change gets no second record. If one money change is the sum of all open drops (the player took several mails at once), `LedgerMail` writes one record for each drop.
+- Records: `ahSale` for a sale invoice (item, quantity, `money` = the amount that arrived, `bid`, `buyout`, `deposit`, `cut`, `counterparty` = the buyer, `invoiceType`, `ctx`). `ahOutbidRefund` for the outbid mail. `mailMoney` for every other mail with money. A buyer invoice gives no money record: the Auction House purchase is a record from PR2, and the item comes in the mail. The item name is resolved to a key with the item name index when exactly one item has the name; else the record keeps `itemName`.
+- Expired and cancelled: one rule. A record (`ahExpired` or `ahCancelled`, no money) is written when the mail is first seen in the inbox, not when the item is taken. The item and quantity come from the header (first attachment). The mail subject sets the kind.
+- Fingerprint: a hash of sender, subject, the invoice values (or the mail money if there is no invoice), item count, first item and quantity, plus an occurrence number. A mail with money takes the lowest number that is not saved and not used in the snapshot, so a new sale equal to an old one is not lost. Another mail takes its place among equal mails. A matched mail keeps its fingerprint. Flipside saves fingerprints in the account setting `ledger.mailFps` for 31 days. A saved fingerprint blocks a second record. The residual risk: after a reload, an equal expired mail whose twin was removed gets the number 1 again and its record is skipped.
+- Secret values: a mail with a secret header or invoice field is skipped and counted.
+- TBC: the flavour value `hasMailInvoices` is false. `LedgerMail` reads the mail headers only (no `GetInboxInvoiceInfo`). The subject patterns still work, so a sale gets a record from the mail money. The TBC invoice fields are not verified.
+- Debug: `/flip ledgerdebug` prints the mail counters. With `ledger.debug` on, the ring holds the raw invoice fields.
 
 **Packaging.** The release has two addon folders: `Flipside` and `Flipside_Ledger`. The TOC of `Flipside_Ledger` has `## LoadOnDemand: 1` and `## Dependencies: Flipside`.
 
@@ -932,7 +945,7 @@ The MVP is done when a player on WoW: Forever can scan, see prices in tooltips, 
 | PR4 | Loot: items, money and the mob | PR0, PR1, PR2 |
 | PR5 | Vendor and repair | PR0, PR1, PR2 |
 | PR6 | Trade and quest | PR0, PR1, PR2 |
-| PR7 | Ledger page with the inner tabs (Sales, Purchases, Auctions, Income by source, Loot, Expenses) and the filters | PR1; the tabs show the sources of PR2 to PR6 that exist |
+| PR7 | Ledger page with the inner tabs (Sales, Purchases, Auctions, Loot, Expenses; "Income by source" removed in PR3) and the filters | PR1; the tabs show the sources of PR2 to PR6 that exist |
 | PR8 | CSV export | PR7 |
 | PR9 | Decision logs of Buying and Selling saved in the ledger, and shown as the detail of the Auctions rows (dry run rows included) | PR1, PR2, PR7 and the step 6 tabs |
 

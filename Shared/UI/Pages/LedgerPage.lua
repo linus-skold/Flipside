@@ -26,7 +26,6 @@ LedgerPage.TABS = {
     { key = "sales", title = "Sales" },
     { key = "purchases", title = "Purchases" },
     { key = "auctions", title = "Auctions" },
-    { key = "income", title = "Income by source" },
     { key = "loot", title = "Loot" },
     { key = "expenses", title = "Expenses" },
 }
@@ -46,6 +45,7 @@ local SOURCE_LABELS = {
     ahPost = "Auction post",
     ahDeposit = "Auction deposit",
     ahDepositRefund = "Deposit refund",
+    ahOutbidRefund = "Outbid refund",
     ahExpired = "Auction expired",
     ahCancelled = "Auction cancelled",
     loot = "Loot",
@@ -181,7 +181,7 @@ local function recordRow(tab, record, log)
     return {
         time = record.time,
         char = record.char,
-        item = record.item or "",
+        item = (record.item or "") ~= "" and record.item or record.itemName or "",
         qty = qty,
         money = (record.money or 0) > 0 and record.money or nil,
         moneyIn = dir == "in" and (record.money or 0) or 0,
@@ -281,32 +281,6 @@ function LedgerPage.Rows(store, tab, filter, now)
     return rows
 end
 
--- Returns one row for each source with money flow: { source, count, qty, moneyIn, moneyOut, net }.
-function LedgerPage.IncomeRows(store, filter, now)
-    local rows = {}
-    for source, entry in pairs(store:SumsBySource(storeOptions(filter, now))) do
-        if entry.moneyIn > 0 or entry.moneyOut > 0 then
-            rows[#rows + 1] = {
-                source = source,
-                label = LedgerPage.SourceLabel(source),
-                count = entry.count,
-                qty = entry.qty,
-                moneyIn = entry.moneyIn,
-                moneyOut = entry.moneyOut,
-                net = entry.moneyIn - entry.moneyOut,
-            }
-        end
-    end
-    table.sort(rows, function(a, b)
-        local sa, sb = a.moneyIn + a.moneyOut, b.moneyIn + b.moneyOut
-        if sa ~= sb then
-            return sa > sb
-        end
-        return a.source < b.source
-    end)
-    return rows
-end
-
 -- Returns money in, money out and net of rows.
 function LedgerPage.Totals(rows)
     local totalIn, totalOut = 0, 0
@@ -321,15 +295,6 @@ end
 -- The Money columns are owned: the page draws them with the Kit money widget.
 function LedgerPage.Columns(tab, showChar, formatters)
     formatters = formatters or {}
-    if tab == "income" then
-        return {
-            { key = "label", title = "Source" },
-            { key = "count", title = "Count", width = 60, number = true },
-            { key = "moneyIn", title = "Money in", width = 120, number = true, owned = true },
-            { key = "moneyOut", title = "Money out", width = 120, number = true, owned = true },
-            { key = "net", title = "Net", width = 120, number = true, owned = true },
-        }
-    end
     local detailTitle = ({ sales = "Buyer", purchases = "Seller", loot = "Mob", expenses = "Type" })[tab] or "Detail"
     return {
         { key = "time", title = "Date", width = 104, format = formatters.time },
@@ -723,12 +688,7 @@ function LedgerPage.Build(content, deps)
         local view = ensureView(tab)
         applyColumns(view)
         local at = now(deps)
-        local rows
-        if tab == "income" then
-            rows = LedgerPage.IncomeRows(current, page.filter, at)
-        else
-            rows = LedgerPage.Rows(current, tab, page.filter, at)
-        end
+        local rows = LedgerPage.Rows(current, tab, page.filter, at)
         view.rows = rows
         view.list:SetData(rows)
         view.empty:SetShown(#rows == 0)

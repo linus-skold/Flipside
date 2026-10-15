@@ -17,6 +17,9 @@ local GLOBAL_NAMES = {
     "Enum", "TooltipDataProcessor", "IsAltKeyDown", "GetInboxNumItems", "GetInboxItemLink", "GetInboxItem",
     "FlipsideDB_TBC", "FlipsideScanDB_TBC", "FlipsideLedgerDB", "FlipsideLedgerDB_TBC", "C_AddOns", "LoadAddOn",
     "NUM_BAG_SLOTS", "NUM_BANKBAGSLOTS", "BANK_CONTAINER",
+    "GetInboxHeaderInfo", "GetInboxInvoiceInfo", "GetInboxText", "hooksecurefunc",
+    "AUCTION_SOLD_MAIL_SUBJECT", "AUCTION_EXPIRED_MAIL_SUBJECT", "AUCTION_REMOVED_MAIL_SUBJECT",
+    "AUCTION_OUTBID_MAIL_SUBJECT", "AUCTION_WON_MAIL_SUBJECT",
 }
 
 local frameMethods = {}
@@ -431,7 +434,9 @@ function M.reset(options)
     M.altDown = false -- result of IsAltKeyDown()
     M.postCalls = {} -- AddTooltipPostCall registrations: { type, fn }
     M.guidLinks = {} -- item guid -> link that GetItemLinkByGUID gives
-    M.mail = {} -- inbox rows; each has attachments = array of { link, count }
+    M.mail = {} -- inbox rows; each has attachments = array of { link, count }, and optional header and invoice
+    M.hookCalls = {} -- names passed to hooksecurefunc
+    M.inboxTextCalls = 0 -- number of GetInboxText calls (the real call marks the mail as read)
     M.ownedAuctions = {} -- rows that GetOwnedAuctions gives
     M.bags = {} -- bag index -> array of slot tables (as GetContainerItemInfo gives); a missing bag has no slots
 
@@ -796,6 +801,32 @@ function M.reset(options)
     _G.GetInboxItemLink = function(index, attachment)
         local a = M.mail[index] and M.mail[index].attachments[attachment]
         return a and a.link
+    end
+    _G.AUCTION_SOLD_MAIL_SUBJECT = "Auction successful: %s"
+    _G.AUCTION_EXPIRED_MAIL_SUBJECT = "Auction expired: %s"
+    _G.AUCTION_REMOVED_MAIL_SUBJECT = "Auction cancelled: %s"
+    _G.AUCTION_OUTBID_MAIL_SUBJECT = "Outbid on %s"
+    _G.AUCTION_WON_MAIL_SUBJECT = "Auction won: %s"
+    _G.hooksecurefunc = function(name)
+        table.insert(M.hookCalls, tostring(name))
+    end
+    -- header = { sender, subject, money, itemCount, quantity, link }; same order as the client values.
+    _G.GetInboxHeaderInfo = function(index)
+        local h = M.mail[index] and M.mail[index].header
+        if h then
+            return "pkg", "stat", h.sender, h.subject, h.money, 0, 3, h.itemCount, false, false, false, true, false,
+                h.quantity, h.link
+        end
+    end
+    -- invoice = { type, itemName, player, bid, buyout, deposit, consignment, count }
+    _G.GetInboxInvoiceInfo = function(index)
+        local v = M.mail[index] and M.mail[index].invoice
+        if v then
+            return v.type, v.itemName, v.player, v.bid, v.buyout, v.deposit, v.consignment, 0, 0, 0, v.count, false
+        end
+    end
+    _G.GetInboxText = function()
+        M.inboxTextCalls = M.inboxTextCalls + 1
     end
     _G.GetInboxItem = function(index, attachment)
         local a = M.mail[index] and M.mail[index].attachments[attachment]
