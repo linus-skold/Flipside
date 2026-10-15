@@ -262,13 +262,14 @@ describe("LedgerPage", function()
             build()
         end)
 
-        it("has the six inner tabs", function()
+        it("has the five inner tabs and no Income by source", function()
             local titles = {}
             for _, tab in ipairs(ns.LedgerPage.TABS) do
                 titles[#titles + 1] = tab.title
             end
-            assert.are.same({ "Sales", "Purchases", "Auctions", "Income by source", "Loot", "Expenses" }, titles)
-            assert.are.equal(6, #page.topTabs.buttons)
+            assert.are.same({ "Sales", "Purchases", "Auctions", "Loot", "Expenses" }, titles)
+            assert.are.equal(5, #page.topTabs.buttons)
+            assert.is_nil(ns.LedgerPage.IncomeRows)
         end)
 
         it("builds only the visible tab", function()
@@ -285,7 +286,6 @@ describe("LedgerPage", function()
                 auctions = { "time", "item", "qty", "money", "detail" },
                 loot = { "time", "item", "qty", "money", "value", "detail" },
                 expenses = { "time", "item", "qty", "money", "detail" },
-                income = { "label", "count", "moneyIn", "moneyOut", "net" },
             }
             for tab, list in pairs(expected) do
                 select(tab)
@@ -385,6 +385,22 @@ describe("LedgerPage", function()
             assert.are.equal("Buyer", sales[1].detail)
             assert.are.equal(2, sales[1].qty)
             assert.are.equal(5000, sales[1].money)
+        end)
+
+        it("shows a mail sale with item, quantity, real money and buyer in Sales", function()
+            local mine = saved.records.EU.standard[ME]
+            mine[#mine + 1] = { time = NOW - 60, char = ME, type = "sale", source = "ahSale", item = "",
+                itemName = "Mystery Herb", qty = 4, money = 9050, bid = 9500, deposit = 100, cut = 550,
+                counterparty = "Rich-Realm" }
+            setup({ saved = saved })
+            build()
+            local first = rows("sales")[1]
+            assert.are.equal(NOW - 60, first.time)
+            assert.are.equal("Mystery Herb", first.item)
+            assert.are.equal(4, first.qty)
+            assert.are.equal(9050, first.money)
+            assert.are.equal(9050, first.moneyIn)
+            assert.are.equal("Rich-Realm", first.detail)
         end)
 
         it("shows the purchases of the Auction House", function()
@@ -520,62 +536,6 @@ describe("LedgerPage", function()
         end)
     end)
 
-    describe("income by source", function()
-        before_each(function()
-            setup()
-            build()
-            select("income")
-        end)
-
-        it("has one row for each source with money", function()
-            local bySource = {}
-            for _, row in ipairs(rows("income")) do
-                bySource[row.source] = row
-            end
-            assert.are.equal(5000 + 2000 + 700, bySource.ahSale.moneyIn)
-            assert.are.equal(3, bySource.ahSale.count)
-            assert.are.equal(300, bySource.ahPurchase.moneyOut)
-            assert.are.equal(-300, bySource.ahPurchase.net)
-            assert.are.equal(77, bySource.loot.moneyIn)
-            assert.are.equal(1000, bySource.quest.moneyIn)
-            assert.are.equal(15, bySource.unknown.moneyOut)
-            assert.is_nil(bySource.ahExpired)
-            assert.is_nil(bySource.ahPost)
-        end)
-
-        it("includes the daily sums of old days", function()
-            pick(page.rangeDropdown, "all")
-            local bySource = {}
-            for _, row in ipairs(rows("income")) do
-                bySource[row.source] = row
-            end
-            assert.are.equal(5, bySource.ahSale.count)
-            assert.are.equal(5000 + 2000 + 700 + 900 + 400, bySource.ahSale.moneyIn)
-        end)
-
-        it("shows the totals of all rows", function()
-            local view = page.views.income
-            local totals = ns.LedgerPage.Totals(rows("income"))
-            assert.are.equal(totals.moneyIn, tonumber((view.totals.moneyIn:GetText():gsub("c", ""))))
-            assert.are.equal(totals.moneyOut, tonumber((view.totals.moneyOut:GetText():gsub("c", ""))))
-        end)
-
-        it("sorts by the size of the flow", function()
-            local list = rows("income")
-            assert.are.equal("ahSale", list[1].source)
-            for i = 2, #list do
-                assert.is_true(list[i - 1].moneyIn + list[i - 1].moneyOut >= list[i].moneyIn + list[i].moneyOut)
-            end
-        end)
-
-        it("follows the character filter", function()
-            pick(page.charDropdown, ALT)
-            local list = rows("income")
-            assert.are.equal(1, #list)
-            assert.are.equal(1000, list[1].moneyIn)
-        end)
-    end)
-
     describe("empty state", function()
         it("shows the message when there are no records", function()
             setup({ saved = {} })
@@ -585,8 +545,6 @@ describe("LedgerPage", function()
             assert.is_true(view.empty:IsShown())
             assert.are.equal("No records yet. The ledger records money from loot, vendors, mail, trades, quests "
                 .. "and the Auction House.", view.empty:GetText())
-            select("income")
-            assert.is_true(page.views.income.empty:IsShown())
         end)
 
         it("hides the message when rows exist", function()
@@ -654,16 +612,6 @@ describe("LedgerPage", function()
             select("auctions")
             local row = draw("auctions", rows("auctions")[1])
             assert.are.equal("-", row.money.money:GetText())
-        end)
-
-        it("draws the income row with the money columns", function()
-            build()
-            select("income")
-            local data = rows("income")[1]
-            local row = draw("income", data)
-            assert.are.equal(data.label, row.cells.label:GetText())
-            assert.are.equal(tostring(data.count), row.cells.count:GetText())
-            assert.are.equal(data.moneyIn .. "c", row.money.moneyIn:GetText())
         end)
 
         it("asks the item cache once for an item that is not known", function()

@@ -16,6 +16,7 @@ ns.Flavour = {
     scopeIncludesRealm = false,
     captureEnabled = true,
     hasCommodityMarket = true, -- stackables trade as commodities (D15)
+    hasMailInvoices = true, -- GetInboxInvoiceInfo is read-only; the field order is checked in the Forever source
     savedVariables = { main = "FlipsideDB", scan = "FlipsideScanDB", ledger = "FlipsideLedgerDB" },
     -- Bag and bank container ids; each call returns a new list.
     bagIDs = function()

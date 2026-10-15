@@ -750,6 +750,84 @@ local function openLedgerMoney()
         ns.ReportError("the money tracker is not available this session: " .. tostring(err))
     end
 end
+
+-- Read one mail header into a table. The calls only read; GetInboxText is never called (it marks the mail as read).
+local function mailHeader(index)
+    local _, _, sender, subject, money, _, _, itemCount, _, _, _, _, _, quantity, link = GetInboxHeaderInfo(index)
+    if sender == nil and subject == nil then
+        return nil
+    end
+    return { sender = sender, subject = subject, money = money, itemCount = itemCount, itemQuantity = quantity,
+        itemLink = link }
+end
+
+-- Read the invoice fields of one mail. The order is the one in Blizzard_MailFrame/MailFrame.lua.
+local function mailInvoice(index)
+    local ok, invoiceType, itemName, player, bid, buyout, deposit, consignment, _, _, _, quantity =
+        pcall(GetInboxInvoiceInfo, index)
+    if not ok or invoiceType == nil then
+        return nil
+    end
+    return { type = invoiceType, itemName = itemName, player = player, bid = bid, buyout = buyout, deposit = deposit,
+        consignment = consignment, count = quantity }
+end
+
+-- Resolve an item name to a key when exactly one scanned or cached item has that name.
+local function itemKeyByName(name)
+    if not ns.itemNameIndex or type(name) ~= "string" then
+        return nil
+    end
+    local ok, matches = pcall(ns.itemNameIndex.Find, ns.itemNameIndex, '"' .. name .. '"', 2)
+    if ok and type(matches) == "table" and #matches == 1 then
+        return matches[1].key
+    end
+    return nil
+end
+
+-- Create the mail reader of the ledger; it needs the money tracker. It reads the inbox and adds no hook.
+local function openLedgerMail()
+    if not (ns.db and ns.ledgerBuffer and ns.ledgerMoney and ns.LedgerMail and type(GetInboxNumItems) == "function"
+        and type(GetInboxHeaderInfo) == "function") then
+        return
+    end
+    local ok, err = pcall(function()
+        local KEY = "ledger.mailFps"
+        local fingerprints = ns.db:Get("account", KEY)
+        if type(fingerprints) ~= "table" then
+            fingerprints = {}
+            ns.db:Set("account", KEY, fingerprints)
+        end
+        ns.ledgerMail = ns.LedgerMail.Attach({
+            bus = ns.bus,
+            buffer = ns.ledgerBuffer,
+            tracker = ns.ledgerMoney,
+            api = { numItems = GetInboxNumItems, header = mailHeader, invoice = mailInvoice },
+            invoices = ns.Flavour.hasMailInvoices == true and type(GetInboxInvoiceInfo) == "function",
+            now = GetTime,
+            serverTime = GetServerTime,
+            character = characterKey,
+            after = C_Timer.After,
+            report = ns.ReportError,
+            isSecret = type(issecretvalue) == "function" and issecretvalue or nil,
+            strings = function(name)
+                return _G[name]
+            end,
+            itemKey = function(input)
+                return ns.ItemString.ToKey(input, false)
+            end,
+            itemKeyByName = itemKeyByName,
+            fingerprints = fingerprints,
+            saveFingerprints = function(value)
+                ns.db:Set("account", KEY, value)
+            end,
+        })
+    end)
+    if not ok then
+        ns.ledgerMail = nil
+        ns.ReportError("the mail reader of the ledger is not available this session: " .. tostring(err))
+    end
+end
+
 -- Save the gold balance of this character for the Ledger graph, at login and at logout.
 local function saveBalance()
     if not (ns.db and ns.LedgerBalance and type(GetMoney) == "function") then
@@ -828,6 +906,7 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
         openInventory()
         openLedger()
         openLedgerMoney()
+        openLedgerMail()
         openBalance()
         openTooltip()
         openUI()
@@ -1409,6 +1488,14 @@ local function ledgerDebugCommand()
     local stats = tracker:Stats()
     printLine(string.format("ledger money: %d records, %d skipped, %d claimed, %d rejected, %d unpaired",
         stats.records, stats.skipped, stats.claimed, stats.rejected, stats.unpaired))
+    if ns.ledgerMail then
+        local mail = ns.ledgerMail:Stats()
+        printLine(string.format(
+            "ledger mail: %d sales, %d expired, %d cancelled, %d refunds, %d mail money, %d duplicates, "
+            .. "%d skipped, %d without invoice, %d unknown invoice, %d late",
+            mail.sales, mail.expired, mail.cancelled, mail.refunds, mail.mailMoney, mail.duplicates, mail.skipped,
+            mail.noInvoice, mail.unknownInvoice, mail.late))
+    end
     local lines = tracker:DebugLines(30)
     if #lines == 0 then
         printLine("no events in the ring; set ledger.debug to true to fill it")

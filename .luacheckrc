@@ -28,6 +28,8 @@ read_globals = {
     "CreateTreeDataProvider",
     "DEFAULT_CHAT_FRAME",
     "Enum",
+    "GetInboxHeaderInfo",
+    "GetInboxInvoiceInfo",
     "GetInboxItem",
     "GetInboxItemLink",
     "GetInboxNumItems",

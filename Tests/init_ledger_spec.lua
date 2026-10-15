@@ -102,6 +102,35 @@ describe("Init ledger", function()
         end
     end)
 
+    it("records a mail sale through the real wiring without GetInboxText or a hook", function()
+        mock.money = 1000
+        login()
+        assert.is_table(ns.ledgerMail)
+        mock.mail[1] = {
+            attachments = {},
+            header = { sender = "AH", subject = "Auction successful: Linen", money = 9050, itemCount = 0 },
+            invoice = { type = "seller", itemName = "Linen", player = "Rich", bid = 9500, buyout = 9500,
+                deposit = 100, consignment = 550, count = 5 },
+        }
+        mock.fire("MAIL_SHOW")
+        mock.advance(0.5)
+        mock.mail[1].header.money = 0
+        mock.money = 10050
+        mock.fire("PLAYER_MONEY")
+        mock.advance(3)
+        assert.are.equal(1, ns.ledgerBuffer:Count())
+        local record = ns.ledgerBuffer:Peek()[1]
+        assert.are.equal("ahSale", record.source)
+        assert.are.equal(9050, record.money)
+        assert.are.equal(0, mock.inboxTextCalls)
+        assert.are.equal(0, #mock.hookCalls)
+        assert.is_true(mock.isRegistered("MAIL_INBOX_UPDATE"))
+        ns.db:Set("account", "ledger.debug", true)
+        mock.messages = {}
+        ns.HandleSlash("ledgerdebug")
+        assert.is_truthy(table.concat(mock.messages, "\n"):find("ledger mail: 1 sales", 1, true))
+    end)
+
     it("saves the gold balance at login and at logout", function()
         mock.money = 4200
         login()

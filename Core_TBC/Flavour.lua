@@ -26,6 +26,7 @@ ns.Flavour = {
     scopeIncludesRealm = true, -- D24
     captureEnabled = true,
     hasCommodityMarket = false, -- every listing is a stack with a stack buyout
+    hasMailInvoices = false, -- the TBC invoice fields are not checked yet; only the mail headers are read
     savedVariables = { main = "FlipsideDB_TBC", scan = "FlipsideScanDB_TBC", ledger = "FlipsideLedgerDB_TBC" },
     -- Backpack and bag slots 0..NUM_BAG_SLOTS.
     bagIDs = function()
