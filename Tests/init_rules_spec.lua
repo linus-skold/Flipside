@@ -110,6 +110,21 @@ describe("Init rules", function()
         before(manifest.path("GroupsPage"), manifest.path("MainWindow"))
     end)
 
+    it("creates the search lists at login with the saved-list contract", function()
+        assert.is_table(ns.searchLists)
+        for _, name in ipairs({ "List", "Get", "Create", "Upsert", "Rename", "Delete", "AddItem", "RemoveItem" }) do
+            assert.is_function(ns.searchLists[name], name)
+        end
+        local id = ns.searchLists:Create("Recipe", { { itemID = 2589 } })
+        local changed = 0
+        ns.bus:Subscribe("Flipside.SearchListsChanged", "test", function()
+            changed = changed + 1
+        end)
+        assert.are.equal(id, ns.searchLists:Upsert("Recipe", { { itemID = 2589 }, { itemID = 2592 } }))
+        assert.are.equal(1, changed)
+        assert.are.equal(2, ns.searchLists:List()[1].count)
+    end)
+
     it("creates the rules and the custom sources at login", function()
         assert.is_table(ns.rules)
         assert.is_table(ns.customSources)
@@ -157,16 +172,24 @@ describe("Init rules", function()
 
         it("refreshes a subscribed page when the rules change", function()
             local operations = ns.OperationsPage.Build(CreateFrame("Frame", nil, UIParent), deps)
-            assert.are.equal(1, #operations.list.data)
+            assert.are.equal(2, #operations.list.data)
             assert.are.equal("Default", operations.list.data[1].name)
+            assert.are.equal("Default", operations.list.data[2].name)
             local events = 0
             ns.bus:Subscribe("Flipside.RulesChanged", "test", function()
                 events = events + 1
             end)
             assert.is_number(ns.rules:CreateOperation("selling", "Sell linen"))
-            assert.are.equal(2, #operations.list.data)
-            assert.are.equal("Sell linen", operations.list.data[2].name)
+            assert.are.equal(3, #operations.list.data)
+            assert.are.equal("Sell linen", operations.list.data[3].name)
             assert.are.equal(1, events)
+        end)
+
+        it("makes the Default buying operation with no max price on Base", function()
+            local op = ns.rules:ListOperations("buying")[1]
+            assert.are.equal("Default", op.name)
+            assert.are.equal(op.id, (ns.rules:EffectiveOperation(1, "buying")))
+            assert.are.equal("", ns.rules:GetOperation(op.id).settings.maxPrice)
         end)
 
         it("makes the Default selling operation and attaches it to Base", function()

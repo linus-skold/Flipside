@@ -47,6 +47,9 @@ function OperationsPage.Build(content, deps)
 
     -- Preview text of a formula.
     local function previewText(formula)
+        if formula == "" then
+            return "empty: no limit"
+        end
         if not run then
             return "formulas are not available this session"
         end

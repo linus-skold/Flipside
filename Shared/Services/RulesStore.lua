@@ -416,36 +416,48 @@ function Store:EffectiveOperation(groupID, opType)
     return ns.GroupTree.Effective(self._groups, groupID, opType)
 end
 
--- Once for each profile: make the built-in selling operation and attach it to the Base group.
--- It attaches only if Base has no selling operation. A deleted operation does not come back.
+-- Make one built-in operation and attach it to Base if Base has none of that type.
+local function SeedOperation(self, data, opType, baseName, settings)
+    local name = baseName
+    local suffix = 1
+    while NameTaken(data, opType, name) do
+        suffix = suffix + 1
+        name = baseName .. " (" .. suffix .. ")"
+    end
+    local id = data.nextID
+    data.nextID = id + 1
+    data.ops[id] = { type = opType, name = name, settings = settings }
+    if not ns.GroupTree.Attached(self._groups, 1, opType) then
+        ns.GroupTree.Attach(self._groups, 1, opType, id)
+    end
+    return id
+end
+
+-- Once for each profile and type: make the built-in selling and buying operations on Base.
+-- Each attaches only if Base has no operation of that type. A deleted operation does not come back.
 function Store:_SeedDefault()
-    if self._operations.defaultSeeded or self:IsReadOnly() then
+    local first = self._operations
+    if (first.defaultSeeded and first.defaultBuyingSeeded) or self:IsReadOnly() then
         return
     end
     local onChange = self._onChange
     self._onChange = nil
     self:_Change({ "operations", "groups" }, function()
-        local data = self._operations
-        local name = ns.OperationSchema.DEFAULT_SELLING_NAME
-        local suffix = 1
-        while NameTaken(data, "selling", name) do
-            suffix = suffix + 1
-            name = ns.OperationSchema.DEFAULT_SELLING_NAME .. " (" .. suffix .. ")"
+        local Schema, data = ns.OperationSchema, self._operations
+        if not data.defaultSeeded then
+            SeedOperation(self, data, "selling", Schema.DEFAULT_SELLING_NAME, Schema.DefaultSellingSettings())
+            data.defaultSeeded = true
         end
-        local id = data.nextID
-        data.nextID = id + 1
-        data.ops[id] = { type = "selling", name = name, settings = ns.OperationSchema.DefaultSellingSettings() }
-        if not ns.GroupTree.Attached(self._groups, 1, "selling") then
-            ns.GroupTree.Attach(self._groups, 1, "selling", id)
+        if not data.defaultBuyingSeeded then
+            SeedOperation(self, data, "buying", Schema.DEFAULT_BUYING_NAME, Schema.DefaultBuyingSettings())
+            data.defaultBuyingSeeded = true
         end
-        data.defaultSeeded = true
-        return id
+        return true
     end)
     self._onChange = onChange
 end
-
 -- db is a SettingsDB object. Options: onWarning, onChange, compile.
--- seedDefault = true makes the default selling operation once for the profile.
+-- seedDefault = true makes the default selling and buying operations once for the profile.
 function RulesStore.New(db, options)
     if type(db) ~= "table" then
         error("db must be a SettingsDB object", 2)

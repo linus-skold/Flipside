@@ -10,6 +10,7 @@ read_globals = {
     "GetCursorPosition",
     "AuctionHouseFrame",
     "hooksecurefunc",
+    "ChatEdit_InsertLink",
     "CANCEL",
     "C_AuctionHouse",
     "C_Container",

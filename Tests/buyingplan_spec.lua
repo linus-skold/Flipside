@@ -10,6 +10,7 @@ describe("BuyingPlan", function()
         ns = {}
         load(manifest.path("ItemString"))
         load(manifest.path("GroupTree"))
+        load(manifest.path("OperationSchema"))
         load(manifest.path("BuyingPlan"))
         BP, GT = ns.BuyingPlan, ns.GroupTree
         groups = GT.NewData()
@@ -106,6 +107,98 @@ describe("BuyingPlan", function()
             local out = list()
             assert.is_nil(out[1].maxPrice)
             assert.equal("no data", out[1].reason)
+        end)
+
+        it("marks an operation with an empty max price as no max, without a formula run", function()
+            ops[12] = { id = 12, name = "Default", type = "buying", settings = { maxPrice = "", showAboveMax = false } }
+            local g = GT.Create(groups, 1, "Herbs")
+            GT.AddItem(groups, "100", g)
+            GT.Attach(groups, g, "buying", 12)
+            run.Evaluate = function()
+                error("must not evaluate an empty formula")
+            end
+            local out = list()
+            assert.equal(1, #out)
+            assert.is_true(out[1].noMax)
+            assert.is_nil(out[1].maxPrice)
+            assert.is_nil(out[1].reason)
+            ops[12].settings.maxPrice = "   "
+            assert.is_true(list()[1].noMax)
+        end)
+    end)
+
+    describe("ListEntries", function()
+        local function entries(items)
+            return BP.ListEntries(items, { rules = rules, formulaRun = run, label = "Search list" })
+        end
+
+        before_each(function()
+            rules.GroupOf = function(_, key) return GT.GroupOf(groups, key) end
+        end)
+
+        it("uses the operation of the group of the item", function()
+            local g = GT.Create(groups, 1, "Herbs")
+            GT.AddItem(groups, "100", g)
+            GT.Attach(groups, g, "buying", 10)
+            local out = entries({ { itemID = 100, name = "Peacebloom" } })
+            assert.equal(1, #out)
+            assert.equal("100", out[1].key)
+            assert.equal(100, out[1].itemID)
+            assert.equal(5000, out[1].maxPrice)
+            assert.equal("Cheap", out[1].operationName)
+            assert.equal("Peacebloom", out[1].name)
+            assert.same({ "Base", "Herbs" }, out[1].groupPath)
+        end)
+
+        it("uses the operation of Base for an item of no group", function()
+            ops[12] = { id = 12, name = "Default", type = "buying", settings = { maxPrice = "p" } }
+            GT.Attach(groups, 1, "buying", 12)
+            local out = entries({ { itemID = 100 } })
+            assert.equal(5000, out[1].maxPrice)
+            assert.equal("Default", out[1].operationName)
+            assert.equal("Search list", out[1].groupPath)
+        end)
+
+        it("uses built-in Default settings with no max price when no operation exists", function()
+            run.Evaluate = function()
+                error("must not evaluate an empty formula")
+            end
+            local out = entries({ { itemID = 100 }, { key = "200#b5" } })
+            assert.equal(2, #out)
+            assert.is_true(out[1].noMax)
+            assert.is_nil(out[1].operationID)
+            assert.equal("Default", out[1].operationName)
+            assert.equal("200#b5", out[2].key)
+            assert.equal(200, out[2].itemID)
+        end)
+
+        it("skips an item without a valid key", function()
+            assert.same({}, entries({ { name = "x" }, { key = "bad key" } }))
+            assert.same({}, entries(nil))
+        end)
+    end)
+
+    describe("Evaluate with no max price", function()
+        local function row(id, price, own)
+            return { auctionID = id, unitPrice = price, quantity = 2, isCommodity = false, ownerItem = own }
+        end
+
+        it("makes every row of another seller buyable", function()
+            local result = BP.Evaluate({ noMax = true, key = "1" }, { row(1, 10), row(2, 900000), row(3, 5, true) })
+            assert.equal(2, #result.buyable)
+            assert.equal(4, result.quantity)
+            assert.equal(2 * 10 + 2 * 900000, result.cost)
+            assert.is_nil(result.stop)
+            assert.is_nil(result.maxPrice)
+        end)
+
+        it("stops for own rows only and for no rows", function()
+            assert.equal("own auction only", BP.Evaluate({ noMax = true }, { row(1, 10, true) }).stop)
+            assert.equal("no results", BP.Evaluate({ noMax = true }, {}).stop)
+        end)
+
+        it("still stops without a price when the entry has no max and no noMax flag", function()
+            assert.equal("no max price", BP.Evaluate({ key = "1" }, { row(1, 10) }).stop)
         end)
     end)
 
