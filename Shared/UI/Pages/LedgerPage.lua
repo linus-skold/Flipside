@@ -21,7 +21,6 @@ local GRAPH_EMPTY_TEXT = "No balance to show."
 local HEADER_HEIGHT = 18
 local TOTALS_HEIGHT = 22
 local ROW_HEIGHT = 18
-local STRIP_HEIGHT = 46
 
 LedgerPage.TABS = {
     { key = "overview", title = "Overview" },
@@ -636,35 +635,13 @@ function LedgerPage.Build(content, deps)
                 row.data = data
             end,
         })
+        -- The rows sit inside the list, so only the header takes the list insets.
         local edge = view.list.contentInsets
-        view.options.left, view.options.right = edge.left, edge.right
-        -- The summary strip of the Overview: three large values above the list.
-        local stripHeight = 0
-        if tab == "overview" then
-            stripHeight = STRIP_HEIGHT
-            view.strip = { frame = CreateFrame("Frame", nil, panel) }
-            placeAcross(view.strip.frame, panel, 0)
-            view.strip.frame:SetHeight(STRIP_HEIGHT)
-            local previous
-            for _, name in ipairs({ "moneyIn", "moneyOut", "net" }) do
-                local title = ({ moneyIn = "Money in", moneyOut = "Money out", net = "Net" })[name]
-                local caption = Kit.Label(view.strip.frame, title, "small")
-                local value = Kit.Money(view.strip.frame, money)
-                value:SetFontObject(Kit.Font("title"))
-                if previous then
-                    caption:SetPoint("TOPLEFT", previous, "TOPRIGHT", 40, 0)
-                else
-                    caption:SetPoint("TOPLEFT", view.strip.frame, "TOPLEFT", 8, -4)
-                end
-                value:SetPoint("TOPLEFT", caption, "BOTTOMLEFT", 0, -2)
-                view.strip[name] = value
-                previous = value
-            end
-        end
-        view.header = Kit.CreateColumnHeader(panel, view.columns, view.options)
-        placeAcross(view.header.frame, panel, -stripHeight)
+        view.headerOptions = { gap = view.options.gap, left = edge.left, right = edge.right }
+        view.header = Kit.CreateColumnHeader(panel, view.columns, view.headerOptions)
+        placeAcross(view.header.frame, panel, 0)
         view.header.frame:SetHeight(HEADER_HEIGHT)
-        view.list.frame:SetPoint("TOPLEFT", panel, "TOPLEFT", 0, -stripHeight - HEADER_HEIGHT - 2)
+        view.list.frame:SetPoint("TOPLEFT", panel, "TOPLEFT", 0, -HEADER_HEIGHT - 2)
         view.list.frame:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", 0, TOTALS_HEIGHT + 4)
         view.empty = Kit.Label(panel, EMPTY_TEXT, "disabled")
         view.empty:SetPoint("CENTER", view.list.frame, "CENTER", 0, 0)
@@ -710,7 +687,7 @@ function LedgerPage.Build(content, deps)
                 column.hidden = not show
             end
         end
-        Kit.LayoutColumnLabels(view.header.labels, view.header.frame, view.columns, view.options)
+        Kit.LayoutColumnLabels(view.header.labels, view.header.frame, view.columns, view.headerOptions)
     end
 
     local function showStatus(text)
@@ -815,17 +792,12 @@ function LedgerPage.Build(content, deps)
         view.totals.moneyIn:SetCopper(totals.moneyIn)
         view.totals.moneyOut:SetCopper(totals.moneyOut)
         view.totals.net:SetCopper(totals.net)
-        if view.strip then
-            view.strip.moneyIn:SetCopper(totals.moneyIn)
-            view.strip.moneyOut:SetCopper(totals.moneyOut)
-            view.strip.net:SetCopper(totals.net)
-            if totals.net > 0 then
-                view.strip.net:SetTextColor(0.25, 1, 0.25)
-            elseif totals.net < 0 then
-                view.strip.net:SetTextColor(1, 0.25, 0.25)
-            else
-                view.strip.net:SetTextColor(1, 1, 1)
-            end
+        if totals.net > 0 then
+            view.totals.net:SetTextColor(0.25, 1, 0.25)
+        elseif totals.net < 0 then
+            view.totals.net:SetTextColor(1, 0.25, 0.25)
+        else
+            view.totals.net:SetTextColor(1, 1, 1)
         end
         view.totals.count:SetText(totals.count .. (totals.count == 1 and " row" or " rows"))
         page.DrawGraph()
