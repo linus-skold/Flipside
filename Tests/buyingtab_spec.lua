@@ -4,6 +4,7 @@ local mock = require("Tests.wow_mock")
 local function loadModules()
     local ns = { ReportError = function() end, Flavour = { hasCommodityMarket = true } }
     for _, name in ipairs({ "EventBus", "ItemString", "BuyingPlan", "Theme", "Widgets", "Window", "List", "Tree",
+        "Tabs",
         "Columns", "AuctionTabs", "BuyingTab" }) do
         assert(loadfile(manifest.path(name)))("Flipside", ns)
     end
@@ -517,12 +518,12 @@ describe("BuyingTab", function()
         it("disables Buy next above the max price and for an own level", function()
             searchItem({ row(200, 1) })
             assert.is_false(ui.buyNext.enabled)
-            assert.matches("Buy next: above max price", ui.summary.text)
+            assert.matches("Buy: above max price", ui.summary.text)
             client.rows[10] = { row(50, 1, true), row(60, 1) }
             tab:Search()
             fire("COMMODITY_RESULTS", 10)
             assert.is_false(ui.buyNext.enabled)
-            assert.matches("Buy next: own listing", ui.summary.text)
+            assert.matches("Buy: own listing", ui.summary.text)
         end)
 
         it("disables Buy next while the client is not ready or cannot buy", function()
@@ -643,7 +644,7 @@ describe("BuyingTab", function()
             client.rows[10] = { row(150, 1) }
             fire("COMMODITY_RESULTS", 10)
             assert.is_false(ui.buyNext.enabled)
-            assert.matches("Buy next: above max price", ui.summary.text)
+            assert.matches("Buy: above max price", ui.summary.text)
             local ok, reason = tab:BuyNext()
             assert.is_false(ok)
             assert.are.equal("above max price", reason)
@@ -842,7 +843,7 @@ describe("BuyingTab", function()
 
         it("selects a row with the highlight and names the button", function()
             search({ auction(1, 30), auction(2, 40) })
-            assert.are.equal("Buy next", ui.buyNext.text)
+            assert.are.equal("Buy", ui.buyNext.text)
             pick(2)
             assert.are.equal("Buy", ui.buyNext.text)
             assert.is_true(ui.rowsList.rows[2].selection:IsShown())
@@ -857,7 +858,7 @@ describe("BuyingTab", function()
             search({ auction(1, 30), auction(2, 40) })
             pick(2)
             pick(2)
-            assert.are.equal("Buy next", ui.buyNext.text)
+            assert.are.equal("Buy", ui.buyNext.text)
             assert.is_false(ui.rowsList.rows[2].selection:IsShown())
         end)
 
@@ -941,7 +942,7 @@ describe("BuyingTab", function()
             tab:Search()
             fire("ITEM_RESULTS", 10)
             assert.is_nil(tab.levelSel)
-            assert.are.equal("Buy next", ui.buyNext.text)
+            assert.are.equal("Buy", ui.buyNext.text)
         end)
 
         it("clears the selection when another item is picked", function()

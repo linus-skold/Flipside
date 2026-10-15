@@ -4,7 +4,7 @@ local mock = require("Tests.wow_mock")
 local function loadModules()
     local ns = { ReportError = function() end }
     for _, name in ipairs({ "EventBus", "SettingsDB", "ItemString", "OperationSchema", "ItemNameIndex", "BuyingPlan",
-        "SearchLists", "Theme", "Widgets", "Window", "List", "Tree", "Columns", "AuctionTabs", "BuyingTab" }) do
+        "SearchLists", "Theme", "Widgets", "Window", "List", "Tree", "Tabs", "Columns", "AuctionTabs", "BuyingTab" }) do
         assert(loadfile(manifest.path(name)))("Flipside", ns)
     end
     return ns
@@ -109,7 +109,7 @@ describe("BuyingTab search lists", function()
         it("has no search lists source without the lists object", function()
             local plain = mount({ searchLists = false })
             assert.is_false(plain:SetSource("lists"))
-            assert.is_false(plain.ui.listsButton:IsShown())
+            assert.is_false(plain.ui.sourceTabs.buttons[2]:IsShown())
         end)
 
         it("shows the items of the selected list with the operation of the group, or the Default", function()

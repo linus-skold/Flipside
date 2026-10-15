@@ -1429,9 +1429,10 @@ end
 function Tab:_UpdateLeft()
     local ui, lists = self.ui, self.deps.searchLists
     local isLists = self.source == "lists" and lists ~= nil
-    ui.groupsButton:SetEnabled(isLists)
-    ui.listsButton:SetShown(lists ~= nil)
-    ui.listsButton:SetEnabled(not isLists)
+    ui.sourceTabs.buttons[2]:SetShown(lists ~= nil)
+    self.syncingTabs = true
+    ui.sourceTabs:Select(isLists and "lists" or "groups")
+    self.syncingTabs = false
     for _, control in ipairs(ui.listControls) do
         control:SetShown(isLists)
     end
@@ -1470,13 +1471,12 @@ function Tab:_Update()
     ui.tree.selected = nodeID(self.selectedKey)
     ui.tree:SetNodes(self.nodes)
     if not selected then
-        ui.itemName:SetText("")
         local text = canSearch and "Pick an item of the list." or "Live search is not available."
         if self.source == "lists" and not self.listID then
             text = "Make or pick a search list, then add items."
         end
         ui.summary:SetText(text)
-        ui.buyNext:SetText("Buy next")
+        ui.buyNext:SetText("Buy")
         ui.buyNext:SetEnabled(false)
         ui.amount:SetEnabled(true)
         self:_FillAmount(nil)
@@ -1486,7 +1486,6 @@ function Tab:_Update()
         return
     end
     local done = self.results[selected.key]
-    ui.itemName:SetText(self:_ItemName(selected))
     local levels = done and self.deps.plan.PriceLevels(done.rows) or {}
     local described = BuyingTab.DescribeLevels(selected, levels, selected.showAboveMax)
     -- The selection stays on the same unit price if the level is still in the list. Else it clears.
@@ -1500,7 +1499,7 @@ function Tab:_Update()
         end
     end
     local _, nextLevel, _, reason, cover = self:_NextBuy()
-    local verb = self.levelSel and "Buy" or "Buy next"
+    local verb = "Buy"
     -- The amount box does not apply to an item: an item buy is one auction.
     local isItem = done ~= nil and done.rows[1] ~= nil and done.rows[1].isCommodity == false
     ui.amount:SetEnabled(not isItem)
@@ -1584,12 +1583,16 @@ end
 function Tab:_BuildLeft(content, place)
     local Kit = ns.Kit
     local ui = self.ui
-    ui.groupsButton = place(Kit.Button(content, "Groups", 90, function()
-        self:SetSource("groups")
-    end), 0, 0)
-    ui.listsButton = place(Kit.Button(content, "Search lists", 100, function()
-        self:SetSource("lists")
-    end), 94, 0)
+    -- The source tabs sit on the top edge of the list (the host is 30 px high, the list starts below it).
+    local host = place(CreateFrame("Frame", nil, content), 0, -14)
+    host:SetSize(LIST_WIDTH, 30)
+    ui.sourceTabs = Kit.CreateTopTabs(host, { { "groups", "Groups" }, { "lists", "Lists" } }, {
+        onSelect = function(key)
+            if not self.syncingTabs then
+                self:SetSource(key)
+            end
+        end,
+    })
     ui.listControls = {}
     local function control(widget, x, y)
         ui.listControls[#ui.listControls + 1] = place(widget, x, y)
@@ -1646,9 +1649,9 @@ function Tab:_BuildContent()
     ui.stop = place(Kit.Button(content, "Stop", 60, function()
         self:Stop()
     end), 268, 0)
-    ui.message = place(Kit.Label(content, "", "small"), 0, -28)
+    ui.message = place(Kit.Label(content, "", "small"), 0, -4)
     ui.message:SetJustifyH("LEFT")
-    ui.message:SetWidth(LIST_WIDTH)
+    ui.message:SetWidth(260)
 
     ui.tree = Kit.CreateTree(content, { rowHeight = ROW_HEIGHT, inset = true,
         initRow = function(row, node, depth, isCollapsed, hasChildren)
@@ -1664,9 +1667,7 @@ function Tab:_BuildContent()
     self:_BuildLeft(content, place)
 
     local rightX = LIST_WIDTH + padding
-    ui.itemName = place(Kit.Label(content, "", "normal"), rightX, -4)
-    ui.itemName:SetJustifyH("LEFT")
-    ui.summary = place(Kit.Label(content, "", "small"), rightX, -24)
+    ui.summary = place(Kit.Label(content, "", "small"), rightX, -4)
     ui.summary:SetJustifyH("LEFT")
     ui.summary:SetWidth(330)
     ui.rowsList = Kit.CreateList(content, { rowHeight = 18, inset = true, initRow = function(row, data)
@@ -1699,7 +1700,7 @@ function Tab:_BuildContent()
     Kit.Tooltip(ui.totals, "Total to buy", { "All units and the cost of all price levels that you can buy.",
         "Your own levels and levels above the max price are not in the total." })
     ui.totals:Hide()
-    ui.buyNext = Kit.Button(content, "Buy next", 100, function()
+    ui.buyNext = Kit.Button(content, "Buy", 100, function()
         self:BuyNext()
     end)
     ui.buyNext:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", rightX, 0)
