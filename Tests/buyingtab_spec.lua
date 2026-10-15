@@ -3,7 +3,7 @@ local mock = require("Tests.wow_mock")
 
 local function loadModules()
     local ns = { ReportError = function() end }
-    for _, name in ipairs({ "EventBus", "ItemString", "BuyingPlan", "Theme", "Widgets", "Window", "List",
+    for _, name in ipairs({ "EventBus", "ItemString", "BuyingPlan", "Theme", "Widgets", "Window", "List", "Columns",
         "AuctionTabs", "BuyingTab" }) do
         assert(loadfile(manifest.path(name)))("Flipside", ns)
     end
@@ -208,6 +208,30 @@ describe("BuyingTab", function()
             local all = ns.BuyingTab.DescribeLevels(entry, levels, true)
             assert.are.equal(3, #all)
             assert.are.equal("above", all[3].state)
+        end)
+        it("sets the stack price from the stack size of the buy row", function()
+            local item = function(price, quantity, own)
+                return { auctionID = price * 100 + quantity, unitPrice = price, quantity = quantity,
+                    isCommodity = false, ownerItem = own }
+            end
+            local levels = ns.BuyingPlan.PriceLevels({ item(50, 5, true), item(50, 20), item(50, 5) })
+            assert.are.equal(20, ns.BuyingTab.StackSize(levels[1]))
+            local out = ns.BuyingTab.DescribeLevels({ maxPrice = 100 }, levels, false)
+            assert.are.equal(1000, out[1].stackPrice)
+            local mine = ns.BuyingPlan.PriceLevels({ item(70, 3, true) })
+            assert.are.equal(3, ns.BuyingTab.StackSize(mine[1]))
+        end)
+        it("uses stack size 1 for a commodity level", function()
+            local levels = ns.BuyingPlan.PriceLevels({ row(50, 40) })
+            assert.are.equal(1, ns.BuyingTab.StackSize(levels[1]))
+            local out = ns.BuyingTab.DescribeLevels({ maxPrice = 100 }, levels, false)
+            assert.are.equal(50, out[1].stackPrice)
+        end)
+        it("shows a status only for yours and above max", function()
+            assert.are.equal("Yours", ns.BuyingTab.StatusText("own"))
+            assert.are.equal("Above max", ns.BuyingTab.StatusText("above"))
+            assert.are.equal("", ns.BuyingTab.StatusText("buy"))
+            assert.are.equal("", ns.BuyingTab.StatusText(nil))
         end)
         it("describes an entry with no max price", function()
             local entry = { noMax = true, key = "10", itemID = 10 }
@@ -418,12 +442,22 @@ describe("BuyingTab", function()
         it("shows the listings grouped by price level", function()
             searchItem({ row(50, 3), row(50, 2), row(60, 1, true), row(200, 4) })
             assert.are.equal(2, #ui.rowsList.rows)
-            local first = ui.rowsList.rows[1].parts
-            assert.are.equal("50c", first.price.text)
+            local first = ui.rowsList.rows[1].cells
+            assert.are.equal("50c", first.unitPrice.text)
+            assert.are.equal("50c", first.stackPrice.text)
             assert.are.equal("x5", first.quantity.text)
-            assert.are.equal("2 listings", first.listings.text)
-            assert.are.equal("buy", first.mark.text)
-            assert.are.equal("yours", ui.rowsList.rows[2].parts.mark.text)
+            assert.are.equal("2", first.listings.text)
+            assert.are.equal("", first.status.text)
+            assert.are.equal("Yours", ui.rowsList.rows[2].cells.status.text)
+            assert.are.equal("Unit Price", ui.levelHeader.labels.unitPrice.text)
+            assert.are.equal("Stack Price", ui.levelHeader.labels.stackPrice.text)
+            assert.are.equal("Status", ui.levelHeader.labels.status.text)
+        end)
+
+        it("keeps the Dry run text and the jump label apart with relative anchors", function()
+            assert.are.equal("Jump warning %", ui.jumpLabel.text)
+            assert.are.equal(ui.dryRun.Text, ui.jumpLabel.points[1][2])
+            assert.are.equal(ui.jumpLabel, ui.jump.points[1][2])
         end)
 
         it("has no dry run label and keeps a Dry run check box that is off", function()
