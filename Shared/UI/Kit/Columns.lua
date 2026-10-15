@@ -9,7 +9,9 @@ local Kit = ns.Kit
 --   key      name of the column; the default value is data[key]
 --   get      optional function(data) that returns the value (replaces data[key])
 --   title    header text
---   width    a number (fixed width), or nil / "fill" for the one column that takes the rest
+--   width    a number (fixed width), nil / "fill" for the one column that takes the rest, or { share = n }
+--            for a column that takes n parts of the room that the fixed columns leave. Share columns split the
+--            whole width in equal parts for equal n. A list cannot mix a fill column and share columns.
 --   justify  "LEFT" (default), "RIGHT" or "CENTER"
 --   number   true for money and numbers: the default justify is then "RIGHT"
 --   format   optional function(value, data) that returns the cell text (default tostring)
@@ -36,6 +38,10 @@ local DEFAULT_MIN_FILL = 20
 
 local function isFill(column)
     return column.width == nil or column.width == "fill"
+end
+
+local function isShare(column)
+    return type(column.width) == "table" and column.width.share ~= nil
 end
 
 -- The justify of a column: its own value, else RIGHT for a number column, else LEFT.
@@ -76,15 +82,27 @@ function Kit.ColumnLayout(columns, totalWidth, options)
     local left, right = options.left or 0, options.right or 0
     local fill = fillIndex(columns)
     local used = left + right + gap * math.max(0, #columns - 1)
+    local shareTotal = 0
     for index, column in ipairs(columns) do
-        if index ~= fill then
+        if isShare(column) then
+            if fill then
+                error("a fill column and share columns cannot mix", 2)
+            end
+            shareTotal = shareTotal + column.width.share
+        elseif index ~= fill then
             used = used + column.width
         end
     end
     local fillWidth = math.max(options.minFill or DEFAULT_MIN_FILL, (totalWidth or 0) - used)
+    local shareRoom = math.max(0, (totalWidth or 0) - used)
     local layout, x = {}, left
     for index, column in ipairs(columns) do
-        local width = index == fill and fillWidth or column.width
+        local width
+        if isShare(column) then
+            width = shareRoom * column.width.share / shareTotal
+        else
+            width = index == fill and fillWidth or column.width
+        end
         layout[index] = { key = column.key, x = x, width = width, justify = Kit.ColumnJustify(column) }
         x = x + width + gap
     end
@@ -99,6 +117,11 @@ function Kit.ColumnAnchors(columns, options)
     columns = visibleColumns(columns)
     options = options or {}
     local gap = options.gap or DEFAULT_GAP
+    for _, column in ipairs(columns) do
+        if isShare(column) then
+            error("share columns need the row width: use Kit.ColumnLayout", 2)
+        end
+    end
     local fill = fillIndex(columns)
     local anchors, x = {}, options.left or 0
     for index = 1, fill and fill - 1 or #columns do
@@ -143,6 +166,44 @@ local function placeText(label, parent, anchor)
     end
 end
 
+-- Place the labels with the widths of Kit.ColumnLayout for the parent width. The parent places them again
+-- when its size changes.
+local function placeShared(state, parent)
+    local width = parent.GetWidth and parent:GetWidth() or 0
+    for _, entry in ipairs(Kit.ColumnLayout(state.columns, width, state.options)) do
+        local label = state.labels[entry.key]
+        if label then
+            placeText(label, parent, { side = "LEFT", x = entry.x, width = entry.width, justify = entry.justify })
+            label:Show()
+        end
+    end
+end
+
+local function layoutShared(labels, parent, columns, options)
+    parent.kitColumnStates = parent.kitColumnStates or {}
+    local states = parent.kitColumnStates
+    local state
+    for _, known in ipairs(states) do
+        if known.labels == labels then
+            state = known
+        end
+    end
+    if not state then
+        state = { labels = labels }
+        states[#states + 1] = state
+        if not parent.kitColumnHooked then
+            parent.kitColumnHooked = true
+            parent:HookScript("OnSizeChanged", function(self)
+                for _, each in ipairs(self.kitColumnStates) do
+                    placeShared(each, self)
+                end
+            end)
+        end
+    end
+    state.columns, state.options = columns, options
+    placeShared(state, parent)
+end
+
 -- Place the labels (a table of fontStrings by key) in the parent with the anchors of the visible columns.
 -- A label of a hidden column is hidden. Call it again after a hidden flag changes.
 function Kit.LayoutColumnLabels(labels, parent, columns, options)
@@ -150,6 +211,11 @@ function Kit.LayoutColumnLabels(labels, parent, columns, options)
         local label = labels[column.key]
         if label and column.hidden then
             label:Hide()
+        end
+    end
+    for _, column in ipairs(columns) do
+        if not column.hidden and isShare(column) then
+            return layoutShared(labels, parent, columns, options)
         end
     end
     for _, anchor in ipairs(Kit.ColumnAnchors(columns, options)) do

@@ -306,7 +306,7 @@ describe("BuyingTab search lists", function()
             -- Item 200 uses the Default: no max price, every row of another seller is buyable.
             assert.are.equal(4, tab.results["200"].result.quantity)
             tab:Select_("200")
-            assert.matches("no max price set", ui.summary.text)
+            assert.are.equal("", ui.summary.text)
             local _, level, _, reason = tab:_NextBuy()
             assert.is_nil(reason)
             assert.are.equal(5000, level.unitPrice)

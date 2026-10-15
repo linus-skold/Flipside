@@ -317,6 +317,11 @@ The scan buttons also show on the start page of the Blizzard Auction House: a sm
 - Result columns add **% of ScanMarket** and **data age**.
 - Group search uses the Buying operation: max price, and an optional *buy up to keep-stock target* that limits quantity to what Keep stock says is missing.
 - Commodity purchases show the quote and total before confirming.
+- Price level list. Each column takes an equal share of the list width: Unit Price and Quantity 50% each, or 33% each when Stack Price shows. Headers and cells are right-aligned. The Kit column option is width = { share = n }.
+- Totals row. A row above the first price level shows the total quantity and the total cost of all levels that you can buy. It uses the same columns. It is not selectable. Own levels and levels above the max price are not in the totals. A tooltip on the row says this.
+- Max price. The max price belongs to the buying operation. The item list on the left shows it for each item, or "no max" in grey. The right pane does not show it.
+- Amount box. The box shows the units that the next click buys: all units up to the selected level, or the next level if no level is selected. The total price shows on the right of the box. It covers the whole range, from the cheapest level up to the selected level. If the user types a number, the box keeps it and the total updates. A new selection fills the box again.
+- Message line. The line shows only real messages: an error, a wait for the Auction House, or the reason why the buy button is off. The panel shows no "buyable", "stop" or "end of results" text.
 
 ### 5.4 Selling (reference §5.1 Auctioning)
 

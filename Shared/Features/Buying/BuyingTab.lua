@@ -85,35 +85,18 @@ function BuyingTab.DescribeLevels(entry, levels, showAboveMax)
     end
     return out
 end
--- Build the summary lines of one evaluation. result is from BuyingPlan.Evaluate.
-function BuyingTab.DescribeSummary(entry, result, rows)
-    local lines = {}
-    if entry.noMax then
-        lines[1] = "no max price set"
-    elseif entry.maxPrice then
-        lines[1] = "Max price: " .. money(entry.maxPrice)
-    else
-        lines[1] = "No max price: " .. tostring(entry.reason)
-    end
-    if not result then
-        lines[#lines + 1] = "Not searched yet"
-        return lines
-    end
-    lines[#lines + 1] = string.format("Buyable: %d units, total cost %s", result.quantity, money(result.cost))
-    local stop = result.stop
-    if not stop then
-        stop = "end of results"
-        for _, row in ipairs(rows or {}) do
-            if not isOwn(row) and not entry.noMax and entry.maxPrice and row.unitPrice > entry.maxPrice then
-                stop = "above max price"
-                break
-            end
+-- The totals of the price levels that you can buy: the units and the cost of all levels in the state "buy".
+-- Own levels and levels above the max price are not in the totals. described is from DescribeLevels.
+function BuyingTab.DescribeTotals(described)
+    local totals = { quantity = 0, cost = 0 }
+    for _, level in ipairs(described or {}) do
+        if level.state == "buy" then
+            totals.quantity = totals.quantity + level.quantity
+            totals.cost = totals.cost + level.quantity * level.unitPrice
         end
     end
-    lines[#lines + 1] = "Stop: " .. stop
-    return lines
+    return totals
 end
-
 -- The log decision of one evaluation: "would buy N at X", or the stop reason.
 function BuyingTab.DescribeDecision(result)
     if result.first then
@@ -567,6 +550,7 @@ function Tab:Select_(key)
     if key ~= self.selectedKey then
         self.run = nil
         self.levelSel = nil
+        self.amount, self.amountBad, self.amountEdit = nil, false, false
     end
     self.selectedKey = key
     self:_Update()
@@ -776,6 +760,10 @@ end
 -- must be a whole number above 0. Else the buy is refused until the text is right.
 function Tab:SetAmount(text)
     text = tostring(text or ""):match("^%s*(.-)%s*$")
+    if self.fillingAmount then
+        return
+    end
+    self.amountEdit = true
     self.amount, self.amountBad = nil, false
     if text ~= "" then
         local number = text:match("^%d+$") and tonumber(text) or nil
@@ -798,6 +786,7 @@ function Tab:SelectLevel(price)
         return false, "pick an item first"
     end
     self.levelSel = (self.levelSel ~= price) and price or nil
+    self.amount, self.amountBad, self.amountEdit = nil, false, false
     self:_Update()
     if self.levelSel then
         local _, _, _, reason = self:_NextBuy()
@@ -1377,16 +1366,17 @@ function Tab:_RunHeldSearch()
     end
 end
 
--- The columns of the price level list. The header and the row cells use the same definition.
+-- The columns of the price level list. The header, the totals row and the row cells use the same definition.
+-- Each column takes an equal share of the width and the text is right-aligned.
 -- On Forever a price point is unique, so the quantity equals the listings. A Listings column can come back
 -- later for TBC, where one price can have many listings.
 local LEVEL_COLUMNS = {
-    { key = "unitPrice", title = "Unit Price", width = 104, number = true, format = money },
-    { key = "stackPrice", title = "Stack Price", width = 104, number = true,
+    { key = "unitPrice", title = "Unit Price", width = { share = 1 }, number = true, format = money },
+    { key = "stackPrice", title = "Stack Price", width = { share = 1 }, number = true,
         format = function(value)
             return value and money(value) or ""
         end },
-    { key = "quantity", title = "Quantity", width = 50, number = true,
+    { key = "quantity", title = "Quantity", width = { share = 1 }, number = true,
         format = function(value)
             return "x" .. tostring(value)
         end },
@@ -1510,7 +1500,9 @@ function Tab:_Update()
     ui.jumpLabel:SetShown(not self.showLog)
     ui.amount:SetShown(not self.showLog)
     ui.amountLabel:SetShown(not self.showLog)
+    ui.amountTotal:SetShown(not self.showLog)
     if self.showLog then
+        ui.totals:Hide()
         local entries = self.deps.log:List()
         local newestFirst = {}
         for index = #entries, 1, -1 do
@@ -1529,13 +1521,14 @@ function Tab:_Update()
         ui.buyNext:SetText("Buy next")
         ui.buyNext:SetEnabled(false)
         ui.amount:SetEnabled(true)
+        self:_FillAmount(nil)
+        ui.totals:Hide()
         self.covered = {}
         ui.rowsList:SetData({})
         return
     end
     local done = self.results[selected.key]
     ui.itemName:SetText(self:_ItemName(selected))
-    local lines = BuyingTab.DescribeSummary(selected, done and done.result, done and done.rows)
     local levels = done and self.deps.plan.PriceLevels(done.rows) or {}
     local described = BuyingTab.DescribeLevels(selected, levels, selected.showAboveMax)
     -- The selection stays on the same unit price if the level is still in the list. Else it clears.
@@ -1554,21 +1547,12 @@ function Tab:_Update()
     local isItem = done ~= nil and done.rows[1] ~= nil and done.rows[1].isCommodity == false
     ui.amount:SetEnabled(not isItem)
     self.covered = (reason == nil and cover) and cover.covered or {}
-    if done then
-        if reason then
-            lines[#lines + 1] = verb .. ": " .. reason
-        elseif cover then
-            local last = cover.last
-            local text = cover.levels > 1
-                and string.format("%s: %d up to %s", verb, cover.quantity, money(last.unitPrice))
-                or string.format("%s: %d at %s", verb, cover.quantity, money(last.unitPrice))
-            if not cover.isItem then
-                text = text .. ", total " .. money(cover.cost)
-            end
-            lines[#lines + 1] = text
-        end
-    end
-    ui.summary:SetText(table.concat(lines, "\n"))
+    -- The line shows only the reason why the button is off.
+    ui.summary:SetText(reason and (verb .. ": " .. reason) or "")
+    self:_FillAmount(cover)
+    ui.totals:SetShown(done ~= nil)
+    local totals = BuyingTab.DescribeTotals(described)
+    ns.Kit.SetColumnCells(ui.totalCells, LEVEL_COLUMNS, { unitPrice = totals.cost, quantity = totals.quantity })
     ui.buyNext:SetText(verb)
     ui.buyNext:SetEnabled(nextLevel ~= nil and reason == nil)
     self:_ShowStackColumn(not (levels[1] and BuyingTab.StackSize(levels[1]) == nil))
@@ -1584,8 +1568,21 @@ function Tab:_ShowStackColumn(show)
     end
     STACK_COLUMN.hidden = hide
     local edge = ui.rowsList.contentInsets or { left = 0, right = 0 }
-    Kit.LayoutColumnLabels(ui.levelHeader.labels, ui.levelHeader.frame, LEVEL_COLUMNS,
-        { gap = LEVEL_OPTIONS.gap, left = edge.left, right = edge.right })
+    local options = { gap = LEVEL_OPTIONS.gap, left = edge.left, right = edge.right }
+    Kit.LayoutColumnLabels(ui.levelHeader.labels, ui.levelHeader.frame, LEVEL_COLUMNS, options)
+    Kit.LayoutColumnLabels(ui.totalCells, ui.totals, LEVEL_COLUMNS, options)
+end
+
+-- Show the units and the total price of the purchase in the amount box and next to it.
+-- The text that the user typed stays.
+function Tab:_FillAmount(cover)
+    local ui = self.ui
+    if not self.amountEdit then
+        self.fillingAmount = true
+        ui.amount:SetText(cover and tostring(cover.quantity) or "")
+        self.fillingAmount = false
+    end
+    ui.amountTotal:SetText(cover and money(cover.cost) or "")
 end
 
 function Tab:IsActive()
@@ -1721,7 +1718,7 @@ function Tab:_BuildContent()
     ui.rowsList = Kit.CreateList(content, { rowHeight = 18, inset = true, initRow = function(row, data)
         self:_InitLevelRow(row, data)
     end })
-    ui.rowsList.frame:SetPoint("TOPLEFT", content, "TOPLEFT", rightX, -100)
+    ui.rowsList.frame:SetPoint("TOPLEFT", content, "TOPLEFT", rightX, -118)
     ui.rowsList.frame:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", 0, 56)
     -- The column titles over the price level list.
     local edge = ui.rowsList.contentInsets or { left = 0, right = 0 }
@@ -1730,6 +1727,22 @@ function Tab:_BuildContent()
     ui.levelHeader.frame:SetPoint("TOPLEFT", content, "TOPLEFT", rightX, -82)
     ui.levelHeader.frame:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, -82)
     ui.levelHeader.frame:SetHeight(18)
+    -- The totals row: same columns as the list, above all other rows. It is not a list row, so it is not selectable.
+    local options = { gap = LEVEL_OPTIONS.gap, left = edge.left, right = edge.right, role = "highlight" }
+    ui.totals = CreateFrame("Frame", nil, content)
+    ui.totals:SetPoint("TOPLEFT", content, "TOPLEFT", rightX, -100)
+    ui.totals:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, -100)
+    ui.totals:SetHeight(18)
+    ui.totals:EnableMouse(true)
+    ui.totalsBackground = ui.totals:CreateTexture(nil, "BACKGROUND")
+    ui.totalsBackground:SetTexture(Kit.Theme.rowHighlight)
+    ui.totalsBackground:SetBlendMode("ADD")
+    ui.totalsBackground:SetAlpha(0.6)
+    ui.totalsBackground:SetAllPoints(ui.totals)
+    ui.totalCells = Kit.CreateColumnCells(ui.totals, LEVEL_COLUMNS, options)
+    Kit.Tooltip(ui.totals, "Total to buy", { "All units and the cost of all price levels that you can buy.",
+        "Your own levels and levels above the max price are not in the total." })
+    ui.totals:Hide()
     ui.logList = Kit.CreateList(content, { rowHeight = 18, inset = true, initRow = function(row, data)
         self:_InitLogRow(row, data)
     end })
@@ -1749,6 +1762,9 @@ function Tab:_BuildContent()
     ui.amount:HookScript("OnTextChanged", function(box)
         self:SetAmount(box:GetText())
     end)
+    -- The total price of the purchase, on the right of the amount box.
+    ui.amountTotal = Kit.Label(content, "", "highlight")
+    ui.amountTotal:SetPoint("LEFT", ui.amount, "RIGHT", 10, 0)
     ui.buyNext:SetEnabled(false)
     ui.dryRun = Kit.Check(content, "Dry run", function(checked)
         self:SetDryRun(checked)
