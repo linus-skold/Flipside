@@ -4,6 +4,7 @@ local mock = require("Tests.wow_mock")
 local function loadModules()
     local ns = { ReportError = function() end, Flavour = { hasCommodityMarket = true } }
     for _, name in ipairs({ "EventBus", "ItemString", "BuyingPlan", "Theme", "Widgets", "Window", "List", "Tree",
+        "Tabs",
         "Columns", "AuctionTabs", "BuyingTab" }) do
         assert(loadfile(manifest.path(name)))("Flipside", ns)
     end
@@ -105,7 +106,7 @@ describe("BuyingTab totals, amount and columns", function()
 
         it("shows only the reason why the button is off", function()
             search({ row(150, 1) })
-            assert.are.equal("Buy next: above max price", ui.summary.text)
+            assert.are.equal("Buy: above max price", ui.summary.text)
         end)
     end)
 
