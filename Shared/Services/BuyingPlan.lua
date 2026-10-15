@@ -15,6 +15,34 @@ local function PriceReason(info)
     return "no data"
 end
 
+-- Build the entry of one item for an operation. op is { name, settings }.
+local function MakeEntry(run, key, groupID, path, opID, op)
+    local parsed = ns.ItemString.ParseKey(key)
+    local formula = op.settings.maxPrice
+    local noMax = type(formula) ~= "string" or formula:match("^%s*$") ~= nil
+    local copper, info
+    if not noMax then
+        copper, info = run:Evaluate(formula, key)
+    end
+    local entry = {
+        key = key,
+        itemID = parsed and parsed.itemID,
+        groupID = groupID,
+        groupPath = path,
+        operationID = opID,
+        operationName = op.name,
+        showAboveMax = op.settings.showAboveMax == true,
+    }
+    if noMax then
+        entry.noMax = true
+    elseif copper ~= nil and copper > 0 then
+        entry.maxPrice = copper
+    else
+        entry.reason = PriceReason(info)
+    end
+    return entry
+end
+
 -- deps.rules: RulesStore-like (Walk, ItemsIn, Path, Name, EffectiveOperation, GetOperation).
 -- deps.formulaRun: FormulaRun-like (Evaluate(text, key) returns copper and info).
 -- Returns one entry for each item of a group that has a buying operation.
@@ -40,28 +68,39 @@ function BuyingPlan.ShoppingList(deps)
         end
         local path = rules:Path(groupID)
         for _, key in ipairs(rules:ItemsIn(groupID)) do
-            local parsed = ns.ItemString.ParseKey(key)
-            local copper, info = run:Evaluate(op.settings.maxPrice, key)
-            local entry = {
-                key = key,
-                itemID = parsed and parsed.itemID,
-                groupID = groupID,
-                groupPath = path,
-                operationID = opID,
-                operationName = op.name,
-                showAboveMax = op.settings.showAboveMax == true,
-            }
-            if copper ~= nil and copper > 0 then
-                entry.maxPrice = copper
-            else
-                entry.reason = PriceReason(info)
-            end
-            list[#list + 1] = entry
+            list[#list + 1] = MakeEntry(run, key, groupID, path, opID, op)
         end
     end)
     return list
 end
 
+-- The items of a search list as entries. items: { { itemID, key?, name? } }. deps as for ShoppingList.
+-- An item uses the buying operation of its group (or of Base). With none, it uses the built-in Default settings.
+-- deps.label is the text for groupPath of an item that is in no group.
+function BuyingPlan.ListEntries(items, deps)
+    local rules, run = deps.rules, deps.formulaRun
+    local entries = {}
+    for index, item in ipairs(items or {}) do
+        local key = item.key or (item.itemID and string.format("%d", item.itemID))
+        if key and ns.ItemString.ParseKey(key) then
+            local groupID = rules and rules.GroupOf and rules:GroupOf(key) or nil
+            local effective = groupID or BASE_ID
+            local opID = rules and rules:EffectiveOperation(effective, "buying")
+            local op = opID and rules:GetOperation(opID) or nil
+            if not op then
+                opID = nil
+                local Schema = ns.OperationSchema
+                op = { name = Schema.DEFAULT_BUYING_NAME, settings = Schema.DefaultBuyingSettings() }
+            end
+            local path = groupID and groupID ~= BASE_ID and rules:Path(groupID) or deps.label
+            local entry = MakeEntry(run, key, groupID, path, opID, op)
+            entry.name = item.name
+            entry.listIndex = index
+            entries[#entries + 1] = entry
+        end
+    end
+    return entries
+end
 local function IsOwn(row, opts)
     if opts.isOwn then
         return opts.isOwn(row) == true
@@ -81,7 +120,7 @@ function BuyingPlan.Evaluate(entry, rows, opts)
         showAbove = entry.showAboveMax
     end
     local max = entry.maxPrice
-    if not max then
+    if not max and not entry.noMax then
         result.stop = "no max price"
         return result
     end
@@ -93,7 +132,7 @@ function BuyingPlan.Evaluate(entry, rows, opts)
     for _, row in ipairs(rows) do
         if not IsOwn(row, opts) and type(row.unitPrice) == "number" then
             foreign = foreign + 1
-            if row.unitPrice <= max then
+            if max == nil or row.unitPrice <= max then
                 local quantity = row.quantity or 1
                 result.buyable[#result.buyable + 1] = row
                 result.quantity = result.quantity + quantity
