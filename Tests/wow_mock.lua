@@ -10,7 +10,8 @@ local GLOBAL_NAMES = {
     "SLASH_FLIPSIDE1", "SLASH_FLIPSIDE2",
     "SLASH_SCANTEST1", "ScanTestDB", "SlashCmdList",
     "StaticPopupDialogs", "StaticPopup_Show", "UnitName", "WOW_PROJECT_ID", "date", "debugprofilestop", "time",
-    "UISpecialFrames", "UIParent", "GameTooltip", "GetMoneyString", "PanelTemplates_SetNumTabs",
+    "UISpecialFrames", "UIParent", "GameTooltip", "GetMoneyString", "GetMoney", "issecretvalue",
+    "PanelTemplates_SetNumTabs",
     "PanelTemplates_SetTab", "InCombatLockdown", "ScrollUtil", "CreateDataProvider",
     "CreateScrollBoxListLinearView", "CreateTreeDataProvider", "CreateScrollBoxListTreeListView", "MenuUtil",
     "Enum", "TooltipDataProcessor", "IsAltKeyDown", "GetInboxNumItems", "GetInboxItemLink", "GetInboxItem",
@@ -354,6 +355,7 @@ function M.reset(options)
     M.commodity = {} -- itemID -> isCommodity from GetItemKeyInfo; a missing id gives no info
     M.stackSizes = {} -- itemID -> max stack size
     M.playerName = nil -- result of UnitName("player")
+    M.money = 0 -- result of GetMoney()
     M.realmName = nil -- result of GetNormalizedRealmName()
     M.itemInfo = {} -- itemID -> array of GetItemInfo return values
     M.loadRequests = {} -- itemIDs passed to RequestLoadItemDataByID
@@ -543,6 +545,9 @@ function M.reset(options)
     end
     _G.GetTime = function()
         return M.clock
+    end
+    _G.GetMoney = function()
+        return M.money
     end
     _G.GetCurrentRegionName = function()
         return M.region

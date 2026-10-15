@@ -19,12 +19,14 @@ describe("LedgerRecord", function()
     end)
 
     it("lists every source of the spec table", function()
-        assert.are.same({ "ahCancelled", "ahDeposit", "ahDepositRefund", "ahExpired", "ahPurchase", "ahSale",
+        assert.are.same({ "ahCancelled", "ahDeposit", "ahDepositRefund", "ahExpired", "ahPost", "ahPurchase",
+            "ahSale",
             "loot", "mailMoney", "quest", "repair", "trade", "unknown", "vendorPurchase", "vendorSale" }, R.SOURCES)
     end)
 
     it("lists the types", function()
-        assert.are.same({ "sale", "purchase", "income", "expense", "loot", "expired", "cancelled", "log" }, R.TYPES)
+        assert.are.same({ "sale", "purchase", "post", "income", "expense", "loot", "expired", "cancelled", "log" },
+            R.TYPES)
     end)
 
     it("rejects a record that is not a table", function()
@@ -122,7 +124,7 @@ describe("LedgerRecord", function()
     it("gives the setting defaults as a new table each time", function()
         local d = R.Defaults()
         assert.are.same({ ["ledger.bufferCap"] = 500, ["ledger.hardLimit"] = 2000, ["ledger.retentionDays"] = 180,
-            ["ledger.mobWindow"] = 60, ["ledger.logDays"] = 30 }, d)
+            ["ledger.mobWindow"] = 60, ["ledger.logDays"] = 30, ["ledger.debug"] = false }, d)
         d["ledger.bufferCap"] = 1
         assert.are.equal(500, R.Defaults()["ledger.bufferCap"])
     end)

@@ -78,4 +78,27 @@ describe("Init ledger", function()
         assert.is_truthy(mock.messages[1]:find("did not load: MISSING", 1, true))
         assert.are.equal(1, ns.ledgerBuffer:Count())
     end)
+
+    it("creates the money tracker at login and prints the debug ring with the slash command", function()
+        login()
+        assert.is_table(ns.ledgerMoney)
+        ns.db:Set("account", "ledger.debug", true)
+        mock.fire("MERCHANT_SHOW")
+        mock.money = 150
+        mock.fire("PLAYER_MONEY")
+        mock.messages = {}
+        ns.HandleSlash("ledgerdebug")
+        local text = table.concat(mock.messages, "\n")
+        assert.is_truthy(text:find("1 records", 1, true))
+        assert.is_truthy(text:find("MERCHANT_SHOW", 1, true))
+        assert.is_truthy(text:find("record vendorSale income 150", 1, true))
+        assert.are.equal(1, ns.ledgerBuffer:Count())
+    end)
+
+    it("registers no restricted event for the money tracker", function()
+        login()
+        for _, frame in ipairs(mock.frames or {}) do
+            assert.is_nil(frame.events and frame.events.COMBAT_LOG_EVENT_UNFILTERED)
+        end
+    end)
 end)
