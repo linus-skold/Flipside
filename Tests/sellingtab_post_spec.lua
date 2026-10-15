@@ -12,7 +12,7 @@ end
 
 -- These specs keep ScrollUtil: the game uses the ScrollBox path.
 describe("SellingTab price box, warnings, post all and bag sync", function()
-    local ns, bus, client, rules, tab, ui, bagItems, bagReads, warns, views, vendor, opExtra
+    local ns, bus, client, rules, tab, ui, bagItems, bagReads, warns, views, vendor, opExtra, confirms, autoAccept
 
     local function makeClient()
         local c = { ready = true, searches = {}, rows = {}, commodity = {}, posts = {}, confirmed = {} }
@@ -168,10 +168,16 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
             end,
             maxStack = function(id) return id == 10 and 20 or 1 end,
             vendorPrice = function(id) return vendor[id] end,
-            confirm = function() end,
+            -- The Post all confirm accepts at once; the server confirm of a post stays open.
+            confirm = function(name, text, onAccept)
+                confirms[#confirms + 1] = { name = name, text = text, onAccept = onAccept }
+                if name == "FLIPSIDE_CONFIRM_POST_ALL" and autoAccept then
+                    onAccept()
+                end
+            end,
             itemLink = function(id) return "|Hitem:" .. id .. "|h[Item" .. id .. "]|h", 1 end,
-            warn = function(title, text, yesLabel, onYes)
-                warns[#warns + 1] = { title = title, text = text, yesLabel = yesLabel, onYes = onYes }
+            warn = function(title, text, onPost, onSkip, onCancel)
+                warns[#warns + 1] = { title = title, text = text, onYes = onPost, onSkip = onSkip, onCancel = onCancel }
             end,
         }
         for k, v in pairs(extra or {}) do
@@ -201,7 +207,8 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
         client = makeClient()
         client.commodity[10] = false
         client.commodity[11] = true
-        warns, bagReads, vendor, opExtra = {}, 0, {}, { vendorSkip = false }
+        warns, bagReads, vendor, opExtra = {}, 0, {}, { vendorSkip = false, maxPrice = "100000000" }
+        confirms, autoAccept = {}, true
         rules = makeRules()
         bagItems = {
             { key = "11", itemID = 11, name = "Bolt of Linen", count = 12, stacks = {
@@ -346,22 +353,20 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
     end)
 
     describe("the info pane", function()
-        it("names the lowest price and explains it in a tooltip", function()
+        it("keeps the lowest price in the list and not in the pane", function()
             selectCloth()
             pick("i10")
-            assert.are.equal("Lowest on AH: 120c", ui.details.lowest.text)
             assert.are.equal("Lowest on AH", ui.headers.labels.lowest.text)
-            local hit = ui.details.lowestHit
-            hit.scripts.OnEnter(hit)
-            assert.are.equal("Lowest on AH", mock.tooltip.title)
-            assert.are.equal(ns.SellingTab.LOWEST_TIP, mock.tooltip.lines[1])
+            assert.are.equal("120c", draw("i10").sellParts.cells.lowest.text)
+            assert.is_nil(ui.details.lowest)
+            assert.is_nil(ui.details.vs)
         end)
 
-        it("says none when no other seller has an auction", function()
+        it("says none in the list when no other seller has an auction", function()
             client.rows[10] = {}
             pick("i10")
             fire("ITEM_RESULTS", 10)
-            assert.are.equal("Lowest on AH: none", ui.details.lowest.text)
+            assert.are.equal("none", draw("i10").sellParts.cells.lowest.text)
         end)
 
         it("shows no post time", function()
@@ -436,7 +441,7 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
             click(ui.postNext)
             assert.are.equal(0, #client.posts)
             assert.are.equal(1, #warns)
-            assert.are.equal("Post anyway", warns[1].yesLabel)
+            assert.are.equal("Check the price", warns[1].title)
             assert.matches("Post 20 x |cff1eff00|Hitem:10|h%[Item10%]|h|r at 119c each", warns[1].text)
             assert.matches("Sells for more at a vendor: 4000c", warns[1].text)
             warns[1].onYes()
@@ -457,12 +462,13 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
             assert.are.equal(0, #client.posts)
         end)
 
-        it("asks no vendor question in the Post all queue", function()
+        it("asks the same question in the Post all queue", function()
             vendor[10] = 200
             selectCloth()
             click(ui.postAll)
-            assert.are.equal(0, #warns)
-            assert.are.equal(1, #client.posts)
+            assert.are.equal(1, #warns)
+            assert.are.equal(0, #client.posts)
+            assert.matches("Sells for more at a vendor", warns[1].text)
         end)
 
         it("does not ask in a dry run", function()
@@ -493,7 +499,9 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
             assert.are.equal(0, #client.posts)
             assert.matches("|cff1eff00|Hitem:10|h%[Item10%]|h|r", window.text.text)
             assert.matches("Sells for more at a vendor", window.text.text)
-            assert.are.equal("Post anyway", window.yesButton.text)
+            assert.are.equal("Post", window.yesButton.text)
+            assert.are.equal("Skip", window.skipButton.text)
+            assert.are.equal("Cancel", window.noButton.text)
             assert.is_true(window.shown)
             click(window.noButton)
             assert.is_false(window.shown)
@@ -503,7 +511,284 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
             assert.is_false(window.shown)
             assert.are.equal(1, #client.posts)
         end)
+
+        it("skips the item with the Skip button of the real box and makes no post", function()
+            local window
+            local create = ns.Kit.CreateWindow
+            ns.Kit.CreateWindow = function(name, options)
+                window = create(name, options)
+                return window
+            end
+            vendor[10] = 200
+            tab = mount({ realWarn = true })
+            ui = tab.ui
+            selectCloth()
+            pick("i10")
+            click(ui.postNext)
+            assert.is_true(window.shown)
+            click(window.skipButton)
+            assert.is_false(window.shown)
+            assert.are.equal(0, #client.posts)
+            assert.are.equal("skipped", entryOf("10").status)
+            assert.are.equal("i11", tab.selectedId)
+        end)
     end)
+    describe("the price warning box (Post, Skip, Cancel)", function()
+        it("opens when the price is below the minimum price, and Cancel makes no post", function()
+            selectCloth()
+            pick("i10")
+            type_("5c")
+            click(ui.postNext)
+            assert.are.equal(1, #warns)
+            assert.matches("The price is below the minimum price: 10c", warns[1].text)
+            assert.are.equal(0, #client.posts)
+            warns[1].onCancel()
+            assert.are.equal(0, #client.posts)
+            assert.are.equal("ready", entryOf("10").status)
+            assert.are.equal("i10", tab.selectedId)
+        end)
+
+        it("opens when the price is above the maximum price", function()
+            opExtra = { vendorSkip = false, maxPrice = "200" }
+            tab = mount()
+            ui = tab.ui
+            selectCloth()
+            pick("i10")
+            type_("5g")
+            click(ui.postNext)
+            assert.matches("The price is above the maximum price: 200c", warns[1].text)
+        end)
+
+        it("opens when the price is below the vendor price", function()
+            vendor[10] = 200
+            selectCloth()
+            pick("i10")
+            click(ui.postNext)
+            assert.matches("Sells for more at a vendor", warns[1].text)
+        end)
+
+        it("opens for an item that the rule skips, so that Post works on any item with a result", function()
+            client.rows[10] = { row(5, 1) }
+            pick("i10")
+            fire("ITEM_RESULTS", 10)
+            ui.details.priceInput:SetText("25c")
+            click(ui.postNext)
+            assert.matches("The rule skips this item", warns[1].text)
+            assert.is_nil(warns[1].text:match("below the minimum price"))
+        end)
+
+        it("does not open for a price inside the limits", function()
+            selectCloth()
+            pick("i10")
+            click(ui.postNext)
+            assert.are.equal(0, #warns)
+            assert.are.equal(1, #client.posts)
+        end)
+
+        it("posts with the Post button, once, and asks no more for the same item", function()
+            selectCloth()
+            pick("i10")
+            type_("5c")
+            click(ui.postNext)
+            warns[1].onYes()
+            assert.are.equal(1, #client.posts)
+            assert.are.equal(5 * 20, client.posts[1].buyout)
+            click(ui.postNext)
+            assert.are.equal(1, #warns)
+            assert.are.equal(2, #client.posts)
+        end)
+
+        it("skips the whole item with the Skip button and moves the selection to the next item", function()
+            selectCloth()
+            pick("i10")
+            type_("5c")
+            click(ui.postNext)
+            warns[1].onSkip()
+            assert.are.equal(0, #client.posts)
+            assert.are.equal("skipped", entryOf("10").status)
+            assert.are.equal("i11", tab.selectedId)
+            assert.are.equal("i11", ui.tree.selected)
+            assert.are.equal(1, #tab.selection)
+            assert.are.equal("11", tab.selection[1].key)
+            assert.are.equal("Bolt of Linen", ui.details.name.text)
+            local list = ns.SellingPlan.Log:List()
+            assert.are.equal("skipped by user", list[#list].reason)
+        end)
+
+        it("moves the selection to the next item after the last post of an item", function()
+            selectCloth()
+            pick("i10")
+            click(ui.postNext)
+            click(ui.postNext)
+            assert.are.equal("i10", tab.selectedId)
+            click(ui.postNext)
+            assert.are.equal("i11", tab.selectedId)
+            assert.are.equal("i11", ui.tree.selected)
+            click(ui.postNext)
+            assert.are.equal(4, #client.posts)
+        end)
+
+        it("starts the search of the next item when the selection moves to it", function()
+            client.rows[10] = { row(120, 1) }
+            pick("i10")
+            fire("ITEM_RESULTS", 10)
+            for _ = 1, 3 do
+                click(ui.postNext)
+            end
+            assert.are.equal("i11", tab.selectedId)
+            assert.are.same({ 10, 11 }, client.searches)
+        end)
+
+        it("moves on after the Skip button too", function()
+            selectCloth()
+            pick("i10")
+            for _ = 1, 3 do
+                click(ui.skip)
+            end
+            assert.are.equal("i11", tab.selectedId)
+            assert.are.equal(0, #client.posts)
+        end)
+
+        it("keeps the group selection when a post ends an item of the group", function()
+            selectCloth()
+            for _ = 1, 3 do
+                click(ui.postNext)
+            end
+            assert.are.equal("g2", tab.selectedId)
+        end)
+
+        it("makes the post call only in a click", function()
+            selectCloth()
+            pick("i10")
+            type_("5c")
+            tab:PostNext()
+            assert.are.equal(0, #client.posts)
+            warns[1].onSkip()
+            warns[1].onCancel()
+            assert.are.equal(0, #client.posts)
+        end)
+    end)
+
+    describe("Post all with the warning box and the deposit confirm", function()
+        local function warnBoth()
+            vendor[10] = 200
+            vendor[11] = 1000
+            selectCloth()
+        end
+
+        it("shows the box for each warned item, then goes on", function()
+            warnBoth()
+            click(ui.postAll)
+            assert.are.equal(1, #confirms)
+            assert.are.equal(1, #warns)
+            assert.are.equal(0, #client.posts)
+            warns[1].onYes()
+            assert.are.equal(1, #client.posts)
+            click(ui.postAll)
+            click(ui.postAll)
+            assert.are.equal(1, #warns)
+            assert.are.equal(3, #client.posts)
+            click(ui.postAll)
+            assert.are.equal(2, #warns)
+            assert.are.equal(3, #client.posts)
+            assert.matches("Item11", warns[2].text)
+            warns[2].onYes()
+            assert.are.equal(4, #client.posts)
+            assert.are.equal("commodity", client.posts[4].kind)
+        end)
+
+        it("skips the warned item with Skip and goes on with the next one", function()
+            warnBoth()
+            click(ui.postAll)
+            warns[1].onSkip()
+            assert.are.equal("skipped", entryOf("10").status)
+            assert.are.equal(0, #client.posts)
+            click(ui.postAll)
+            assert.are.equal(2, #warns)
+            warns[2].onYes()
+            assert.are.equal(1, #client.posts)
+            assert.are.equal("commodity", client.posts[1].kind)
+        end)
+
+        it("stops the run with Cancel and asks for the deposit confirm again", function()
+            warnBoth()
+            click(ui.postAll)
+            warns[1].onCancel()
+            assert.are.equal(0, #client.posts)
+            assert.is_nil(tab.allRun)
+            assert.are.equal("stopped", ui.message.text)
+            click(ui.postAll)
+            assert.are.equal(2, #confirms)
+            assert.are.equal(2, #warns)
+        end)
+
+        it("confirms the total deposit before the first post", function()
+            selectCloth()
+            autoAccept = false
+            click(ui.postAll)
+            assert.are.equal("FLIPSIDE_CONFIRM_POST_ALL", confirms[1].name)
+            assert.matches("Post 4 auctions%? Total deposit: 720c", confirms[1].text)
+            assert.are.equal(0, #client.posts)
+            confirms[1].onAccept()
+            assert.are.equal(1, #client.posts)
+        end)
+
+        it("makes the post inside the accept of the confirm, and no post if the user cancels it", function()
+            selectCloth()
+            autoAccept = false
+            tab:PostAll()
+            assert.are.equal(0, #client.posts)
+            assert.are.equal(1, #confirms)
+        end)
+
+        it("asks no deposit confirm in a dry run", function()
+            selectCloth()
+            tab:SetDryRun(true)
+            click(ui.postAll)
+            assert.are.equal(0, #confirms)
+            assert.are.equal("dry run", ns.SellingPlan.Log:List()[#ns.SellingPlan.Log:List()].decision)
+        end)
+
+        it("posts everything under Base, each item by its own group rules", function()
+            selectCloth()
+            pick("g1")
+            for _ = 1, 4 do
+                click(ui.postAll)
+            end
+            assert.are.equal(4, #client.posts)
+            assert.are.equal(1, #confirms)
+            -- The widget has no operation and the Base root has no loose item here.
+            for _, post in ipairs(client.posts) do
+                assert.are_not.equal(2, post.bag)
+            end
+        end)
+    end)
+
+    describe("the list columns", function()
+        it("lines up the cells with the header at every depth of the tree", function()
+            selectCloth()
+            local headerX = ui.headers.labels.price.points[1][4] - ui.tree.contentInsets.left
+            for id, depth in pairs({ i13 = 3, i10 = 3, i11 = 4 }) do
+                local drawn = draw(id)
+                local cell = drawn.sellParts.cells.price
+                assert.are.equal(headerX, cell.points[1][4] + (depth - 1) * 14, id)
+                local info = drawn.sellParts.cells.info
+                assert.are.equal(info.points[1][4] + (depth - 1) * 14,
+                    ui.headers.labels.info.points[1][4] - ui.tree.contentInsets.left, id)
+            end
+        end)
+
+        it("right-aligns the number columns and the header of each", function()
+            for _, column in ipairs(ns.SellingTab.COLUMNS) do
+                local expected = column.number and "RIGHT" or "LEFT"
+                assert.are.equal(expected, ns.Kit.ColumnJustify(column), column.key)
+            end
+            assert.is_true(ns.SellingTab.COLUMNS[2].number)
+            assert.is_true(ns.SellingTab.COLUMNS[4].number)
+            assert.is_true(ns.SellingTab.COLUMNS[5].number)
+        end)
+    end)
+
     describe("a post of an item that the rule skips", function()
         local function skipLinen()
             client.rows[10] = { row(5, 1) }
@@ -851,7 +1136,7 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
                 { bag = 1, slot = 3, count = 7 } } }
             fire("BAG_UPDATE_DELAYED")
             assert.is_true(has(visibleIds(), "i10"))
-            assert.are.equal("Linen Cloth x7", draw("i10").label.text)
+            assert.are.equal("|cff1eff00|Hitem:10|h[Item10]|h|r x7", draw("i10").label.text)
             assert.are.equal("searching", entryOf("10").status)
             assert.are.equal(10, client.searches[#client.searches])
             fire("ITEM_RESULTS", 10)

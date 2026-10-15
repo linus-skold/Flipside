@@ -250,14 +250,16 @@ describe("SellingTab", function()
     end)
 
     describe("the tree", function()
-        it("nests the groups, puts the items first and ends with the no-group section", function()
+        it("has the Base group as the one root, with the loose items first and the groups below it", function()
             local roots = tab.nodes
-            assert.are.same({ "g2", "g6", "none" }, idsOf(roots))
-            assert.are.equal("[Cloth]", roots[1].text)
-            assert.are.same({ "i10", "g3" }, idsOf(roots[1].children))
-            assert.are.same({ "i11" }, idsOf(roots[1].children[2].children))
-            assert.are.equal("[No group]", roots[3].text)
-            assert.are.same({ "i12" }, idsOf(roots[3].children))
+            assert.are.same({ "g1" }, idsOf(roots))
+            assert.are.equal("[Base]", roots[1].text)
+            assert.are.equal(1, roots[1].groupID)
+            assert.are.same({ "i12", "g2", "g6" }, idsOf(roots[1].children))
+            local cloth = roots[1].children[2]
+            assert.are.equal("[Cloth]", cloth.text)
+            assert.are.same({ "i10", "g3" }, idsOf(cloth.children))
+            assert.are.same({ "i11" }, idsOf(cloth.children[2].children))
         end)
 
         it("hides a group with no bag item", function()
@@ -267,13 +269,19 @@ describe("SellingTab", function()
             groups[2].children = { 5 }
             itemGroup = { ["13"] = 6 }
             tab:RefreshBags()
-            assert.are.same({ "g6", "none" }, idsOf(tab.nodes))
+            assert.are.same({ "i11", "i12", "i10", "g6" }, idsOf(tab.nodes[1].children))
         end)
 
-        it("has no [No group] section when every item is in a group", function()
+        it("has no loose item under Base when every item is in a group", function()
             itemGroup["12"] = 6
             tab:RefreshBags()
-            assert.are.same({ "g2", "g6" }, idsOf(tab.nodes))
+            assert.are.same({ "g2", "g6" }, idsOf(tab.nodes[1].children))
+        end)
+
+        it("shows no node when the bags hold no item", function()
+            bagItems = {}
+            tab:RefreshBags()
+            assert.are.same({}, tab.nodes)
         end)
 
         it("hides bound items", function()
@@ -301,24 +309,27 @@ describe("SellingTab", function()
             tab:RefreshBags()
             assert.are.equal(1, #tab.entries)
             assert.are.equal("Linen Cloth", tab.entries[1].item.name)
-            assert.are.same({ "none" }, idsOf(tab.nodes))
+            assert.are.same({ "g1" }, idsOf(tab.nodes))
+            assert.are.same({ "i10" }, idsOf(tab.nodes[1].children))
         end)
 
         it("shows the rows of the expanded groups with the name, the count and the columns", function()
             local rows = ui.tree.list.rows
-            assert.are.equal("[Cloth]", rows[1].label.text)
-            assert.are.equal("Linen Cloth x60", rows[2].label.text)
-            local cells = rows[2].sellParts.cells
+            assert.are.equal("[Base]", rows[1].label.text)
+            assert.are.equal("Copper Ore x8", rows[2].label.text)
+            assert.are.equal("[Cloth]", rows[3].label.text)
+            assert.are.equal("Linen Cloth x60", rows[4].label.text)
+            local cells = rows[4].sellParts.cells
             assert.are.equal("~100c", cells.price.text)
             assert.are.equal("Sell", cells.operation.text)
             assert.are.equal("-", cells.lowest.text)
             assert.are.equal("-", cells.net.text)
             assert.are.equal("not searched yet", cells.info.text)
-            assert.are.equal("[Bolts]", rows[3].label.text)
-            assert.are.equal("Bolt of Linen x12", rows[4].label.text)
-            assert.are.equal("[Misc]", rows[5].label.text)
-            assert.are.equal("no operation", rows[6].sellParts.cells.info.text)
-            assert.are.equal("-", rows[6].sellParts.cells.operation.text)
+            assert.are.equal("[Bolts]", rows[5].label.text)
+            assert.are.equal("Bolt of Linen x12", rows[6].label.text)
+            assert.are.equal("[Misc]", rows[7].label.text)
+            assert.are.equal("no operation", rows[8].sellParts.cells.info.text)
+            assert.are.equal("-", rows[8].sellParts.cells.operation.text)
         end)
 
         it("has the header columns Item, Your price, Operation, Lowest on AH, Net and Info", function()
@@ -331,22 +342,22 @@ describe("SellingTab", function()
 
         it("collapses and expands a group", function()
             ui.tree:SetCollapsed("g2", true)
-            assert.are.equal("[Misc]", ui.tree.list.rows[2].label.text)
+            assert.are.equal("[Misc]", ui.tree.list.rows[4].label.text)
             ui.tree:SetCollapsed("g2", false)
-            assert.are.equal("Linen Cloth x60", ui.tree.list.rows[2].label.text)
+            assert.are.equal("Linen Cloth x60", ui.tree.list.rows[4].label.text)
         end)
 
         it("greys the expected price until the live result and shows the columns after it", function()
-            local cells = ui.tree.list.rows[2].sellParts.cells
+            local cells = ui.tree.list.rows[4].sellParts.cells
             assert.are.same({ 0.5, 0.5, 0.5 }, { cells.price.color[1], cells.price.color[2], cells.price.color[3] })
             selectCloth()
-            cells = ui.tree.list.rows[2].sellParts.cells
+            cells = ui.tree.list.rows[4].sellParts.cells
             assert.are.equal("119c", cells.price.text)
             assert.are.equal("120c", cells.lowest.text)
             assert.are.equal("6183c", cells.net.text)
             assert.are.equal("1c under lowest", cells.info.text)
             assert.are.same({ 1, 1, 1 }, { cells.price.color[1], cells.price.color[2], cells.price.color[3] })
-            local bolts = ui.tree.list.rows[4].sellParts.cells
+            local bolts = ui.tree.list.rows[6].sellParts.cells
             assert.are.equal("149c", bolts.price.text)
             assert.are.equal("150c", bolts.lowest.text)
             assert.are.equal("1579c", bolts.net.text)
@@ -369,12 +380,12 @@ describe("SellingTab", function()
             selectCloth()
             local rows = ui.tree.list.rows
             -- 119c x 60 = 7140c; cut 5% = 357c; deposit 3 x 200c = 600c.
-            assert.are.equal("6183c", rows[2].sellParts.cells.net.text)
+            assert.are.equal("6183c", rows[4].sellParts.cells.net.text)
             -- 149c x 12 = 1788c; cut 89c; deposit 120c.
-            assert.are.equal("1579c", rows[4].sellParts.cells.net.text)
+            assert.are.equal("1579c", rows[6].sellParts.cells.net.text)
         end)
 
-        it("shows the details of the next post", function()
+        it("shows the details of the next post, with no lowest and no vs vendor line", function()
             selectCloth()
             local d = ui.details
             assert.are.equal("Linen Cloth", d.name.text)
@@ -382,23 +393,10 @@ describe("SellingTab", function()
             assert.are.equal("Buyout 2380c per auction", d.price.text)
             assert.are.equal("3 x 20", d.stack.text)
             assert.are.equal("Deposit: 600c", d.deposit.text)
-            assert.are.equal("Lowest on AH: 120c", d.lowest.text)
             assert.are.equal("Net: " .. ns.SellingTab.ARROW_UP .. " 6183c", d.net.text)
-            -- The vendor pays 5c each: 300c for 60 items.
-            assert.are.equal("vs vendor: 5883c", d.vs.text)
-        end)
-
-        it("shows the total net and the total vs vendor of the queue", function()
-            selectCloth()
-            assert.are.equal("Queue net: 7762c", ui.net.text)
-            -- The vendor price of the commodity is not known, so the total vs vendor is not known.
-            assert.are.equal("vs vendor: -", ui.vs.text)
-            tab.deps.vendorPrice = function()
-                return 1
-            end
-            entryOf("11").vendor = 1
-            tab:_Update()
-            assert.are.equal("vs vendor: 7450c", ui.vs.text)
+            assert.is_nil(d.lowest)
+            assert.is_nil(d.vs)
+            assert.is_nil(d.lowestHit)
         end)
 
         it("counts only the auctions that are left", function()
@@ -406,8 +404,7 @@ describe("SellingTab", function()
             click(ui.postNext)
             assert.are.equal("Net: " .. ns.SellingTab.ARROW_UP .. " 4122c", ui.details.net.text)
             assert.are.equal("2 x 20", ui.details.stack.text)
-            assert.are.equal("Queue net: 5701c", ui.net.text)
-            assert.are.equal("4122c", ui.tree.list.rows[2].sellParts.cells.net.text)
+            assert.are.equal("4122c", ui.tree.list.rows[4].sellParts.cells.net.text)
         end)
 
         it("moves the details to the next item when one is done", function()
@@ -418,38 +415,26 @@ describe("SellingTab", function()
             assert.are.equal("Bolt of Linen", ui.details.name.text)
             assert.are.equal("Buyout 1788c per auction", ui.details.price.text)
             assert.are.equal("1 x 12", ui.details.stack.text)
-            assert.are.equal("vs vendor: -", ui.details.vs.text)
         end)
 
-        it("shows a negative net in red, in the row, the pane and the total", function()
+        it("shows a negative net in red, in the row and the pane", function()
             client.Deposit = function()
                 return 100000
             end
             selectCloth()
-            local cells = ui.tree.list.rows[2].sellParts.cells
+            local cells = ui.tree.list.rows[4].sellParts.cells
             assert.is_true(cells.net.text:sub(1, 1) == "-")
             assert.are.same({ 1, 0.3, 0.3 }, color(cells.net))
             assert.are.same({ 1, 0.3, 0.3 }, color(ui.details.net))
-            assert.are.same({ 1, 0.3, 0.3 }, color(ui.net))
-        end)
-
-        it("shows a vendor loss in red and a vendor gain in green", function()
-            selectCloth()
-            assert.are.same({ 0.4, 1, 0.4 }, color(ui.details.vs))
-            entryOf("10").vendor = 500
-            tab:_Update()
-            assert.are.same({ 1, 0.3, 0.3 }, color(ui.details.vs))
-            assert.are.equal("vs vendor: -23817c", ui.details.vs.text)
         end)
 
         it("shows no profit for a skipped or waiting row, and clears the pane", function()
-            assert.are.equal("-", ui.tree.list.rows[2].sellParts.cells.net.text)
+            assert.are.equal("-", ui.tree.list.rows[4].sellParts.cells.net.text)
             assert.are.equal("Pick a group or an item", ui.details.name.text)
-            assert.are.equal("", ui.net.text)
             client.rows[10] = { row(5, 1) }
             pick("i10")
             fire("ITEM_RESULTS", 10)
-            assert.are.equal("-", ui.tree.list.rows[2].sellParts.cells.net.text)
+            assert.are.equal("-", ui.tree.list.rows[4].sellParts.cells.net.text)
             -- One selected item that the rule skips shows in the pane; Post asks first.
             assert.are.equal("Linen Cloth", ui.details.name.text)
             assert.matches("The rule skips this item: below minimum", ui.details.warn.text)
@@ -539,9 +524,21 @@ describe("SellingTab", function()
         end)
 
         it("selects through a click on the row", function()
-            local rowFrame = ui.tree.list.rows[1]
+            local rowFrame = ui.tree.list.rows[3]
             rowFrame.scripts.OnClick(rowFrame, "LeftButton")
             assert.are.equal(2, #tab.selection)
+        end)
+
+        it("selects every item through the Base group, and only the group below it for a subgroup", function()
+            pick("g1")
+            local keys = {}
+            for _, entry in ipairs(tab.selection) do
+                keys[#keys + 1] = entry.key
+            end
+            assert.are.same({ "12", "10", "11", "13" }, keys)
+            pick("g6")
+            assert.are.equal(1, #tab.selection)
+            assert.are.equal("13", tab.selection[1].key)
         end)
 
         it("searches the items of the selection one at a time and decides on each result", function()
@@ -566,7 +563,7 @@ describe("SellingTab", function()
         end)
 
         it("makes no search for items without an operation", function()
-            pick("none")
+            pick("i12")
             pick("g6")
             assert.are.same({}, client.searches)
             assert.are.equal("noop", entryOf("12").status)
@@ -679,11 +676,24 @@ describe("SellingTab", function()
             assert.are.equal("post", list[#list].decision)
         end)
 
-        it("shows the total deposit of the queue next to the button", function()
+        it("has no deposit, queue net or vendor text next to the buttons", function()
             selectCloth()
-            assert.are.equal("Deposit: 720c", ui.deposit.text)
-            click(ui.postNext)
-            assert.are.equal("Deposit: 520c", ui.deposit.text)
+            assert.is_nil(ui.deposit)
+            assert.is_nil(ui.net)
+            assert.is_nil(ui.vs)
+        end)
+
+        it("puts Post, Post all and Skip above the list", function()
+            local function y(frame)
+                return frame.points[1][5]
+            end
+            assert.are.equal("TOPLEFT", ui.postNext.points[1][1])
+            assert.is_true(y(ui.postNext) > y(ui.details.frame))
+            assert.is_true(y(ui.details.frame) > y(ui.tree.frame))
+            assert.are.equal(ui.postNext, ui.postAll.points[1][2])
+            assert.are.equal(ui.postAll, ui.skip.points[1][2])
+            -- The list reaches the bottom of the panel: no bar below it.
+            assert.are.equal(0, ui.tree.frame.points[2][5])
         end)
 
         it("posts only the selected item", function()
@@ -715,7 +725,7 @@ describe("SellingTab", function()
         end)
 
         it("never posts an item without an operation", function()
-            pick("none")
+            pick("i12")
             assert.is_false(ui.postNext.enabled)
             local ok, text = tab:PostNext()
             assert.is_false(ok)
@@ -903,6 +913,212 @@ describe("SellingTab", function()
         end)
     end)
 
+    describe("rules changes", function()
+        it("builds the tree again and moves an item to its new group", function()
+            assert.are.same({ "i11" }, idsOf(tab.nodes[1].children[2].children[2].children))
+            itemGroup["10"] = 6
+            fire("Flipside.RulesChanged")
+            local base = tab.nodes[1]
+            assert.are.same({ "i12", "g2", "g6" }, idsOf(base.children))
+            assert.are.same({ "g3" }, idsOf(base.children[2].children))
+            assert.are.same({ "i13", "i10" }, idsOf(base.children[3].children))
+            assert.are.equal(6, entryOf("10").groupID)
+            assert.are.equal("Linen Cloth x60", ui.tree.list.rows[8].label.text)
+        end)
+
+        it("hides a group when its last item leaves, and shows a loose item in its new group", function()
+            itemGroup["10"] = 6
+            itemGroup["11"] = 6
+            itemGroup["12"] = 6
+            fire("Flipside.RulesChanged")
+            assert.are.same({ "g6" }, idsOf(tab.nodes[1].children))
+            itemGroup = {}
+            fire("Flipside.RulesChanged")
+            assert.are.same({ "i11", "i13", "i12", "i10" }, idsOf(tab.nodes[1].children))
+        end)
+
+        it("takes the selection again from the new tree", function()
+            pick("g6")
+            assert.are.equal(1, #tab.selection)
+            itemGroup["10"] = 6
+            fire("Flipside.RulesChanged")
+            local keys = {}
+            for _, entry in ipairs(tab.selection) do
+                keys[#keys + 1] = entry.key
+            end
+            assert.are.same({ "13", "10" }, keys)
+            assert.are.equal("g6", tab.selectedId)
+        end)
+
+        it("makes no search and no post", function()
+            itemGroup["10"] = 6
+            fire("Flipside.RulesChanged")
+            assert.are.same({}, client.searches)
+            assert.are.equal(0, #client.posts)
+        end)
+    end)
+
+    describe("Base and Post all", function()
+        local function searchAll()
+            client.rows[10] = { row(120, 1) }
+            client.rows[11] = { row(150, 5) }
+            pick("g1")
+            fire("ITEM_RESULTS", 10)
+            fire("COMMODITY_RESULTS", 11)
+        end
+
+        it("posts every item under Base, each by the rules of its own group", function()
+            searchAll()
+            assert.are.equal("ready", entryOf("10").status)
+            assert.are.equal("ready", entryOf("11").status)
+            assert.are.equal("noop", entryOf("12").status)
+            click(ui.postAll)
+            confirms[1].onAccept()
+            for _ = 1, 3 do
+                click(ui.postAll)
+            end
+            assert.are.equal(4, #client.posts)
+            assert.are.same({ "item", "item", "item", "commodity" },
+                { client.posts[1].kind, client.posts[2].kind, client.posts[3].kind, client.posts[4].kind })
+            assert.are.equal(119 * 20, client.posts[1].buyout)
+            assert.are.equal(149, client.posts[4].unitPrice)
+        end)
+
+        it("posts only the items of the selected group and its subgroups", function()
+            searchAll()
+            pick("g3")
+            click(ui.postAll)
+            confirms[1].onAccept()
+            assert.are.equal(1, #client.posts)
+            assert.are.equal("commodity", client.posts[1].kind)
+            pick("g6")
+            assert.is_false(ui.postAll.enabled)
+        end)
+
+        it("confirms with the total deposit before the first post and then asks no more", function()
+            searchAll()
+            click(ui.postAll)
+            assert.are.equal(1, #confirms)
+            assert.are.equal("FLIPSIDE_CONFIRM_POST_ALL", confirms[1].name)
+            -- 3 auctions of 20 at 10c each unit = 600c, and 12 units = 120c.
+            assert.matches("Post 4 auctions%? Total deposit: 720c", confirms[1].text)
+            assert.are.equal(0, #client.posts)
+            confirms[1].onAccept()
+            assert.are.equal(1, #client.posts)
+            click(ui.postAll)
+            assert.are.equal(1, #confirms)
+            assert.are.equal(2, #client.posts)
+        end)
+
+        it("makes no post when the user cancels the confirm, and asks again on the next click", function()
+            searchAll()
+            click(ui.postAll)
+            assert.are.equal(0, #client.posts)
+            click(ui.postAll)
+            assert.are.equal(2, #confirms)
+            assert.are.equal(0, #client.posts)
+        end)
+
+        it("asks again for a new selection", function()
+            searchAll()
+            click(ui.postAll)
+            confirms[1].onAccept()
+            pick("g3")
+            click(ui.postAll)
+            assert.are.equal(2, #confirms)
+            assert.matches("Post 1 auctions%? Total deposit: 120c", confirms[2].text)
+        end)
+
+        it("asks nothing in a dry run", function()
+            searchAll()
+            tab:SetDryRun(true)
+            click(ui.postAll)
+            assert.are.equal(0, #confirms)
+            assert.are.equal("dry run", ns.SellingPlan.Log:List()[#ns.SellingPlan.Log:List()].decision)
+        end)
+
+        it("makes the post call only in the accept of the confirm", function()
+            searchAll()
+            tab:PostAll()
+            assert.are.equal(0, #client.posts)
+            confirms[1].onAccept()
+            assert.are.equal(1, #client.posts)
+        end)
+    end)
+
+    describe("the item link in a row", function()
+        local LINK = "|cff1eff00|Hitem:10::::|h[Linen Cloth]|h|r"
+        local inserted
+
+        before_each(function()
+            inserted = nil
+            _G.ChatEdit_InsertLink = function(link)
+                inserted = link
+                return true
+            end
+            _G.IsModifiedClick = function(name)
+                return name == "CHATLINK" and _G.shiftDown == true
+            end
+            _G.shiftDown = false
+        end)
+
+        after_each(function()
+            _G.ChatEdit_InsertLink, _G.IsModifiedClick, _G.shiftDown = nil, nil, nil
+        end)
+
+        it("shows the name as the item link in the quality colour", function()
+            bagItems[4].link = LINK
+            tab:RefreshBags()
+            assert.are.equal(LINK .. " x60", ui.tree.list.rows[4].label.text)
+        end)
+
+        it("colours a link that has no colour with the quality colour", function()
+            mock.qualityColors[1] = { 1, 1, 1, "ff1eff00" }
+            tab = mount({ itemLink = function(id)
+                return "|Hitem:" .. id .. "::::|h[Linen Cloth]|h", 1
+            end })
+            ui = tab.ui
+            assert.are.equal("|cff1eff00|Hitem:10::::|h[Linen Cloth]|h|r x60", ui.tree.list.rows[4].label.text)
+        end)
+
+        it("shows the item tooltip on hover and hides it on leave", function()
+            bagItems[4].link = LINK
+            tab:RefreshBags()
+            local rowFrame = ui.tree.list.rows[4]
+            rowFrame.scripts.OnEnter(rowFrame)
+            assert.are.equal("item:10::::", mock.tooltip.hyperlink)
+            assert.is_true(mock.tooltip.shown)
+            rowFrame.scripts.OnLeave(rowFrame)
+            assert.is_false(mock.tooltip.shown)
+        end)
+
+        it("puts the link in the chat box on a shift-click and does not select the rowFrame", function()
+            bagItems[4].link = LINK
+            tab:RefreshBags()
+            local rowFrame = ui.tree.list.rows[4]
+            _G.shiftDown = true
+            rowFrame.scripts.OnClick(rowFrame, "LeftButton")
+            assert.are.equal(LINK, inserted)
+            assert.are.equal(0, #tab.selection)
+        end)
+
+        it("selects the rowFrame on a plain click", function()
+            bagItems[4].link = LINK
+            tab:RefreshBags()
+            local rowFrame = ui.tree.list.rows[4]
+            rowFrame.scripts.OnClick(rowFrame, "LeftButton")
+            assert.is_nil(inserted)
+            assert.are.equal(1, #tab.selection)
+        end)
+
+        it("gives a group rowFrame no tooltip", function()
+            bagItems[4].link = LINK
+            tab:RefreshBags()
+            local rowFrame = ui.tree.list.rows[3]
+            assert.is_nil(rowFrame.scripts.OnEnter)
+        end)
+    end)
+
     describe("protected calls", function()
         it("makes no post call except from a click", function()
             selectCloth()
@@ -966,5 +1182,6 @@ describe("SellingTab", function()
         assert.is_false(bus:HasSubscribers("COMMODITY_RESULTS"))
         assert.is_false(bus:HasSubscribers("READY"))
         assert.is_false(bus:HasSubscribers("CREATED"))
+        assert.is_false(bus:HasSubscribers("Flipside.RulesChanged"))
     end)
 end)
