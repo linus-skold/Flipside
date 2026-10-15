@@ -120,7 +120,8 @@ function MainWindow.Create(deps)
             ledgerPage.Open()
         end
     end
-    local tabs = Kit.CreatePageTabs(window, pages)
+    local flavour = ns.Flavour or {}
+    local tabs = Kit.CreatePageTabs(window, pages, { template = flavour.pageTabTemplate })
     for index, page in ipairs(pages) do
         if page.key == "tooltip" then
             tabs.buttons[index]:HookScript("OnClick", function()

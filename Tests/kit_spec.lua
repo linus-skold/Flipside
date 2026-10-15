@@ -250,6 +250,95 @@ describe("Kit", function()
         end)
     end)
 
+    describe("Tab sizing", function()
+        local function pages(...)
+            local list = {}
+            for _, title in ipairs({ ... }) do
+                list[#list + 1] = { key = title, title = title }
+            end
+            return list
+        end
+
+        it("TabWidth is text + padding, at least the minimum", function()
+            assert.are.equal(70, Kit.TabWidth(50, 20))
+            assert.are.equal(60, Kit.TabWidth(10, 20, 60))
+            assert.are.equal(50, Kit.TabWidth(50))
+        end)
+
+        it("FitTabWidths keeps widths that fit", function()
+            assert.are.same({ 100, 80 }, Kit.FitTabWidths({ 100, 80 }, 200, 3))
+        end)
+
+        it("FitTabWidths shrinks all tabs so that the total fits", function()
+            local fitted = Kit.FitTabWidths({ 120, 120, 60 }, 240, 3)
+            local sum = 0
+            for _, width in ipairs(fitted) do
+                sum = sum + width
+            end
+            assert.is_true(sum + 6 <= 240)
+            assert.is_true(fitted[1] < 120 and fitted[3] < 60)
+            assert.are.equal(fitted[1], fitted[2])
+        end)
+
+        it("FitTabWidths never goes below the minimum", function()
+            assert.are.same({ 40, 40 }, Kit.FitTabWidths({ 100, 100 }, 20, 3))
+        end)
+
+        it("page tabs size to the text through the client helper", function()
+            local window = Kit.CreateWindow("FitWindow1", {})
+            window:SetSize(800, 540)
+            local tabs = Kit.CreatePageTabs(window, pages("Groups", "Operations"), { tabPadding = 4, minTabWidth = 20 })
+            assert.are.equal(6 * 6 + 4 + 32, tabs.buttons[1]:GetWidth())
+            assert.are.equal(10 * 6 + 4 + 32, tabs.buttons[2]:GetWidth())
+            assert.are.equal(4, window.tabPadding)
+        end)
+
+        it("page tabs never extend past the window width", function()
+            local window = Kit.CreateWindow("FitWindow2", {})
+            window:SetSize(300, 540)
+            local tabs = Kit.CreatePageTabs(window, pages("Groups and more", "Operations list", "Formulas pg", "About"))
+            local total = 3 * 3
+            for _, tab in ipairs(tabs.buttons) do
+                total = total + tab:GetWidth()
+            end
+            assert.is_true(total <= 300 - 2 * Kit.Theme.padding)
+        end)
+
+        it("page tabs use the template of the option", function()
+            local window = Kit.CreateWindow("FitWindow3", {})
+            window:SetSize(800, 540)
+            local tabs = Kit.CreatePageTabs(window, pages("A"), { template = "CharacterFrameTabButtonTemplate" })
+            assert.are.equal("CharacterFrameTabButtonTemplate", tabs.buttons[1].template)
+            assert.are.equal("FitWindow3Tab1", tabs.buttons[1]:GetName())
+        end)
+
+        it("an unnamed window still gets named page tabs", function()
+            local window = CreateFrame("Frame")
+            window:SetSize(800, 540)
+            local tabs = Kit.CreatePageTabs(window, pages("A", "B"))
+            assert.is_string(tabs.buttons[1]:GetName())
+            assert.are_not.equal(tabs.buttons[1]:GetName(), tabs.buttons[2]:GetName())
+        end)
+
+        it("top tabs size to the text with padding and a minimum width", function()
+            local tabs = Kit.CreateTopTabs(CreateFrame("Frame"), { { "a", "Rules and more" }, { "b", "I" } }, {
+                tabPadding = 10, minTabWidth = 50,
+            })
+            assert.are.equal(14 * 6 + 10 + 32, tabs.buttons[1]:GetWidth())
+            assert.are.equal(50 + 32, tabs.buttons[2]:GetWidth())
+        end)
+
+        it("top tabs use the template of the option", function()
+            local tabs = Kit.CreateTopTabs(CreateFrame("Frame"), { { "a", "A" } }, { template = "TabButtonTemplate" })
+            assert.are.equal("TabButtonTemplate", tabs.buttons[1].template)
+        end)
+
+        it("without the client helper the width comes from the text width", function()
+            _G.PanelTemplates_TabResize = nil
+            local tabs = Kit.CreateTopTabs(CreateFrame("Frame"), { { "a", "Items" } }, { tabPadding = 12 })
+            assert.are.equal(5 * 6 + 12, tabs.buttons[1]:GetWidth())
+        end)
+    end)
     describe("List", function()
         it("passes data to the data provider", function()
             local inited = {}

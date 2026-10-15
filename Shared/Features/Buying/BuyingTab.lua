@@ -1594,7 +1594,11 @@ function Tab:_BuildLeft(content)
     end
     local host = place(CreateFrame("Frame", nil, content), 0, -14)
     host:SetSize(LIST_WIDTH, 30)
+    local flavour = ns.Flavour or {}
     ui.sourceTabs = Kit.CreateTopTabs(host, { { "groups", "Groups" }, { "lists", "Lists" } }, {
+        template = flavour.topTabTemplate,
+        tabPadding = flavour.topTabPadding,
+        minTabWidth = flavour.topTabMinWidth,
         onSelect = function(key)
             if not self.syncingTabs then
                 self:SetSource(key)

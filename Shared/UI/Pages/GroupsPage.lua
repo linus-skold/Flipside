@@ -328,10 +328,14 @@ function GroupsPage.Build(content, deps)
     local right = CreateFrame("Frame", nil, content)
     right:SetSize(516, 400)
     place(right, RIGHT, TAB_Y)
+    local flavour = ns.Flavour or {}
     page.topTabs = Kit.CreateTopTabs(right, {
         { key = "rules", title = "Rules" },
         { key = "items", title = "Items" },
     }, {
+        template = flavour.topTabTemplate,
+        tabPadding = flavour.topTabPadding,
+        minTabWidth = flavour.topTabMinWidth,
         onSelect = function(key)
             page.tab = key
         end,

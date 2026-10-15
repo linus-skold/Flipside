@@ -12,7 +12,7 @@ local GLOBAL_NAMES = {
     "StaticPopupDialogs", "StaticPopup_Show", "UnitName", "WOW_PROJECT_ID", "date", "debugprofilestop", "time",
     "UISpecialFrames", "UIParent", "GameTooltip", "GetMoneyString", "GetMoney", "issecretvalue",
     "PanelTemplates_SetNumTabs",
-    "PanelTemplates_SetTab", "InCombatLockdown", "ScrollUtil", "CreateDataProvider",
+    "PanelTemplates_SetTab", "PanelTemplates_TabResize", "InCombatLockdown", "ScrollUtil", "CreateDataProvider",
     "CreateScrollBoxListLinearView", "CreateTreeDataProvider", "CreateScrollBoxListTreeListView", "MenuUtil",
     "Enum", "TooltipDataProcessor", "IsAltKeyDown", "GetInboxNumItems", "GetInboxItemLink", "GetInboxItem",
     "FlipsideDB_TBC", "FlipsideScanDB_TBC", "FlipsideLedgerDB", "FlipsideLedgerDB_TBC", "C_AddOns", "LoadAddOn",
@@ -213,6 +213,10 @@ function frameMethods:ClearFocus()
 end
 
 -- Text width of the mock: 6 per character.
+function frameMethods:GetTextWidth()
+    return #(self.text or "") * 6
+end
+
 function frameMethods:GetStringWidth()
     return #(self.text or "") * 6
 end
@@ -543,6 +547,20 @@ function M.reset(options)
     end
     _G.PanelTemplates_SetTab = function(frame, id)
         table.insert(M.tabCalls, { "tab", frame, id })
+    end
+    -- Client helper: the tab is text + padding + 32 for the sides (at least minWidth), or absoluteSize.
+    M.tabResizes = {}
+    _G.PanelTemplates_TabResize = function(tab, padding, absoluteSize, minWidth)
+        table.insert(M.tabResizes, { tab, padding, absoluteSize, minWidth })
+        if absoluteSize then
+            tab:SetWidth(absoluteSize)
+        else
+            local width = tab:GetTextWidth() + (padding or 0)
+            if minWidth and width < minWidth then
+                width = minWidth
+            end
+            tab:SetWidth(width + 32)
+        end
     end
     _G.GameTooltip = {
         SetOwner = function(_, owner)
