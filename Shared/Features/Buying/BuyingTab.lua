@@ -684,10 +684,13 @@ function Tab:_OnResult(arg)
     self:_Next()
 end
 
+-- The throttle is ready again. A search result can come while the client is still not ready, so the buy controls
+-- must be drawn again here.
 function Tab:_OnReady()
     if self.queue and not self.pending then
         self:_Next()
     end
+    self:_Update()
 end
 
 -- The jump warning threshold in percent. It is saved in the profile (buying.jumpPercent).

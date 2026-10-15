@@ -238,6 +238,21 @@ describe("BuyingTab item tree", function()
             assert.are.same({}, client.searches)
         end)
 
+        it("enables the buy button after the result and the ready event, with no tab switch", function()
+            client.rows[10] = { { auctionID = 1, unitPrice = 50, quantity = 3, ownerItem = false } }
+            local row = draw("i10")
+            row.scripts.OnClick(row, "LeftButton")
+            -- The search sets the throttle: the client is not ready when the result comes.
+            client.ready = false
+            bus:Emit("ITEM_RESULTS", 10)
+            assert.is_false(ui.buyNext.enabled)
+            assert.matches("waiting for the Auction House", ui.summary.text)
+            client.ready = true
+            bus:Emit("READY")
+            assert.is_true(ui.buyNext.enabled)
+            assert.matches("Buy next: 3 at 50c", ui.summary.text)
+        end)
+
         it("does not buy: a click makes no protected call", function()
             local row = draw("i10")
             row.scripts.OnClick(row, "LeftButton")
