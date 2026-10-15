@@ -266,6 +266,33 @@ describe("SellingTab", function()
             assert.are.equal(28, y - lower)
         end)
     end)
+    describe("the look", function()
+        it("shows no pick hint above the action row after the bags load", function()
+            assert.is_false(ui.message:IsShown())
+            assert.are.equal("", ui.message.text)
+            assert.is_false(ui.stop:IsShown())
+        end)
+
+        it("still says when the bags hold no tradable item", function()
+            bagItems = {}
+            tab:RefreshBags()
+            assert.are.equal("no tradable item in the bags", ui.message.text)
+            assert.is_true(ui.message:IsShown())
+        end)
+
+        it("gives the tree and the details pane the client Auction House background", function()
+            assert.are.equal("auctionhouse-background-index", ui.tree.frame.skinBackground.atlas)
+            assert.are.equal("auctionhouse-background-index", ui.details.frame.skinBackground.atlas)
+        end)
+
+        it("gives the tree rows the client select and hover atlases", function()
+            local rows = ui.tree.list.rows
+            assert.are.equal("auctionhouse-ui-row-select", rows[1].selection.atlas)
+            assert.are.equal("auctionhouse-ui-row-highlight", rows[1].kitHover.atlas)
+            assert.are.equal("auctionhouse-rowstripe-1", rows[1].kitStripe.atlas)
+            assert.are.equal("auctionhouse-rowstripe-2", rows[2].kitStripe.atlas)
+        end)
+    end)
     describe("the tree", function()
         it("has the top-level groups as the roots and ends with the no-group node, with no Base node", function()
             local roots = tab.nodes

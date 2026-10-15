@@ -677,7 +677,7 @@ function Tab:RefreshBags()
         self.ui.tree.selected = nil
         self.ui.tree:SetNodes(self.nodes)
     end
-    self:_Say(#self.entries == 0 and "no tradable item in the bags" or "pick a group or an item")
+    self:_Say(#self.entries == 0 and "no tradable item in the bags" or "")
     self:_Update()
     return true
 end
@@ -1825,7 +1825,8 @@ function Tab:_BuildContent()
     end
 
     -- The details pane: the next post of the queue.
-    local pane = Kit.Inset(content)
+    local skin = ns.AuctionTabs and ns.AuctionTabs.Skin
+    local pane = Kit.Inset(content, skin)
     pane:SetPoint("TOPLEFT", content, "TOPLEFT", 0, DETAILS_TOP)
     pane:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, DETAILS_TOP)
     pane:SetHeight(DETAILS_HEIGHT)
@@ -1892,7 +1893,7 @@ function Tab:_BuildContent()
     d.duration:SetPoint("TOPLEFT", pane, "TOPLEFT", 650, -34)
     ui.details = d
 
-    ui.tree = Kit.CreateTree(content, { rowHeight = ROW_HEIGHT, inset = true,
+    ui.tree = Kit.CreateTree(content, { rowHeight = ROW_HEIGHT, inset = true, skin = skin,
         initRow = function(row, node, depth, isCollapsed, hasChildren)
             self:_InitTreeRow(row, node, depth, isCollapsed, hasChildren)
         end,

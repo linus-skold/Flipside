@@ -25,16 +25,13 @@ local function flatten(nodes, depth, collapsed, out)
     return out
 end
 
-local function prepareRow(row)
+local function prepareRow(row, skin)
     if row.kitTree then
         return
     end
     row.kitTree = true
-    row:SetHighlightTexture(Kit.Theme.rowHighlight, "ADD")
-    row.selection = row:CreateTexture(nil, "BACKGROUND")
-    row.selection:SetTexture(Kit.Theme.rowHighlight)
-    row.selection:SetBlendMode("ADD")
-    row.selection:SetAllPoints(row)
+    Kit.SkinRow(row, skin)
+    row.selection = Kit.SelectionTexture(row, skin)
     row.toggle = CreateFrame("Button", nil, row)
     row.toggle:SetSize(TOGGLE_SIZE, TOGGLE_SIZE)
     row.toggle.glyph = Kit.Label(row.toggle, "-", "highlight")
@@ -140,7 +137,7 @@ end
 
 -- Show an indented label and a collapse toggle. indentRow is true when the view does not indent.
 local function defaultInit(tree, row, data, depth, isCollapsed, hasChildren, indentRow)
-    prepareRow(row)
+    prepareRow(row, tree.options.skin)
     row.toggle:ClearAllPoints()
     row.toggle:SetPoint("LEFT", row, "LEFT", indentRow and (depth - 1) * INDENT or 0, 0)
     row.toggle:SetShown(hasChildren)
@@ -153,7 +150,7 @@ local function defaultInit(tree, row, data, depth, isCollapsed, hasChildren, ind
 end
 
 local function renderRow(tree, row, data, depth, isCollapsed, hasChildren, indentRow)
-    prepareRow(row)
+    prepareRow(row, tree.options.skin)
     row.kitId = data.id
     row.dropMark:SetShown(tree.dropTarget ~= nil and tree.dropTarget == data.id)
     if tree.options.onRightClick then
@@ -185,7 +182,8 @@ local function renderRow(tree, row, data, depth, isCollapsed, hasChildren, inden
 end
 
 -- Create a tree. options: rowHeight, initRow(row, node, depth, isCollapsed, hasChildren), onSelect(node),
--- onDrop(draggedId, targetId or nil), canDrag(id), onRightClick(id, rowFrame), inset (client inset background).
+-- onDrop(draggedId, targetId or nil), canDrag(id), onRightClick(id, rowFrame), inset (client inset background),
+-- skin (client atlas names for the inset background, the row stripes, the row hover and the selection; see Kit.Inset).
 -- Drag a row with the left button. A drop on a row gives its id. A drop on the empty tree gives nil.
 -- A drop on the dragged row itself, or outside the tree, calls nothing. canDrag(id) false blocks the drag.
 -- A node is { id, text, children }. Use tree.frame to place the tree.
@@ -204,7 +202,7 @@ function Kit.CreateTree(parent, options)
     local scrollApi = ScrollUtil and ScrollUtil.InitScrollBoxListWithScrollBar and CreateTreeDataProvider
         and CreateScrollBoxListTreeListView
     if scrollApi then
-        local container = options.inset and Kit.Inset(parent) or CreateFrame("Frame", nil, parent)
+        local container = options.inset and Kit.Inset(parent, options.skin) or CreateFrame("Frame", nil, parent)
         local pad = options.inset and Kit.Theme.insetPadding or 0
         local box = CreateFrame("Frame", nil, container, "WowScrollBoxList")
         local bar = CreateFrame("EventFrame", nil, container, "MinimalScrollBar")
@@ -219,6 +217,7 @@ function Kit.CreateTree(parent, options)
             renderRow(tree, row, data, treeNode:GetDepth(), treeNode:IsCollapsed(), #treeNode:GetNodes() > 0, false)
         end)
         ScrollUtil.InitScrollBoxListWithScrollBar(box, bar, view)
+        Kit.AlternateStripes(box, options.skin)
         tree.frame = container
         tree.box = box
         tree.contentInsets = { left = pad, right = 16 + pad }
@@ -242,6 +241,7 @@ function Kit.CreateTree(parent, options)
         tree.list = Kit.CreateList(parent, {
             rowHeight = rowHeight,
             inset = options.inset,
+            skin = options.skin,
             initRow = function(row, entry)
                 local data = entry.data
                 local hasChildren = data.children ~= nil and #data.children > 0

@@ -2,14 +2,12 @@ local _, ns = ...
 ns.Kit = ns.Kit or {}
 local Kit = ns.Kit
 
-local function prepareRow(row)
-    if not row.kitReady then
-        row.kitReady = true
-        row:SetHighlightTexture(Kit.Theme.rowHighlight, "ADD")
-    end
+local function prepareRow(row, skin, alternate)
+    Kit.SkinRow(row, skin, alternate)
 end
 
--- Create a list. options: rowHeight, initRow(rowFrame, data), inset (true gives the client inset background).
+-- Create a list. options: rowHeight, initRow(rowFrame, data), inset (true gives the client inset background),
+-- skin (client atlas names for the inset background, the row stripes and the row hover; see Kit.Inset).
 -- Use list.frame to place the list. Call list:SetData(array) to fill it.
 -- list.contentInsets = { left, right } is the space between the list frame and the rows (for a header row).
 function Kit.CreateList(parent, options)
@@ -17,7 +15,7 @@ function Kit.CreateList(parent, options)
     local rowHeight = options.rowHeight or Kit.Theme.rowHeight
     local initRow = options.initRow or function() end
     local list = { data = {} }
-    local container = options.inset and Kit.Inset(parent) or CreateFrame("Frame", nil, parent)
+    local container = options.inset and Kit.Inset(parent, options.skin) or CreateFrame("Frame", nil, parent)
     local pad = options.inset and Kit.Theme.insetPadding or 0
     list.frame = container
 
@@ -33,10 +31,11 @@ function Kit.CreateList(parent, options)
         local view = CreateScrollBoxListLinearView()
         view:SetElementExtent(rowHeight)
         view:SetElementInitializer("Button", function(row, data)
-            prepareRow(row)
+            prepareRow(row, options.skin)
             initRow(row, data)
         end)
         ScrollUtil.InitScrollBoxListWithScrollBar(box, bar, view)
+        Kit.AlternateStripes(box, options.skin)
         list.box = box
         list.contentInsets = { left = pad, right = 16 + pad }
         function list:SetData(array)
@@ -57,7 +56,7 @@ function Kit.CreateList(parent, options)
                     row:SetPoint("TOPRIGHT", container, "TOPRIGHT", -pad, -pad - (index - 1) * rowHeight)
                     self.rows[index] = row
                 end
-                prepareRow(row)
+                prepareRow(row, options.skin, index % 2 == 1)
                 row:Show()
                 initRow(row, data)
             end

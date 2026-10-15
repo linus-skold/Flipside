@@ -1415,20 +1415,13 @@ end
 function Tab:_InitLevelRow(row, data)
     initRowsRow(row, data)
     if not row.selection then
-        row.selection = row:CreateTexture(nil, "BACKGROUND")
-        row.selection:SetTexture(ns.Kit.Theme.rowHighlight)
-        row.selection:SetBlendMode("ADD")
-        row.selection:SetAllPoints(row)
+        row.selection = ns.Kit.SelectionTexture(row, self.skin)
     end
     local selected = self.levelSel ~= nil and self.levelSel == data.unitPrice
     row.selection:SetShown(selected)
     -- The rows that the next click buys get a fainter highlight. The selected row keeps the selection highlight.
     if not row.cover then
-        row.cover = row:CreateTexture(nil, "BACKGROUND")
-        row.cover:SetTexture(ns.Kit.Theme.rowHighlight)
-        row.cover:SetBlendMode("ADD")
-        row.cover:SetAlpha(0.4)
-        row.cover:SetAllPoints(row)
+        row.cover = ns.Kit.SelectionTexture(row, self.skin, 0.4)
     end
     row.cover:SetShown(not selected and self.covered ~= nil and self.covered[data.unitPrice] == true)
     row:SetScript("OnClick", function()
@@ -1670,7 +1663,9 @@ function Tab:_BuildContent()
     ui.leftTop = CreateFrame("Frame", nil, content)
     ui.leftTop:SetSize(1, 1)
 
-    ui.tree = Kit.CreateTree(content, { rowHeight = ROW_HEIGHT, inset = true,
+    local skin = ns.AuctionTabs and ns.AuctionTabs.Skin
+    self.skin = skin
+    ui.tree = Kit.CreateTree(content, { rowHeight = ROW_HEIGHT, inset = true, skin = skin,
         initRow = function(row, node, depth, isCollapsed, hasChildren)
             self:_InitTreeRow(row, node, depth, isCollapsed, hasChildren)
         end,
@@ -1688,7 +1683,7 @@ function Tab:_BuildContent()
     ui.summary = place(Kit.Label(content, "", "small"), rightX, -4)
     ui.summary:SetJustifyH("LEFT")
     ui.summary:SetWidth(330)
-    ui.rowsList = Kit.CreateList(content, { rowHeight = 18, inset = true, initRow = function(row, data)
+    ui.rowsList = Kit.CreateList(content, { rowHeight = 18, inset = true, skin = skin, initRow = function(row, data)
         self:_InitLevelRow(row, data)
     end })
     ui.rowsList.frame:SetPoint("TOPLEFT", content, "TOPLEFT", rightX, -38)
