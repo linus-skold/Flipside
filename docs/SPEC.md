@@ -432,6 +432,7 @@ The user approved points 1 to 10 on 2026-10-15. They are binding. The idea is si
    - Safe default: Flipside does not merge at logout. It is not verified that an addon that loads during `PLAYER_LOGOUT` saves its variables.
    - If the load fails (the addon is missing or disabled), the buffer grows to a hard limit of 2,000 records. Then Flipside drops the oldest record for each new record, counts the drops, and shows one warning in chat for each session.
    - The Main DB holds no ledger records after the move.
+   - The ledger settings are in the account scope of the Main DB. The keys and defaults are: `ledger.buffer` (the record list), `ledger.bufferCap` 500, `ledger.hardLimit` 2000, `ledger.retentionDays` 180, `ledger.mobWindow` 60 and `ledger.logDays` 30.
    - Access point (decided 2026-10-15, PR1): `Flipside_Ledger` has no Lua code and no shared table. All ledger code is in `Flipside` (`LedgerBuffer`, `LedgerStore`, `LedgerLoader`). After `LoadAddOn` returns, the client has put the saved table in the global `FlipsideLedgerDB` (TBC: `FlipsideLedgerDB_TBC`), and `LedgerStore` works on that table. No new global exists. The TBC ledger TOC is `Flipside_Ledger_TBC.toc`.
 2. **Retention.**
    - Full records are kept for 180 days (setting `ledger.retentionDays`). This is the retention rule that §5.8 already gave.
