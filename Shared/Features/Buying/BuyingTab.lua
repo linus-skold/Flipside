@@ -93,6 +93,89 @@ function BuyingTab.DescribeDecision(result)
     return result.stop
 end
 
+local function itemOf(itemID, key, name)
+    return { itemID = itemID, key = key, name = name }
+end
+
+local function itemFromMatch(match)
+    return itemOf(match.itemID, match.key, match.name)
+end
+
+local function resolveMatches(matches, text, callback)
+    if #matches == 0 then
+        callback({ kind = "error", message = 'no item named "' .. text .. '"' })
+    elseif #matches == 1 then
+        callback({ kind = "item", item = itemFromMatch(matches[1]) })
+    else
+        local choices = {}
+        for index, match in ipairs(matches) do
+            choices[index] = itemFromMatch(match)
+        end
+        callback({ kind = "choices", choices = choices })
+    end
+end
+
+-- Read the text of the item box: an item ID, an item link, a Flipside key or an item name.
+-- callback(result) runs once, at once or after an Auction House name search. result is
+-- { kind = "item", item }, { kind = "choices", choices } or { kind = "error", message }.
+-- deps: itemNameIndex, ahNameSearch, keyFor(link), isAuctionHouseOpen() (all optional).
+function BuyingTab.ParseInput(input, deps, callback)
+    local text = tostring(input or ""):match("^%s*(.-)%s*$")
+    local ItemString = ns.ItemString
+    if text == "" then
+        callback({ kind = "error", message = "enter an item name, ID, link or key" })
+        return
+    end
+    if text:match("^%d+$") then
+        local itemID = tonumber(text)
+        if itemID < 1 then
+            callback({ kind = "error", message = "not an item: " .. text })
+            return
+        end
+        callback({ kind = "item", item = itemOf(itemID, string.format("%d", itemID)) })
+        return
+    end
+    local parsed = ItemString.ParseKey(text)
+    if parsed then
+        callback({ kind = "item", item = itemOf(parsed.itemID, text) })
+        return
+    end
+    if ItemString.IsItemLink(text) then
+        local fields = ItemString.ParseLink(text)
+        local key = deps.keyFor and deps.keyFor(text) or ItemString.ToExactKey(text)
+        callback({ kind = "item", item = itemOf(fields.itemID, key, text:match("|h%[(.-)%]|h")) })
+        return
+    end
+    local index = deps.itemNameIndex
+    local result = index and index:Resolve(text) or nil
+    if result and result.kind == "error" then
+        callback({ kind = "error", message = result.message })
+        return
+    end
+    if result and result.kind == "name" and #result.matches > 0 then
+        resolveMatches(result.matches, text, callback)
+        return
+    end
+    local search = deps.ahNameSearch
+    local open = deps.isAuctionHouseOpen and deps.isAuctionHouseOpen()
+    if search and open then
+        local query = ns.ItemNameIndex and ns.ItemNameIndex.ParseQuery(text) or { raw = text }
+        search:Find(query.raw, function(items, err)
+            if not items then
+                callback({ kind = "error", message = err or "the search failed" })
+            else
+                resolveMatches(items, text, callback)
+            end
+        end, { exact = query.exact })
+        return
+    end
+    if not index and not search then
+        callback({ kind = "error", message = "item names are not available" })
+    else
+        callback({ kind = "error", message = 'no item named "' .. text .. '" in the scan data' })
+    end
+end
+
 local function defaultItemInfo(itemID)
     local name, icon
     if C_Item and C_Item.GetItemNameByID then
@@ -194,17 +277,225 @@ function Tab:_Selected()
 end
 
 function Tab:_ItemName(entry)
-    return (self.deps.itemInfo(entry.itemID or 0))
+    local name = self.deps.itemInfo(entry.itemID or 0)
+    if entry.name and (not name or name:match("^item %d+$")) then
+        return entry.name
+    end
+    return name
 end
 
--- Build the shopping list again from the groups and the operations.
+-- Build the list again: from the groups and the operations, or from the selected search list.
 function Tab:RefreshList()
     local deps = self.deps
-    self.list = deps.plan.ShoppingList({ rules = deps.rules, formulaRun = deps.formulaRun })
+    local lists = deps.searchLists
+    if self.source == "lists" then
+        local saved = lists and self.listID and lists:Get(self.listID) or nil
+        if not saved then
+            self.listID = nil
+        end
+        self.list = saved and deps.plan.ListEntries(saved.items, {
+            rules = deps.rules, formulaRun = deps.formulaRun, label = "Search list: " .. saved.name,
+        }) or {}
+    else
+        self.list = deps.plan.ShoppingList({ rules = deps.rules, formulaRun = deps.formulaRun })
+    end
     if self.selectedKey and not self:_Entry(self.selectedKey) then
         self.selectedKey = nil
     end
     self:_Update()
+end
+
+-- Show the groups ("groups") or the search lists ("lists") on the left side.
+function Tab:SetSource(source)
+    if source ~= "groups" and not (source == "lists" and self.deps.searchLists) then
+        return false
+    end
+    self.source = source
+    self.selectedKey = nil
+    self.run = nil
+    if source == "lists" and not self.listID then
+        local first = self.deps.searchLists:List()[1]
+        self.listID = first and first.id or nil
+    end
+    self:RefreshList()
+    return true
+end
+
+-- Select a search list and show it.
+function Tab:SelectList(id)
+    local lists = self.deps.searchLists
+    if not lists or not lists:Get(id) then
+        return false
+    end
+    self.listID = id
+    self.source = "lists"
+    self.selectedKey = nil
+    self.run = nil
+    self:RefreshList()
+    return true
+end
+
+-- Make a search list with the name. Returns true, or false and a text.
+function Tab:NewList(name)
+    local lists = self.deps.searchLists
+    local id, err = lists:Create(name, {})
+    if not id then
+        self:_Say(err)
+        return false, err
+    end
+    if self.ui then
+        self.ui.nameInput:SetText("")
+    end
+    self:SelectList(id)
+    return true
+end
+
+function Tab:RenameList(name)
+    local lists = self.deps.searchLists
+    if not self.listID then
+        self:_Say("pick a search list first")
+        return false, "pick a search list first"
+    end
+    local ok, err = lists:Rename(self.listID, name)
+    if not ok then
+        self:_Say(err)
+        return false, err
+    end
+    self:_Update()
+    return true
+end
+
+function Tab:DeleteList()
+    local lists = self.deps.searchLists
+    if not self.listID then
+        return false
+    end
+    local ok, err = lists:Delete(self.listID)
+    if not ok then
+        self:_Say(err)
+        return false, err
+    end
+    self.listID = nil
+    self:SetSource("lists")
+    return true
+end
+
+-- Remove one item of the selected search list by its place in the list.
+function Tab:RemoveListItem(index)
+    local lists = self.deps.searchLists
+    if not (lists and self.listID) then
+        return false
+    end
+    local ok, err = lists:RemoveItem(self.listID, index)
+    if not ok then
+        self:_Say(err)
+        return false, err
+    end
+    self:RefreshList()
+    return true
+end
+
+local QUICK_LIST = "Quick search"
+
+-- Add a resolved item to the selected search list. With no list, it uses the list "Quick search".
+function Tab:_AddResolved(item)
+    local lists = self.deps.searchLists
+    if not self.listID then
+        local id
+        for _, saved in ipairs(lists:List()) do
+            if saved.name == QUICK_LIST then
+                id = saved.id
+            end
+        end
+        if not id then
+            local err
+            id, err = lists:Create(QUICK_LIST, {})
+            if not id then
+                self:_Say(err)
+                return false, err
+            end
+        end
+        self.listID = id
+    end
+    local ok, err = lists:AddItem(self.listID, item)
+    if not ok then
+        self:_Say(err)
+        return false, err
+    end
+    self.source = "lists"
+    if self.ui then
+        self.ui.itemInput:SetText("")
+    end
+    self:RefreshList()
+    self:Select_(item.key)
+    self:_Say("added " .. (item.name or self.deps.itemInfo(item.itemID)))
+    return true
+end
+
+-- Add the item that the text names (name, ID, link or key) to the current search list.
+function Tab:AddItem(text)
+    local deps = self.deps
+    if not deps.searchLists then
+        return false, "search lists are not available"
+    end
+    local handled, ok, err = false, nil, nil
+    BuyingTab.ParseInput(text, deps, function(result)
+        handled = true
+        if result.kind == "item" then
+            ok, err = self:_AddResolved(result.item)
+        elseif result.kind == "choices" then
+            self.choices = result.choices
+            self:_Say(#result.choices .. " items match, pick one")
+            self:_ShowChoices(result.choices)
+            ok = true
+        else
+            self:_Say(result.message)
+            ok, err = false, result.message
+        end
+    end)
+    if not handled then
+        self:_Say("searching the Auction House for the name")
+        return true
+    end
+    return ok, err
+end
+
+-- Open a menu with the matching items. The pick adds the item.
+function Tab:_ShowChoices(choices)
+    local ui = self.ui
+    if not (ui and ns.Kit.ContextMenu) then
+        return
+    end
+    local entries = {}
+    for index = 1, math.min(#choices, 12) do
+        local item = choices[index]
+        entries[index] = {
+            text = (item.name or ("item " .. item.itemID)) .. " (" .. item.key .. ")",
+            onClick = function()
+                self.choices = nil
+                self:_AddResolved(item)
+            end,
+        }
+    end
+    ns.Kit.ContextMenu(ui.itemInput, entries, { title = "Pick an item" })
+end
+
+-- Apply a request to open a search list; start the search if autoSearch is true.
+function Tab:OpenList(id, autoSearch)
+    if not self:SelectList(id) then
+        return false
+    end
+    if autoSearch == true and self.deps.client.CanLiveSearch() then
+        self:SearchAll()
+    end
+    return true
+end
+
+-- The event "Flipside.SearchListOpen". The search lists object records the request while the AH is closed.
+function Tab:_OnOpenList(id, autoSearch)
+    if self.deps.isAuctionHouseOpen() then
+        self:OpenList(id, autoSearch)
+    end
 end
 
 function Tab:Select_(key)
@@ -731,13 +1022,19 @@ function Tab:_InitListRow(row, entry)
         parts.price:SetWidth(120)
         parts.price:SetJustifyH("RIGHT")
         parts.sub:SetPoint("BOTTOMLEFT", row, "BOTTOMLEFT", 32, 3)
-        parts.sub:SetWidth(330)
+        parts.sub:SetWidth(310)
         parts.sub:SetJustifyH("LEFT")
+        parts.remove = Kit.IconButton(row, "close", nil, "Remove from the list")
+        parts.remove:SetPoint("BOTTOMRIGHT", row, "BOTTOMRIGHT", -2, 2)
         row.parts = parts
     end
-    local name, icon = self.deps.itemInfo(entry.itemID or 0)
+    parts.remove:SetShown(self.source == "lists" and entry.listIndex ~= nil)
+    parts.remove:SetScript("OnClick", function()
+        self:RemoveListItem(entry.listIndex)
+    end)
+    local _, icon = self.deps.itemInfo(entry.itemID or 0)
     parts.icon:SetTexture(icon)
-    parts.name:SetText(name)
+    parts.name:SetText(self:_ItemName(entry))
     setColor(parts.name, false)
     if entry.noMax then
         parts.price:SetText("no max")
@@ -750,6 +1047,9 @@ function Tab:_InitListRow(row, entry)
         setColor(parts.price, true)
     end
     local sub = entry.groupPath or ""
+    if type(sub) == "table" then
+        sub = table.concat(sub, "/")
+    end
     local done = self.results[entry.key]
     if done then
         sub = sub .. "  |  " .. tostring(BuyingTab.DescribeDecision(done.result))
@@ -814,12 +1114,41 @@ function Tab:_InitLogRow(row, data)
     label:SetText(text)
 end
 
+-- Update the source buttons, the search list controls and the place of the list.
+function Tab:_UpdateLeft()
+    local ui, lists = self.ui, self.deps.searchLists
+    local isLists = self.source == "lists" and lists ~= nil
+    ui.groupsButton:SetEnabled(isLists)
+    ui.listsButton:SetShown(lists ~= nil)
+    ui.listsButton:SetEnabled(not isLists)
+    for _, control in ipairs(ui.listControls) do
+        control:SetShown(isLists)
+    end
+    if isLists then
+        local items = {}
+        for _, saved in ipairs(lists:List()) do
+            items[#items + 1] = { value = saved.id, text = saved.name .. " (" .. saved.count .. ")" }
+        end
+        ui.picker:SetItems(items)
+        ui.picker:SetValue(self.listID)
+        ui.rename:SetEnabled(self.listID ~= nil)
+        ui.delete:SetEnabled(self.listID ~= nil)
+    end
+    if self.placedFor ~= isLists then
+        self.placedFor = isLists
+        ui.list.frame:ClearAllPoints()
+        ui.list.frame:SetPoint("TOPLEFT", ui.content, "TOPLEFT", 0, isLists and -152 or -74)
+        ui.list.frame:SetPoint("BOTTOMLEFT", ui.content, "BOTTOMLEFT", 0, 0)
+    end
+end
+
 -- Update the buttons, the list and the right side from the state.
 function Tab:_Update()
     local ui = self.ui
     if not ui then
         return
     end
+    self:_UpdateLeft()
     local client = self.deps.client
     local busy = self.pending ~= nil
     local canSearch = client.CanLiveSearch()
@@ -848,7 +1177,11 @@ function Tab:_Update()
     end
     if not selected then
         ui.itemName:SetText("")
-        ui.summary:SetText(canSearch and "Pick an item of the list." or "Live search is not available.")
+        local text = canSearch and "Pick an item of the list." or "Live search is not available."
+        if self.source == "lists" and not self.listID then
+            text = "Make or pick a search list, then add items."
+        end
+        ui.summary:SetText(text)
         ui.buyNext:SetEnabled(false)
         ui.rowsList:SetData({})
         return
@@ -894,7 +1227,58 @@ function Tab:Select()
     self.api.Enter(self.active)
     self.active = true
     self.content:Show()
+    local lists = self.deps.searchLists
+    local request = lists and lists.Requested and lists:Requested()
+    if request then
+        lists:ClearRequested()
+        self:SelectList(request.id)
+        if request.autoSearch and self.deps.client.CanLiveSearch() then
+            self:SearchAll()
+        end
+        return
+    end
     self:RefreshList()
+end
+
+-- The source buttons and the search list controls above the list.
+function Tab:_BuildLeft(content, place)
+    local Kit = ns.Kit
+    local ui = self.ui
+    ui.groupsButton = place(Kit.Button(content, "Groups", 90, function()
+        self:SetSource("groups")
+    end), 0, -48)
+    ui.listsButton = place(Kit.Button(content, "Search lists", 100, function()
+        self:SetSource("lists")
+    end), 94, -48)
+    ui.listControls = {}
+    local function control(widget, x, y)
+        ui.listControls[#ui.listControls + 1] = place(widget, x, y)
+        return widget
+    end
+    ui.picker = control(Kit.Dropdown(content, 160, { onChange = function(id)
+        self:SelectList(id)
+    end }), 0, -74)
+    ui.newList = control(Kit.Button(content, "New", 50, function()
+        self:NewList(ui.nameInput:GetText())
+    end), 164, -74)
+    ui.rename = control(Kit.Button(content, "Rename", 64, function()
+        self:RenameList(ui.nameInput:GetText())
+    end), 218, -74)
+    ui.delete = control(Kit.Button(content, "Delete", 56, function()
+        local saved = self.listID and self.deps.searchLists:Get(self.listID)
+        if saved then
+            Kit.Confirm("FLIPSIDE_DELETE_SEARCH_LIST", "Delete the search list " .. saved.name .. "?", function()
+                self:DeleteList()
+            end)
+        end
+    end), 286, -74)
+    ui.nameInput = control(Kit.Input(content, 250, nil, nil, { placeholder = "name of the list" }), 6, -102)
+    ui.itemInput = control(Kit.Input(content, 250, function(text)
+        self:AddItem(text)
+    end, nil, { placeholder = "item name, ID, link or key" }), 6, -128)
+    ui.addItem = control(Kit.Button(content, "Add", 50, function()
+        self:AddItem(ui.itemInput:GetText())
+    end), 262, -126)
 end
 
 function Tab:_BuildContent()
@@ -942,9 +1326,11 @@ function Tab:_BuildContent()
     ui.list = Kit.CreateList(content, { rowHeight = 32, inset = true, initRow = function(row, entry)
         self:_InitListRow(row, entry)
     end })
-    ui.list.frame:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -48)
+    ui.content = content
+    ui.list.frame:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -74)
     ui.list.frame:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", 0, 0)
     ui.list.frame:SetWidth(LIST_WIDTH)
+    self:_BuildLeft(content, place)
 
     local rightX = LIST_WIDTH + padding
     ui.itemName = place(Kit.Label(content, "", "normal"), rightX, -52)
@@ -1020,6 +1406,28 @@ function Tab:Mount(parent, api)
             self:_OnItemError(code)
         end)
     end
+    if self.deps.searchLists then
+        bus:Subscribe("Flipside.SearchListOpen", OWNER, function(_, id, autoSearch)
+            self:_OnOpenList(id, autoSearch)
+        end)
+        bus:Subscribe("Flipside.SearchListsChanged", OWNER, function()
+            if self.source == "lists" then
+                self:RefreshList()
+            end
+        end)
+        self.events[#self.events + 1] = "Flipside.SearchListOpen"
+        self.events[#self.events + 1] = "Flipside.SearchListsChanged"
+    end
+    -- A shift-click on an item link puts the link into the item box while it has focus.
+    if hooksecurefunc and ChatEdit_InsertLink and not self.linkHooked then
+        self.linkHooked = true
+        hooksecurefunc("ChatEdit_InsertLink", function(text)
+            local ui = self.ui
+            if ui and ui.itemInput and ui.itemInput:HasFocus() and type(text) == "string" then
+                ui.itemInput:Insert(text)
+            end
+        end)
+    end
     local closeEvent = client.CloseEvent()
     if closeEvent then
         bus:Subscribe(closeEvent, OWNER, function()
@@ -1051,7 +1459,8 @@ function Tab:Unmount()
 end
 
 -- Create the Buying core. The host mounts it and shows it.
--- deps: bus, rules, formulaRun, after(seconds, fn); optional client, plan, log, itemInfo, db (the settings DB).
+-- deps: bus, rules, formulaRun, after(seconds, fn); optional client, plan, log, itemInfo, db (the settings DB),
+-- searchLists, itemNameIndex, ahNameSearch, keyFor(link) and isAuctionHouseOpen() (search lists and the item box).
 function BuyingTab.New(deps)
     if type(deps) ~= "table" or type(deps.bus) ~= "table" then
         error("deps.bus must be a table", 2)
@@ -1065,10 +1474,18 @@ function BuyingTab.New(deps)
         plan = deps.plan or ns.BuyingPlan,
         itemInfo = deps.itemInfo or defaultItemInfo,
         db = deps.db,
+        searchLists = deps.searchLists or nil,
+        itemNameIndex = deps.itemNameIndex,
+        ahNameSearch = deps.ahNameSearch,
+        keyFor = deps.keyFor,
+        isAuctionHouseOpen = deps.isAuctionHouseOpen or function()
+            return ns.IsAuctionHouseOpen ~= nil and ns.IsAuctionHouseOpen() == true
+        end,
     }
     resolved.log = deps.log or resolved.plan.Log
     return setmetatable({
         deps = resolved, list = {}, results = {}, events = {}, active = false, token = 0, dryRun = false,
+        source = "groups",
     }, Tab)
 end
 

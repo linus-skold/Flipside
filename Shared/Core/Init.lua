@@ -601,6 +601,22 @@ local function openRules()
     end
 end
 
+-- Create the saved search lists; they need the settings DB.
+local function openSearchLists()
+    if not (ns.db and ns.SearchLists) then
+        return
+    end
+    local ok, result = pcall(ns.SearchLists.New, ns.db, {
+        bus = ns.bus,
+        isAuctionHouseOpen = ns.IsAuctionHouseOpen,
+    })
+    if ok then
+        ns.searchLists = result
+    else
+        ns.ReportError("search lists are not available this session: " .. tostring(result))
+    end
+end
+
 -- Client read functions for the inventory capture; mail is left out if the client has no mail functions.
 local function buildInventoryApi()
     local api = {
@@ -702,6 +718,7 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
         openAHSearch()
         openFormula()
         openRules()
+        openSearchLists()
         openInventory()
         openTooltip()
         openUI()
@@ -880,6 +897,11 @@ openUI = function()
             after = C_Timer.After,
             db = ns.db,
             readBags = ns.readBagStacks,
+            searchLists = ns.searchLists,
+            itemNameIndex = ns.itemNameIndex,
+            ahNameSearch = ns.ahNameSearch,
+            keyFor = ns.keyFor,
+            isAuctionHouseOpen = ns.IsAuctionHouseOpen,
             getRecord = function(key)
                 return ns.scanStore and ns.scanStore:Get(key) or nil
             end,

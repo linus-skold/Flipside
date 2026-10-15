@@ -10,6 +10,7 @@ describe("BuyingPlan", function()
         ns = {}
         load(manifest.path("ItemString"))
         load(manifest.path("GroupTree"))
+        load(manifest.path("OperationSchema"))
         load(manifest.path("BuyingPlan"))
         BP, GT = ns.BuyingPlan, ns.GroupTree
         groups = GT.NewData()
@@ -123,6 +124,57 @@ describe("BuyingPlan", function()
             assert.is_nil(out[1].reason)
             ops[12].settings.maxPrice = "   "
             assert.is_true(list()[1].noMax)
+        end)
+    end)
+
+    describe("ListEntries", function()
+        local function entries(items)
+            return BP.ListEntries(items, { rules = rules, formulaRun = run, label = "Search list" })
+        end
+
+        before_each(function()
+            rules.GroupOf = function(_, key) return GT.GroupOf(groups, key) end
+        end)
+
+        it("uses the operation of the group of the item", function()
+            local g = GT.Create(groups, 1, "Herbs")
+            GT.AddItem(groups, "100", g)
+            GT.Attach(groups, g, "buying", 10)
+            local out = entries({ { itemID = 100, name = "Peacebloom" } })
+            assert.equal(1, #out)
+            assert.equal("100", out[1].key)
+            assert.equal(100, out[1].itemID)
+            assert.equal(5000, out[1].maxPrice)
+            assert.equal("Cheap", out[1].operationName)
+            assert.equal("Peacebloom", out[1].name)
+            assert.same({ "Base", "Herbs" }, out[1].groupPath)
+        end)
+
+        it("uses the operation of Base for an item of no group", function()
+            ops[12] = { id = 12, name = "Default", type = "buying", settings = { maxPrice = "p" } }
+            GT.Attach(groups, 1, "buying", 12)
+            local out = entries({ { itemID = 100 } })
+            assert.equal(5000, out[1].maxPrice)
+            assert.equal("Default", out[1].operationName)
+            assert.equal("Search list", out[1].groupPath)
+        end)
+
+        it("uses built-in Default settings with no max price when no operation exists", function()
+            run.Evaluate = function()
+                error("must not evaluate an empty formula")
+            end
+            local out = entries({ { itemID = 100 }, { key = "200#b5" } })
+            assert.equal(2, #out)
+            assert.is_true(out[1].noMax)
+            assert.is_nil(out[1].operationID)
+            assert.equal("Default", out[1].operationName)
+            assert.equal("200#b5", out[2].key)
+            assert.equal(200, out[2].itemID)
+        end)
+
+        it("skips an item without a valid key", function()
+            assert.same({}, entries({ { name = "x" }, { key = "bad key" } }))
+            assert.same({}, entries(nil))
         end)
     end)
 
