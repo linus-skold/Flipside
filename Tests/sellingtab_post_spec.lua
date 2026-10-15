@@ -795,6 +795,91 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
         end)
     end)
 
+    describe("the Post button of the real warning box", function()
+        local box, seen
+
+        local function warnDialog()
+            for _, frame in ipairs(mock.frames) do
+                if frame.name == "FlipsideSellWarning" then
+                    return frame
+                end
+            end
+        end
+
+        -- Mount with the real box. Each post call notes if the box is still open and if the click handler runs.
+        local function mountReal()
+            seen = {}
+            local inClick = false
+            for _, name in ipairs({ "PostItem", "PostCommodity" }) do
+                local inner = client[name]
+                client[name] = function(...)
+                    seen[#seen + 1] = { name = name, inClick = inClick, shown = box and box:IsShown() }
+                    return inner(...)
+                end
+            end
+            tab = mount({ realWarn = true })
+            ui = tab.ui
+            box = nil
+            local function press(button)
+                inClick = true
+                click(button)
+                inClick = false
+            end
+            return press
+        end
+
+        it("posts an item that the rule skips inside the click", function()
+            local press = mountReal()
+            client.rows[10] = { row(5, 1) }
+            pick("i10")
+            fire("ITEM_RESULTS", 10)
+            type_("25c")
+            click(ui.postNext)
+            box = warnDialog()
+            assert.is_true(box:IsShown())
+            assert.matches("The rule skips this item", box.text.text)
+            assert.are.equal(0, #client.posts)
+            press(box.yesButton)
+            assert.are.equal(1, #client.posts)
+            assert.are.same({ { name = "PostItem", inClick = true, shown = true } }, seen)
+            assert.is_false(box:IsShown())
+        end)
+
+        it("posts a vendor-price warning of a commodity inside the click", function()
+            local press = mountReal()
+            vendor[11] = 4000
+            client.rows[11] = { row(150, 5) }
+            pick("i11")
+            fire("COMMODITY_RESULTS", 11)
+            type_("119c")
+            click(ui.postNext)
+            box = warnDialog()
+            assert.is_true(box:IsShown())
+            assert.matches("Sells for more at a vendor", box.text.text)
+            assert.are.equal(0, #client.posts)
+            press(box.yesButton)
+            assert.are.equal(1, #client.posts)
+            assert.are.equal("commodity", client.posts[1].kind)
+            assert.are.same({ { name = "PostCommodity", inClick = true, shown = true } }, seen)
+            assert.is_false(box:IsShown())
+        end)
+
+        it("posts a vendor-price warning of an item inside the click", function()
+            local press = mountReal()
+            vendor[10] = 4000
+            client.rows[10] = { row(150, 5) }
+            pick("i10")
+            fire("ITEM_RESULTS", 10)
+            type_("119c")
+            click(ui.postNext)
+            box = warnDialog()
+            assert.matches("Sells for more at a vendor", box.text.text)
+            press(box.yesButton)
+            assert.are.same({ { name = "PostItem", inClick = true, shown = true } }, seen)
+            assert.is_false(box:IsShown())
+        end)
+    end)
+
     describe("Post all", function()
         it("posts the queue in tree order, one auction for each click", function()
             selectCloth()
