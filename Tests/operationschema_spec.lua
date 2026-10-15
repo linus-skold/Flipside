@@ -149,7 +149,7 @@ describe("OperationSchema", function()
         end)
 
         it("checks the post duration choices", function()
-            for _, hours in ipairs({ 12, 24, 48 }) do
+            for _, hours in ipairs({ 2, 8, 24 }) do
                 assert.is_true(field("selling", "duration", hours))
             end
             assert.is_false(field("selling", "duration", 36))
@@ -207,7 +207,7 @@ describe("OperationSchema", function()
         end)
 
         it("checks choices", function()
-            assert.is_true(field("selling", "duration", 48))
+            assert.is_true(field("selling", "duration", 8))
             assert.is_false(field("selling", "duration", 36))
             assert.is_false(field("selling", "duration", "24"))
             assert.is_true(field("selling", "belowMin", "postAtMin"))

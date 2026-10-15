@@ -66,7 +66,7 @@ describe("RulesExport", function()
         local sell = assert(rules:CreateOperation("selling", "Fast sell"))
         assert(rules:SetSetting(sell, "minPrice", "mytop"))
         assert(rules:SetSetting(sell, "undercut", 25))
-        assert(rules:SetSetting(sell, "duration", 48))
+        assert(rules:SetSetting(sell, "duration", 8))
         assert(rules:SetSetting(sell, "cancelUndercut", false))
         local buy = assert(rules:CreateOperation("buying", "Cheap"))
         assert(rules:SetSetting(buy, "maxPrice", "mybase / 2"))
@@ -101,7 +101,7 @@ describe("RulesExport", function()
     it("round trips the selling rule fields", function()
         local group = assert(rules:CreateGroup(1, "Limits"))
         local op = assert(rules:CreateOperation("selling", "Limited"))
-        for key, value in pairs({ stackSize = 5, keepInBags = 7, postCap = 9, duration = 12, vendorSkip = false,
+        for key, value in pairs({ stackSize = 5, keepInBags = 7, postCap = 9, duration = 2, vendorSkip = false,
             minSamples = 5 }) do
             assert(rules:SetSetting(op, key, value))
         end
@@ -111,7 +111,7 @@ describe("RulesExport", function()
         assert(ns.RulesExport.Apply(other.rules, other.cs, ns.RulesExport.Parse(text), 1, compile))
         local imported = other.rules:Children(1)[1]
         local s = other.rules:GetOperation(other.rules:EffectiveOperation(imported, "selling")).settings
-        assert.are.same({ 5, 7, 9, 12, false, 5 },
+        assert.are.same({ 5, 7, 9, 2, false, 5 },
             { s.stackSize, s.keepInBags, s.postCap, s.duration, s.vendorSkip, s.minSamples })
     end)
 

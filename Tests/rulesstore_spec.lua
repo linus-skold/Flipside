@@ -308,9 +308,9 @@ describe("RulesStore", function()
         end)
 
         it("checks choices", function()
-            assert.is_true(store:SetSetting(id, "duration", 48))
+            assert.is_true(store:SetSetting(id, "duration", 8))
             assert.is_nil(store:SetSetting(id, "duration", 7))
-            assert.are.equal(48, store:GetOperation(id).settings.duration)
+            assert.are.equal(8, store:GetOperation(id).settings.duration)
         end)
 
         it("compiles formulas", function()

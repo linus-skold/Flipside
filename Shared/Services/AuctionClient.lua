@@ -111,7 +111,7 @@ action("ConfirmCommodityPurchase")
 action("CancelCommodityPurchase")
 action("BuyItemAuction")
 
--- Posting (optional; Forever only). The item is a bag slot. duration is in hours: 12, 24 or 48.
+-- Posting (optional; Forever only). The item is a bag slot. duration is in hours: 2, 8 or 24.
 -- PostItem(bag, slot, duration, quantity, bid, buyout) and PostCommodity(bag, slot, duration, quantity, unitPrice)
 -- are protected: call them only inside a click handler. They give needsConfirmation (true or false); if it is true,
 -- the confirm call with the same arguments finishes the post. Deposit(bag, slot, duration, quantity, isCommodity)
