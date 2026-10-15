@@ -253,6 +253,19 @@ describe("SellingTab", function()
         mock.teardown()
     end)
 
+    describe("the top row", function()
+        it("takes no space while the message is empty and Stop is hidden", function()
+            tab:_Say("")
+            tab:_Update()
+            assert.is_false(ui.message:IsShown())
+            assert.is_false(ui.stop:IsShown())
+            local y = ui.tree.frame.points[1][5]
+            tab:_Say("something")
+            local lower = ui.tree.frame.points[1][5]
+            assert.is_true(ui.message:IsShown())
+            assert.are.equal(28, y - lower)
+        end)
+    end)
     describe("the tree", function()
         it("has the top-level groups as the roots and ends with the no-group node, with no Base node", function()
             local roots = tab.nodes
