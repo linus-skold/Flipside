@@ -1033,6 +1033,14 @@ local function withMainWindow(action)
                     ns.db:Set("account", "ui.windowPosition", position)
                 end,
             } or nil,
+            windowSize = ns.db and {
+                get = function()
+                    return ns.db:Get("character", "ui.windowSize")
+                end,
+                set = function(size)
+                    ns.db:Set("character", "ui.windowSize", size)
+                end,
+            } or nil,
             formulaRun = ns.formulaRun,
             formulaSources = ns.formulaSources,
             itemCache = ns.itemCache,

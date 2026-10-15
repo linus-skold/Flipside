@@ -509,7 +509,7 @@ describe("GroupsPage", function()
         it("shows no items for Base and disables the add controls", function()
             build()
             assert.are.same({}, page.itemList:GetData())
-            assert.is_false(page.bagsButton.enabled)
+            assert.is_false(page.addSelectedButton.enabled)
             assert.is_false(page.addButton.enabled)
             assert.is_false(page.addInput.enabled)
         end)
@@ -527,101 +527,130 @@ describe("GroupsPage", function()
                 page.itemList.rows[2].nameText.color[2], page.itemList.rows[2].nameText.color[3] })
             assert.is_nil(page.itemList.rows[1].nameText.color[4])
         end)
-
-        it("removes an item with the X icon button", function()
-            local herbs = store:CreateGroup(1, "Herbs")
-            store:AddItem("100", herbs)
-            store:AddItem("200", herbs)
-            build()
-            page.tree:Select(herbs)
-            local button = page.itemList.rows[1].removeButton
-            assert.are.equal("UIPanelCloseButtonNoScripts", button.template)
-            button.scripts.OnEnter(button)
-            assert.are.equal("Remove from group", mock.tooltip.title)
-            click(button)
-            assert.are.same({ "200" }, page.itemList:GetData())
-            assert.are.equal("Herbs (1)", treeText(herbs))
-            assert.are.equal(1, store:GroupOf("100"))
-        end)
     end)
 
-    describe("add from bags", function()
+    describe("split pane", function()
         local herbs, ore
 
+        local function bagKeys()
+            local keys = {}
+            for _, entry in ipairs(page.bagList:GetData()) do
+                keys[#keys + 1] = entry.key
+            end
+            return keys
+        end
+
         before_each(function()
+            _G.IsShiftKeyDown = function()
+                return false
+            end
             herbs = store:CreateGroup(1, "Herbs")
             ore = store:CreateGroup(1, "Ore")
             store:AddItem("300", ore)
+            store:AddItem("400", herbs)
             bags = {
                 { key = "100", name = "Peacebloom", count = 5 },
                 { key = "200", name = "Silverleaf", count = 3 },
                 { key = "300", name = "Copper Ore", count = 1 },
+                { key = "400", name = "Tin Ore", count = 2 },
             }
             build()
             page.tree:Select(herbs)
         end)
 
-        it("shows the bag items with the group of items that are in a group", function()
-            click(page.bagsButton)
-            assert.is_true(page.bagPanel:IsShown())
-            assert.are.equal(3, #page.bagList:GetData())
+        after_each(function()
+            _G.IsShiftKeyDown = nil
+        end)
+
+        it("shows the bags on the left and hides the items that are already in the group", function()
+            assert.are.same({ "100", "200", "300" }, bagKeys())
+            assert.are.same({ "400" }, page.itemList:GetData())
             assert.are.equal("Peacebloom x5", page.bagList.rows[1].text:GetText())
             assert.are.equal("Copper Ore x1 (in Ore)", page.bagList.rows[3].text:GetText())
         end)
 
-        it("adds all items with select all", function()
-            click(page.bagsButton)
-            click(page.selectAllButton)
-            assert.is_true(page.bagList.rows[2].check:GetChecked())
+        it("adds the selected bag items with the right arrow and updates both lists", function()
+            click(page.bagList.rows[1])
+            click(page.bagList.rows[3])
+            assert.is_true(page.bagList:IsSelected(bags[1]))
             click(page.addSelectedButton)
-            assert.are.same({ "100", "200", "300" }, store:ItemsIn(herbs))
+            assert.are.same({ "100", "300", "400" }, store:ItemsIn(herbs))
             assert.are.same({}, store:ItemsIn(ore))
-            assert.are.equal("Added 3 items", page.status:GetText())
-            assert.is_false(page.bagPanel:IsShown())
+            assert.are.same({ "100", "300", "400" }, page.itemList:GetData())
+            assert.are.same({ "200" }, bagKeys())
+            assert.are.equal("Added 2 items", page.status:GetText())
         end)
 
-        it("adds only the checked items", function()
-            click(page.bagsButton)
-            local row = page.bagList.rows[2]
-            row.check:SetChecked(true)
-            click(row.check)
+        it("clears both selections after a move", function()
+            click(page.bagList.rows[1])
+            click(page.itemList.rows[1])
             click(page.addSelectedButton)
-            assert.are.same({ "200" }, store:ItemsIn(herbs))
-            assert.are.equal("Added 1 items", page.status:GetText())
+            assert.are.same({}, page.bagList:GetSelected())
+            assert.are.same({}, page.itemList:GetSelected())
+            assert.is_false(page.bagList.rows[1].kitSelect:IsShown())
+        end)
+
+        it("removes the selected group items with the left arrow and updates both lists", function()
+            store:AddItem("100", herbs)
+            page.Refresh()
+            click(page.itemList.rows[1])
+            click(page.itemList.rows[2])
+            click(page.removeSelectedButton)
+            assert.are.same({}, store:ItemsIn(herbs))
+            assert.are.same({}, page.itemList:GetData())
+            assert.are.same({ "100", "200", "300", "400" }, bagKeys())
+            assert.are.equal("Removed 2 items", page.status:GetText())
+            assert.are.same({}, page.itemList:GetSelected())
+        end)
+
+        it("selects a range with Shift-click from the last clicked row", function()
+            click(page.bagList.rows[1])
+            _G.IsShiftKeyDown = function()
+                return true
+            end
+            click(page.bagList.rows[3])
+            click(page.addSelectedButton)
+            assert.are.same({ "100", "200", "300", "400" }, store:ItemsIn(herbs))
         end)
 
         it("asks for a selection first", function()
-            click(page.bagsButton)
             click(page.addSelectedButton)
-            assert.are.equal("Select items first", page.status:GetText())
-            assert.are.same({}, store:ItemsIn(herbs))
-            assert.is_true(page.bagPanel:IsShown())
+            assert.are.equal("Select bag items first", page.status:GetText())
+            click(page.removeSelectedButton)
+            assert.are.equal("Select group items first", page.status:GetText())
+            assert.are.same({ "400" }, store:ItemsIn(herbs))
         end)
 
-        it("says so when the bags hold no items", function()
+        it("shows all bag items for Base and disables the arrows", function()
+            page.tree:Select(1)
+            assert.are.equal(4, #page.bagList:GetData())
+            assert.is_false(page.addSelectedButton.enabled)
+            assert.is_false(page.removeSelectedButton.enabled)
+        end)
+
+        it("shows no rows when the bags hold no items", function()
             bags = {}
-            click(page.bagsButton)
-            assert.are.equal("No items found in bags", page.status:GetText())
-            assert.is_false(page.bagPanel:IsShown())
+            page.Refresh()
+            assert.are.same({}, page.bagList:GetData())
         end)
     end)
 
     describe("top tabs", function()
-        it("shows the Rules tab first and switches to Items", function()
+        it("shows the Items tab first and by default, then Rules", function()
             build()
-            assert.are.equal("Rules", page.topTabs.buttons[1]:GetText())
-            assert.are.equal("Items", page.topTabs.buttons[2]:GetText())
-            assert.is_true(page.rulesPanel:IsShown())
-            assert.is_false(page.itemsPanel:IsShown())
-            click(page.topTabs.buttons[2])
-            assert.is_false(page.rulesPanel:IsShown())
-            assert.is_true(page.itemsPanel:IsShown())
+            assert.are.equal("Items", page.topTabs.buttons[1]:GetText())
+            assert.are.equal("Rules", page.topTabs.buttons[2]:GetText())
             assert.are.equal("items", page.tab)
-            click(page.topTabs.buttons[1])
+            assert.is_true(page.itemsPanel:IsShown())
+            assert.is_false(page.rulesPanel:IsShown())
+            click(page.topTabs.buttons[2])
+            assert.is_false(page.itemsPanel:IsShown())
             assert.is_true(page.rulesPanel:IsShown())
             assert.are.equal("rules", page.tab)
+            click(page.topTabs.buttons[1])
+            assert.is_true(page.itemsPanel:IsShown())
+            assert.are.equal("items", page.tab)
         end)
-
         it("keeps the tab when another group is selected", function()
             local herbs = store:CreateGroup(1, "Herbs")
             build()
@@ -644,18 +673,28 @@ describe("GroupsPage", function()
     end)
 
     describe("items layout", function()
-        it("puts the add box above the list and gives the list the rest of the height", function()
+        it("anchors the panes to the items panel, with the add box above the right pane", function()
             build()
-            local box, list = page.addInput.points[1], page.itemList.frame.points
-            assert.are.equal(page.itemsPanel, box[2])
-            assert.is_true(box[5] > list[1][5])
-            assert.are.equal("BOTTOMRIGHT", list[2][1])
-            assert.are.equal(page.itemsPanel, list[2][2])
+            local box = page.addInput.points[1]
+            local left, right = page.bagList.frame.points, page.itemList.frame.points
+            assert.are.equal(page.middle, box[2])
+            assert.are.equal("TOPRIGHT", box[3])
+            assert.are.equal(page.itemsPanel, left[1][2])
+            assert.are.equal(page.middle, left[2][2])
+            assert.are.equal(page.middle, right[1][2])
+            assert.are.equal("BOTTOMRIGHT", right[2][1])
+            assert.are.equal(page.itemsPanel, right[2][2])
+            assert.is_true(box[5] > right[1][5])
             assert.are.equal(page.addInput, page.addButton.points[1][2])
-            assert.are.equal(page.addButton, page.bagsButton.points[1][2])
+        end)
+
+        it("anchors the right area to the page frame, with no fixed size", function()
+            build()
+            local points = page.itemsPanel:GetParent().points
+            assert.are.equal("BOTTOMRIGHT", points[2][1])
+            assert.are.equal(content, points[2][2])
         end)
     end)
-
     describe("add box", function()
         local herbs
         local LINK = "|cff1eff00|Hitem:100:0:0:0:0:0:0:0:0:0:0:0:2:5:3|h[Peacebloom]|h|r"
@@ -1186,8 +1225,8 @@ describe("GroupsPage", function()
             assert.is_true(store:IsReadOnly())
             assert.is_true(page.readOnlyLabel:IsShown())
             assert.are.equal("Settings are read-only", page.readOnlyLabel:GetText())
-            for _, control in ipairs({ page.newButton, page.nameInput, page.bagsButton, page.addButton,
-                page.addInput, page.opRows.selling.dropdown }) do
+            for _, control in ipairs({ page.newButton, page.nameInput, page.addSelectedButton,
+                page.removeSelectedButton, page.addButton, page.addInput, page.opRows.selling.dropdown }) do
                 assert.is_false(control.enabled)
             end
         end)

@@ -198,6 +198,28 @@ end
 
 function frameMethods:StopMovingOrSizing()
     self.moving = false
+    self.sizing = nil
+end
+
+function frameMethods:SetResizable(resizable)
+    self.resizable = resizable
+end
+
+-- Models the newer client. A test removes it to model an older client (SetMinResize and SetMaxResize).
+function frameMethods:SetResizeBounds(minWidth, minHeight, maxWidth, maxHeight)
+    self.resizeBounds = { minWidth, minHeight, maxWidth, maxHeight }
+end
+
+function frameMethods:StartSizing(point)
+    self.sizing = point
+end
+
+function frameMethods:SetNormalTexture(texture)
+    self.normalTexture = texture
+end
+
+function frameMethods:SetPushedTexture(texture)
+    self.pushedTexture = texture
 end
 
 function frameMethods:SetClampedToScreen(clamped)

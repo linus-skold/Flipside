@@ -12,6 +12,8 @@ local MAX_RESULTS = 20
 local RIGHT = 260
 local TAB_Y = 24
 local LIST_Y = 46
+local ARROW_COLUMN = 44
+local STATUS_HEIGHT = 40 -- space at the bottom for the status lines
 local DELETE_DIALOG = "FLIPSIDE_DELETE_GROUP"
 local IMPORT_CONFIRM = "FLIPSIDE_IMPORT_CONFIRM"
 local EXPORT_DIALOG = "FLIPSIDE_EXPORT_DIALOG"
@@ -59,7 +61,7 @@ function GroupsPage.Build(content, deps)
     local Kit = ns.Kit
     local rules, index = deps.rules, deps.itemNameIndex
     local gap, pad = Kit.Theme.gap, Kit.Theme.padding
-    local page = { selected = BASE_ID, opRows = {}, bagEntries = {}, bagSelected = {}, results = {}, tab = "rules" }
+    local page = { selected = BASE_ID, opRows = {}, results = {}, tab = "items" }
 
     local function place(frame, x, y)
         frame:SetPoint("TOPLEFT", content, "TOPLEFT", x, -y)
@@ -326,12 +328,12 @@ function GroupsPage.Build(content, deps)
     place(page.header, RIGHT, 0)
 
     local right = CreateFrame("Frame", nil, content)
-    right:SetSize(516, 400)
     place(right, RIGHT, TAB_Y)
     local flavour = ns.Flavour or {}
+    right:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", 0, STATUS_HEIGHT)
     page.topTabs = Kit.CreateTopTabs(right, {
-        { key = "rules", title = "Rules" },
         { key = "items", title = "Items" },
+        { key = "rules", title = "Rules" },
     }, {
         template = flavour.topTabTemplate,
         tabPadding = flavour.topTabPadding,
@@ -383,65 +385,75 @@ function GroupsPage.Build(content, deps)
         page.opRows[opType] = row
     end
 
-    -- Items tab: the add box and its buttons, then the items of the group.
+    -- Items tab: the bags on the left, the items of the group on the right, and an arrow button for each move.
+    -- The add box is above the right pane.
 
     local itemsPanel = page.itemsPanel
 
-    local function onRemove(key)
-        local ok, message = rules:RemoveItem(key)
-        report(ok, message)
-        refresh()
-    end
+    local middle = CreateFrame("Frame", nil, itemsPanel)
+    middle:SetWidth(ARROW_COLUMN)
+    middle:SetPoint("TOP", itemsPanel, "TOP", 0, 0)
+    middle:SetPoint("BOTTOM", itemsPanel, "BOTTOM", 0, 0)
+    page.middle = middle
 
-    page.addInput = Kit.Input(itemsPanel, 250, function()
+    page.addInput = Kit.Input(itemsPanel, 140, function()
         page.Submit()
     end, nil, { placeholder = "Item name, link or id" })
-    placeIn(itemsPanel, page.addInput, 6, 0)
-    page.addButton = Kit.Button(itemsPanel, "Add", 60, function()
+    page.addInput:SetPoint("TOPLEFT", middle, "TOPRIGHT", 10, 0)
+    page.addButton = Kit.Button(itemsPanel, "Add", 50, function()
         page.Submit()
     end)
     page.addButton:SetPoint("LEFT", page.addInput, "RIGHT", gap, 0)
-    page.bagsButton = Kit.Button(itemsPanel, "Add from bags", 110, nil)
-    page.bagsButton:SetPoint("LEFT", page.addButton, "RIGHT", gap, 0)
 
+    page.bagsLabel = Kit.Label(itemsPanel, "Bags", "highlight")
+    placeIn(itemsPanel, page.bagsLabel, 0, 28)
     page.itemsLabel = Kit.Label(itemsPanel, "Items", "highlight")
-    placeIn(itemsPanel, page.itemsLabel, 0, 28)
+    page.itemsLabel:SetPoint("TOPLEFT", middle, "TOPRIGHT", 4, -28)
 
+    -- The bag list. Selected rows are the items that the right arrow adds.
+    page.bagList = Kit.CreateList(itemsPanel, {
+        inset = true,
+        multiSelect = true,
+        keyOf = function(entry)
+            return entry.key
+        end,
+        initRow = function(row, entry)
+            if not row.text then
+                row.text = Kit.Label(row, "", "normal")
+                row.text:SetPoint("LEFT", row, "LEFT", 6, 0)
+                row.text:SetPoint("RIGHT", row, "RIGHT", -6, 0)
+                row.text:SetJustifyH("LEFT")
+            end
+            local text = string.format("%s x%d", entry.name ~= "" and entry.name or entry.key, entry.count or 1)
+            local groupID = rules:GroupOf(entry.key)
+            if groupID ~= BASE_ID then
+                text = text .. " (in " .. tostring(rules:Name(groupID)) .. ")"
+            end
+            row.text:SetText(text)
+            setQualityColor(row.text, qualityOf(entry.itemID))
+        end,
+    })
+    page.bagList.frame:SetPoint("TOPLEFT", itemsPanel, "TOPLEFT", 0, -LIST_Y)
+    page.bagList.frame:SetPoint("BOTTOMRIGHT", middle, "BOTTOMLEFT", -4, 0)
+
+    -- The group list. Selected rows are the items that the left arrow removes.
     page.itemList = Kit.CreateList(itemsPanel, {
         inset = true,
+        multiSelect = true,
         initRow = function(row, key)
             if not row.nameText then
                 row.nameText = Kit.Label(row, "", "normal")
                 row.nameText:SetPoint("LEFT", row, "LEFT", 6, 0)
-                row.nameText:SetWidth(430)
+                row.nameText:SetPoint("RIGHT", row, "RIGHT", -6, 0)
                 row.nameText:SetJustifyH("LEFT")
-                row.removeButton = Kit.IconButton(row, "close", nil, "Remove from group")
-                row.removeButton:SetPoint("RIGHT", row, "RIGHT", -4, 0)
             end
             local text, quality = itemName(key)
             row.nameText:SetText(text)
             setQualityColor(row.nameText, quality)
-            row.removeButton:SetEnabled(editable())
-            row.removeButton:SetScript("OnClick", function()
-                onRemove(key)
-            end)
         end,
     })
-    placeIn(itemsPanel, page.itemList.frame, 0, LIST_Y)
+    page.itemList.frame:SetPoint("TOPLEFT", middle, "TOPRIGHT", 4, -LIST_Y)
     page.itemList.frame:SetPoint("BOTTOMRIGHT", itemsPanel, "BOTTOMRIGHT", 0, 0)
-
-    -- Add from bags. The bag list takes the place of the item list.
-
-    local bagPanel = CreateFrame("Frame", nil, itemsPanel)
-    placeIn(itemsPanel, bagPanel, 0, LIST_Y)
-    bagPanel:SetPoint("BOTTOMRIGHT", itemsPanel, "BOTTOMRIGHT", 0, 0)
-    bagPanel:Hide()
-    page.bagPanel = bagPanel
-
-    local function showBags(shown)
-        bagPanel:SetShown(shown)
-        page.itemList.frame:SetShown(not shown)
-    end
 
     -- Add one item to the selected group. It moves from another group.
     local function addKey(key)
@@ -458,73 +470,63 @@ function GroupsPage.Build(content, deps)
         return ok ~= nil
     end
 
-    page.bagList = Kit.CreateList(bagPanel, {
-        inset = true,
-        initRow = function(row, entry)
-            if not row.check then
-                row.check = Kit.Check(row, "", function(checked)
-                    if row.entry then
-                        page.bagSelected[row.entry.key] = checked or nil
-                    end
-                end)
-                row.check:SetPoint("LEFT", row, "LEFT", 0, 0)
-                row.text = Kit.Label(row, "", "normal")
-                row.text:SetPoint("LEFT", row, "LEFT", 28, 0)
-            end
-            row.entry = entry
-            row.check:SetChecked(page.bagSelected[entry.key] == true)
-            row.check:SetEnabled(editable())
-            local text = string.format("%s x%d", entry.name ~= "" and entry.name or entry.key, entry.count or 1)
-            local groupID = rules:GroupOf(entry.key)
-            if groupID ~= BASE_ID then
-                text = text .. " (in " .. tostring(rules:Name(groupID)) .. ")"
-            end
-            row.text:SetText(text)
-        end,
-    })
-    page.bagList.frame:SetPoint("TOPLEFT", bagPanel, "TOPLEFT", 0, 0)
-    page.bagList.frame:SetPoint("BOTTOMRIGHT", bagPanel, "BOTTOMRIGHT", 0, 26)
+    local function clearSelections()
+        page.bagList:ClearSelection()
+        page.itemList:ClearSelection()
+    end
 
-    page.selectAllButton = Kit.Button(bagPanel, "Select all", 90, function()
-        for _, entry in ipairs(page.bagEntries) do
-            page.bagSelected[entry.key] = true
-        end
-        page.bagList:SetData(page.bagEntries)
-    end)
-    page.selectAllButton:SetPoint("BOTTOMLEFT", bagPanel, "BOTTOMLEFT", 0, 0)
-
-    page.addSelectedButton = Kit.Button(bagPanel, "Add selected", 100, function()
+    -- The right arrow: add the selected bag items to the group.
+    page.addSelectedButton = Kit.Button(middle, ">", 36, function()
         local keys = {}
-        for _, entry in ipairs(page.bagEntries) do
-            if page.bagSelected[entry.key] then
-                keys[#keys + 1] = entry.key
-            end
+        for _, entry in ipairs(page.bagList:GetSelected()) do
+            keys[#keys + 1] = entry.key
         end
         if #keys == 0 then
-            say("Select items first")
+            say("Select bag items first")
             return
         end
         local added, message = rules:AddItems(keys, page.selected)
         if report(added, message) then
             say("Added " .. added .. " items")
-            showBags(false)
         end
+        clearSelections()
         refresh()
     end)
-    page.addSelectedButton:SetPoint("LEFT", page.selectAllButton, "RIGHT", gap, 0)
+    page.addSelectedButton:SetPoint("CENTER", middle, "CENTER", 0, 20)
+    Kit.Tooltip(page.addSelectedButton, "Add to group", { "Adds the selected bag items to the group." })
 
-    page.bagsButton:SetScript("OnClick", function()
-        showBags(false)
-        local entries = deps.readBags and deps.readBags() or {}
-        if #entries == 0 then
-            say("No items found in bags")
+    -- The left arrow: remove the selected group items from the group.
+    page.removeSelectedButton = Kit.Button(middle, "<", 36, function()
+        local keys = page.itemList:GetSelected()
+        if #keys == 0 then
+            say("Select group items first")
             return
         end
-        say("")
-        page.bagEntries, page.bagSelected = entries, {}
-        page.bagList:SetData(entries)
-        showBags(true)
+        local removed = 0
+        for _, key in ipairs(keys) do
+            if rules:RemoveItem(key) ~= nil then
+                removed = removed + 1
+            end
+        end
+        say("Removed " .. removed .. " items")
+        clearSelections()
+        refresh()
     end)
+    page.removeSelectedButton:SetPoint("CENTER", middle, "CENTER", 0, -20)
+    Kit.Tooltip(page.removeSelectedButton, "Remove from group", { "Removes the selected items from the group." })
+
+    -- Read the bags again. Items that are already in the selected group are hidden.
+    local function refreshBags()
+        local entries, shown = deps.readBags and deps.readBags() or {}, {}
+        for _, entry in ipairs(entries) do
+            if page.selected == BASE_ID or rules:GroupOf(entry.key) ~= page.selected then
+                shown[#shown + 1] = entry
+            end
+        end
+        page.bagList:SetData(shown)
+    end
+    page.RefreshBags = refreshBags
+    itemsPanel:SetScript("OnShow", refreshBags)
 
     -- The results window. The list stays until the next search.
 
@@ -658,7 +660,6 @@ function GroupsPage.Build(content, deps)
 
     -- Work out what the player typed and act on it.
     function page.Submit()
-        showBags(false)
         local text = trim(page.addInput:GetText())
         if text == "" then
             say("type an item name, link or id")
@@ -772,6 +773,7 @@ function GroupsPage.Build(content, deps)
         end
 
         page.itemList:SetData(rules:ItemsIn(id))
+        page.RefreshBags()
         page.nameList:SetData(page.results)
         page.itemsLabel:SetText(isBase and "Items (select a group to add items)" or "Items")
 
@@ -779,12 +781,11 @@ function GroupsPage.Build(content, deps)
         setEnabled(page.newButton, canEdit)
         setEnabled(page.newRootButton, canEdit)
         setEnabled(page.importButton, canShare and canEdit)
-        setEnabled(page.bagsButton, canAdd)
         setEnabled(page.addInput, canAdd)
         setEnabled(page.addButton, canAdd)
         setEnabled(page.ahButton, canAdd)
-        setEnabled(page.selectAllButton, canAdd)
         setEnabled(page.addSelectedButton, canAdd)
+        setEnabled(page.removeSelectedButton, canAdd)
         page.readOnlyLabel:SetShown(not canEdit)
     end
 
