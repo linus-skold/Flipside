@@ -2,7 +2,7 @@ local manifest = require("Tests.manifest")
 local mock = require("Tests.wow_mock")
 
 local function loadModules()
-    local ns = { ReportError = function() end }
+    local ns = { ReportError = function() end, Flavour = { hasCommodityMarket = true } }
     for _, name in ipairs({ "EventBus", "ItemString", "BuyingPlan", "Theme", "Widgets", "Window", "List", "Columns",
         "AuctionTabs", "BuyingTab" }) do
         assert(loadfile(manifest.path(name)))("Flipside", ns)
@@ -221,13 +221,31 @@ describe("BuyingTab", function()
             local mine = ns.BuyingPlan.PriceLevels({ item(70, 3, true) })
             assert.are.equal(3, ns.BuyingTab.StackSize(mine[1]))
         end)
-        it("uses stack size 1 for a commodity level", function()
+        it("leaves the stack price empty for a commodity level", function()
             local levels = ns.BuyingPlan.PriceLevels({ row(50, 40) })
-            assert.are.equal(1, ns.BuyingTab.StackSize(levels[1]))
+            assert.is_nil(ns.BuyingTab.StackSize(levels[1]))
+            assert.is_nil(ns.BuyingTab.StackPrice(levels[1]))
             local out = ns.BuyingTab.DescribeLevels({ maxPrice = 100 }, levels, false)
-            assert.are.equal(50, out[1].stackPrice)
+            assert.is_nil(out[1].stackPrice)
         end)
-        it("shows a status only for yours and above max", function()
+        it("sets the stack price of every level on a client with no commodity market", function()
+            ns.Flavour.hasCommodityMarket = false
+            local legacy = function(price, quantity, own)
+                return { auctionID = price * 100 + quantity, unitPrice = price, quantity = quantity, ownerItem = own }
+            end
+            local levels = ns.BuyingPlan.PriceLevels({ legacy(5, 20), legacy(5, 20), legacy(9, 1) })
+            assert.are.equal(20, ns.BuyingTab.StackSize(levels[1]))
+            local out = ns.BuyingTab.DescribeLevels({ maxPrice = 100 }, levels, false)
+            assert.are.equal(100, out[1].stackPrice)
+            assert.are.equal(9, out[2].stackPrice)
+            ns.Flavour.hasCommodityMarket = nil
+            assert.are.equal(100, ns.BuyingTab.StackPrice(levels[1]))
+        end)
+        it("ignores a commodity mark on a client with no commodity market", function()
+            ns.Flavour.hasCommodityMarket = false
+            local levels = ns.BuyingPlan.PriceLevels({ row(50, 40) })
+            assert.are.equal(2000, ns.BuyingTab.StackPrice(levels[1]))
+        end)        it("shows a status only for yours and above max", function()
             assert.are.equal("Yours", ns.BuyingTab.StatusText("own"))
             assert.are.equal("Above max", ns.BuyingTab.StatusText("above"))
             assert.are.equal("", ns.BuyingTab.StatusText("buy"))
@@ -444,7 +462,7 @@ describe("BuyingTab", function()
             assert.are.equal(2, #ui.rowsList.rows)
             local first = ui.rowsList.rows[1].cells
             assert.are.equal("50c", first.unitPrice.text)
-            assert.are.equal("50c", first.stackPrice.text)
+            assert.are.equal("", first.stackPrice.text)
             assert.are.equal("x5", first.quantity.text)
             assert.are.equal("2", first.listings.text)
             assert.are.equal("", first.status.text)

@@ -32,11 +32,19 @@ local function withinMax(entry, price)
     return entry.maxPrice ~= nil and price <= entry.maxPrice
 end
 
--- The stack size of a price level. An item level uses the quantity of the row that Buy next buys
--- (the first row that is not yours). A commodity has no stack, so its stack size is 1.
+-- True if the client has a commodity market (the flavour flag). A flavour with no flag has none.
+local function hasCommodityMarket()
+    return ns.Flavour ~= nil and ns.Flavour.hasCommodityMarket == true
+end
+
+-- The stack size of a price level, or nil if the level has no stack. With a commodity market, a commodity
+-- level has no stack. Other levels use the quantity of the row that Buy next buys (the first row not yours).
 function BuyingTab.StackSize(level)
     local first = level.rows and level.rows[1]
-    if not first or first.isCommodity ~= false then
+    if hasCommodityMarket() and (not first or first.isCommodity ~= false) then
+        return nil
+    end
+    if not first then
         return 1
     end
     for _, row in ipairs(level.rows) do
@@ -45,6 +53,12 @@ function BuyingTab.StackSize(level)
         end
     end
     return first.quantity or 1
+end
+
+-- The stack price of a price level (unit price times stack size), or nil if the level has no stack.
+function BuyingTab.StackPrice(level)
+    local size = BuyingTab.StackSize(level)
+    return size and level.unitPrice * size or nil
 end
 
 -- The text of the Status column. Only "Yours" and "Above max" show; a level to buy shows no text.
@@ -73,7 +87,7 @@ function BuyingTab.DescribeLevels(entry, levels, showAboveMax)
         if state then
             out[#out + 1] = {
                 unitPrice = level.unitPrice, quantity = level.quantity, listings = level.listings, state = state,
-                stackPrice = level.unitPrice * BuyingTab.StackSize(level),
+                stackPrice = BuyingTab.StackPrice(level),
             }
         end
     end
@@ -1092,7 +1106,10 @@ end
 -- The columns of the price level list. The header and the row cells use the same definition.
 local LEVEL_COLUMNS = {
     { key = "unitPrice", title = "Unit Price", width = 104, number = true, format = money },
-    { key = "stackPrice", title = "Stack Price", width = 104, number = true, format = money },
+    { key = "stackPrice", title = "Stack Price", width = 104, number = true,
+        format = function(value)
+            return value and money(value) or ""
+        end },
     { key = "quantity", title = "Quantity", width = 50, number = true,
         format = function(value)
             return "x" .. tostring(value)
