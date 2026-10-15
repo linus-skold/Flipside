@@ -13,6 +13,7 @@ local LIST_WIDTH = 380
 local QUOTE_WAIT = 10
 local CONFIRM_WAIT = 15
 local DEFAULT_JUMP = 25
+local MESSAGE_ROOM = 12 -- height that the left column gains when the message line is empty
 local JUMP_KEY = "buying.jumpPercent"
 local RED = { 1, 0.2, 0.2 }
 -- The text for the amount box when the input is not a positive whole number.
@@ -307,7 +308,19 @@ Tab.__index = Tab
 
 function Tab:_Say(text)
     if self.ui then
-        self.ui.message:SetText(text or "")
+        text = text or ""
+        self.ui.message:SetText(text)
+        self.ui.message:SetShown(text ~= "")
+        self:_Layout()
+    end
+end
+
+-- Move the left column up when the message line is empty.
+function Tab:_Layout()
+    local ui = self.ui
+    if ui and ui.leftTop then
+        ui.leftTop:ClearAllPoints()
+        ui.leftTop:SetPoint("TOPLEFT", ui.content, "TOPLEFT", 0, ui.message:IsShown() and 0 or MESSAGE_ROOM)
     end
 end
 
@@ -505,7 +518,6 @@ function Tab:AddItem(text)
         end
     end)
     if not handled then
-        self:_Say("searching the Auction House for the name")
         return true
     end
     return ok, err
@@ -592,7 +604,6 @@ function Tab:_Start(entry, silent)
     self.token = self.token + 1
     local token = self.token
     self.pending = { entry = entry, itemID = entry.itemID, token = token, silent = silent }
-    self:_Say("searching " .. self:_ItemName(entry))
     self.deps.after(SEARCH_TIMEOUT, function()
         local pending = self.pending
         if pending and pending.token == token then
@@ -1449,7 +1460,7 @@ function Tab:_UpdateLeft()
     if self.placedFor ~= isLists then
         self.placedFor = isLists
         ui.tree.frame:ClearAllPoints()
-        ui.tree.frame:SetPoint("TOPLEFT", ui.content, "TOPLEFT", 0, isLists and -122 or -44)
+        ui.tree.frame:SetPoint("TOPLEFT", ui.leftTop, "TOPLEFT", 0, isLists and -122 or -44)
         ui.tree.frame:SetPoint("BOTTOMLEFT", ui.content, "BOTTOMLEFT", 0, 0)
     end
 end
@@ -1580,10 +1591,14 @@ function Tab:Select()
 end
 
 -- The source buttons and the search list controls above the list.
-function Tab:_BuildLeft(content, place)
+function Tab:_BuildLeft(content)
     local Kit = ns.Kit
     local ui = self.ui
     -- The source tabs sit on the top edge of the list (the host is 30 px high, the list starts below it).
+    local function place(widget, x, y)
+        widget:SetPoint("TOPLEFT", ui.leftTop, "TOPLEFT", x, y)
+        return widget
+    end
     local host = place(CreateFrame("Frame", nil, content), 0, -14)
     host:SetSize(LIST_WIDTH, 30)
     ui.sourceTabs = Kit.CreateTopTabs(host, { { "groups", "Groups" }, { "lists", "Lists" } }, {
@@ -1652,6 +1667,8 @@ function Tab:_BuildContent()
     ui.message = place(Kit.Label(content, "", "small"), 0, -4)
     ui.message:SetJustifyH("LEFT")
     ui.message:SetWidth(260)
+    ui.leftTop = CreateFrame("Frame", nil, content)
+    ui.leftTop:SetSize(1, 1)
 
     ui.tree = Kit.CreateTree(content, { rowHeight = ROW_HEIGHT, inset = true,
         initRow = function(row, node, depth, isCollapsed, hasChildren)
@@ -1661,10 +1678,11 @@ function Tab:_BuildContent()
             self:_OnTreeSelect(node)
         end })
     ui.content = content
-    ui.tree.frame:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -44)
+    ui.tree.frame:SetPoint("TOPLEFT", ui.leftTop, "TOPLEFT", 0, -44)
     ui.tree.frame:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", 0, 0)
     ui.tree.frame:SetWidth(LIST_WIDTH)
-    self:_BuildLeft(content, place)
+    self:_BuildLeft(content)
+    self:_Say("")
 
     local rightX = LIST_WIDTH + padding
     ui.summary = place(Kit.Label(content, "", "small"), rightX, -4)
