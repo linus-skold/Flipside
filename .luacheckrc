@@ -49,6 +49,7 @@ read_globals = {
     "IsTestBuild",
     "GetTimePreciseSec",
     "PanelTemplates_SetNumTabs",
+    "ButtonFrameTemplate_HidePortrait",
     "PanelTemplates_SetTab",
     "ScrollUtil",
     "StaticPopup_Show",

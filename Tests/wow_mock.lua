@@ -249,6 +249,14 @@ function frameMethods:SetTextColor(r, g, b, a)
     self.color = { r, g, b, a }
 end
 
+function frameMethods:SetHyperlinksEnabled(enabled)
+    self.hyperlinksEnabled = enabled
+end
+
+function frameMethods.GetStringHeight()
+    return 14
+end
+
 function frameMethods:SetAlpha(alpha)
     self.alpha = alpha
 end
@@ -452,6 +460,9 @@ function M.reset(options)
         end,
         SetText = function(_, text)
             M.tooltip.title = text
+        end,
+        SetHyperlink = function(_, link)
+            M.tooltip.hyperlink = link
         end,
         AddLine = function(_, text)
             table.insert(M.tooltip.lines, text)

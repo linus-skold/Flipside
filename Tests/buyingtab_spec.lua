@@ -1130,6 +1130,115 @@ describe("BuyingTab", function()
             assert.is_true(ui.amount.enabled)
         end)
     end)
+    describe("the confirm box", function()
+        local EPIC = "|cffa335ee|Hitem:10::::|h[Linen]|h|r"
+
+        local function click(button)
+            client.inClick = true
+            button.scripts.OnClick(button)
+            client.inClick = false
+        end
+
+        local function confirmFrame()
+            for _, frame in ipairs(mock.frames) do
+                if frame.name == "FlipsideBuyConfirm" then
+                    return frame
+                end
+            end
+        end
+
+        local function openItemConfirm()
+            client.rows[10] = { { auctionID = 7, unitPrice = 30, quantity = 1, isCommodity = false, buyout = 30 } }
+            tab:Select_("10")
+            tab:Search()
+            fire("ITEM_RESULTS", 10)
+            click(ui.buyNext)
+            return confirmFrame()
+        end
+
+        after_each(function()
+            _G.ButtonFrameTemplate_HidePortrait = nil
+        end)
+
+        it("is a square box with no portrait", function()
+            local hidden = {}
+            _G.ButtonFrameTemplate_HidePortrait = function(frame)
+                hidden[#hidden + 1] = frame
+            end
+            local confirm = openItemConfirm()
+            assert.are.same({ confirm }, hidden)
+            assert.is_false(confirm.portraitShown)
+        end)
+
+        it("leaves a window that does not ask for a square frame as it is", function()
+            local hidden = {}
+            _G.ButtonFrameTemplate_HidePortrait = function(frame)
+                hidden[#hidden + 1] = frame
+            end
+            ns.Kit.CreateWindow("PlainWindow", { width = 100, height = 100 })
+            assert.are.same({}, hidden)
+        end)
+
+        it("shows the item as a link in the quality colour", function()
+            tab.deps.itemLink = function()
+                return "|Hitem:10::::|h[Linen]|h", 4
+            end
+            local confirm = openItemConfirm()
+            assert.matches("Buy 1 x " .. EPIC:gsub("%p", "%%%0"), confirm.text.text)
+            assert.matches("Total: 30c", confirm.text.text)
+        end)
+
+        it("keeps the colour of a link that has one", function()
+            tab.deps.itemLink = function()
+                return "|cff0070dd|Hitem:10::::|h[Linen]|h|r", 3
+            end
+            local confirm = openItemConfirm()
+            assert.is_not_nil(confirm.text.text:find("|cff0070dd|Hitem:10::::|h[Linen]|h|r", 1, true))
+        end)
+
+        it("uses the link of the row", function()
+            tab.deps.itemLink = function()
+                return nil, 4
+            end
+            client.rows[10] = { { auctionID = 7, unitPrice = 30, quantity = 1, isCommodity = false, buyout = 30,
+                itemLink = "|Hitem:10::::|h[Linen]|h" } }
+            tab:Select_("10")
+            tab:Search()
+            fire("ITEM_RESULTS", 10)
+            click(ui.buyNext)
+            assert.is_not_nil(confirmFrame().text.text:find(EPIC, 1, true))
+        end)
+
+        it("shows the plain name until the link is loaded, then the link", function()
+            local link
+            tab.deps.itemLink = function()
+                return link, 4
+            end
+            local confirm = openItemConfirm()
+            assert.matches("Buy 1 x Item10", confirm.text.text)
+            link = "|Hitem:10::::|h[Linen]|h"
+            timers[#timers].fn()
+            assert.is_not_nil(confirm.text.text:find(EPIC, 1, true))
+        end)
+
+        it("shows the item tooltip when the mouse is over the link", function()
+            local confirm = openItemConfirm()
+            local frame = confirm.textFrame
+            assert.is_true(frame.hyperlinksEnabled)
+            frame.scripts.OnHyperlinkEnter(frame, "item:10::::")
+            assert.are.equal(frame, mock.tooltip.owner)
+            assert.are.equal("item:10::::", mock.tooltip.hyperlink)
+            assert.is_true(mock.tooltip.shown)
+            frame.scripts.OnHyperlinkLeave(frame)
+            assert.is_false(mock.tooltip.shown)
+        end)
+
+        it("keeps the quantity, the prices and the jump warning text", function()
+            local confirm = openItemConfirm()
+            assert.matches("Buy 1 x Item10", confirm.text.text)
+            assert.matches("Unit price: 30c   Total: 30c", confirm.text.text)
+        end)
+    end)
     describe("registry", function()
         it("registers the Buying tab for hosts with many tabs", function()
             local spec = ns.AuctionTabs.List()[1]

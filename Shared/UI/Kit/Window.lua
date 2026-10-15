@@ -11,7 +11,8 @@ local function createFrame(name)
 end
 
 -- Create a hidden, movable window from a client frame template.
--- options: width, height, title, portrait (texture path or nil), strata (default "MEDIUM").
+-- options: width, height, title, portrait (texture path or nil), strata (default "MEDIUM"),
+-- square (true gives the plain square frame with no portrait and no round ring).
 function Kit.CreateWindow(name, options)
     options = options or {}
     local window, hasPortrait = createFrame(name)
@@ -24,6 +25,16 @@ function Kit.CreateWindow(name, options)
         if options.portrait then
             window:SetPortraitTextureRaw(options.portrait)
         elseif window.SetPortraitShown then
+            window:SetPortraitShown(false)
+        end
+    end
+
+    if options.square and hasPortrait then
+        -- The client function also swaps the border, so the round ring goes with the portrait.
+        if ButtonFrameTemplate_HidePortrait then
+            pcall(ButtonFrameTemplate_HidePortrait, window)
+        end
+        if window.SetPortraitShown then
             window:SetPortraitShown(false)
         end
     end

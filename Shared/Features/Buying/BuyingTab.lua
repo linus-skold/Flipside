@@ -219,6 +219,18 @@ local function defaultItemInfo(itemID)
     return name or ("item " .. tostring(itemID)), icon
 end
 
+-- The item link and the quality of an item, or nil while the item data is not loaded. Asks the client to load it.
+local function defaultItemLink(itemID)
+    if not (C_Item and C_Item.GetItemInfo) then
+        return nil
+    end
+    local _, link, quality = C_Item.GetItemInfo(itemID)
+    if not link and C_Item.RequestLoadItemDataByID then
+        C_Item.RequestLoadItemDataByID(itemID)
+    end
+    return link, quality
+end
+
 local dialogs = {}
 
 -- A small dialog with a text and two buttons, made from the Kit window. One dialog for each name.
@@ -230,14 +242,28 @@ local function makeDialog(name)
     end
     local Kit = ns.Kit
     local pad = Kit.Theme.padding
-    local dialog = Kit.CreateWindow(name, { width = 380, height = 190 })
+    local dialog = Kit.CreateWindow(name, { width = 380, height = 190, square = true })
     dialogs[name] = dialog
     dialog:SetFrameStrata("FULLSCREEN_DIALOG")
     dialog:SetToplevel(true)
-    dialog.text = Kit.Label(dialog, "", "normal")
-    dialog.text:SetPoint("TOPLEFT", dialog, "TOPLEFT", pad + 8, -40)
-    dialog.text:SetWidth(380 - 2 * pad - 16)
-    dialog.text:SetJustifyH("LEFT")
+    -- The text sits in a frame that takes hyperlinks, so an item link shows the item tooltip.
+    local textWidth = 380 - 2 * pad - 16
+    dialog.textFrame = CreateFrame("Frame", nil, dialog)
+    dialog.textFrame:SetPoint("TOP", dialog, "TOP", 0, -40)
+    dialog.textFrame:SetSize(textWidth, 20)
+    dialog.textFrame:SetHyperlinksEnabled(true)
+    dialog.textFrame:SetScript("OnHyperlinkEnter", function(frame, link)
+        GameTooltip:SetOwner(frame, "ANCHOR_CURSOR")
+        GameTooltip:SetHyperlink(link)
+        GameTooltip:Show()
+    end)
+    dialog.textFrame:SetScript("OnHyperlinkLeave", function()
+        GameTooltip:Hide()
+    end)
+    dialog.text = Kit.Label(dialog.textFrame, "", "normal")
+    dialog.text:SetPoint("TOP", dialog.textFrame, "TOP", 0, 0)
+    dialog.text:SetWidth(textWidth)
+    dialog.text:SetJustifyH("CENTER")
     local function press(key)
         local callback = dialog[key]
         dialog.onYes, dialog.onNo = nil, nil
@@ -268,6 +294,10 @@ local function makeDialog(name)
             self:SetTitle(title or "")
         end
         self.text:SetText(text or "")
+        -- Size the box so that the text fits above the buttons.
+        local textHeight = self.text.GetStringHeight and self.text:GetStringHeight() or 14
+        self.textFrame:SetHeight(textHeight)
+        self:SetHeight(math.max(150, 40 + textHeight + 20 + 22 + pad + 8))
         if options.red then
             self.text:SetTextColor(RED[1], RED[2], RED[3])
         else
@@ -912,7 +942,7 @@ function Tab:_StartBuy(entry, cover)
         end
         local buyout = row.buyout or math.floor(row.unitPrice * (row.quantity or 1) + 0.5)
         self.buy = {
-            entry = entry, level = level, isItem = true, phase = "quoted", itemID = entry.itemID,
+            entry = entry, level = level, row = row, isItem = true, phase = "quoted", itemID = entry.itemID,
             auctionID = row.auctionID, quantity = row.quantity or 1, unit = row.unitPrice, total = buyout,
         }
         self:_ShowConfirm()
@@ -925,7 +955,8 @@ function Tab:_StartBuy(entry, cover)
         self:_Say("the quote was refused")
         return false, "the quote was refused"
     end
-    local buy = { entry = entry, level = level, phase = "quoting", itemID = entry.itemID, quantity = cover.quantity,
+    local buy = { entry = entry, level = level, row = first, phase = "quoting", itemID = entry.itemID,
+        quantity = cover.quantity,
         complete = cover.complete }
     self.buy = buy
     self:_Say("waiting for the quote of " .. self:_ItemName(entry))
@@ -938,9 +969,27 @@ function Tab:_StartBuy(entry, cover)
     return true
 end
 
+-- The item as a link in the quality colour. Returns nil while the client has no link yet.
+function Tab:_ItemLink(entry, row)
+    local link, quality = self.deps.itemLink(entry.itemID or 0)
+    if type(row) == "table" and type(row.itemLink) == "string" then
+        link = row.itemLink
+    end
+    if not link then
+        return nil
+    end
+    if link:find("^|c") then
+        return link
+    end
+    local _, _, _, hex = ns.Kit.QualityColor(quality)
+    return "|c" .. hex .. link .. "|r"
+end
+
 local function quoteText(self, buy)
+    local link = self:_ItemLink(buy.entry, buy.row)
+    buy.linkMissing = link == nil
     local lines = {
-        string.format("Buy %d x %s", buy.quantity, self:_ItemName(buy.entry)),
+        string.format("Buy %d x %s", buy.quantity, link or self:_ItemName(buy.entry)),
         string.format("Unit price: %s   Total: %s", money(buy.unit), money(buy.total)),
     }
     if not buy.isItem and buy.left then
@@ -964,6 +1013,16 @@ function Tab:_ShowConfirm()
         return
     end
     local text, over = quoteText(self, buy)
+    -- A link that is not loaded shows the plain name. Draw the box again when the item data may have come.
+    if buy.linkMissing and (buy.linkTries or 0) < 5 and not buy.linkWait then
+        buy.linkWait, buy.linkTries = true, (buy.linkTries or 0) + 1
+        self.deps.after(1, function()
+            buy.linkWait = false
+            if self.buy == buy and buy.phase == "quoted" then
+                self:_ShowConfirm()
+            end
+        end)
+    end
     makeDialog("FlipsideBuyConfirm"):Open("Confirm purchase", text, {
         yes = over and "Buy anyway" or "Confirm", no = "Cancel", red = over,
         onYes = function()
@@ -1798,7 +1857,8 @@ end
 
 -- Create the Buying core. The host mounts it and shows it.
 -- deps: bus, rules, formulaRun, after(seconds, fn); optional client, plan, log, itemInfo, db (the settings DB),
--- searchLists, itemNameIndex, ahNameSearch, keyFor(link) and isAuctionHouseOpen() (search lists and the item box).
+-- itemLink(itemID) (link, quality), searchLists, itemNameIndex, ahNameSearch, keyFor(link) and isAuctionHouseOpen()
+-- (search lists and the item box).
 function BuyingTab.New(deps)
     if type(deps) ~= "table" or type(deps.bus) ~= "table" then
         error("deps.bus must be a table", 2)
@@ -1811,6 +1871,7 @@ function BuyingTab.New(deps)
         client = deps.client or ns.AuctionClient,
         plan = deps.plan or ns.BuyingPlan,
         itemInfo = deps.itemInfo or defaultItemInfo,
+        itemLink = deps.itemLink or defaultItemLink,
         db = deps.db,
         searchLists = deps.searchLists or nil,
         itemNameIndex = deps.itemNameIndex,
