@@ -178,7 +178,8 @@ end
 -- Build the scan buttons, the Stop button and the status text in the parent frame.
 -- deps: scanEngine, scanCooldown, scanModes (optional list of scan modes), confirmScan(onAccept).
 -- opts: x, y (offset of the first button), buttonWidth, step (distance of the buttons), stopWidth,
--- labelDx, labelDy (status text offset, from the Stop button), say(text), onChange(), short, followLabel, labelRole.
+-- labelDx, labelDy (status text offset, from the Stop button), say(text), onChange(), short, followLabel, labelRole,
+-- statusParent (frame that owns the status text; the caller places the text then).
 -- Call :Refresh() after the build.
 function ScanBar.New(parent, deps, opts)
     local Kit = ns.Kit
@@ -213,12 +214,12 @@ function ScanBar.New(parent, deps, opts)
         deps.scanEngine:Cancel()
         bar:_Changed()
     end), x, y)
-    bar.status = Kit.Label(parent, "", opts.labelRole or "highlight")
+    bar.status = Kit.Label(opts.statusParent or parent, "", opts.labelRole or "highlight")
     bar.status:SetJustifyH("LEFT")
     if bar.status.SetWordWrap then
         bar.status:SetWordWrap(false)
     end
-    if not opts.followLabel then
+    if not opts.followLabel and not opts.statusParent then
         place(bar.status, x + (opts.labelDx or 0), y + (opts.labelDy or 0))
     end
     return bar

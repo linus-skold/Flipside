@@ -9,7 +9,7 @@ local OWNER = "Flipside.AuctionTab"
 local EVENT_FINISHED = "Flipside.ScanFinished"
 local EVENT_PRICE_CAPTURED = "Flipside.PriceCaptured"
 local WIDTH = 740
-local COMPACT_WIDTH = 760
+local COMPACT_WIDTH = 776
 local PRICE_SLOTS = 9
 local MAX_CHOICES = 8
 
@@ -133,6 +133,16 @@ function Tab:Refresh()
         ui.startCheck:SetChecked(not get or get() ~= false)
     end
     ui.status:SetText(self:_StatusText())
+    if ui.progress then
+        local fraction = 0
+        if engine and engine:IsRunning() and engine.GetProgress then
+            local _, page, pages = engine:GetProgress()
+            if page and pages and pages > 0 then
+                fraction = page / pages
+            end
+        end
+        self:_SetProgress(fraction)
+    end
 end
 
 -- The check box of the start page scan bar: save the setting and show or hide the bar.
@@ -485,7 +495,42 @@ function Tab:_BuildClassic(content, ui)
     end
 end
 
--- The compact layout for a host with a small content area: normal fonts, a slim scan bar, no large headings.
+-- The progress bar of the compact layout: a dark back, a fill and the status text on top. It uses client art only.
+local BAR_TEXTURE = "Interface\\TargetingFrame\\UI-StatusBar"
+
+local function buildProgress(content, ui, x, y, width)
+    local frame = CreateFrame("Frame", nil, content)
+    frame:SetSize(width, 18)
+    frame:SetPoint("TOPLEFT", content, "TOPLEFT", x, y)
+    local back = frame:CreateTexture(nil, "BACKGROUND")
+    back:SetAllPoints(frame)
+    back:SetColorTexture(0, 0, 0, 0.6)
+    local fill = frame:CreateTexture(nil, "BORDER")
+    fill:SetTexture(BAR_TEXTURE)
+    fill:SetVertexColor(0.1, 0.5, 0.9, 0.9)
+    fill:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, 0)
+    fill:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 0, 0)
+    fill:SetWidth(1)
+    fill:Hide()
+    ui.progress = { frame = frame, fill = fill, width = width }
+    return frame
+end
+
+-- Set the fill of the progress bar to a fraction from 0 to 1.
+function Tab:_SetProgress(fraction)
+    local progress = self.ui.progress
+    if not progress then
+        return
+    end
+    if fraction > 0 then
+        progress.fill:SetWidth(math.max(1, progress.width * math.min(fraction, 1)))
+    end
+    progress.fill:SetShown(fraction > 0)
+end
+
+-- The compact layout for a host with a small content area, built like a Blizzard list tab:
+-- a header strip (scan buttons and progress bar), a body (scan data left, price lookup right)
+-- and a bottom bar (start page check box, Reset cooldown, Open Flipside).
 function Tab:_BuildCompact(content, ui)
     local Kit = ns.Kit
     local function place(widget, x, y)
@@ -495,45 +540,58 @@ function Tab:_BuildCompact(content, ui)
 
     local title = Kit.Label(content, "Flipside", "normal")
     title:SetPoint("TOP", self.parent, "TOP", 0, -18)
-    -- One button for each scan mode, or one Full scan button without modes.
-    self:_BuildScanBar(content, ui, { buttonWidth = 90, step = 96, stopWidth = 60, labelDx = 184, labelDy = -4 })
-    ui.reset = place(Kit.Button(content, "Reset cooldown", 110, function()
-        self:_ResetClicked()
-    end), self.bar.stopX + 66, 0)
-    self:_BuildStartPageCheck(content, ui, -26)
-    ui.openMain = Kit.Button(content, "Open Flipside", 110, function()
+    -- Header strip: one button for each scan mode, then Stop in its own slot, then the progress bar.
+    local progress = buildProgress(content, ui, 336, -2, COMPACT_WIDTH - 336)
+    self:_BuildScanBar(content, ui, { buttonWidth = 80, step = 82, stopWidth = 80, statusParent = progress })
+    self.bar.status:SetPoint("CENTER", progress, "CENTER", 0, 0)
+
+    -- Bottom bar, in the place of the Bid, Buyout and Close buttons of Blizzard.
+    ui.openMain = Kit.Button(content, "Open Flipside", 100, function()
         self.deps.openMainWindow()
     end)
-    ui.openMain:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, 0)
-    ui.message = leftAligned(place(Kit.Label(content, "", "small"), 0, -28), COMPACT_WIDTH)
-    ui.status = leftAligned(place(Kit.Label(content, "", "small"), 0, -44), COMPACT_WIDTH)
+    ui.openMain:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", 0, 0)
+    ui.reset = Kit.Button(content, "Reset cooldown", 100, function()
+        self:_ResetClicked()
+    end)
+    ui.reset:SetPoint("RIGHT", ui.openMain, "LEFT", -2, 0)
+    -- The check box starts right of the money frame of the Blizzard frame.
+    local check = Kit.Check(content, "Scan bar on the start page", function(checked)
+        self:_StartPageToggled(checked)
+    end)
+    check:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", 166, -1)
+    ui.startCheck = check
 
-    place(Kit.Label(content, "Price lookup", "normal"), 0, -116)
-    ui.input = place(Kit.Input(content, 300, function(text)
+    -- Left half of the body: the scan data.
+    place(Kit.Label(content, "Scan data", "highlight"), 12, -34)
+    ui.status = leftAligned(place(Kit.Label(content, "", "normal"), 12, -54), 340)
+    ui.message = leftAligned(place(Kit.Label(content, "", "small"), 12, -300), 340)
+
+    -- Right half of the body: the price lookup.
+    place(Kit.Label(content, "Price lookup", "highlight"), 380, -34)
+    ui.input = place(Kit.Input(content, 250, function(text)
         self:Lookup(text)
-    end), 84, -112)
+    end), 384, -56)
     ui.lookup = place(Kit.Button(content, "Look up", 90, function()
         self:Lookup(ui.input:GetText())
-    end), 392, -112)
-    ui.pendingMessage = leftAligned(place(Kit.Label(content, "", "small"), 494, -118), 270)
-    ui.priceMessage = leftAligned(place(Kit.Label(content, "", "small"), 0, -140), COMPACT_WIDTH)
+    end), 642, -56)
+    ui.pendingMessage = leftAligned(place(Kit.Label(content, "", "small"), 380, -82), 380)
+    ui.priceMessage = leftAligned(place(Kit.Label(content, "", "small"), 380, -98), 380)
     ui.choices = {}
     for index = 1, MAX_CHOICES do
-        local button = place(Kit.Button(content, "", 360, nil), 0, -158 - (index - 1) * 22)
+        local button = place(Kit.Button(content, "", 360, nil), 380, -118 - (index - 1) * 22)
         button:Hide()
         ui.choices[index] = button
     end
     local step = Kit.Theme.rowHeight - 2
     for index = 1, PRICE_SLOTS do
-        local y = -140 - (index - 1) * step
+        local y = -118 - (index - 1) * step
         ui.slots[index] = {
-            name = leftAligned(place(Kit.Label(content, "", "normal"), 0, y), 110),
-            money = place(Kit.Money(content, ns.TooltipLines and ns.TooltipLines.FormatMoney), 120, y),
-            value = leftAligned(place(Kit.Label(content, "", "highlight"), 120, y), 300),
+            name = leftAligned(place(Kit.Label(content, "", "normal"), 380, y), 110),
+            money = place(Kit.Money(content, ns.TooltipLines and ns.TooltipLines.FormatMoney), 494, y),
+            value = leftAligned(place(Kit.Label(content, "", "highlight"), 494, y), 280),
         }
     end
 end
-
 -- Build the panel in the parent frame and listen for finished scans. Errors go to the host.
 -- api: Enter(wasActive), Leave(tabIndex), and optional fields.
 -- insets { left, right, top, bottom } set the distance to the parent.
