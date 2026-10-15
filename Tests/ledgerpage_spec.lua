@@ -195,12 +195,9 @@ describe("LedgerPage", function()
             for _, tab in ipairs(win.frame.Tabs) do
                 titles[#titles + 1] = tab:GetText()
             end
-            local found
-            for _, title in ipairs(titles) do
-                found = found or title == "Ledger"
-            end
-            assert.is_true(found)
-            assert.are.equal(0, ensureCalls)
+            assert.are.equal("Ledger", titles[1])
+            assert.are.equal("ledger", win:GetSelectedPage())
+            assert.are.equal(1, ensureCalls)
             win:SelectPage("ledger")
             assert.are.equal(1, ensureCalls)
         end)
