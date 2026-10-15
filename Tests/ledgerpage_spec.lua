@@ -858,6 +858,34 @@ describe("LedgerPage", function()
             assert.are.equal((totalIn - totalOut) .. "c", view.totals.net:GetText())
         end)
 
+        it("shows buyout and deposit as the Detail of a post row, with Money empty", function()
+            build_overview()
+            pick(page.rangeDropdown, "all")
+            local post
+            for _, row in ipairs(rows("overview")) do
+                if row.source == "ahPost" then
+                    post = row
+                end
+            end
+            assert.are.equal("Buyout 9000c, deposit 50c", post.detail)
+            assert.is_nil(post.money)
+        end)
+
+        it("shows only the buyout when the post has no deposit", function()
+            for _, record in ipairs(saved.records.EU.standard[ME]) do
+                if record.source == "ahPost" then
+                    record.deposit = nil
+                end
+            end
+            build_overview()
+            pick(page.rangeDropdown, "all")
+            for _, row in ipairs(rows("overview")) do
+                if row.source == "ahPost" then
+                    assert.are.equal("Buyout 9000c", row.detail)
+                end
+            end
+        end)
+
         it("gives the header the list insets and the cells none", function()
             build_overview()
             for _, tab in ipairs({ "overview", "sales" }) do

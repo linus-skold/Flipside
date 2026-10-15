@@ -751,7 +751,7 @@ local function openLedgerMoney()
     end
 end
 
--- Read one mail header into a table. The calls only read; GetInboxText is never called (it marks the mail as read).
+-- Read one mail header into a table. The call only reads.
 local function mailHeader(index)
     local _, _, sender, subject, money, _, _, itemCount, _, _, _, _, _, quantity, link = GetInboxHeaderInfo(index)
     if sender == nil and subject == nil then
@@ -801,7 +801,12 @@ local function openLedgerMail()
             bus = ns.bus,
             buffer = ns.ledgerBuffer,
             tracker = ns.ledgerMoney,
-            api = { numItems = GetInboxNumItems, header = mailHeader, invoice = mailInvoice },
+            api = {
+                numItems = GetInboxNumItems, header = mailHeader, invoice = mailInvoice,
+                text = type(GetInboxText) == "function" and function(index)
+                    pcall(GetInboxText, index)
+                end or nil,
+            },
             invoices = ns.Flavour.hasMailInvoices == true and type(GetInboxInvoiceInfo) == "function",
             now = GetTime,
             serverTime = GetServerTime,

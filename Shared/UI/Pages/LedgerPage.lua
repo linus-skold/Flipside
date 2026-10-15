@@ -212,6 +212,19 @@ end
 -- The detail text of a full record for a tab.
 local function detailOf(tab, record, log)
     if tab == "overview" then
+        if record.type == "post" then
+            local parts = {}
+            if (record.buyout or 0) > 0 then
+                parts[1] = "Buyout " .. money(record.buyout)
+            end
+            if (record.deposit or 0) > 0 then
+                parts[#parts + 1] = "deposit " .. money(record.deposit)
+            end
+            if #parts > 0 then
+                parts[1] = parts[1]:sub(1, 1):upper() .. parts[1]:sub(2)
+                return table.concat(parts, ", ")
+            end
+        end
         return record.counterparty or record.mob or ""
     elseif tab == "sales" or tab == "purchases" then
         return record.counterparty or (tab == "purchases" and LedgerPage.SourceLabel(record.source)) or ""
