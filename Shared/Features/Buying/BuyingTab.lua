@@ -24,6 +24,14 @@ local function isOwn(row)
     return row.isOwn == true or row.ownerItem == true
 end
 
+-- True if the price is inside the limit of the entry. An entry with no max price has no limit.
+local function withinMax(entry, price)
+    if entry.noMax then
+        return true
+    end
+    return entry.maxPrice ~= nil and price <= entry.maxPrice
+end
+
 -- Build the price level rows to show. state is "buy", "above" or "own".
 -- Levels above the maximum show only if the operation sets showAboveMax.
 function BuyingTab.DescribeLevels(entry, levels, showAboveMax)
@@ -32,7 +40,7 @@ function BuyingTab.DescribeLevels(entry, levels, showAboveMax)
         local state
         if level.own then
             state = "own"
-        elseif entry.maxPrice and level.unitPrice <= entry.maxPrice then
+        elseif withinMax(entry, level.unitPrice) then
             state = "buy"
         elseif showAboveMax then
             state = "above"
@@ -48,7 +56,9 @@ end
 -- Build the summary lines of one evaluation. result is from BuyingPlan.Evaluate.
 function BuyingTab.DescribeSummary(entry, result, rows)
     local lines = {}
-    if entry.maxPrice then
+    if entry.noMax then
+        lines[1] = "no max price set"
+    elseif entry.maxPrice then
         lines[1] = "Max price: " .. money(entry.maxPrice)
     else
         lines[1] = "No max price: " .. tostring(entry.reason)
@@ -62,7 +72,7 @@ function BuyingTab.DescribeSummary(entry, result, rows)
     if not stop then
         stop = "end of results"
         for _, row in ipairs(rows or {}) do
-            if not isOwn(row) and entry.maxPrice and row.unitPrice > entry.maxPrice then
+            if not isOwn(row) and not entry.noMax and entry.maxPrice and row.unitPrice > entry.maxPrice then
                 stop = "above max price"
                 break
             end
@@ -76,8 +86,9 @@ end
 function BuyingTab.DescribeDecision(result)
     if result.first then
         local last = result.buyable[#result.buyable]
+        local limit = result.maxPrice and (", max " .. money(result.maxPrice)) or ", no max price"
         return string.format("would buy %d at %s", result.quantity, money(last.unitPrice)),
-            "cost " .. money(result.cost) .. ", max " .. money(result.maxPrice)
+            "cost " .. money(result.cost) .. limit
     end
     return result.stop
 end
@@ -223,7 +234,7 @@ end
 -- Returns "started", "skipped" or "wait" with a text.
 function Tab:_Start(entry, silent)
     local client = self.deps.client
-    if not entry.maxPrice or not entry.itemID then
+    if not (entry.maxPrice or entry.noMax) or not entry.itemID then
         self:_Finish(entry, {})
         return "skipped"
     end
@@ -402,13 +413,13 @@ function Tab:_NextBuy()
     local lastPrice = self.run and self.run.key == entry.key and self.run.lastPrice or nil
     local level = plan.NextLevel(levels, lastPrice, isItem)
     local reason
-    if not entry.maxPrice then
+    if not (entry.maxPrice or entry.noMax) then
         reason = "no max price"
     elseif not level then
         reason = "nothing left to buy"
     elseif level.own then
         reason = "own listing"
-    elseif level.unitPrice > entry.maxPrice then
+    elseif not withinMax(entry, level.unitPrice) then
         reason = "above max price"
     elseif not self.dryRun and not self.deps.client.CanBuy() then
         reason = "buying is not available"
@@ -507,11 +518,15 @@ local function quoteText(self, buy)
     if not buy.isItem and buy.left then
         lines[#lines + 1] = "Quote time left: " .. buy.left .. " s"
     end
-    local limit = (buy.entry.maxPrice or 0) * buy.quantity
-    if buy.total > limit then
+    local limit = nil
+    if not buy.entry.noMax then
+        limit = (buy.entry.maxPrice or 0) * buy.quantity
+    end
+    local over = limit ~= nil and buy.total > limit
+    if over then
         lines[#lines + 1] = "Above your max price: " .. money(limit)
     end
-    return table.concat(lines, "\n"), buy.total > limit
+    return table.concat(lines, "\n"), over
 end
 
 -- Show the confirm box with the server quote.
@@ -724,7 +739,10 @@ function Tab:_InitListRow(row, entry)
     parts.icon:SetTexture(icon)
     parts.name:SetText(name)
     setColor(parts.name, false)
-    if entry.maxPrice then
+    if entry.noMax then
+        parts.price:SetText("no max")
+        setColor(parts.price, false)
+    elseif entry.maxPrice then
         parts.price:SetText(money(entry.maxPrice))
         setColor(parts.price, false)
     else

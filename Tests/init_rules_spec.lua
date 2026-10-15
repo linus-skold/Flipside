@@ -157,16 +157,24 @@ describe("Init rules", function()
 
         it("refreshes a subscribed page when the rules change", function()
             local operations = ns.OperationsPage.Build(CreateFrame("Frame", nil, UIParent), deps)
-            assert.are.equal(1, #operations.list.data)
+            assert.are.equal(2, #operations.list.data)
             assert.are.equal("Default", operations.list.data[1].name)
+            assert.are.equal("Default", operations.list.data[2].name)
             local events = 0
             ns.bus:Subscribe("Flipside.RulesChanged", "test", function()
                 events = events + 1
             end)
             assert.is_number(ns.rules:CreateOperation("selling", "Sell linen"))
-            assert.are.equal(2, #operations.list.data)
-            assert.are.equal("Sell linen", operations.list.data[2].name)
+            assert.are.equal(3, #operations.list.data)
+            assert.are.equal("Sell linen", operations.list.data[3].name)
             assert.are.equal(1, events)
+        end)
+
+        it("makes the Default buying operation with no max price on Base", function()
+            local op = ns.rules:ListOperations("buying")[1]
+            assert.are.equal("Default", op.name)
+            assert.are.equal(op.id, (ns.rules:EffectiveOperation(1, "buying")))
+            assert.are.equal("", ns.rules:GetOperation(op.id).settings.maxPrice)
         end)
 
         it("makes the Default selling operation and attaches it to Base", function()

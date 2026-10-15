@@ -363,7 +363,11 @@ The user decided points 1 to 4. Points 5 to 9 are defaults from the study recomm
     - Details pane (72 px, UI kit Inset) for the next post of the queue. Left: the icon, the item name, the operation name, "Price X each | buyout Y per auction", and "N x S | D h" (auctions left x stack size, duration). Right: "Deposit", "Lowest", "Net" and "vs vendor" of the auctions that are left of this item. When no post is left it shows "Pick a group or an item" or "Nothing to post".
     - Tree (about 12 rows of 22 px) with a column header line (18 px). Item columns, as x from the row start and width: Item (name, icon; up to 190 px), Your price (250, 78, right), Operation (336, 80), Lowest (420, 78, right; "none" when no other seller has an auction), Net (504, 78, right), Info (590, 160). The Info texts are short reasons: "1c under lowest", "no competitor, normal price", "capped at max price", "raised to min price", "below vendor price, skipped" (Default floor) or "below min price, skipped", "no competitor, no market value", "you are already lowest", "no operation", and the reason of a data skip.
     - Bottom bar (34 px): "Post", "Skip", "Posting 3 of 60", the queue deposit, the queue Net and the queue vs vendor. The Log button swaps the tree for the session log.
-
+20. **Default buying operation (user request, 2026-10-15).** Flipside makes one buying operation named "Default" and attaches it to the Base group. The rules are the same as for the selling Default (point 17): once for each profile (defaultBuyingSeeded in the operations data), only if Base has no buying operation, editable, and a deleted one does not come back. A profile that already has the selling Default also gets the buying one the next time it loads.
+    - The maximum price of Default is empty. An empty maximum price formula means no limit. The schema accepts an empty buying maxPrice (field flag optional); the schema default for a new buying operation stays scanmarket.
+    - With no limit, BuyingPlan marks the entry 
+oMax. It does not run a formula. Every row of another seller is buyable. The summary reads "no max price set". The list row shows "no max".
+    - Only the price jump warning (point 12) and the confirm click (D26) protect the buyer. The confirm box never shows the red "above your max price" state for such an entry.
 ### 5.5 Mail lists (reference §5.4 Mailing)
 
 - A **mail list** is a named rule set: "send group X to character Y, keep N, send up to M".

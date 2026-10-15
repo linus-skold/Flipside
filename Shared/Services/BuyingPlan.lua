@@ -41,7 +41,12 @@ function BuyingPlan.ShoppingList(deps)
         local path = rules:Path(groupID)
         for _, key in ipairs(rules:ItemsIn(groupID)) do
             local parsed = ns.ItemString.ParseKey(key)
-            local copper, info = run:Evaluate(op.settings.maxPrice, key)
+            local formula = op.settings.maxPrice
+            local noMax = type(formula) ~= "string" or formula:match("^%s*$") ~= nil
+            local copper, info
+            if not noMax then
+                copper, info = run:Evaluate(formula, key)
+            end
             local entry = {
                 key = key,
                 itemID = parsed and parsed.itemID,
@@ -51,7 +56,9 @@ function BuyingPlan.ShoppingList(deps)
                 operationName = op.name,
                 showAboveMax = op.settings.showAboveMax == true,
             }
-            if copper ~= nil and copper > 0 then
+            if noMax then
+                entry.noMax = true
+            elseif copper ~= nil and copper > 0 then
                 entry.maxPrice = copper
             else
                 entry.reason = PriceReason(info)
@@ -81,7 +88,7 @@ function BuyingPlan.Evaluate(entry, rows, opts)
         showAbove = entry.showAboveMax
     end
     local max = entry.maxPrice
-    if not max then
+    if not max and not entry.noMax then
         result.stop = "no max price"
         return result
     end
@@ -93,7 +100,7 @@ function BuyingPlan.Evaluate(entry, rows, opts)
     for _, row in ipairs(rows) do
         if not IsOwn(row, opts) and type(row.unitPrice) == "number" then
             foreign = foreign + 1
-            if row.unitPrice <= max then
+            if max == nil or row.unitPrice <= max then
                 local quantity = row.quantity or 1
                 result.buyable[#result.buyable + 1] = row
                 result.quantity = result.quantity + quantity

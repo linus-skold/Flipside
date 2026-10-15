@@ -107,6 +107,47 @@ describe("BuyingPlan", function()
             assert.is_nil(out[1].maxPrice)
             assert.equal("no data", out[1].reason)
         end)
+
+        it("marks an operation with an empty max price as no max, without a formula run", function()
+            ops[12] = { id = 12, name = "Default", type = "buying", settings = { maxPrice = "", showAboveMax = false } }
+            local g = GT.Create(groups, 1, "Herbs")
+            GT.AddItem(groups, "100", g)
+            GT.Attach(groups, g, "buying", 12)
+            run.Evaluate = function()
+                error("must not evaluate an empty formula")
+            end
+            local out = list()
+            assert.equal(1, #out)
+            assert.is_true(out[1].noMax)
+            assert.is_nil(out[1].maxPrice)
+            assert.is_nil(out[1].reason)
+            ops[12].settings.maxPrice = "   "
+            assert.is_true(list()[1].noMax)
+        end)
+    end)
+
+    describe("Evaluate with no max price", function()
+        local function row(id, price, own)
+            return { auctionID = id, unitPrice = price, quantity = 2, isCommodity = false, ownerItem = own }
+        end
+
+        it("makes every row of another seller buyable", function()
+            local result = BP.Evaluate({ noMax = true, key = "1" }, { row(1, 10), row(2, 900000), row(3, 5, true) })
+            assert.equal(2, #result.buyable)
+            assert.equal(4, result.quantity)
+            assert.equal(2 * 10 + 2 * 900000, result.cost)
+            assert.is_nil(result.stop)
+            assert.is_nil(result.maxPrice)
+        end)
+
+        it("stops for own rows only and for no rows", function()
+            assert.equal("own auction only", BP.Evaluate({ noMax = true }, { row(1, 10, true) }).stop)
+            assert.equal("no results", BP.Evaluate({ noMax = true }, {}).stop)
+        end)
+
+        it("still stops without a price when the entry has no max and no noMax flag", function()
+            assert.equal("no max price", BP.Evaluate({ key = "1" }, { row(1, 10) }).stop)
+        end)
     end)
 
     describe("Evaluate", function()

@@ -11,6 +11,7 @@ OperationSchema.TYPES = { "selling", "buying", "vendoring" }
 -- The built-in selling operation: price 1c under the lowest auction, vendor price as the floor, no scan data needed.
 OperationSchema.DEFAULT_SELLING_NAME = "Default"
 OperationSchema.VENDOR_FLOOR = "first(vendorsell, 1)"
+OperationSchema.DEFAULT_BUYING_NAME = "Default"
 
 local LABELS = { selling = "Selling", buying = "Buying", vendoring = "Vendoring" }
 
@@ -94,8 +95,8 @@ local FIELDS = {
     },
     buying = {
         {
-            key = "maxPrice", label = "Maximum price", kind = "formula", default = "scanmarket",
-            help = "Never buy above this price.",
+            key = "maxPrice", label = "Maximum price", kind = "formula", default = "scanmarket", optional = true,
+            help = "Never buy above this price. Empty means no limit.",
         },
         {
             key = "showAboveMax", label = "Show above maximum", kind = "bool", default = false,
@@ -159,6 +160,13 @@ function OperationSchema.DefaultSellingSettings()
     return settings
 end
 
+-- Returns the settings of the built-in buying operation: no maximum price.
+function OperationSchema.DefaultBuyingSettings()
+    local settings = OperationSchema.Defaults("buying")
+    settings.maxPrice = ""
+    return settings
+end
+
 function OperationSchema.Normalize(type, settings)
     local out = {}
     for k, v in pairs(settings or {}) do
@@ -175,6 +183,9 @@ end
 local function checkField(f, value, compile)
     local kind = f.kind
     if kind == "formula" then
+        if f.optional and type(value) == "string" and value:match("^%s*$") then
+            return true
+        end
         if type(value) ~= "string" or value:match("^%s*$") then
             return false, "Enter a formula."
         end
