@@ -4,14 +4,14 @@ local mock = require("Tests.wow_mock")
 local function loadModules()
     local ns = { ReportError = function() end }
     for _, name in ipairs({ "EventBus", "ItemString", "ScanKey", "BagItems", "SellingPlan", "Theme", "Widgets",
-        "List", "Columns", "Tree", "AuctionTabs", "SellingTab" }) do
+        "MoneyInput", "List", "Columns", "Tree", "AuctionTabs", "SellingTab" }) do
         assert(loadfile(manifest.path(name)))("Flipside", ns)
     end
     return ns
 end
 
 describe("SellingTab", function()
-    local ns, bus, client, rules, run, timers, tab, ui, confirms, bagItems, bagReads, groups, itemGroup
+    local ns, bus, client, rules, run, timers, tab, ui, confirms, bagItems, bagReads, groups, itemGroup, now
 
     -- A fake client: it records searches and post calls. Each post call is one protected call.
     local function makeClient()
@@ -166,6 +166,10 @@ describe("SellingTab", function()
             confirm = function(name, text, onAccept)
                 confirms[#confirms + 1] = { name = name, text = text, onAccept = onAccept }
             end,
+            syncInterval = 0,
+            time = function()
+                return now
+            end,
         }
         for k, v in pairs(extra or {}) do
             deps[k] = v
@@ -216,7 +220,7 @@ describe("SellingTab", function()
         client = makeClient()
         client.commodity[10] = false
         client.commodity[11] = true
-        timers, confirms, bagReads = {}, {}, 0
+        timers, confirms, bagReads, now = {}, {}, 0, 0
         groups = {
             [1] = { name = "Base", children = { 2, 6 } },
             [2] = { name = "Cloth", children = { 3, 5 } },
@@ -250,16 +254,22 @@ describe("SellingTab", function()
     end)
 
     describe("the tree", function()
-        it("has the Base group as the one root, with the loose items first and the groups below it", function()
+        it("has the top-level groups as the roots and ends with the no-group node, with no Base node", function()
             local roots = tab.nodes
-            assert.are.same({ "g1" }, idsOf(roots))
-            assert.are.equal("[Base]", roots[1].text)
-            assert.are.equal(1, roots[1].groupID)
-            assert.are.same({ "i12", "g2", "g6" }, idsOf(roots[1].children))
-            local cloth = roots[1].children[2]
-            assert.are.equal("[Cloth]", cloth.text)
-            assert.are.same({ "i10", "g3" }, idsOf(cloth.children))
-            assert.are.same({ "i11" }, idsOf(cloth.children[2].children))
+            assert.are.same({ "g2", "g6", "none" }, idsOf(roots))
+            assert.are.equal("[Cloth]", roots[1].text)
+            assert.are.same({ "i10", "g3" }, idsOf(roots[1].children))
+            assert.are.same({ "i11" }, idsOf(roots[1].children[2].children))
+            assert.are.equal("[No group]", roots[3].text)
+            assert.are.same({ "i12" }, idsOf(roots[3].children))
+        end)
+
+        it("shows many top-level groups", function()
+            groups[1].children = { 2, 6, 7 }
+            groups[7] = { name = "Herbs", children = {} }
+            itemGroup["12"] = 7
+            tab:RefreshBags()
+            assert.are.same({ "g2", "g6", "g7" }, idsOf(tab.nodes))
         end)
 
         it("hides a group with no bag item", function()
@@ -269,13 +279,13 @@ describe("SellingTab", function()
             groups[2].children = { 5 }
             itemGroup = { ["13"] = 6 }
             tab:RefreshBags()
-            assert.are.same({ "i11", "i12", "i10", "g6" }, idsOf(tab.nodes[1].children))
+            assert.are.same({ "g6", "none" }, idsOf(tab.nodes))
         end)
 
-        it("has no loose item under Base when every item is in a group", function()
+        it("has no no-group node when every item is in a group", function()
             itemGroup["12"] = 6
             tab:RefreshBags()
-            assert.are.same({ "g2", "g6" }, idsOf(tab.nodes[1].children))
+            assert.are.same({ "g2", "g6" }, idsOf(tab.nodes))
         end)
 
         it("shows no node when the bags hold no item", function()
@@ -309,27 +319,27 @@ describe("SellingTab", function()
             tab:RefreshBags()
             assert.are.equal(1, #tab.entries)
             assert.are.equal("Linen Cloth", tab.entries[1].item.name)
-            assert.are.same({ "g1" }, idsOf(tab.nodes))
+            assert.are.same({ "none" }, idsOf(tab.nodes))
             assert.are.same({ "i10" }, idsOf(tab.nodes[1].children))
         end)
 
         it("shows the rows of the expanded groups with the name, the count and the columns", function()
             local rows = ui.tree.list.rows
-            assert.are.equal("[Base]", rows[1].label.text)
-            assert.are.equal("Copper Ore x8", rows[2].label.text)
-            assert.are.equal("[Cloth]", rows[3].label.text)
-            assert.are.equal("Linen Cloth x60", rows[4].label.text)
-            local cells = rows[4].sellParts.cells
+            assert.are.equal("[Cloth]", rows[1].label.text)
+            assert.are.equal("Linen Cloth x60", rows[2].label.text)
+            local cells = rows[2].sellParts.cells
             assert.are.equal("~100c", cells.price.text)
             assert.are.equal("Sell", cells.operation.text)
             assert.are.equal("-", cells.lowest.text)
             assert.are.equal("-", cells.net.text)
             assert.are.equal("not searched yet", cells.info.text)
-            assert.are.equal("[Bolts]", rows[5].label.text)
-            assert.are.equal("Bolt of Linen x12", rows[6].label.text)
-            assert.are.equal("[Misc]", rows[7].label.text)
-            assert.are.equal("no operation", rows[8].sellParts.cells.info.text)
-            assert.are.equal("-", rows[8].sellParts.cells.operation.text)
+            assert.are.equal("[Bolts]", rows[3].label.text)
+            assert.are.equal("Bolt of Linen x12", rows[4].label.text)
+            assert.are.equal("[Misc]", rows[5].label.text)
+            assert.are.equal("no operation", rows[6].sellParts.cells.info.text)
+            assert.are.equal("-", rows[6].sellParts.cells.operation.text)
+            assert.are.equal("[No group]", rows[7].label.text)
+            assert.are.equal("Copper Ore x8", rows[8].label.text)
         end)
 
         it("has the header columns Item, Your price, Operation, Lowest on AH, Net and Info", function()
@@ -342,32 +352,40 @@ describe("SellingTab", function()
 
         it("collapses and expands a group", function()
             ui.tree:SetCollapsed("g2", true)
-            assert.are.equal("[Misc]", ui.tree.list.rows[4].label.text)
+            assert.are.equal("[Misc]", ui.tree.list.rows[2].label.text)
             ui.tree:SetCollapsed("g2", false)
-            assert.are.equal("Linen Cloth x60", ui.tree.list.rows[4].label.text)
+            assert.are.equal("Linen Cloth x60", ui.tree.list.rows[2].label.text)
         end)
 
         it("greys the expected price until the live result and shows the columns after it", function()
-            local cells = ui.tree.list.rows[4].sellParts.cells
+            local cells = ui.tree.list.rows[2].sellParts.cells
             assert.are.same({ 0.5, 0.5, 0.5 }, { cells.price.color[1], cells.price.color[2], cells.price.color[3] })
             selectCloth()
-            cells = ui.tree.list.rows[4].sellParts.cells
+            cells = ui.tree.list.rows[2].sellParts.cells
             assert.are.equal("119c", cells.price.text)
             assert.are.equal("120c", cells.lowest.text)
             assert.are.equal("6183c", cells.net.text)
             assert.are.equal("1c under lowest", cells.info.text)
             assert.are.same({ 1, 1, 1 }, { cells.price.color[1], cells.price.color[2], cells.price.color[3] })
-            local bolts = ui.tree.list.rows[6].sellParts.cells
+            local bolts = ui.tree.list.rows[4].sellParts.cells
             assert.are.equal("149c", bolts.price.text)
             assert.are.equal("150c", bolts.lowest.text)
             assert.are.equal("1579c", bolts.net.text)
         end)
-        it("reads the bags when the tab opens and again on demand", function()
+
+        it("has no Refresh bags, Log or Dry run control", function()
+            assert.is_nil(ui.refresh)
+            assert.is_nil(ui.logButton)
+            assert.is_nil(ui.logList)
+            assert.is_nil(ui.dryRun)
+            assert.is_nil(tab.ToggleLog)
+            assert.is_nil(tab.SetDryRun)
+        end)
+
+        it("reads the bags when the tab opens and does not read them again on a tab switch", function()
             assert.are.equal(1, bagReads)
             tab:Select()
             assert.are.equal(1, bagReads)
-            click(ui.refresh)
-            assert.are.equal(2, bagReads)
         end)
     end)
 
@@ -380,9 +398,9 @@ describe("SellingTab", function()
             selectCloth()
             local rows = ui.tree.list.rows
             -- 119c x 60 = 7140c; cut 5% = 357c; deposit 3 x 200c = 600c.
-            assert.are.equal("6183c", rows[4].sellParts.cells.net.text)
+            assert.are.equal("6183c", rows[2].sellParts.cells.net.text)
             -- 149c x 12 = 1788c; cut 89c; deposit 120c.
-            assert.are.equal("1579c", rows[6].sellParts.cells.net.text)
+            assert.are.equal("1579c", rows[4].sellParts.cells.net.text)
         end)
 
         it("shows the details of the next post, with no lowest and no vs vendor line", function()
@@ -404,7 +422,7 @@ describe("SellingTab", function()
             click(ui.postNext)
             assert.are.equal("Net: " .. ns.SellingTab.ARROW_UP .. " 4122c", ui.details.net.text)
             assert.are.equal("2 x 20", ui.details.stack.text)
-            assert.are.equal("4122c", ui.tree.list.rows[4].sellParts.cells.net.text)
+            assert.are.equal("4122c", ui.tree.list.rows[2].sellParts.cells.net.text)
         end)
 
         it("moves the details to the next item when one is done", function()
@@ -422,19 +440,19 @@ describe("SellingTab", function()
                 return 100000
             end
             selectCloth()
-            local cells = ui.tree.list.rows[4].sellParts.cells
+            local cells = ui.tree.list.rows[2].sellParts.cells
             assert.is_true(cells.net.text:sub(1, 1) == "-")
             assert.are.same({ 1, 0.3, 0.3 }, color(cells.net))
             assert.are.same({ 1, 0.3, 0.3 }, color(ui.details.net))
         end)
 
         it("shows no profit for a skipped or waiting row, and clears the pane", function()
-            assert.are.equal("-", ui.tree.list.rows[4].sellParts.cells.net.text)
+            assert.are.equal("-", ui.tree.list.rows[2].sellParts.cells.net.text)
             assert.are.equal("Pick a group or an item", ui.details.name.text)
             client.rows[10] = { row(5, 1) }
             pick("i10")
             fire("ITEM_RESULTS", 10)
-            assert.are.equal("-", ui.tree.list.rows[4].sellParts.cells.net.text)
+            assert.are.equal("-", ui.tree.list.rows[2].sellParts.cells.net.text)
             -- One selected item that the rule skips shows in the pane; Post asks first.
             assert.are.equal("Linen Cloth", ui.details.name.text)
             assert.matches("The rule skips this item: below minimum", ui.details.warn.text)
@@ -524,23 +542,19 @@ describe("SellingTab", function()
         end)
 
         it("selects through a click on the row", function()
-            local rowFrame = ui.tree.list.rows[3]
+            local rowFrame = ui.tree.list.rows[1]
             rowFrame.scripts.OnClick(rowFrame, "LeftButton")
             assert.are.equal(2, #tab.selection)
         end)
 
-        it("selects every item through the Base group, and only the group below it for a subgroup", function()
-            pick("g1")
-            local keys = {}
-            for _, entry in ipairs(tab.selection) do
-                keys[#keys + 1] = entry.key
-            end
-            assert.are.same({ "12", "10", "11", "13" }, keys)
+        it("selects the items of no group through the no-group node", function()
+            pick("none")
+            assert.are.equal(1, #tab.selection)
+            assert.are.equal("12", tab.selection[1].key)
             pick("g6")
             assert.are.equal(1, #tab.selection)
             assert.are.equal("13", tab.selection[1].key)
         end)
-
         it("searches the items of the selection one at a time and decides on each result", function()
             client.rows[10] = { row(120, 1) }
             client.rows[11] = { row(150, 5) }
@@ -882,59 +896,145 @@ describe("SellingTab", function()
         end)
     end)
 
-    describe("dry run", function()
-        it("is off by default and logs only when on", function()
-            assert.is_false(tab.dryRun)
-            selectCloth()
-            ui.dryRun.checked = true
-            ui.dryRun.scripts.OnClick(ui.dryRun)
-            assert.is_true(tab.dryRun)
-            for _ = 1, 4 do
-                click(ui.postNext)
-            end
-            assert.are.equal(0, #client.posts)
-            assert.are.equal(0, #confirms)
-            assert.are.equal("done", entryOf("10").status)
-            assert.are.equal(1, bagReads)
-            local list = ns.SellingPlan.Log:List()
-            assert.are.equal("dry run", list[#list].decision)
-            assert.are.equal(149, list[#list].price)
+    describe("automatic bag reads", function()
+        it("reads the bags again on a bag event and drops an item that left the bags", function()
+            local reads = bagReads
+            bagItems = { bagItems[1], bagItems[2], bagItems[4] }
+            fire("BAG_UPDATE_DELAYED")
+            assert.are.equal(reads + 1, bagReads)
+            assert.is_nil(entryOf("12"))
+            assert.are.same({ "g2", "g6" }, idsOf(tab.nodes))
         end)
-    end)
 
-    describe("log view", function()
-        it("shows the log newest first", function()
+        it("shows a new bag item at once", function()
+            bagItems[#bagItems + 1] = { key = "14", itemID = 14, name = "Thread", count = 5, stacks = {
+                { bag = 3, slot = 1, count = 5 } } }
+            fire("BAG_UPDATE_DELAYED")
+            assert.is_not_nil(entryOf("14"))
+            assert.are.same({ "i12", "i14" }, idsOf(tab.nodes[3].children))
+        end)
+
+        it("reads the bags on the post event too", function()
+            local reads = bagReads
+            fire("CREATED")
+            assert.are.equal(reads + 1, bagReads)
+        end)
+
+        it("keeps the search results of the items", function()
             selectCloth()
+            fire("BAG_UPDATE_DELAYED")
+            assert.are.equal("ready", entryOf("10").status)
+            assert.are.equal("ready", entryOf("11").status)
+        end)
+
+        describe("with a time limit", function()
+            before_each(function()
+                tab:Unmount()
+                tab = mount({ syncInterval = 5 })
+                ui = tab.ui
+                bagReads = 0
+            end)
+
+            it("reads at once the first time and makes the later events wait for the end of the interval", function()
+                fire("BAG_UPDATE_DELAYED")
+                assert.are.equal(1, bagReads)
+                now = 1
+                fire("BAG_UPDATE_DELAYED")
+                fire("CREATED")
+                fire("BAG_UPDATE_DELAYED")
+                assert.are.equal(1, bagReads)
+                local wait = timers[#timers]
+                assert.are.equal(4, wait.seconds)
+                now = 5
+                wait.fn()
+                assert.are.equal(2, bagReads)
+            end)
+
+            it("reads at once again after the interval", function()
+                fire("BAG_UPDATE_DELAYED")
+                now = 6
+                fire("BAG_UPDATE_DELAYED")
+                assert.are.equal(2, bagReads)
+            end)
+        end)
+
+        it("waits for an open server confirm and reads the bags after it", function()
+            selectCloth()
+            client.needsConfirmation = true
             click(ui.postNext)
-            tab:ToggleLog()
-            assert.is_true(ui.logList.frame:IsShown())
-            assert.is_false(ui.tree.frame:IsShown())
-            assert.matches("Item10: post 20 at 119c", ui.logList.rows[1].parts.text)
+            local reads = bagReads
+            fire("BAG_UPDATE_DELAYED")
+            assert.are.equal(reads, bagReads)
+            confirms[1].onAccept()
+            assert.are.equal(reads + 1, bagReads)
         end)
     end)
 
     describe("rules changes", function()
         it("builds the tree again and moves an item to its new group", function()
-            assert.are.same({ "i11" }, idsOf(tab.nodes[1].children[2].children[2].children))
+            assert.are.same({ "i11" }, idsOf(tab.nodes[1].children[2].children))
             itemGroup["10"] = 6
             fire("Flipside.RulesChanged")
-            local base = tab.nodes[1]
-            assert.are.same({ "i12", "g2", "g6" }, idsOf(base.children))
-            assert.are.same({ "g3" }, idsOf(base.children[2].children))
-            assert.are.same({ "i13", "i10" }, idsOf(base.children[3].children))
+            assert.are.same({ "g2", "g6", "none" }, idsOf(tab.nodes))
+            assert.are.same({ "g3" }, idsOf(tab.nodes[1].children))
+            assert.are.same({ "i13", "i10" }, idsOf(tab.nodes[2].children))
             assert.are.equal(6, entryOf("10").groupID)
-            assert.are.equal("Linen Cloth x60", ui.tree.list.rows[8].label.text)
+            assert.are.equal("Linen Cloth x60", ui.tree.list.rows[6].label.text)
         end)
 
-        it("hides a group when its last item leaves, and shows a loose item in its new group", function()
+        it("hides a group when its last item leaves, and shows an item that has no group again", function()
             itemGroup["10"] = 6
             itemGroup["11"] = 6
             itemGroup["12"] = 6
             fire("Flipside.RulesChanged")
-            assert.are.same({ "g6" }, idsOf(tab.nodes[1].children))
+            assert.are.same({ "g6" }, idsOf(tab.nodes))
             itemGroup = {}
             fire("Flipside.RulesChanged")
+            assert.are.same({ "none" }, idsOf(tab.nodes))
             assert.are.same({ "i11", "i13", "i12", "i10" }, idsOf(tab.nodes[1].children))
+        end)
+
+        it("reads the operation, the min price and the max price of each item again", function()
+            assert.are.equal("Sell", entryOf("10").candidate.operationName)
+            assert.are.equal(10, entryOf("10").candidate.minPrice)
+            rules.GetOperation = function()
+                return { name = "Dearer", settings = {
+                    minPrice = "50", normalPrice = "100", maxPrice = "300", undercut = 1, duration = 24,
+                    vendorSkip = false,
+                } }
+            end
+            fire("Flipside.RulesChanged")
+            local candidate = entryOf("10").candidate
+            assert.are.equal("Dearer", candidate.operationName)
+            assert.are.equal(50, candidate.minPrice)
+            assert.are.equal(300, candidate.maxPrice)
+        end)
+
+        it("gives an item an operation when a rule change gives its group one", function()
+            assert.are.equal("noop", entryOf("12").status)
+            rules.EffectiveOperation = function()
+                return 7
+            end
+            fire("Flipside.RulesChanged")
+            assert.are.equal("waiting", entryOf("12").status)
+            assert.are.equal("Sell", entryOf("12").candidate.operationName)
+        end)
+
+        it("keeps the selected node and searches its items again", function()
+            selectCloth()
+            assert.are.equal("ready", entryOf("10").status)
+            rules.GetOperation = function()
+                return { name = "Dearer", settings = {
+                    minPrice = "50", normalPrice = "100", maxPrice = "300", undercut = 1, duration = 24,
+                    vendorSkip = false,
+                } }
+            end
+            fire("Flipside.RulesChanged")
+            assert.are.equal("g2", tab.selectedId)
+            assert.are.equal("g2", ui.tree.selected)
+            assert.are.equal(2, #tab.selection)
+            assert.are.equal("searching", entryOf("10").status)
+            assert.are.same({ 10, 11, 10 }, client.searches)
         end)
 
         it("takes the selection again from the new tree", function()
@@ -950,28 +1050,61 @@ describe("SellingTab", function()
             assert.are.equal("g6", tab.selectedId)
         end)
 
-        it("makes no search and no post", function()
+        it("makes no post", function()
             itemGroup["10"] = 6
             fire("Flipside.RulesChanged")
-            assert.are.same({}, client.searches)
             assert.are.equal(0, #client.posts)
+        end)
+
+        it("waits while the tab is hidden and reads when it shows", function()
+            tab:Deselect()
+            local reads = bagReads
+            itemGroup["10"] = 6
+            fire("Flipside.RulesChanged")
+            assert.are.equal(reads, bagReads)
+            tab:Select()
+            assert.are.equal(reads + 1, bagReads)
+            assert.are.same({ "i13", "i10" }, idsOf(tab.nodes[2].children))
+            tab:Select()
+            assert.are.equal(reads + 1, bagReads)
+        end)
+
+        it("waits for an open server confirm", function()
+            selectCloth()
+            client.needsConfirmation = true
+            click(ui.postNext)
+            local reads = bagReads
+            itemGroup["10"] = 6
+            fire("Flipside.RulesChanged")
+            assert.are.equal(reads, bagReads)
+            confirms[1].onAccept()
+            assert.is_true(bagReads > reads)
+            assert.are.equal(6, entryOf("10").groupID)
         end)
     end)
 
-    describe("Base and Post all", function()
+    describe("Post all", function()
         local function searchAll()
             client.rows[10] = { row(120, 1) }
             client.rows[11] = { row(150, 5) }
-            pick("g1")
+            pick("g2")
             fire("ITEM_RESULTS", 10)
             fire("COMMODITY_RESULTS", 11)
         end
 
-        it("posts every item under Base, each by the rules of its own group", function()
+        it("is off with nothing selected, and makes no confirm and no post", function()
+            assert.are.equal(0, #tab.selection)
+            assert.is_false(ui.postAll.enabled)
+            local ok, why = tab:PostAll()
+            assert.is_false(ok)
+            assert.are.equal("select a group first", why)
+            click(ui.postAll)
+            assert.are.equal(0, #confirms)
+            assert.are.equal(0, #client.posts)
+        end)
+
+        it("posts the selected group and its subgroups, each item by its own rules", function()
             searchAll()
-            assert.are.equal("ready", entryOf("10").status)
-            assert.are.equal("ready", entryOf("11").status)
-            assert.are.equal("noop", entryOf("12").status)
             click(ui.postAll)
             confirms[1].onAccept()
             for _ = 1, 3 do
@@ -984,7 +1117,7 @@ describe("SellingTab", function()
             assert.are.equal(149, client.posts[4].unitPrice)
         end)
 
-        it("posts only the items of the selected group and its subgroups", function()
+        it("posts only the items of the selected subgroup", function()
             searchAll()
             pick("g3")
             click(ui.postAll)
@@ -992,6 +1125,31 @@ describe("SellingTab", function()
             assert.are.equal(1, #client.posts)
             assert.are.equal("commodity", client.posts[1].kind)
             pick("g6")
+            assert.is_false(ui.postAll.enabled)
+        end)
+
+        it("posts the items of the no-group node", function()
+            rules.EffectiveOperation = function()
+                return 7
+            end
+            tab:RefreshBags()
+            ui = tab.ui
+            client.commodity[12] = true
+            client.rows[12] = { row(150, 5) }
+            pick("none")
+            fire("COMMODITY_RESULTS", 12)
+            assert.are.equal("ready", entryOf("12").status)
+            assert.is_true(ui.postAll.enabled)
+            click(ui.postAll)
+            confirms[1].onAccept()
+            assert.are.equal(1, #client.posts)
+            assert.are.same({ 2, 2 }, { client.posts[1].bag, client.posts[1].slot })
+        end)
+
+        it("is off again when the selection ends", function()
+            searchAll()
+            assert.is_true(ui.postAll.enabled)
+            tab:RefreshBags()
             assert.is_false(ui.postAll.enabled)
         end)
 
@@ -1029,14 +1187,6 @@ describe("SellingTab", function()
             assert.matches("Post 1 auctions%? Total deposit: 120c", confirms[2].text)
         end)
 
-        it("asks nothing in a dry run", function()
-            searchAll()
-            tab:SetDryRun(true)
-            click(ui.postAll)
-            assert.are.equal(0, #confirms)
-            assert.are.equal("dry run", ns.SellingPlan.Log:List()[#ns.SellingPlan.Log:List()].decision)
-        end)
-
         it("makes the post call only in the accept of the confirm", function()
             searchAll()
             tab:PostAll()
@@ -1069,7 +1219,7 @@ describe("SellingTab", function()
         it("shows the name as the item link in the quality colour", function()
             bagItems[4].link = LINK
             tab:RefreshBags()
-            assert.are.equal(LINK .. " x60", ui.tree.list.rows[4].label.text)
+            assert.are.equal(LINK .. " x60", ui.tree.list.rows[2].label.text)
         end)
 
         it("colours a link that has no colour with the quality colour", function()
@@ -1078,13 +1228,13 @@ describe("SellingTab", function()
                 return "|Hitem:" .. id .. "::::|h[Linen Cloth]|h", 1
             end })
             ui = tab.ui
-            assert.are.equal("|cff1eff00|Hitem:10::::|h[Linen Cloth]|h|r x60", ui.tree.list.rows[4].label.text)
+            assert.are.equal("|cff1eff00|Hitem:10::::|h[Linen Cloth]|h|r x60", ui.tree.list.rows[2].label.text)
         end)
 
         it("shows the item tooltip on hover and hides it on leave", function()
             bagItems[4].link = LINK
             tab:RefreshBags()
-            local rowFrame = ui.tree.list.rows[4]
+            local rowFrame = ui.tree.list.rows[2]
             rowFrame.scripts.OnEnter(rowFrame)
             assert.are.equal("item:10::::", mock.tooltip.hyperlink)
             assert.is_true(mock.tooltip.shown)
@@ -1092,29 +1242,29 @@ describe("SellingTab", function()
             assert.is_false(mock.tooltip.shown)
         end)
 
-        it("puts the link in the chat box on a shift-click and does not select the rowFrame", function()
+        it("puts the link in the chat box on a shift-click and does not select the row", function()
             bagItems[4].link = LINK
             tab:RefreshBags()
-            local rowFrame = ui.tree.list.rows[4]
+            local rowFrame = ui.tree.list.rows[2]
             _G.shiftDown = true
             rowFrame.scripts.OnClick(rowFrame, "LeftButton")
             assert.are.equal(LINK, inserted)
             assert.are.equal(0, #tab.selection)
         end)
 
-        it("selects the rowFrame on a plain click", function()
+        it("selects the row on a plain click", function()
             bagItems[4].link = LINK
             tab:RefreshBags()
-            local rowFrame = ui.tree.list.rows[4]
+            local rowFrame = ui.tree.list.rows[2]
             rowFrame.scripts.OnClick(rowFrame, "LeftButton")
             assert.is_nil(inserted)
             assert.are.equal(1, #tab.selection)
         end)
 
-        it("gives a group rowFrame no tooltip", function()
+        it("gives a group row no tooltip", function()
             bagItems[4].link = LINK
             tab:RefreshBags()
-            local rowFrame = ui.tree.list.rows[3]
+            local rowFrame = ui.tree.list.rows[1]
             assert.is_nil(rowFrame.scripts.OnEnter)
         end)
     end)
@@ -1127,8 +1277,6 @@ describe("SellingTab", function()
             fire("CREATED", 5)
             pick("g6")
             pick("g2")
-            tab:ToggleLog()
-            tab:SetDryRun(false)
             tab:Select()
             tab:Stop()
             tab:RefreshBags()

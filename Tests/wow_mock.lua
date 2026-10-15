@@ -245,6 +245,10 @@ function frameMethods:SetNumeric(numeric)
     self.numeric = numeric
 end
 
+function frameMethods:SetMaxLetters(count)
+    self.maxLetters = count
+end
+
 -- GetWidth and GetHeight are set per object in newObject; UIParent has none, as specs for the window rely on it.
 local function getWidth(self)
     return self.width or 0

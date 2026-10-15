@@ -4,7 +4,7 @@ local mock = require("Tests.wow_mock")
 local function loadModules()
     local ns = { ReportError = function() end }
     for _, name in ipairs({ "EventBus", "ItemString", "ScanKey", "BagItems", "SellingPlan", "Theme", "Widgets",
-        "Window", "List", "Columns", "Tree", "AuctionTabs", "SellingTab" }) do
+        "MoneyInput", "Window", "List", "Columns", "Tree", "AuctionTabs", "SellingTab" }) do
         assert(loadfile(manifest.path(name)))("Flipside", ns)
     end
     return ns
@@ -143,9 +143,13 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
         return { label.color[1], label.color[2], label.color[3] }
     end
 
+    -- Fill the gold, silver and copper boxes as the user does, from a text like "1g 20s 5c".
     local function type_(text)
-        ui.details.priceInput:SetText(text)
-        ui.details.priceInput.scripts.OnTextChanged(ui.details.priceInput)
+        local money = ui.details.priceInput
+        money.gold:SetText(text:match("(%d+)g") or "")
+        money.silver:SetText(text:match("(%d+)s") or "")
+        money.copper:SetText(text:match("(%d+)c") or "")
+        money.gold.scripts.OnTextChanged(money.gold)
     end
 
     local function selectCloth()
@@ -166,6 +170,7 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
                 bagReads = bagReads + 1
                 return bagItems
             end,
+            syncInterval = 0,
             maxStack = function(id) return id == 10 and 20 or 1 end,
             vendorPrice = function(id) return vendor[id] end,
             -- The Post all confirm accepts at once; the server confirm of a post stays open.
@@ -227,47 +232,27 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
         mock.teardown()
     end)
 
-    describe("the price parse function", function()
-        local parse = function(text)
-            return ns.SellingTab.ParsePrice(text)
-        end
-
-        it("reads gold, silver and copper", function()
-            assert.are.equal(12000, parse("1g 20s"))
-            assert.are.equal(12000, parse("120s"))
-            assert.are.equal(12000, parse("12000"))
-            assert.are.equal(10205, parse("1G2s5C"))
-            assert.are.equal(10205, parse("  1g   2s  5c "))
-            assert.are.equal(7, parse("7c"))
-            assert.are.equal(5, parse("5"))
+    describe("the price check", function()
+        it("accepts a price from 1 copper up to the limit", function()
+            assert.are.equal(1, ns.SellingTab.CheckPrice(1))
+            assert.are.equal(12000, ns.SellingTab.CheckPrice(12000))
+            assert.are.equal(100000000000, ns.SellingTab.CheckPrice(100000000000))
         end)
 
-        it("refuses text that is not a price, with a reason", function()
-            for _, text in ipairs({ "", "   ", "abc", "1.5g", "-5", "0", "0g", "1x", "g", "1g 1g", "5c 1g", "1g,20s",
-                "1 g 20", "99999999999999999999g" }) do
-                local price, why = parse(text)
-                assert.is_nil(price, text)
+        it("refuses 0, a price that is too large and a value that is not a number, with a reason", function()
+            for _, value in ipairs({ 0, -5, 100000000001 }) do
+                local price, why = ns.SellingTab.CheckPrice(value)
+                assert.is_nil(price, value)
                 assert.is_string(why)
             end
-            assert.is_nil((parse(nil)))
-        end)
-
-        it("writes a price as text that it reads back", function()
-            assert.are.equal("1g 20s", ns.SellingTab.PriceText(12000))
-            assert.are.equal("1s 19c", ns.SellingTab.PriceText(119))
-            assert.are.equal("1g 5c", ns.SellingTab.PriceText(10005))
-            assert.are.equal("20s", ns.SellingTab.PriceText(2000))
-            for _, copper in ipairs({ 1, 99, 100, 10001, 123456789 }) do
-                assert.are.equal(copper, parse(ns.SellingTab.PriceText(copper)))
-            end
+            assert.is_nil((ns.SellingTab.CheckPrice(nil)))
         end)
     end)
-
     describe("the price box", function()
         it("holds the suggested price and the user can change it", function()
             selectCloth()
-            assert.are.equal("1s 19c", ui.details.priceInput.text)
-            assert.is_true(ui.details.priceInput.enabled)
+            assert.are.equal(119, ui.details.priceInput:GetCopper())
+            assert.is_true(ui.details.priceInput.gold.enabled)
         end)
 
         it("posts an item at the typed price", function()
@@ -287,7 +272,7 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
         it("posts a commodity at the typed price for each item", function()
             selectCloth()
             pick("i11")
-            assert.are.equal("1s 49c", ui.details.priceInput.text)
+            assert.are.equal(149, ui.details.priceInput:GetCopper())
             type_("50s")
             click(ui.postNext)
             assert.are.equal("commodity", client.posts[1].kind)
@@ -312,7 +297,7 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
         it("refuses an invalid price with a message and posts nothing", function()
             selectCloth()
             pick("i10")
-            type_("12 apples")
+            type_("")
             assert.matches("^Invalid price", ui.details.warn.text)
             assert.are.same({ 1, 0.3, 0.3 }, color(ui.details.warn))
             local ok, why = tab:PostNext()
@@ -332,9 +317,9 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
             pick("i10")
             type_("1g")
             pick("i11")
-            assert.are.equal("1s 49c", ui.details.priceInput.text)
+            assert.are.equal(149, ui.details.priceInput:GetCopper())
             pick("i10")
-            assert.are.equal("1s 19c", ui.details.priceInput.text)
+            assert.are.equal(119, ui.details.priceInput:GetCopper())
         end)
 
         it("uses the typed price only for the item that shows", function()
@@ -346,7 +331,7 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
             end
             assert.are.equal(10000 * 20, client.posts[1].buyout)
             -- The next entry is the commodity: its own suggested price.
-            assert.are.equal("1s 49c", ui.details.priceInput.text)
+            assert.are.equal(149, ui.details.priceInput:GetCopper())
             click(ui.postAll)
             assert.are.equal(149, client.posts[4].unitPrice)
         end)
@@ -471,16 +456,6 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
             assert.matches("Sells for more at a vendor", warns[1].text)
         end)
 
-        it("does not ask in a dry run", function()
-            vendor[10] = 200
-            selectCloth()
-            pick("i10")
-            tab:SetDryRun(true)
-            click(ui.postNext)
-            assert.are.equal(0, #warns)
-            assert.are.equal("dry run", ns.SellingPlan.Log:List()[1].decision)
-        end)
-
         it("uses a square Kit window with the item link in the quality colour", function()
             local seen, window
             local create = ns.Kit.CreateWindow
@@ -571,7 +546,7 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
             client.rows[10] = { row(5, 1) }
             pick("i10")
             fire("ITEM_RESULTS", 10)
-            ui.details.priceInput:SetText("25c")
+            type_("25c")
             click(ui.postNext)
             assert.matches("The rule skips this item", warns[1].text)
             assert.is_nil(warns[1].text:match("below the minimum price"))
@@ -741,34 +716,13 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
             assert.are.equal(1, #confirms)
         end)
 
-        it("asks no deposit confirm in a dry run", function()
-            selectCloth()
-            tab:SetDryRun(true)
-            click(ui.postAll)
-            assert.are.equal(0, #confirms)
-            assert.are.equal("dry run", ns.SellingPlan.Log:List()[#ns.SellingPlan.Log:List()].decision)
-        end)
-
-        it("posts everything under Base, each item by its own group rules", function()
-            selectCloth()
-            pick("g1")
-            for _ = 1, 4 do
-                click(ui.postAll)
-            end
-            assert.are.equal(4, #client.posts)
-            assert.are.equal(1, #confirms)
-            -- The widget has no operation and the Base root has no loose item here.
-            for _, post in ipairs(client.posts) do
-                assert.are_not.equal(2, post.bag)
-            end
-        end)
     end)
 
     describe("the list columns", function()
         it("lines up the cells with the header at every depth of the tree", function()
             selectCloth()
             local headerX = ui.headers.labels.price.points[1][4] - ui.tree.contentInsets.left
-            for id, depth in pairs({ i13 = 3, i10 = 3, i11 = 4 }) do
+            for id, depth in pairs({ i13 = 2, i10 = 2, i11 = 3 }) do
                 local drawn = draw(id)
                 local cell = drawn.sellParts.cells.price
                 assert.are.equal(headerX, cell.points[1][4] + (depth - 1) * 14, id)
@@ -800,8 +754,8 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
             skipLinen()
             assert.are.equal("skip", entryOf("10").status)
             assert.is_true(ui.postNext.enabled)
-            assert.are.equal("4c", ui.details.priceInput.text)
-            ui.details.priceInput:SetText("25c")
+            assert.are.equal(4, ui.details.priceInput:GetCopper())
+            type_("25c")
             click(ui.postNext)
             assert.are.equal(0, #client.posts)
             assert.are.equal(1, #warns)
@@ -819,7 +773,7 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
 
         it("needs a price when the rule has none", function()
             skipLinen()
-            ui.details.priceInput:SetText("")
+            type_("")
             click(ui.postNext)
             assert.are.equal(0, #warns)
             assert.matches("^invalid price", ui.message.text)
@@ -971,7 +925,7 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
             client.rows[10] = { row(5, 1) }
             pick("i10")
             fire("ITEM_RESULTS", 10)
-            ui.details.priceInput:SetText("25c")
+            type_("25c")
             click(ui.postNext)
             warns[1].onYes()
             assert.are.equal(5, client.posts[1].quantity)
@@ -992,7 +946,7 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
             pick("i11")
             fire("COMMODITY_RESULTS", 11)
             assert.are.equal("skip", entryOf("11").status)
-            ui.details.priceInput:SetText("25c")
+            type_("25c")
             click(ui.postNext)
             warns[1].onYes()
             assert.are.equal(8, client.posts[1].quantity)
@@ -1053,7 +1007,7 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
             selectCloth()
             pick("i10")
             assert.is_true(ui.postNext.enabled)
-            assert.are.equal("1s 19c", ui.details.priceInput.text)
+            assert.are.equal(119, ui.details.priceInput:GetCopper())
             click(ui.postNext)
             assert.are.equal(0, #client.posts)
             assert.matches("The rule skips this item: vendor pays more, skipped", warns[1].text)
@@ -1108,17 +1062,6 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
             assert.is_true(has(ids, "i11"))
             -- The queue keeps its count.
             assert.are.equal("Posting 4 of 4", ui.progress.text)
-        end)
-
-        it("keeps an item in the list while a dry run runs", function()
-            selectCloth()
-            tab:SetDryRun(true)
-            for _ = 1, 3 do
-                click(ui.postNext)
-            end
-            assert.is_true(has(visibleIds(), "i10"))
-            fire("BAG_UPDATE_DELAYED")
-            assert.are.equal(1, bagReads)
         end)
 
         it("shows the rest of a stack that is only partly posted", function()
