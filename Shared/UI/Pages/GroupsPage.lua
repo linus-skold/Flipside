@@ -6,6 +6,7 @@ local GroupsPage = {}
 ns.GroupsPage = GroupsPage
 
 local BASE_ID = 1
+local NO_GROUP_TEXT = "[No group]"
 local INHERIT = 0
 local MAX_RESULTS = 20
 local RIGHT = 260
@@ -192,12 +193,21 @@ function GroupsPage.Build(content, deps)
     page.nameInput = Kit.Input(content, 236, nil, nil, { placeholder = "<group name>" })
     place(page.nameInput, 6, 338)
 
-    local function onNew()
-        local id, message = rules:CreateGroup(page.selected, page.nameInput:GetText())
+    -- A new group goes below the selected group. With parentID = BASE_ID it is a root group (a top-level group).
+    local function create(parentID)
+        local id, message = rules:CreateGroup(parentID, page.nameInput:GetText())
         if report(id, message) then
             page.nameInput:SetText("")
         end
         refresh()
+    end
+
+    local function onNew()
+        create(page.selected)
+    end
+
+    local function onNewRoot()
+        create(BASE_ID)
     end
 
     local function onRename()
@@ -291,10 +301,13 @@ function GroupsPage.Build(content, deps)
         page.importDialog:Open("Import below " .. tostring(rules:Name(page.selected)), "", onImportText)
     end
 
-    page.newButton = Kit.Button(content, "New group", 100, onNew)
+    page.newButton = Kit.Button(content, "New group", 78, onNew)
     place(page.newButton, 0, 364)
-    page.importButton = Kit.Button(content, "Import", 100, onImport)
-    page.importButton:SetPoint("LEFT", page.newButton, "RIGHT", gap, 0)
+    page.newRootButton = Kit.Button(content, "New root", 78, onNewRoot)
+    page.newRootButton:SetPoint("LEFT", page.newButton, "RIGHT", gap, 0)
+    Kit.Tooltip(page.newRootButton, "New root group", { "Makes a top-level group, whatever group is selected." })
+    page.importButton = Kit.Button(content, "Import", 78, onImport)
+    page.importButton:SetPoint("LEFT", page.newRootButton, "RIGHT", gap, 0)
 
     -- Right-click menu of a tree row. Rename uses the text of the name box.
     function onRightClick(id, row)
@@ -707,7 +720,14 @@ function GroupsPage.Build(content, deps)
             page.selected = BASE_ID
         end
         page.tree.selected = page.selected
-        page.tree:SetNodes({ nodeFor(BASE_ID) })
+        -- The roots are the top-level groups. Base stays hidden; its node "[No group]" holds the rules that
+        -- every group and every item of no group inherits.
+        local roots = {}
+        for _, childID in ipairs(rules:Children(BASE_ID)) do
+            roots[#roots + 1] = nodeFor(childID)
+        end
+        roots[#roots + 1] = { id = BASE_ID, text = NO_GROUP_TEXT, children = {} }
+        page.tree:SetNodes(roots)
     end
 
     local function setEnabled(frame, enabled)
@@ -720,7 +740,14 @@ function GroupsPage.Build(content, deps)
         local canEdit = editable()
         local canAdd = canEdit and not isBase
         local canShare = deps.customSources ~= nil
-        page.header:SetText(table.concat(rules:Path(id) or {}, " > "))
+        -- Base is hidden: the path starts below it, and the Base node reads "[No group]".
+        local names = {}
+        for position, name in ipairs(rules:Path(id) or {}) do
+            if position > 1 then
+                names[#names + 1] = name
+            end
+        end
+        page.header:SetText(isBase and NO_GROUP_TEXT or table.concat(names, " > "))
 
         for _, opType in ipairs(ns.OperationSchema.TYPES) do
             local row = page.opRows[opType]
@@ -746,6 +773,7 @@ function GroupsPage.Build(content, deps)
 
         setEnabled(page.nameInput, canEdit)
         setEnabled(page.newButton, canEdit)
+        setEnabled(page.newRootButton, canEdit)
         setEnabled(page.importButton, canShare and canEdit)
         setEnabled(page.bagsButton, canAdd)
         setEnabled(page.addInput, canAdd)

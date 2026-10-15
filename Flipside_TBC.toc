@@ -58,6 +58,7 @@ Shared\Services\LedgerBalance.lua
 Shared\UI\Kit\Theme.lua
 Shared\UI\Kit\Window.lua
 Shared\UI\Kit\Widgets.lua
+Shared\UI\Kit\MoneyInput.lua
 Shared\UI\Kit\Tabs.lua
 Shared\UI\Kit\List.lua
 Shared\UI\Kit\Columns.lua
