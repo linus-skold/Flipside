@@ -175,7 +175,8 @@ function MainWindow.Create(deps)
     else
         cog:SetPoint("TOPRIGHT", window, "TOPRIGHT", -30, -4)
     end
-    cog:SetFrameLevel(window:GetFrameLevel() + 10)
+    -- The title container takes mouse clicks, so the cog must sit above it.
+    cog:SetFrameLevel((window.TitleContainer or window):GetFrameLevel() + 10)
     cog:SetNormalTexture(COG_ICON)
     cog:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
     cog:SetScript("OnClick", function()
