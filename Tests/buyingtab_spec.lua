@@ -805,6 +805,180 @@ describe("BuyingTab", function()
             assert.is_nil(dialog("FlipsideBuyConfirm"))
         end)
     end)
+
+    describe("selecting a price level", function()
+        local function click(button)
+            assert.is_true(button.enabled ~= false, "the button is off")
+            client.inClick = true
+            button.scripts.OnClick(button)
+            client.inClick = false
+        end
+
+        local function dialog(name)
+            for _, frame in ipairs(mock.frames) do
+                if frame.name == name then
+                    return frame
+                end
+            end
+        end
+
+        local function lastLog()
+            local list = ns.BuyingPlan.Log:List()
+            return list[#list]
+        end
+
+        local function auction(id, price, own)
+            return { auctionID = id, unitPrice = price, quantity = 1, isCommodity = false, buyout = price,
+                ownerItem = own or false }
+        end
+
+        local function search(rows)
+            client.rows[10] = rows
+            tab:Select_("10")
+            tab:Search()
+            fire("ITEM_RESULTS", 10)
+        end
+
+        local function pick(index)
+            local level = ui.rowsList.rows[index]
+            level.scripts.OnClick(level)
+        end
+
+        it("selects a row with the highlight and names the button", function()
+            search({ auction(1, 30), auction(2, 40) })
+            assert.are.equal("Buy next", ui.buyNext.text)
+            pick(2)
+            assert.are.equal("Buy selected", ui.buyNext.text)
+            assert.is_true(ui.rowsList.rows[2].selection:IsShown())
+            assert.is_false(ui.rowsList.rows[1].selection:IsShown())
+            assert.is_true(ui.buyNext.enabled)
+            assert.matches("Buy selected: 1 at 40c", ui.summary.text)
+        end)
+
+        it("clears the selection on a second click on the same row", function()
+            search({ auction(1, 30), auction(2, 40) })
+            pick(2)
+            pick(2)
+            assert.are.equal("Buy next", ui.buyNext.text)
+            assert.is_false(ui.rowsList.rows[2].selection:IsShown())
+        end)
+
+        it("buys the selected level, not the cheapest", function()
+            search({ auction(1, 30), auction(2, 40) })
+            pick(2)
+            click(ui.buyNext)
+            assert.are.same({}, client.calls)
+            click(dialog("FlipsideBuyJump").yesButton)
+            click(dialog("FlipsideBuyConfirm").yesButton)
+            assert.are.same({ { "bid", 2, 40 } }, client.calls)
+            assert.are.same({}, client.violations)
+        end)
+
+        it("compares the selected level with the cheapest level for the jump warning", function()
+            search({ auction(1, 30), auction(2, 40) })
+            pick(2)
+            click(ui.buyNext)
+            local warning = dialog("FlipsideBuyJump")
+            assert.is_true(warning:IsShown())
+            assert.are.equal("Price jumps from 30c to 40c (+33%). Keep buying?", warning.text.text)
+            assert.are.same({}, client.calls)
+        end)
+
+        it("shows no warning when the selected level is within the threshold", function()
+            search({ auction(1, 30), auction(2, 36) })
+            pick(2)
+            click(ui.buyNext)
+            assert.is_nil(dialog("FlipsideBuyJump"))
+            assert.is_true(dialog("FlipsideBuyConfirm"):IsShown())
+            click(dialog("FlipsideBuyConfirm").yesButton)
+            assert.are.same({ { "bid", 2, 36 } }, client.calls)
+        end)
+
+        it("keeps Buy next with no selection", function()
+            search({ auction(1, 30), auction(2, 40) })
+            click(ui.buyNext)
+            click(dialog("FlipsideBuyConfirm").yesButton)
+            assert.are.same({ { "bid", 1, 30 } }, client.calls)
+        end)
+
+        it("selects an own row but turns the button off with a reason", function()
+            search({ auction(1, 30), auction(2, 40, true) })
+            pick(2)
+            assert.is_true(ui.rowsList.rows[2].selection:IsShown())
+            assert.is_false(ui.buyNext.enabled)
+            assert.are.equal("own listing", ui.message.text)
+            assert.is_false((tab:BuyNext()))
+            assert.are.same({}, client.calls)
+        end)
+
+        it("selects an above max row but turns the button off with a reason", function()
+            tab.deps.rules.GetOperation = function()
+                return { name = "Cheap", settings = { maxPrice = "100", showAboveMax = true } }
+            end
+            tab:RefreshList()
+            search({ auction(1, 30), auction(2, 150) })
+            assert.are.equal("Above max", ui.rowsList.rows[2].cells.status.text)
+            pick(2)
+            assert.is_true(ui.rowsList.rows[2].selection:IsShown())
+            assert.is_false(ui.buyNext.enabled)
+            assert.are.equal("above max price", ui.message.text)
+            assert.is_false((tab:BuyNext()))
+        end)
+
+        it("keeps the selection on the same level after a new result", function()
+            search({ auction(1, 30), auction(2, 40), auction(3, 50) })
+            pick(2)
+            client.rows[10] = { auction(2, 40), auction(3, 50), auction(4, 40) }
+            tab:Search()
+            fire("ITEM_RESULTS", 10)
+            assert.are.equal(40, tab.levelSel)
+            assert.are.equal("Buy selected", ui.buyNext.text)
+            assert.is_true(ui.rowsList.rows[1].selection:IsShown())
+        end)
+
+        it("clears the selection when the level is gone", function()
+            search({ auction(1, 30), auction(2, 40) })
+            pick(2)
+            client.rows[10] = { auction(1, 30) }
+            tab:Search()
+            fire("ITEM_RESULTS", 10)
+            assert.is_nil(tab.levelSel)
+            assert.are.equal("Buy next", ui.buyNext.text)
+        end)
+
+        it("clears the selection when another item is picked", function()
+            search({ auction(1, 30), auction(2, 40) })
+            pick(2)
+            tab:Select_("11")
+            assert.is_nil(tab.levelSel)
+        end)
+
+        it("logs the selected level in dry run", function()
+            search({ auction(1, 30), auction(2, 40) })
+            tab:SetDryRun(true)
+            pick(2)
+            click(ui.buyNext)
+            assert.are.same({}, client.calls)
+            assert.are.equal("would buy 1 at 40c", lastLog().decision)
+            assert.are.equal("dry run", lastLog().reason)
+        end)
+
+        it("buys a commodity only from the cheapest level", function()
+            client.rows[10] = { row(50, 3), row(60, 2) }
+            tab:Select_("10")
+            tab:Search()
+            fire("COMMODITY_RESULTS", 10)
+            pick(2)
+            assert.is_false(ui.buyNext.enabled)
+            assert.are.equal("a commodity buy starts at the cheapest level", ui.message.text)
+            pick(2)
+            pick(1)
+            assert.is_true(ui.buyNext.enabled)
+            click(ui.buyNext)
+            assert.are.same({ { "start", 10, 3 } }, client.calls)
+        end)
+    end)
+
     describe("registry", function()
         it("registers the Buying tab for hosts with many tabs", function()
             local spec = ns.AuctionTabs.List()[1]
