@@ -131,4 +131,42 @@ describe("Kit columns", function()
         Kit.LayoutColumnLabels(header.labels, header.frame, cols, { gap = 10 })
         assert.is_true(header.labels.b.shown)
     end)
-end)
+
+    it("splits the width in equal shares for share columns", function()
+        local cols = { { key = "a", width = { share = 1 }, number = true }, { key = "b", width = { share = 1 } } }
+        local layout = Kit.ColumnLayout(cols, 206, { gap = 6, left = 4, right = 16 })
+        assert.are.same({ 90, 90 }, { layout[1].width, layout[2].width })
+        assert.are.equal(4, layout[1].x)
+        assert.are.equal(100, layout[2].x)
+        assert.are.equal("RIGHT", layout[1].justify)
+        local three = { { key = "a", width = { share = 1 } }, { key = "b", width = { share = 1 } },
+            { key = "c", width = { share = 1 } } }
+        assert.are.same({ 30, 30, 30 }, { Kit.ColumnLayout(three, 102, { gap = 6 })[1].width,
+            Kit.ColumnLayout(three, 102, { gap = 6 })[2].width, Kit.ColumnLayout(three, 102, { gap = 6 })[3].width })
+    end)
+
+    it("gives a weighted share and keeps fixed columns", function()
+        local cols = { { key = "a", width = 50 }, { key = "b", width = { share = 1 } },
+            { key = "c", width = { share = 3 } } }
+        local layout = Kit.ColumnLayout(cols, 200, { gap = 0 })
+        assert.are.same({ 50, 37.5, 112.5 }, { layout[1].width, layout[2].width, layout[3].width })
+    end)
+
+    it("refuses a fill column with share columns, and anchors for share columns", function()
+        local mixed = { { key = "a" }, { key = "b", width = { share = 1 } } }
+        assert.has_error(function() Kit.ColumnLayout(mixed, 100) end)
+        assert.has_error(function() Kit.ColumnAnchors({ { key = "b", width = { share = 1 } } }) end)
+    end)
+
+    it("places share labels by the parent width and again when it changes", function()
+        local cols = { { key = "a", title = "A", width = { share = 1 }, number = true },
+            { key = "b", title = "B", width = { share = 1 }, number = true } }
+        local header = Kit.CreateColumnHeader(CreateFrame("Frame"), cols, { gap = 6 })
+        local frame = header.frame
+        frame.GetWidth = function() return 106 end
+        frame.scripts.OnSizeChanged(frame)
+        assert.are.same({ 50, 50 }, { header.labels.a.width, header.labels.b.width })
+        assert.are.equal("RIGHT", header.labels.a.justifyH)
+        frame.GetWidth = function() return 206 end
+        frame.scripts.OnSizeChanged(frame)
+        assert.are.same({ 100, 100 }, { header.labels.a.width, header.labels.b.width })    end)end)

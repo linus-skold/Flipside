@@ -144,6 +144,7 @@ end
 -- rows: live rows sorted by unitPrice. Rows: { auctionID, unitPrice, quantity, isCommodity, ownerItem }.
 -- opts: isOwn(row), maxStack (default 1), isCommodity (default: from the first row).
 -- Returns { action, price, quantity, auctions, duration, reason, key, competitor }.
+-- A skip that has a price in mind also gives it as "suggested" (the UI shows it for a manual post).
 function SellingPlan.Decide(candidate, rows, opts)
     opts = opts or {}
     rows = rows or {}
@@ -196,10 +197,12 @@ function SellingPlan.Decide(candidate, rows, opts)
         if s.belowMin == "postAtMin" then
             price, why = candidate.minPrice, "below min, at min"
         else
+            info.suggested = math.max(1, math.floor(price))
             return Skip(candidate, "below minimum", info)
         end
     end
     price = math.max(1, math.floor(price))
+    info.suggested = price
     if ownLowest and ownLowest <= price then
         return Skip(candidate, "already lowest", info)
     end

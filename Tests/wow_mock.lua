@@ -510,8 +510,24 @@ function M.reset(options)
     _G.InCombatLockdown = function()
         return M.inCombat
     end
-    _G.GetMoneyString = function(copper)
-        return copper .. "c"
+    -- With one argument: plain copper text. With separateThousands: the client letter format
+    -- (Colorblind Mode on), as ns.TooltipLines.FormatMoney calls it.
+    _G.GetMoneyString = function(copper, separate)
+        if not separate then
+            return copper .. "c"
+        end
+        local g, s, c = math.floor(copper / 10000), math.floor((copper % 10000) / 100), copper % 100
+        local gold = tostring(g)
+        local prev
+        repeat
+            prev = gold
+            gold = gold:gsub("^(%d+)(%d%d%d)", "%1,%2")
+        until gold == prev
+        local out = {}
+        if g > 0 then out[#out + 1] = gold .. "g" end
+        if s > 0 then out[#out + 1] = s .. "s" end
+        if c > 0 or #out == 0 then out[#out + 1] = c .. "c" end
+        return table.concat(out, " ")
     end
     _G.PanelTemplates_SetNumTabs = function(frame, num)
         table.insert(M.tabCalls, { "num", frame, num })
