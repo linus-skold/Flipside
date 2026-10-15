@@ -249,6 +249,10 @@ function frameMethods:SetTextColor(r, g, b, a)
     self.color = { r, g, b, a }
 end
 
+function frameMethods:SetAlpha(alpha)
+    self.alpha = alpha
+end
+
 function frameMethods:SetBlendMode(mode)
     self.blendMode = mode
 end

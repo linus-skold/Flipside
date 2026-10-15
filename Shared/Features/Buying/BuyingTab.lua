@@ -15,6 +15,8 @@ local CONFIRM_WAIT = 15
 local DEFAULT_JUMP = 25
 local JUMP_KEY = "buying.jumpPercent"
 local RED = { 1, 0.2, 0.2 }
+-- The text for the amount box when the input is not a positive whole number.
+local AMOUNT_TEXT = "amount must be a whole number above 0"
 
 local function money(copper)
     return GetMoneyString(math.floor((copper or 0) + 0.5))
@@ -59,16 +61,6 @@ end
 function BuyingTab.StackPrice(level)
     local size = BuyingTab.StackSize(level)
     return size and level.unitPrice * size or nil
-end
-
--- The text of the Status column. Only "Yours" and "Above max" show; a level to buy shows no text.
-function BuyingTab.StatusText(state)
-    if state == "own" then
-        return "Yours"
-    elseif state == "above" then
-        return "Above max"
-    end
-    return ""
 end
 
 -- Build the price level rows to show. state is "buy", "above" or "own".
@@ -750,6 +742,25 @@ local function cheapestBuyable(levels)
     return levels[1]
 end
 
+-- Set the amount of units from the text of the amount box. Empty means all units up to the level. Any other text
+-- must be a whole number above 0. Else the buy is refused until the text is right.
+function Tab:SetAmount(text)
+    text = tostring(text or ""):match("^%s*(.-)%s*$")
+    self.amount, self.amountBad = nil, false
+    if text ~= "" then
+        local number = text:match("^%d+$") and tonumber(text) or nil
+        if number and number > 0 then
+            self.amount = number
+        else
+            self.amountBad = true
+        end
+    end
+    self:_Update()
+    if self.amountBad then
+        self:_Say(AMOUNT_TEXT)
+    end
+end
+
 -- Select a price level of the item by its unit price. A second click on the same level clears the selection.
 -- The selection never starts a buy. Returns true, or false and a reason.
 function Tab:SelectLevel(price)
@@ -767,8 +778,35 @@ function Tab:SelectLevel(price)
     return true
 end
 
+-- The units that one purchase covers. For a commodity, the purchase takes the cheapest units first: from the level
+-- first up to the level target, and at most amount units (nil means all). For an item, it is one auction of target.
+-- Returns { quantity, cost, covered = { [unitPrice] = true }, last = the highest level reached, levels = count,
+-- complete = true if the last level is taken whole, own = true if a level in the range is yours }.
+local function coverPlan(levels, first, target, amount, isItem)
+    local plan = { quantity = 0, cost = 0, covered = {}, levels = 0, complete = true, own = false, isItem = isItem }
+    if isItem then
+        plan.quantity, plan.cost = target.quantity, target.unitPrice * target.quantity
+        plan.covered[target.unitPrice], plan.last, plan.levels = true, target, 1
+        return plan
+    end
+    local left = amount or math.huge
+    for _, level in ipairs(levels) do
+        if level.unitPrice >= first.unitPrice and level.unitPrice <= target.unitPrice and left > 0 then
+            local take = math.min(level.quantity, left)
+            left = left - take
+            plan.quantity = plan.quantity + take
+            plan.cost = plan.cost + take * level.unitPrice
+            plan.covered[level.unitPrice] = true
+            plan.last, plan.levels = level, plan.levels + 1
+            plan.complete = take == level.quantity
+            plan.own = plan.own or level.own
+        end
+    end
+    return plan
+end
+
 -- Find the level that Buy next or Buy selected buys. With a selected level, it is that level.
--- Returns entry, level, levels and a reason if the level cannot be bought.
+-- Returns entry, level, levels, a reason if the level cannot be bought, and the cover plan of the purchase.
 function Tab:_NextBuy()
     local entry = self:_Selected()
     if not entry then
@@ -792,6 +830,7 @@ function Tab:_NextBuy()
     local nextLevel = plan.NextLevel(levels, lastPrice, isItem)
     local level = chosen or nextLevel
     local reason
+    local cover = level and (isItem or nextLevel) and coverPlan(levels, nextLevel, level, self.amount, isItem) or nil
     if not (entry.maxPrice or entry.noMax) then
         reason = "no max price"
     elseif not level then
@@ -800,26 +839,31 @@ function Tab:_NextBuy()
         reason = "own listing"
     elseif not withinMax(entry, level.unitPrice) then
         reason = "above max price"
-    elseif chosen and not isItem and chosen ~= nextLevel then
-        -- A commodity purchase takes the cheapest units first, so it cannot skip a cheaper level.
-        reason = "a commodity buy starts at the cheapest level"
+    elseif not cover or not cover.last then
+        reason = "nothing left to buy"
+    elseif cover.own then
+        -- The API cannot skip own units: a purchase takes the cheapest units of the market.
+        reason = "own listing below the selected level"
+    elseif not isItem and self.amountBad then
+        reason = AMOUNT_TEXT
     elseif not self.dryRun and not self.deps.client.CanBuy() then
         reason = "buying is not available"
     elseif not self.deps.client.IsReady() then
         reason = "waiting for the Auction House"
     end
-    return entry, level, levels, reason
+    return entry, level, levels, reason, cover
 end
 
 -- Buy next. Call it only from the click of the button. Returns true, or false and a reason.
 function Tab:BuyNext()
-    local entry, level, levels, reason = self:_NextBuy()
+    local entry, _, levels, reason, cover = self:_NextBuy()
     if reason then
         self:_Say(reason)
         return false, reason
     end
+    local level = cover.last
     if self.dryRun then
-        self.deps.log:Add(entry, string.format("would buy %d at %s", level.quantity, money(level.unitPrice)),
+        self.deps.log:Add(entry, string.format("would buy %d at %s", cover.quantity, money(level.unitPrice)),
             "dry run")
         return true
     end
@@ -835,7 +879,7 @@ function Tab:BuyNext()
                 yes = "Keep buying", no = "Stop",
                 onYes = function()
                     if not self.buy then
-                        self:_StartBuy(entry, level)
+                        self:_StartBuy(entry, cover)
                     end
                 end,
                 onNo = function()
@@ -846,12 +890,13 @@ function Tab:BuyNext()
             })
         return true
     end
-    return self:_StartBuy(entry, level)
+    return self:_StartBuy(entry, cover)
 end
 
 -- Start the buy of one level. Call it only from a click. A commodity asks for a quote; an item goes to the confirm.
-function Tab:_StartBuy(entry, level)
+function Tab:_StartBuy(entry, cover)
     local client = self.deps.client
+    local level = cover.last
     local first = level.rows[1]
     if first.isCommodity == false then
         local row
@@ -874,13 +919,14 @@ function Tab:_StartBuy(entry, level)
         self:_Update()
         return true
     end
-    local ok, err = pcall(client.StartCommodityPurchase, entry.itemID, level.quantity)
+    local ok, err = pcall(client.StartCommodityPurchase, entry.itemID, cover.quantity)
     if not ok then
         self.deps.log:Add(entry, "buy failed", tostring(err))
         self:_Say("the quote was refused")
         return false, "the quote was refused"
     end
-    local buy = { entry = entry, level = level, phase = "quoting", itemID = entry.itemID, quantity = level.quantity }
+    local buy = { entry = entry, level = level, phase = "quoting", itemID = entry.itemID, quantity = cover.quantity,
+        complete = cover.complete }
     self.buy = buy
     self:_Say("waiting for the quote of " .. self:_ItemName(entry))
     self.deps.after(QUOTE_WAIT, function()
@@ -1039,7 +1085,10 @@ end
 function Tab:_Succeed(buy)
     self.buy = nil
     local run = self:_Run(buy.entry)
-    run.lastPrice = buy.level.unitPrice
+    -- A level that is taken in part still has units, so only a whole level moves the run on.
+    if buy.complete ~= false then
+        run.lastPrice = buy.level.unitPrice
+    end
     run.bought = run.bought + buy.quantity
     self.deps.log:Add(buy.entry, string.format("bought %d at %s", buy.quantity, money(buy.level.unitPrice)),
         "total " .. money(buy.total))
@@ -1270,6 +1319,8 @@ function Tab:_RunHeldSearch()
 end
 
 -- The columns of the price level list. The header and the row cells use the same definition.
+-- On Forever a price point is unique, so the quantity equals the listings. A Listings column can come back
+-- later for TBC, where one price can have many listings.
 local LEVEL_COLUMNS = {
     { key = "unitPrice", title = "Unit Price", width = 104, number = true, format = money },
     { key = "stackPrice", title = "Stack Price", width = 104, number = true,
@@ -1279,11 +1330,6 @@ local LEVEL_COLUMNS = {
     { key = "quantity", title = "Quantity", width = 50, number = true,
         format = function(value)
             return "x" .. tostring(value)
-        end },
-    { key = "listings", title = "Listings", width = 56, number = true },
-    { key = "status", title = "Status",
-        get = function(data)
-            return BuyingTab.StatusText(data.state)
         end },
 }
 local LEVEL_OPTIONS = { gap = 6 }
@@ -1301,11 +1347,10 @@ local function initRowsRow(row, data)
         Kit.LayoutColumnLabels(cells, row, LEVEL_COLUMNS, LEVEL_OPTIONS)
     end
     Kit.SetColumnCells(cells, LEVEL_COLUMNS, data)
-    setColor(cells.unitPrice, data.state == "above")
-    setColor(cells.stackPrice, data.state == "above")
-    setColor(cells.quantity, data.state == "above")
-    setColor(cells.listings, true)
-    setColor(cells.status, true)
+    local grey = data.state ~= "buy"
+    setColor(cells.unitPrice, grey)
+    setColor(cells.stackPrice, grey)
+    setColor(cells.quantity, grey)
 end
 
 -- Draw one price level row: the cells, the selection highlight and the click that selects the level.
@@ -1317,7 +1362,17 @@ function Tab:_InitLevelRow(row, data)
         row.selection:SetBlendMode("ADD")
         row.selection:SetAllPoints(row)
     end
-    row.selection:SetShown(self.levelSel ~= nil and self.levelSel == data.unitPrice)
+    local selected = self.levelSel ~= nil and self.levelSel == data.unitPrice
+    row.selection:SetShown(selected)
+    -- The rows that the next click buys get a fainter highlight. The selected row keeps the selection highlight.
+    if not row.cover then
+        row.cover = row:CreateTexture(nil, "BACKGROUND")
+        row.cover:SetTexture(ns.Kit.Theme.rowHighlight)
+        row.cover:SetBlendMode("ADD")
+        row.cover:SetAlpha(0.4)
+        row.cover:SetAllPoints(row)
+    end
+    row.cover:SetShown(not selected and self.covered ~= nil and self.covered[data.unitPrice] == true)
     row:SetScript("OnClick", function()
         self:SelectLevel(data.unitPrice)
     end)
@@ -1394,6 +1449,8 @@ function Tab:_Update()
     ui.dryRun:SetShown(not self.showLog)
     ui.jump:SetShown(not self.showLog)
     ui.jumpLabel:SetShown(not self.showLog)
+    ui.amount:SetShown(not self.showLog)
+    ui.amountLabel:SetShown(not self.showLog)
     if self.showLog then
         local entries = self.deps.log:List()
         local newestFirst = {}
@@ -1412,6 +1469,8 @@ function Tab:_Update()
         ui.summary:SetText(text)
         ui.buyNext:SetText("Buy next")
         ui.buyNext:SetEnabled(false)
+        ui.amount:SetEnabled(true)
+        self.covered = {}
         ui.rowsList:SetData({})
         return
     end
@@ -1430,13 +1489,24 @@ function Tab:_Update()
             self.levelSel = nil
         end
     end
-    local _, nextLevel, _, reason = self:_NextBuy()
+    local _, nextLevel, _, reason, cover = self:_NextBuy()
     local verb = self.levelSel and "Buy selected" or "Buy next"
+    -- The amount box does not apply to an item: an item buy is one auction.
+    local isItem = done ~= nil and done.rows[1] ~= nil and done.rows[1].isCommodity == false
+    ui.amount:SetEnabled(not isItem)
+    self.covered = (reason == nil and cover) and cover.covered or {}
     if done then
         if reason then
             lines[#lines + 1] = verb .. ": " .. reason
-        elseif nextLevel then
-            lines[#lines + 1] = string.format("%s: %d at %s", verb, nextLevel.quantity, money(nextLevel.unitPrice))
+        elseif cover then
+            local last = cover.last
+            local text = cover.levels > 1
+                and string.format("%s: %d up to %s", verb, cover.quantity, money(last.unitPrice))
+                or string.format("%s: %d at %s", verb, cover.quantity, money(last.unitPrice))
+            if not cover.isItem then
+                text = text .. ", total " .. money(cover.cost)
+            end
+            lines[#lines + 1] = text
         end
     end
     ui.summary:SetText(table.concat(lines, "\n"))
@@ -1593,7 +1663,7 @@ function Tab:_BuildContent()
         self:_InitLevelRow(row, data)
     end })
     ui.rowsList.frame:SetPoint("TOPLEFT", content, "TOPLEFT", rightX, -100)
-    ui.rowsList.frame:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", 0, 30)
+    ui.rowsList.frame:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", 0, 56)
     -- The column titles over the price level list.
     local edge = ui.rowsList.contentInsets or { left = 0, right = 0 }
     ui.levelHeader = Kit.CreateColumnHeader(content, LEVEL_COLUMNS,
@@ -1611,6 +1681,15 @@ function Tab:_BuildContent()
         self:BuyNext()
     end)
     ui.buyNext:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", rightX, 0)
+    -- The amount box: units to buy for a commodity. Empty means all units up to the level.
+    ui.amountLabel = Kit.Label(content, "Amount", "small")
+    ui.amountLabel:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", rightX, 34)
+    ui.amount = Kit.Input(content, 70, nil, nil, { placeholder = "all" })
+    ui.amount:SetNumeric(true)
+    ui.amount:SetPoint("LEFT", ui.amountLabel, "RIGHT", 8, 0)
+    ui.amount:HookScript("OnTextChanged", function(box)
+        self:SetAmount(box:GetText())
+    end)
     ui.buyNext:SetEnabled(false)
     ui.dryRun = Kit.Check(content, "Dry run", function(checked)
         self:SetDryRun(checked)
