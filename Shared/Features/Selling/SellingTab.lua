@@ -10,6 +10,8 @@ local OWNER = "Flipside.SellingTab"
 local DIALOG = "FLIPSIDE_CONFIRM_POST"
 local SEARCH_TIMEOUT = 10
 local RETRY_SECONDS = 5
+local POST_DELAY = 1.0
+SellingTab.POST_DELAY = POST_DELAY
 local SECONDS_PER_HOUR = 3600
 
 local DIALOG_ALL = "FLIPSIDE_CONFIRM_POST_ALL"
@@ -669,6 +671,7 @@ function Tab:RefreshBags()
     local byKey = self:_CandidatesByKey(bagItems)
     self.entries, self.selection, self.selectedId, self.postedCount = {}, {}, nil, 0
     self.priceEntry, self.allRun = nil, nil
+    self:_Unlock()
     for _, item in ipairs(bagItems) do
         self.entries[#self.entries + 1] = self:_NewEntry(item, byKey[item.key])
     end
@@ -862,6 +865,7 @@ function Tab:SelectNode(node)
     self.postedCount = 0
     self.priceEntry = nil
     self.allRun = nil
+    self:_Unlock()
     local list = {}
     for _, entry in ipairs(self.selection) do
         if entry.status == "waiting" then
@@ -881,7 +885,9 @@ end
 -- Stop the queue. A search in flight still ends with its result.
 function Tab:Stop()
     self.queue = nil
-    self:_Say("search stopped")
+    local waiting = self.locked
+    self:_Unlock()
+    self:_Say(waiting and "stopped" or "search stopped")
     self:_Update()
 end
 
@@ -1097,6 +1103,9 @@ function Tab:_Confirmed()
     end
     awaiting.entry.real = true
     self:_Record(awaiting.entry, awaiting.quantity, "post", awaiting.price, awaiting.duration)
+    if self.allRun then
+        self:_Lock()
+    end
     self:_Advance(awaiting.entry, true)
 end
 
@@ -1329,6 +1338,31 @@ function Tab:_AskWarning(entry, price, lines, unit, all)
     end)
 end
 
+-- Lock the Post all button after a post. A timer unlocks it after POST_DELAY once the AH is ready.
+-- The timer makes no post. Stop or a new selection cancels it.
+function Tab:_Lock()
+    self.lockToken = (self.lockToken or 0) + 1
+    local token = self.lockToken
+    self.locked = true
+    local function check()
+        if self.lockToken ~= token then
+            return
+        end
+        if self.deps.client.IsReady() then
+            self.locked = false
+            self:_Update()
+        else
+            self.deps.after(POST_DELAY, check)
+        end
+    end
+    self.deps.after(POST_DELAY, check)
+end
+
+function Tab:_Unlock()
+    self.lockToken = (self.lockToken or 0) + 1
+    self.locked = false
+end
+
 -- Post the next unit of the first ready entry. Call it only from the click of the post button.
 -- One call makes one protected post. Returns true, or false and a text.
 function Tab:PostNext()
@@ -1340,6 +1374,9 @@ end
 -- The later clicks of the run post at once. It needs a selected group, "[No group]" or item.
 function Tab:PostAll()
     if self.awaiting or self.allRun then
+        if not self.awaiting and self.locked then
+            return false, "wait"
+        end
         return self:_PostStep(true)
     end
     if #self.selection == 0 then
@@ -1366,6 +1403,10 @@ function Tab:_PostStep(all)
     if self.awaiting then
         self:_ShowConfirm()
         return true
+    end
+    if all and not self.deps.client.IsReady() then
+        self:_Say("waiting for the Auction House to be ready")
+        return false, "not ready"
     end
     local entry = self:_Focus(all)
     if not entry then
@@ -1431,6 +1472,9 @@ function Tab:_PostStep(all)
     end
     entry.real = true
     self:_Record(entry, quantity, "post", price, decision.duration)
+    if all then
+        self:_Lock()
+    end
     self:_Advance(entry, true)
     return true
 end
@@ -1746,14 +1790,15 @@ function Tab:_Update()
         return
     end
     local client = self.deps.client
-    ui.stop:SetShown(self.queue ~= nil)
+    ui.stop:SetShown(self.queue ~= nil or self.locked == true)
     self:_Layout()
     ui.tree:Refresh()
     local current = self:_Current()
     ui.postNext:SetText(self:PostLabel())
     ui.postNext:SetEnabled(client.CanPost() and (self.awaiting ~= nil or self:_Focus(false) ~= nil))
     ui.postAll:SetText(self:PostAllLabel())
-    ui.postAll:SetEnabled(client.CanPost() and self.awaiting == nil and #self.selection > 0 and current ~= nil)
+    ui.postAll:SetEnabled(client.CanPost() and self.awaiting == nil and #self.selection > 0 and current ~= nil
+        and not self.locked)
     ui.skip:SetEnabled(self.awaiting ~= nil or self:_Focus(false) ~= nil)
     ui.progress:SetText(self:ProgressText())
     self:_UpdateDetails()

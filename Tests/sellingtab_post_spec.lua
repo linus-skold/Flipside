@@ -13,6 +13,7 @@ end
 -- These specs keep ScrollUtil: the game uses the ScrollBox path.
 describe("SellingTab price box, warnings, post all and bag sync", function()
     local ns, bus, client, rules, tab, ui, bagItems, bagReads, warns, views, vendor, opExtra, confirms, autoAccept
+    local delays = {}
 
     local function makeClient()
         local c = { ready = true, searches = {}, rows = {}, commodity = {}, posts = {}, confirmed = {} }
@@ -94,7 +95,19 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
         bus:Emit(event, ...)
     end
 
+    -- Run the Post all delay timers, as the game does after the delay. Other timers stay off.
+    local function flushDelays()
+        local list = delays
+        delays = {}
+        for _, fn in ipairs(list) do
+            fn()
+        end
+    end
+
     local function click(button)
+        if button == ui.postAll then
+            flushDelays()
+        end
         button.scripts.OnClick(button)
     end
 
@@ -164,7 +177,11 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
         local deps = {
             bus = bus, rules = rules, formulaRun = { Evaluate = function(_, text) return tonumber(text), nil end },
             client = client,
-            after = function() end,
+            after = function(seconds, fn)
+                if seconds == ns.SellingTab.POST_DELAY then
+                    delays[#delays + 1] = fn
+                end
+            end,
             itemInfo = function(id) return "Item" .. id, 1 end,
             readBags = function()
                 bagReads = bagReads + 1
@@ -718,6 +735,63 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
 
     end)
 
+    describe("Post all delay", function()
+        it("turns the button off after a post and on after the delay", function()
+            selectCloth()
+            click(ui.postAll)
+            assert.are.equal(1, #client.posts)
+            assert.is_false(ui.postAll.enabled)
+            assert.are.equal("Post all (1/4)", ui.postAll.text)
+            assert.are.equal(1, #delays)
+            flushDelays()
+            assert.is_true(ui.postAll.enabled)
+        end)
+
+        it("makes no post from the timer and refuses a click while locked", function()
+            selectCloth()
+            click(ui.postAll)
+            local ok = tab:PostAll()
+            assert.is_false(ok)
+            assert.are.equal(1, #client.posts)
+            flushDelays()
+            assert.are.equal(1, #client.posts)
+        end)
+
+        it("keeps the button off while the throttle is not ready", function()
+            selectCloth()
+            click(ui.postAll)
+            client.ready = false
+            flushDelays()
+            assert.is_false(ui.postAll.enabled)
+            assert.are.equal(1, #delays)
+            local ok = tab:PostAll()
+            assert.is_false(ok)
+            assert.are.equal(1, #client.posts)
+            client.ready = true
+            flushDelays()
+            assert.is_true(ui.postAll.enabled)
+            assert.are.equal(1, #client.posts)
+        end)
+
+        it("makes no first post while the throttle is not ready", function()
+            selectCloth()
+            client.ready = false
+            click(ui.postAll)
+            assert.are.equal(0, #client.posts)
+        end)
+
+        it("cancels the pending timer on Stop", function()
+            selectCloth()
+            click(ui.postAll)
+            assert.is_true(ui.stop.shown)
+            tab:Stop()
+            assert.is_false(ui.stop.shown)
+            flushDelays()
+            assert.are.equal(0, #delays)
+            assert.are.equal(1, #client.posts)
+            assert.is_false(tab.locked)
+        end)
+    end)
     describe("the list columns", function()
         it("lines up the cells with the header at every depth of the tree", function()
             selectCloth()
@@ -938,9 +1012,11 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
 
         local function postAllClicks()
             local n = 0
+            flushDelays()
             while ui.postAll.enabled and n < 50 do
                 click(ui.postAll)
                 n = n + 1
+                flushDelays()
             end
             return n
         end
