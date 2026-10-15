@@ -90,18 +90,54 @@ describe("AuctionTab layout option", function()
         assert.are.equal(9, #ui.slots)
     end)
 
-    it("keeps the scan controls in a slim bar at the top", function()
+    it("puts the scan buttons in a header strip with the same size", function()
         local tab = mount({ layout = "compact" })
         local ui = tab.ui
         assert.are.equal(0, ui.scan.points[1][5])
         assert.are.equal(0, ui.stop.points[1][5])
-        assert.are.equal(0, ui.reset.points[1][5])
-        assert.are.equal(0, ui.openMain.points[1][5])
+        for _, button in pairs(tab.bar.buttons or { ui.scan }) do
+            assert.are.equal(80, button.width)
+            assert.are.equal(22, button.height)
+        end
+        assert.are.equal(80, ui.stop.width)
     end)
 
+    it("puts the status text on the progress bar, right of the scan buttons", function()
+        local tab = mount({ layout = "compact" })
+        local progress = tab.ui.progress
+        assert.is_truthy(progress)
+        assert.are.equal(336, progress.frame.points[1][4])
+        assert.are.equal(progress.frame, tab.bar.status.points[#tab.bar.status.points][2])
+    end)
+
+    it("puts Reset cooldown, Open Flipside and the start page check box in the bottom bar", function()
+        local tab = mount({ layout = "compact" })
+        local ui = tab.ui
+        assert.are.equal("BOTTOMRIGHT", ui.openMain.points[1][1])
+        assert.are.equal(100, ui.openMain.width)
+        assert.are.equal(ui.openMain, ui.reset.points[1][2])
+        assert.are.equal("BOTTOMLEFT", ui.startCheck.points[1][1])
+    end)
+
+    it("fills the progress bar from the page of a running page scan", function()
+        deps.scanEngine = {
+            IsRunning = function() return true end,
+            GetProgress = function() return "page", 50, 200 end,
+            CanStart = function() return true end,
+        }
+        deps.scanCooldown = { Remaining = function() return 0 end, GetLastSuccess = function() end }
+        local tab = mount({ layout = "compact" })
+        tab:Refresh()
+        local fill = tab.ui.progress.fill
+        assert.is_true(fill:IsShown())
+        assert.are.equal(tab.ui.progress.width * 0.25, fill.width)
+        deps.scanEngine.IsRunning = function() return false end
+        tab:Refresh()
+        assert.is_false(fill:IsShown())
+    end)
     it("fits every widget in the content area of the legacy frame", function()
         local tab = mount({ layout = "compact", insets = { left = 14, right = 40, top = 60, bottom = 40 } })
-        local contentHeight = 447 - 60 - 40
+        local contentHeight = 447 - 52 - 14
         local ui = tab.ui
         local lowest = 0
         for _, widget in ipairs({ ui.status, ui.input, ui.priceMessage, ui.choices[8], ui.slots[9].name }) do

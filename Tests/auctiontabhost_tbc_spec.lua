@@ -3,6 +3,12 @@ local mock = require("Tests.wow_mock")
 
 local TOC = "Flipside_TBC.toc"
 local ART = { "TopLeft", "Top", "TopRight", "BotLeft", "Bot", "BotRight" }
+-- The art that Blizzard_AuctionUI.lua sets for each of its tabs (AuctionFrameTab_OnClick).
+local BLIZZARD_ART = {
+    { "Browse-TopLeft", "Browse-Top", "Browse-TopRight", "Browse-BotLeft", "Auction-Bot", "Bid-BotRight" },
+    { "Bid-TopLeft", "Auction-Top", "Auction-TopRight", "Bid-BotLeft", "Auction-Bot", "Bid-BotRight" },
+    { "Auction-TopLeft", "Auction-Top", "Auction-TopRight", "Auction-BotLeft", "Auction-Bot", "Auction-BotRight" },
+}
 
 local function loadModules()
     local ns = {}
@@ -70,6 +76,11 @@ describe("AuctionTabHost (TBC)", function()
             end
             if index <= 3 then
                 panes[index]:Show()
+                -- Blizzard sets all six textures for each of its tabs (Browse, Bids, Auctions).
+                local set = BLIZZARD_ART[index]
+                for number, name in ipairs(ART) do
+                    _G["AuctionFrame" .. name]:SetTexture("Interface\\AuctionFrame\\UI-AuctionFrame-" .. set[number])
+                end
             end
             clicks[#clicks + 1] = index
         end
@@ -233,12 +244,27 @@ describe("AuctionTabHost (TBC)", function()
                 assert.are.equal(0, core.unmounts)
             end)
 
-            it("sets the plain Auctions art", function()
+            it("sets the Bids art, without the filter column and the boxes", function()
                 local state = ns.AuctionTabHost.Attach(core)
                 openFrame()
                 click(state.tab)
-                assert.are.equal("Interface\\AuctionFrame\\UI-AuctionFrame-Auction-TopLeft", textures.TopLeft)
-                assert.are.equal("Interface\\AuctionFrame\\UI-AuctionFrame-Auction-Bot", textures.Bot)
+                for number, name in ipairs(ART) do
+                    local path = "Interface\\AuctionFrame\\UI-AuctionFrame-" .. BLIZZARD_ART[2][number]
+                    assert.are.equal(path, textures[name])
+                end
+            end)
+
+            it("restores the art of a Blizzard tab when the user clicks it", function()
+                local state = ns.AuctionTabHost.Attach(core)
+                openFrame()
+                for number = 1, 3 do
+                    click(state.tab)
+                    click(tabs[number])
+                    for position, name in ipairs(ART) do
+                        assert.are.equal("Interface\\AuctionFrame\\UI-AuctionFrame-" .. BLIZZARD_ART[number][position],
+                            textures[name])
+                    end
+                end
             end)
 
             it("hides our panel when another tab is clicked", function()
@@ -333,7 +359,7 @@ describe("AuctionTabHost (TBC)", function()
         it("gives the core the insets and the compact layout", function()
             makeBlizzard(3)
             ns.AuctionTabHost.Attach(core)
-            assert.are.same({ left = 14, right = 40, top = 60, bottom = 40 }, core.api.insets)
+            assert.are.same({ left = 22, right = 34, top = 52, bottom = 14 }, core.api.insets)
             assert.are.equal("compact", core.api.layout)
         end)
 
