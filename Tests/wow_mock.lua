@@ -499,6 +499,7 @@ function M.reset(options)
         local f = newObject(kind, name, parent, template)
         if template == "PortraitFrameTemplate" or template == "ButtonFrameTemplate" then
             f.TitleContainer = newObject("Frame", nil, f)
+            f.TitleContainer:SetFrameLevel(510)
             f.SetTitle = function(self, title)
                 self.title = title
             end

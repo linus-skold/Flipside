@@ -198,6 +198,12 @@ describe("MainWindow", function()
             assert.are.equal("ledger", win:GetSelectedPage())
         end)
 
+        it("puts the cog above the title container", function()
+            local win = ns.MainWindow.Create(deps)
+            assert.are.equal(510, win.frame.TitleContainer:GetFrameLevel())
+            assert.is_true(win.cog:GetFrameLevel() > win.frame.TitleContainer:GetFrameLevel())
+        end)
+
         it("closes when a main tab is clicked", function()
             local win = ns.MainWindow.Create(deps)
             win.cog.scripts.OnClick(win.cog)
