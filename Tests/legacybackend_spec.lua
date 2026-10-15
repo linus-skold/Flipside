@@ -180,6 +180,229 @@ describe("LegacyBackend", function()
         end)
     end)
 
+    describe("scan start gate", function()
+        it("asks the client about the list query", function()
+            -- The mock asserts that the argument is "list".
+            assert.is_true(A().ScanCanStart("page"))
+            assert.is_true(A().CanQueryPage())
+            local ok, text = A().ScanCanStart("full")
+            assert.is_false(ok)
+            assert.is_truthy(text:find("get all", 1, true))
+        end)
+    end)
+
+    describe("live search and buy", function()
+        local ADDON_NAME = "Copper Bar"
+        local timers, bid, emitted, saved2
+
+        -- Legacy tuple with an owner and a buyout.
+        local function listing(count, buyout, itemID, owner)
+            return { info = { ADDON_NAME, 1, count, 1, true, 1, 0, 0, 0, buyout, 0, false, "", owner or "Seller", "", 0,
+                itemID, true }, link = "|Hitem:" .. itemID .. "|h[" .. ADDON_NAME .. "]|h" }
+        end
+
+        before_each(function()
+            saved2 = {}
+            for _, name in ipairs({ "GetItemInfo", "UnitName", "C_Timer", "PlaceAuctionBid", "ERR_AUCTION_WON_S" }) do
+                saved2[name] = _G[name]
+            end
+            timers, bid, emitted = {}, {}, {}
+            _G.GetItemInfo = function(id)
+                return id == 11 and ADDON_NAME or nil
+            end
+            _G.UnitName = function() return "Me" end
+            _G.C_Timer = { After = function(_, fn) timers[#timers + 1] = fn end }
+            _G.PlaceAuctionBid = function(...) bid[#bid + 1] = { n = select("#", ...), ... } end
+            _G.ERR_AUCTION_WON_S = "You won an auction for %s."
+            assert(loadfile(manifest.path("EventBus", TOC)))("Flipside", ns)
+            ns.bus = ns.EventBus.New({})
+            for _, event in ipairs({ "Flipside.LegacyQueryReady", "Flipside.LegacyBuyCompleted",
+                "Flipside.LegacyBuyError" }) do
+                ns.bus:Subscribe(event, "spec", function(name, ...)
+                    emitted[#emitted + 1] = { name, ... }
+                end)
+            end
+        end)
+
+        after_each(function()
+            for name, value in pairs(saved2) do
+                _G[name] = value
+            end
+            _G.GetItemInfo, _G.UnitName, _G.C_Timer = saved2.GetItemInfo, saved2.UnitName, saved2.C_Timer
+            _G.PlaceAuctionBid, _G.ERR_AUCTION_WON_S = saved2.PlaceAuctionBid, saved2.ERR_AUCTION_WON_S
+        end)
+
+        it("can live search and can buy only with the client functions", function()
+            assert.is_true(A().CanLiveSearch())
+            assert.is_true(A().CanBuy())
+            _G.PlaceAuctionBid = nil
+            assert.is_false(A().CanBuy())
+            _G.QueryAuctionItems = nil
+            assert.is_false(A().CanLiveSearch())
+        end)
+
+        it("sends one exact-name query for page 0", function()
+            assert.is_true(A().LiveSearch(11))
+            assert.are.equal(1, #queries)
+            assert.are.same({ ADDON_NAME, nil, nil, 0, false, 0, false, true, nil, n = 9 }, queries[1])
+        end)
+
+        it("refuses with a text and sends no query when the client is busy", function()
+            canQuery = false
+            assert.is_false(A().IsReady())
+            local ok, text = A().LiveSearch(11)
+            assert.is_false(ok)
+            assert.is_truthy(text:find("busy", 1, true))
+            assert.are.equal(0, #queries)
+        end)
+
+        it("refuses with a text when the item name is not loaded", function()
+            local ok, text = A().LiveSearch(99)
+            assert.is_false(ok)
+            assert.is_truthy(text:find("not loaded", 1, true))
+            assert.are.equal(0, #queries)
+        end)
+
+        it("gives the list update as the item result event", function()
+            local commodity, item = A().LiveResultEvents()
+            assert.are.equal("AUCTION_ITEM_LIST_UPDATE", item)
+            assert.are_not.equal(item, commodity)
+        end)
+
+        it("emits the ready event when the client takes a query again", function()
+            A().LiveSearch(11)
+            assert.are.equal("Flipside.LegacyQueryReady", A().ReadyEvent())
+            canQuery = false
+            table.remove(timers, 1)()
+            assert.are.equal(0, #emitted)
+            canQuery = true
+            table.remove(timers, 1)()
+            assert.are.equal(1, #emitted)
+            assert.are.equal("Flipside.LegacyQueryReady", emitted[1][1])
+            assert.are.equal(0, #timers)
+        end)
+
+        it("reads the rows of the item, cheapest unit first, with the list index as ID", function()
+            lists.list = {
+                listing(5, 500, 11),
+                listing(1, 60, 11, "Me"),
+                listing(2, 100, 12),
+                listing(3, 0, 11),
+                listing(10, 400, 11),
+            }
+            local rows = A().LiveRows(11)
+            assert.are.equal(3, #rows)
+            assert.are.equal(5, rows[1].auctionID)
+            assert.are.equal(40, rows[1].unitPrice)
+            assert.are.equal(2, rows[2].auctionID)
+            assert.are.equal(60, rows[2].unitPrice)
+            assert.is_true(rows[2].ownerItem)
+            assert.are.equal(1, rows[3].auctionID)
+            assert.are.equal(100, rows[3].unitPrice)
+            assert.are.equal(500, rows[3].buyout)
+            assert.are.equal(5, rows[3].quantity)
+            assert.is_false(rows[3].isCommodity)
+            assert.is_false(rows[3].ownerItem)
+            assert.are.equal("|Hitem:11|h[Copper Bar]|h", rows[3].itemLink)
+        end)
+
+        describe("buy", function()
+            before_each(function()
+                lists.list = { listing(5, 500, 11), listing(1, 60, 11) }
+                A().LiveRows(11)
+            end)
+
+            it("places the bid on the list index at the buyout", function()
+                A().BuyItemAuction(1, 500)
+                assert.are.same({ "list", 1, 500, n = 3 }, bid[1])
+            end)
+
+            it("refuses a row from no search", function()
+                local ok, err = pcall(A().BuyItemAuction, 7, 500)
+                assert.is_false(ok)
+                assert.is_truthy(err:find("search again", 1, true))
+                assert.are.equal(0, #bid)
+            end)
+
+            it("refuses a row with a changed buyout", function()
+                lists.list[1].info[10] = 450
+                local ok, err = pcall(A().BuyItemAuction, 1, 500)
+                assert.is_false(ok)
+                assert.is_truthy(err:find("changed", 1, true))
+                assert.are.equal(0, #bid)
+            end)
+
+            it("refuses a row with a changed count", function()
+                lists.list[1].info[3] = 4
+                assert.is_false((pcall(A().BuyItemAuction, 1, 500)))
+                assert.are.equal(0, #bid)
+            end)
+
+            it("refuses a row with a changed item", function()
+                lists.list[1].info[17] = 12
+                assert.is_false((pcall(A().BuyItemAuction, 1, 500)))
+                assert.are.equal(0, #bid)
+            end)
+
+            it("refuses a row with a changed owner", function()
+                lists.list[1].info[14] = "Other"
+                assert.is_false((pcall(A().BuyItemAuction, 1, 500)))
+                assert.are.equal(0, #bid)
+            end)
+
+            it("refuses a buyout that is not the buyout of the row", function()
+                assert.is_false((pcall(A().BuyItemAuction, 1, 499)))
+                assert.are.equal(0, #bid)
+            end)
+
+            it("refuses a second buy on the same read", function()
+                A().BuyItemAuction(1, 500)
+                assert.is_false((pcall(A().BuyItemAuction, 1, 500)))
+                assert.are.equal(1, #bid)
+            end)
+
+            it("raises the client error and tells no buy", function()
+                A().BuyEvents()
+                _G.PlaceAuctionBid = function() error("protected") end
+                local ok, err = pcall(A().BuyItemAuction, 1, 500)
+                assert.is_false(ok)
+                assert.is_truthy(err:find("protected", 1, true))
+                ns.bus:Emit("CHAT_MSG_SYSTEM", "You won an auction for Copper Bar.")
+                assert.are.equal(0, #emitted)
+            end)
+
+            it("emits the completed event with the index when the won text comes", function()
+                local events = A().BuyEvents()
+                assert.are.equal("Flipside.LegacyBuyCompleted", events.itemCompleted)
+                assert.are.equal("Flipside.LegacyBuyError", events.itemError)
+                A().BuyItemAuction(1, 500)
+                ns.bus:Emit("CHAT_MSG_SYSTEM", "You won an auction for Iron Bar.")
+                assert.are.equal(0, #emitted)
+                ns.bus:Emit("CHAT_MSG_SYSTEM", "You won an auction for Copper Bar.")
+                assert.are.same({ "Flipside.LegacyBuyCompleted", 1 }, emitted[1])
+                ns.bus:Emit("CHAT_MSG_SYSTEM", "You won an auction for Copper Bar.")
+                assert.are.equal(1, #emitted)
+            end)
+
+            it("emits the error event with the text of a client error after the buy", function()
+                A().BuyEvents()
+                ns.bus:Emit("UI_ERROR_MESSAGE", 1, "Not enough money")
+                assert.are.equal(0, #emitted)
+                A().BuyItemAuction(1, 500)
+                ns.bus:Emit("UI_ERROR_MESSAGE", 1, "Not enough money")
+                assert.are.same({ "Flipside.LegacyBuyError", "Not enough money" }, emitted[1])
+            end)
+
+            it("gives events that the legacy client never sends for the commodity quote", function()
+                local events = A().BuyEvents()
+                for _, key in ipairs({ "priceUpdated", "priceUnavailable", "commoditySucceeded", "commodityFailed" }) do
+                    assert.is_string(events[key])
+                    assert.is_nil(events[key]:find("^[A-Z_]+$"))
+                end
+            end)
+        end)
+    end)
+
     describe("owned auctions", function()
         it("can read and uses the owned event", function()
             assert.is_true(A().CanReadOwned())

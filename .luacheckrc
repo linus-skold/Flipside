@@ -19,6 +19,7 @@ read_globals = {
     "C_GameRules",
     "C_Item",
     "C_Timer",
+    "C_Texture",
     "C_TradeSkillUI",
     "ProfessionsFrame",
     "CreateDataProvider",

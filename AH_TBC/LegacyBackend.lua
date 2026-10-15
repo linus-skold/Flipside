@@ -51,7 +51,7 @@ function Backend.ScanCanStart(mode)
     if not has("CanSendAuctionQuery") then
         return true
     end
-    local canQuery, canMass = _G.CanSendAuctionQuery()
+    local canQuery, canMass = _G.CanSendAuctionQuery("list")
     if not canQuery then
         return false, "the Auction House is busy, try again in a moment"
     end
@@ -115,7 +115,7 @@ end
 
 -- Page mode: true if the client takes a query now.
 function Backend.CanQueryPage()
-    return not has("CanSendAuctionQuery") or _G.CanSendAuctionQuery() == true
+    return not has("CanSendAuctionQuery") or _G.CanSendAuctionQuery("list") == true
 end
 
 -- Page mode: a browse query of one page (0-based) without a name, with the get all flag off.
@@ -347,6 +347,187 @@ end
 
 function Backend.OwnedEvent()
     return "AUCTION_OWNED_LIST_UPDATE"
+end
+
+-- Live search and buy (Buying tab). The legacy list has no auction ID and no quote. A row is its index in the list of
+-- the last query. LiveRows keeps a fingerprint of each row; the buy reads the row again and refuses a changed row.
+local BUY_OWNER = "Flipside.LegacyBackend"
+local READY_POLL_SECONDS = 0.25
+local READY_POLL_MAX = 40
+local BUY_WINDOW_SECONDS = 20
+-- Events that the legacy client does not have. They are never emitted, so the Buying tab listens to nothing.
+local NO_EVENT = {
+    commodity = "Flipside.LegacyNoCommodityResult", priceUpdated = "Flipside.LegacyNoQuote",
+    priceUnavailable = "Flipside.LegacyNoQuoteUnavailable", commoditySucceeded = "Flipside.LegacyNoCommodityBought",
+    commodityFailed = "Flipside.LegacyNoCommodityFailed",
+}
+local READY_EVENT = "Flipside.LegacyQueryReady"
+local BOUGHT_EVENT = "Flipside.LegacyBuyCompleted"
+local BUY_ERROR_EVENT = "Flipside.LegacyBuyError"
+
+local live = { rows = {}, buy = nil, subscribed = false }
+
+local function itemName(itemID)
+    local getInfo = has("GetItemInfo") and _G.GetItemInfo or (type(C_Item) == "table" and C_Item.GetItemInfo)
+    if type(getInfo) ~= "function" then
+        return nil
+    end
+    return (getInfo(itemID))
+end
+
+function Backend.CanLiveSearch()
+    return has("QueryAuctionItems") and has("CanSendAuctionQuery") and has("GetNumAuctionItems")
+        and has("GetAuctionItemInfo")
+end
+
+-- True when the client takes a query now.
+function Backend.IsReady()
+    return has("CanSendAuctionQuery") and _G.CanSendAuctionQuery("list") == true
+end
+
+-- The client has no ready event. After a query, a timer polls CanSendAuctionQuery and emits this event.
+function Backend.ReadyEvent()
+    return READY_EVENT
+end
+
+local function pollReady(tries)
+    if type(C_Timer) ~= "table" or not ns.bus then
+        return
+    end
+    C_Timer.After(READY_POLL_SECONDS, function()
+        if Backend.IsReady() then
+            ns.bus:Emit(READY_EVENT)
+        elseif tries < READY_POLL_MAX then
+            pollReady(tries + 1)
+        end
+    end)
+end
+
+-- One exact-name query for an item, page 0. Gives true, or false and a text.
+function Backend.LiveSearch(itemID)
+    if not Backend.IsReady() then
+        return false, "the Auction House is busy, try again in a moment"
+    end
+    local name = itemName(itemID)
+    if type(name) ~= "string" or name == "" then
+        return false, "the item name is not loaded yet, try again in a moment"
+    end
+    live.rows = {}
+    ownQuery("lookup", name, nil, nil, 0, false, 0, false, true, nil)
+    pollReady(1)
+    return true
+end
+
+-- The legacy list has no commodity result. The item result is the list update.
+function Backend.LiveResultEvents()
+    return NO_EVENT.commodity, "AUCTION_ITEM_LIST_UPDATE"
+end
+
+local function byPrice(a, b)
+    if a.unitPrice ~= b.unitPrice then
+        return a.unitPrice < b.unitPrice
+    end
+    return a.auctionID < b.auctionID
+end
+
+-- Rows of the item in the list, cheapest unit price first. auctionID is the list index. A row with no buyout is
+-- skipped. Each row is an item auction: the unit price is the buyout of the stack divided by the count.
+function Backend.LiveRows(itemID)
+    local rows, prints = {}, {}
+    local me = type(UnitName) == "function" and UnitName("player") or nil
+    for i = 1, tonumber((call("GetNumAuctionItems", "list"))) or 0 do
+        local info = { call("GetAuctionItemInfo", "list", i) }
+        local count, buyout, owner = info[INFO_COUNT], info[10], info[14]
+        if info[INFO_ITEM_ID] == itemID and type(buyout) == "number" and buyout > 0 and (count or 0) > 0 then
+            prints[i] = { itemID = itemID, count = count, buyout = buyout, owner = owner }
+            rows[#rows + 1] = {
+                auctionID = i, unitPrice = buyout / count, quantity = count, buyout = buyout, isCommodity = false,
+                ownerItem = me ~= nil and owner == me, itemLink = has("GetAuctionItemLink")
+                    and _G.GetAuctionItemLink("list", i) or nil,
+            }
+        end
+    end
+    table.sort(rows, byPrice)
+    live.rows = prints
+    return rows
+end
+
+function Backend.CanBuy()
+    return has("PlaceAuctionBid") and has("GetAuctionItemInfo")
+end
+
+-- Pattern of the system text that follows a won buyout (ERR_AUCTION_WON_S, "You won an auction for %s").
+local function wonPattern()
+    local text = _G.ERR_AUCTION_WON_S
+    if type(text) ~= "string" then
+        return nil
+    end
+    local escaped = text:gsub("%p", "%%%0"):gsub("%%%%s", "(.+)")
+    return "^" .. escaped .. "$"
+end
+
+local function buyOpen()
+    local buy = live.buy
+    if buy and now() - buy.at > BUY_WINDOW_SECONDS then
+        live.buy = nil
+        return nil
+    end
+    return buy
+end
+
+local function onSystemText(_, text)
+    local buy = buyOpen()
+    local pattern = wonPattern()
+    local shown = buy and pattern and type(text) == "string" and text:match(pattern) or nil
+    if shown and buy.name and shown:find(buy.name, 1, true) then
+        live.buy = nil
+        ns.bus:Emit(BOUGHT_EVENT, buy.auctionID)
+    end
+end
+
+local function onUiError(_, first, second)
+    local buy = buyOpen()
+    if buy then
+        live.buy = nil
+        ns.bus:Emit(BUY_ERROR_EVENT, second or first)
+    end
+end
+
+-- The legacy client sends no purchase event with an ID. This code reads the won text and the error text instead,
+-- and emits its own events.
+function Backend.BuyEvents()
+    if not live.subscribed and ns.bus then
+        live.subscribed = true
+        ns.bus:Subscribe("CHAT_MSG_SYSTEM", BUY_OWNER, onSystemText)
+        ns.bus:Subscribe("UI_ERROR_MESSAGE", BUY_OWNER, onUiError)
+    end
+    return {
+        priceUpdated = NO_EVENT.priceUpdated, priceUnavailable = NO_EVENT.priceUnavailable,
+        commoditySucceeded = NO_EVENT.commoditySucceeded, commodityFailed = NO_EVENT.commodityFailed,
+        itemCompleted = BOUGHT_EVENT, itemError = BUY_ERROR_EVENT,
+    }
+end
+
+-- Buy the listing at its buyout. Protected: call it from a click only. auctionID is the list index of LiveRows.
+-- The row must still be the same item, count, buyout and owner as when LiveRows read it; if not, this raises an error.
+function Backend.BuyItemAuction(auctionID, buyout)
+    local seen = live.rows[auctionID]
+    if not seen then
+        error("the listing is not from the last search, search again", 0)
+    end
+    local info = { call("GetAuctionItemInfo", "list", auctionID) }
+    if info[INFO_ITEM_ID] ~= seen.itemID or info[INFO_COUNT] ~= seen.count or info[10] ~= seen.buyout
+        or buyout ~= seen.buyout or (seen.owner ~= nil and info[14] ~= seen.owner) then
+        live.rows = {}
+        error("the listing changed, search again", 0)
+    end
+    live.buy = { auctionID = auctionID, name = info[INFO_NAME], at = now() }
+    local ok, err = pcall(call, "PlaceAuctionBid", "list", auctionID, buyout)
+    if not ok then
+        live.buy = nil
+        error(err, 0)
+    end
+    live.rows = {}
 end
 
 ns.AuctionClient.Use(Backend)

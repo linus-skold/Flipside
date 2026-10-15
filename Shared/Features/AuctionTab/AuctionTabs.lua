@@ -1,7 +1,7 @@
 local _, ns = ...
 
 -- Registry of the extra Auction House tabs (Buying, later Selling). The Flipside tab attaches itself.
--- A host that supports many tabs sets host.multiTab. Other hosts (TBC) get no extra tab.
+-- A host that supports many tabs sets host.multiTab. Other hosts get no extra tab.
 local AuctionTabs = {}
 ns.AuctionTabs = AuctionTabs
 
@@ -9,11 +9,22 @@ local specs = {}
 
 -- Client atlases that give the lists in the Flipside tabs the look of Blizzard's Auction House lists.
 -- Source: Blizzard_AuctionHouseUI (AuctionHouseItemListTemplate, AuctionHouseItemListLineTemplate).
+-- A client that does not know an atlas gets no entry for it, so the Kit uses its own textures. Without
+-- C_Texture.GetAtlasInfo every atlas stays.
+local function atlas(name)
+    local info = type(C_Texture) == "table" and C_Texture.GetAtlasInfo
+    if type(info) == "function" and not info(name) then
+        return nil
+    end
+    return name
+end
+
 AuctionTabs.Skin = {
-    backgroundAtlas = "auctionhouse-background-index",
-    stripeAtlases = { "auctionhouse-rowstripe-1", "auctionhouse-rowstripe-2" },
-    highlightAtlas = "auctionhouse-ui-row-highlight",
-    selectAtlas = "auctionhouse-ui-row-select",
+    backgroundAtlas = atlas("auctionhouse-background-index"),
+    stripeAtlases = atlas("auctionhouse-rowstripe-1") and atlas("auctionhouse-rowstripe-2")
+        and { "auctionhouse-rowstripe-1", "auctionhouse-rowstripe-2" } or nil,
+    highlightAtlas = atlas("auctionhouse-ui-row-highlight"),
+    selectAtlas = atlas("auctionhouse-ui-row-select"),
 }
 
 -- spec: { id, label, create(deps) -> core, available(deps) -> boolean (optional) }.

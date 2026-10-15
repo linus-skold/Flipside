@@ -1,11 +1,17 @@
 local _, ns = ...
 
--- TBC Anniversary host of the Flipside tab. It owns the legacy AuctionFrame tab button and the panel show and hide.
--- The tab is a real tab of the frame: the button is AuctionFrameTab<N+1> and PanelTemplates_SetNumTabs adds it.
+-- TBC Anniversary host of the Flipside tabs. It owns the legacy AuctionFrame tab buttons and the panel show and hide.
+-- Each tab is a real tab of the frame: the button is AuctionFrameTab<N+1> and PanelTemplates_SetNumTabs adds it.
 -- Blizzard's click code then marks the tab. It has no branch for our index, so a hook shows or hides our panel.
 -- The host writes no frame field itself. numTabs is written by PanelTemplates_SetNumTabs, as other tab addons do.
 local Host = {}
 ns.AuctionTabHost = Host
+Host.multiTab = true
+
+-- The attached tabs, in order. shared holds the one click hook of the Blizzard frame.
+local entries = {}
+local shared = {}
+local waiting = false
 
 local OWNER = "Flipside.AuctionTabHost"
 local ADDON = "Blizzard_AuctionUI"
@@ -53,12 +59,13 @@ local function nextIndex()
     return index
 end
 
-local function buildTab(state)
+local function buildTab(entry)
+    local state = entry.state
     local index = nextIndex()
     local button = CreateFrame("Button", "AuctionFrameTab" .. index, AuctionFrame, TAB_TEMPLATE)
     state.tab, state.index = button, index
     button:SetID(index)
-    button:SetText("Flipside")
+    button:SetText(entry.label)
     local last = blizzardTab(index - 1)
     if last then
         button:SetPoint("LEFT", last, "RIGHT", TAB_GAP, 0)
@@ -86,10 +93,36 @@ function Host.StartPage(frame)
     }
 end
 
-local function buildFrame(state, core)
+-- Hook the Blizzard tab click once. The template click calls AuctionFrameTab_OnClick for every tab, ours too.
+-- It runs before this hook, so Blizzard has already marked the tab and hidden its panes.
+local function hookClick()
+    if shared.clickHook then
+        return
+    end
+    shared.clickHook = true
+    hooksecurefunc("AuctionFrameTab_OnClick", function(tab)
+        local clicked
+        for _, entry in ipairs(entries) do
+            if entry.state.tab == tab then
+                clicked = entry
+            end
+        end
+        for _, entry in ipairs(entries) do
+            if entry ~= clicked and entry.state.frame and entry.core:IsActive() then
+                entry.core:Deselect()
+            end
+        end
+        if clicked and clicked.state.frame then
+            clicked.core:Select()
+        end
+    end)
+end
+
+local function buildFrame(entry)
+    local state, core = entry.state, entry.core
     local frame = AuctionFrame
     state.frame = frame
-    buildTab(state)
+    buildTab(entry)
     local api = {
         insets = INSETS,
         layout = "compact",
@@ -111,51 +144,55 @@ local function buildFrame(state, core)
         end,
     }
     core:Mount(frame, api)
-    -- The template click calls AuctionFrameTab_OnClick for every tab, ours too. It runs before this hook.
-    hooksecurefunc("AuctionFrameTab_OnClick", function(tab)
-        if tab == state.tab then
-            core:Select()
-        elseif core:IsActive() then
-            core:Deselect()
-        end
-    end)
+    hookClick()
 end
 
 -- Undo a failed build: hide the tab and keep no half-built state.
-local function abandon(state, core)
+local function abandon(entry)
+    local state = entry.state
     if state.tab then
         state.tab:Hide()
     end
-    core:Unmount()
+    entry.core:Unmount()
     state.frame, state.tab, state.index = nil, nil, nil
 end
 
-local function build(state, core)
-    if state.frame or not AuctionFrame then
+local function build(entry)
+    if entry.state.frame or not AuctionFrame then
         return
     end
-    local ok, err = pcall(buildFrame, state, core)
+    local ok, err = pcall(buildFrame, entry)
     if not ok then
-        abandon(state, core)
-        ns.ReportError("the Auction House tab is not available: " .. tostring(err))
+        abandon(entry)
+        ns.ReportError("the Auction House tab " .. entry.label .. " is not available: " .. tostring(err))
     end
 end
 
--- Attach the core panel to the legacy Auction House frame, now or when its addon loads.
+local function buildAll()
+    for _, entry in ipairs({ unpack(entries) }) do
+        build(entry)
+    end
+end
+
+-- Attach a core panel to the legacy Auction House frame, now or when its addon loads. Tabs follow in call order.
 -- core needs Mount(parent, api), Unmount(), Select(), Leave(tabIndex), Deselect(), IsActive() and core.deps.bus.
+-- opts.label is the tab text (default "Flipside"). Call Attach again for more tabs.
 -- Returns a state table with frame, tab and index.
-function Host.Attach(core)
-    local state = {}
+function Host.Attach(core, opts)
+    local entry = { core = core, label = opts and opts.label or "Flipside", state = {} }
+    entries[#entries + 1] = entry
     if AuctionFrame then
-        build(state, core)
-    else
+        build(entry)
+    elseif not waiting then
+        waiting = true
         local bus = core.deps.bus
         bus:Subscribe("ADDON_LOADED", OWNER, function(_, name)
             if name == ADDON then
                 bus:Unsubscribe("ADDON_LOADED", OWNER)
-                build(state, core)
+                waiting = false
+                buildAll()
             end
         end)
     end
-    return state
+    return entry.state
 end
