@@ -596,7 +596,11 @@ function LedgerPage.Build(content, deps)
     end)
     page.graphToggle:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, 0)
     layoutBody()
+    local flavour = ns.Flavour or {}
     page.topTabs = Kit.CreateTopTabs(body, LedgerPage.TABS, {
+        template = flavour.topTabTemplate,
+        tabPadding = flavour.topTabPadding,
+        minTabWidth = flavour.topTabMinWidth,
         onSelect = function(key)
             page.tab = key
             page.Draw()

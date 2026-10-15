@@ -830,6 +830,7 @@ Gold, silver and copper coin amounts keep the game's own coin colours so money r
 - Use the game's own fonts (Friz Quadrata via the standard font objects) so text matches the client; ship no font without a compatible licence.
 - Borders and edges are pixel-perfect at any UI scale.
 - Frames follow the classic layout language: title bar with portrait-style icon, tabs along the bottom edge, close button top-right.
+- Tab style and size (2026-10-15, user feedback on TBC). The Kit takes the tab template as an option, and the caller passes it from `ns.Flavour` (`pageTabTemplate`, `topTabTemplate`, `topTabPadding`, `topTabMinWidth`). TBC uses `CharacterFrameTabButtonTemplate` for the bottom tabs, as the Character and Auction House frames do. Top tabs size to their text plus padding, with a minimum width. If the bottom tabs are wider than the window, the Kit shrinks them evenly with `PanelTemplates_TabResize` and the text truncates.
 - The kit lives in `Shared/UI/Kit/` and has no reference to Flipside code or names, so other addons can reuse it (D19).
 
 ### UI layout (decided 2026-10-14)
