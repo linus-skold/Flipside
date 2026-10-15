@@ -274,6 +274,7 @@ local SKIP_TEXT = {
     ["keep in bags reached"] = "keep in bags reached",
     ["post cap reached"] = "post cap reached",
     ["already lowest"] = "you are already lowest",
+    ["vendor pays more than the AH"] = "vendor pays more, skipped",
     ["no response"] = "no response from the Auction House",
     ["skipped by user"] = "skipped by you",
 }
@@ -611,6 +612,11 @@ function Tab:_Decide(entry, rows)
     if entry.decision.action == "post" then
         entry.status = "ready"
         self:_Quote(entry)
+        local skip = deps.plan.VendorSkip(candidate, entry.decision, entry.units, self:_Vendor(entry))
+        if skip then
+            entry.decision, entry.units, entry.status = skip, {}, "skip"
+            deps.log:Add(candidate, skip)
+        end
     else
         entry.status = "skip"
         deps.log:Add(candidate, entry.decision)
@@ -1127,7 +1133,8 @@ function Tab:_PostPrice(entry)
 end
 
 -- The warning lines for the next post of an entry at a price. An empty list means no warning.
-function Tab:_Warnings(entry, price)
+-- Post all gives no vendor warning: the vendorSkip rule already chose the entries of its queue.
+function Tab:_Warnings(entry, price, all)
     local lines = {}
     local unit
     if entry.status == "ready" then
@@ -1137,7 +1144,10 @@ function Tab:_Warnings(entry, price)
         lines[1] = "The rule skips this item: " .. (SKIP_TEXT[reason] or reason) .. "."
         unit = select(2, self:_ManualPlan(entry, price))[1]
     end
-    local vendor, net = SellingTab.VendorBetter(price, unit, self:_Vendor(entry))
+    local vendor, net
+    if not (all and entry.status == "ready") then
+        vendor, net = SellingTab.VendorBetter(price, unit, self:_Vendor(entry))
+    end
     if vendor then
         lines[#lines + 1] = "Sells for more at a vendor: " .. money(vendor) .. " (net on the AH: " .. money(net) .. ")."
     end
@@ -1185,7 +1195,7 @@ function Tab:_PostStep(all)
         return false, why
     end
     if not self.dryRun and not entry.warned then
-        local lines, unit = self:_Warnings(entry, price)
+        local lines, unit = self:_Warnings(entry, price, all)
         if #lines > 0 then
             self:_AskWarning(entry, price, lines, unit, all)
             return true

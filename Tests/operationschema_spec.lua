@@ -46,7 +46,7 @@ describe("OperationSchema", function()
 
     it("lists fields in sequence with safety fields last", function()
         assert.same({ "minPrice", "normalPrice", "maxPrice", "undercut", "duration", "postCap",
-            "stackSize", "keepInBags", "belowMin", "aboveMax", "cancelUndercut", "needScanData",
+            "stackSize", "keepInBags", "belowMin", "aboveMax", "vendorSkip", "cancelUndercut", "needScanData",
             "maxDataAgeHours", "minSamples" }, keys("selling"))
         assert.same({ "maxPrice", "showAboveMax", "maxDataAgeHours", "minSamples" }, keys("buying"))
         assert.same({ "sellToVendor", "keepInBags", "safetyMultiple",
@@ -64,7 +64,7 @@ describe("OperationSchema", function()
         assert.same({
             minPrice = DEFAULT, normalPrice = "scanmarket", maxPrice = "2 * scanmarket", undercut = 1,
             duration = 24, postCap = 0, stackSize = 0, keepInBags = 0, belowMin = "skip", aboveMax = "postAtMax",
-            cancelUndercut = true, needScanData = true,
+            vendorSkip = true, cancelUndercut = true, needScanData = true,
             maxDataAgeHours = 72, minSamples = 3,
         }, S.Defaults("selling"))
         local builtIn = S.DefaultSellingSettings()
@@ -116,10 +116,51 @@ describe("OperationSchema", function()
         assert.equal(5, S.Normalize("selling", { keepInBags = 5 }).keepInBags)
     end)
 
+    it("fills vendorSkip as true in old saved settings", function()
+        local old = { postCap = 5 }
+        assert.is_true(S.Normalize("selling", old).vendorSkip)
+        assert.is_nil(old.vendorSkip)
+        assert.is_false(S.Normalize("selling", { vendorSkip = false }).vendorSkip)
+        assert.is_true(S.DefaultSellingSettings().vendorSkip)
+    end)
+
+    it("names the rule fields for the user", function()
+        local labels = {}
+        for _, f in ipairs(S.Fields("selling")) do
+            labels[f.key] = f.label
+        end
+        assert.equal("Max stack size", labels.stackSize)
+        assert.equal("Keep quantity", labels.keepInBags)
+        assert.equal("Post quantity", labels.postCap)
+        assert.equal("Post duration", labels.duration)
+        assert.equal("Skip if vendor pays more", labels.vendorSkip)
+    end)
+
     describe("Validate", function()
         local function field(type, key, value)
             return S.ValidateField(type, key, value, compile)
         end
+
+        it("checks vendorSkip as a bool", function()
+            assert.is_true(field("selling", "vendorSkip", true))
+            assert.is_true(field("selling", "vendorSkip", false))
+            assert.is_false(field("selling", "vendorSkip", "yes"))
+            assert.is_false(field("selling", "vendorSkip", nil))
+        end)
+
+        it("checks the post duration choices", function()
+            for _, hours in ipairs({ 12, 24, 48 }) do
+                assert.is_true(field("selling", "duration", hours))
+            end
+            assert.is_false(field("selling", "duration", 36))
+            assert.is_false(field("selling", "duration", "24"))
+        end)
+
+        it("checks the buying max price as an optional formula", function()
+            assert.is_true(field("buying", "maxPrice", ""))
+            assert.is_true(field("buying", "maxPrice", "scanmarket"))
+            assert.is_false(field("buying", "maxPrice", "bad("))
+        end)
 
         it("checks numbers at and outside limits", function()
             assert.is_true(field("buying", "minSamples", 1))

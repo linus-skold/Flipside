@@ -241,6 +241,46 @@ describe("SellingPlan", function()
         end)
     end)
 
+    describe("VendorSkip", function()
+        local post = { action = "post", price = 1000, quantity = 20, auctions = 1 }
+
+        it("skips when the vendor pays more than the net, with a reason", function()
+            -- 20000 gross - 1000 cut - 300 deposit = 18700 net; the vendor pays 20 x 1000 = 20000.
+            local d = SP.VendorSkip(candidate(), post, { { quantity = 20, deposit = 300 } }, 1000)
+            assert.equal("skip", d.action)
+            assert.equal("vendor pays more than the AH", d.reason)
+            assert.equal(1000, d.suggested)
+            assert.equal(20000, d.vendor)
+            assert.equal(18700, d.net)
+            assert.equal("100", d.key)
+        end)
+
+        it("is on by default and when the field is true", function()
+            local units = { { quantity = 20, deposit = 0 } }
+            assert.is_table(SP.VendorSkip(candidate(), post, units, 2000))
+            assert.is_table(SP.VendorSkip(candidate({ vendorSkip = true }), post, units, 2000))
+        end)
+
+        it("skips nothing when the field is false", function()
+            local units = { { quantity = 20, deposit = 0 } }
+            assert.is_nil(SP.VendorSkip(candidate({ vendorSkip = false }), post, units, 2000))
+        end)
+
+        it("skips nothing when the AH pays more or the vendor price is not known", function()
+            local units = { { quantity = 20, deposit = 300 } }
+            assert.is_nil(SP.VendorSkip(candidate(), post, units, 900))
+            assert.is_nil(SP.VendorSkip(candidate(), post, units, nil))
+            assert.is_nil(SP.VendorSkip(candidate(), post, {}, 5000))
+        end)
+
+        it("uses the cut and the deposit of all units", function()
+            local units = { { quantity = 10, deposit = 5000 }, { quantity = 10, deposit = 5000 } }
+            -- Net 20000 - 1000 - 10000 = 9000, below the vendor 10 x 500 x 2 = 10000.
+            assert.is_table(SP.VendorSkip(candidate(), post, units, 500))
+            assert.is_nil(SP.VendorSkip(candidate(), post, units, 400))
+        end)
+    end)
+
     describe("Profit", function()
         it("takes a 5 percent cut and the deposit from the gross", function()
             local p = SP.Profit(1000, { { quantity = 20, deposit = 300 }, { quantity = 20, deposit = 300 } }, nil)

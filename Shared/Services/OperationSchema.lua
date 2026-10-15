@@ -57,7 +57,8 @@ local FIELDS = {
         },
         {
             key = "postCap", label = "Post quantity", kind = "number", default = 0, min = 0, max = 5000,
-            help = "The most to have on the AH for each item: auctions for an item, units for a commodity. 0 means no cap.",
+            help = "The most to have on the AH for each item: auctions for an item, "
+                .. "units for a commodity. 0 means no cap.",
         },
         {
             key = "stackSize", label = "Max stack size", kind = "number", default = 0, min = 0, max = 1000,
@@ -83,6 +84,11 @@ local FIELDS = {
                 { value = "postAtNormal", label = "Post at normal" },
             },
             help = "What to do when the market is above the maximum price.",
+        },
+        {
+            key = "vendorSkip", label = "Skip if vendor pays more", kind = "bool", default = true,
+            help = "Skip an item when its vendor sell price is higher than the net of the auction "
+                .. "(after cut and deposit).",
         },
         {
             key = "cancelUndercut", label = "Cancel undercut", kind = "bool", default = true,

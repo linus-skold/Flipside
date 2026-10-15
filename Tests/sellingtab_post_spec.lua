@@ -201,7 +201,7 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
         client = makeClient()
         client.commodity[10] = false
         client.commodity[11] = true
-        warns, bagReads, vendor, opExtra = {}, 0, {}, {}
+        warns, bagReads, vendor, opExtra = {}, 0, {}, { vendorSkip = false }
         rules = makeRules()
         bagItems = {
             { key = "11", itemID = 11, name = "Bolt of Linen", count = 12, stacks = {
@@ -457,13 +457,11 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
             assert.are.equal(0, #client.posts)
         end)
 
-        it("asks in the Post all queue too", function()
+        it("asks no vendor question in the Post all queue", function()
             vendor[10] = 200
             selectCloth()
             click(ui.postAll)
-            assert.are.equal(0, #client.posts)
-            assert.are.equal(1, #warns)
-            warns[1].onYes()
+            assert.are.equal(0, #warns)
             assert.are.equal(1, #client.posts)
         end)
 
@@ -713,6 +711,70 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
             click(ui.postNext)
             warns[1].onYes()
             assert.are.equal(8, client.posts[1].quantity)
+        end)
+    end)
+    describe("the vendor skip rule", function()
+        local function remount(extra)
+            opExtra = extra
+            tab = mount()
+            ui = tab.ui
+        end
+
+        it("skips an item whose vendor price is higher than the net, by default", function()
+            remount({})
+            vendor[10] = 200
+            selectCloth()
+            local entry = entryOf("10")
+            assert.are.equal("skip", entry.status)
+            assert.are.equal("vendor pays more than the AH", entry.decision.reason)
+            assert.are.equal("vendor pays more, skipped", ns.SellingTab.InfoText(entry))
+            local last
+            for _, item in ipairs(ns.SellingPlan.Log:List()) do
+                if item.key == "10" then
+                    last = item
+                end
+            end
+            assert.are.equal("skip", last.decision)
+            assert.are.equal("vendor pays more than the AH", last.reason)
+        end)
+
+        it("keeps the item in the queue when the AH pays more", function()
+            remount({})
+            vendor[10] = 5
+            selectCloth()
+            assert.are.equal("ready", entryOf("10").status)
+        end)
+
+        it("posts the item when the rule is off", function()
+            remount({ vendorSkip = false })
+            vendor[10] = 200
+            selectCloth()
+            assert.are.equal("ready", entryOf("10").status)
+        end)
+
+        it("leaves the skipped item out of Post all", function()
+            remount({})
+            vendor[10] = 200
+            selectCloth()
+            assert.are.equal("Post all (0/1)", ui.postAll.text)
+            click(ui.postAll)
+            assert.are.equal("commodity", client.posts[1].kind)
+            assert.are.equal(0, #warns)
+        end)
+
+        it("still asks first on a manual post of the skipped item", function()
+            remount({})
+            vendor[10] = 200
+            selectCloth()
+            pick("i10")
+            assert.is_true(ui.postNext.enabled)
+            assert.are.equal("1s 19c", ui.details.priceInput.text)
+            click(ui.postNext)
+            assert.are.equal(0, #client.posts)
+            assert.matches("The rule skips this item: vendor pays more, skipped", warns[1].text)
+            assert.matches("Sells for more at a vendor", warns[1].text)
+            warns[1].onYes()
+            assert.are.equal(1, #client.posts)
         end)
     end)
     describe("the bag sync after a post", function()

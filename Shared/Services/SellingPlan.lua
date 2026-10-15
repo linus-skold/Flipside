@@ -264,6 +264,23 @@ function SellingPlan.Profit(price, units, vendorPrice)
     }
 end
 
+-- The vendor skip rule. decision is a post decision, units are its units ({ quantity, deposit }).
+-- Returns a skip decision if the vendor sell price of the items is higher than the AH net, else nil.
+-- The rule is on unless the operation sets vendorSkip to false. With no vendor price it skips nothing.
+function SellingPlan.VendorSkip(candidate, decision, units, vendorPrice)
+    local s = candidate.settings or {}
+    if s.vendorSkip == false or decision.action ~= "post" or not vendorPrice or #units == 0 then
+        return nil
+    end
+    local profit = SellingPlan.Profit(decision.price, units, vendorPrice)
+    if profit.vendor <= profit.net then
+        return nil
+    end
+    return Skip(candidate, "vendor pays more than the AH", {
+        suggested = decision.price, competitor = decision.competitor, vendor = profit.vendor, net = profit.net,
+    })
+end
+
 local Log = {}
 Log.__index = Log
 
