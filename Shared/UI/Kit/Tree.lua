@@ -189,6 +189,7 @@ end
 -- Drag a row with the left button. A drop on a row gives its id. A drop on the empty tree gives nil.
 -- A drop on the dragged row itself, or outside the tree, calls nothing. canDrag(id) false blocks the drag.
 -- A node is { id, text, children }. Use tree.frame to place the tree.
+-- tree.contentInsets = { left, right } is the space between the tree frame and the rows.
 function Kit.CreateTree(parent, options)
     options = options or {}
     local rowHeight = options.rowHeight or Kit.Theme.rowHeight
@@ -220,6 +221,7 @@ function Kit.CreateTree(parent, options)
         ScrollUtil.InitScrollBoxListWithScrollBar(box, bar, view)
         tree.frame = container
         tree.box = box
+        tree.contentInsets = { left = pad, right = 16 + pad }
         function tree:Render()
             local provider = CreateTreeDataProvider()
             local function add(parentNode, nodes)
@@ -247,6 +249,7 @@ function Kit.CreateTree(parent, options)
             end,
         })
         tree.frame = tree.list.frame
+        tree.contentInsets = tree.list.contentInsets
         function tree:Render()
             self.list:SetData(flatten(self.roots, 1, self.collapsed, {}))
         end
