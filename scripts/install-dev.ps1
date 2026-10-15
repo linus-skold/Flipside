@@ -5,7 +5,8 @@ Installs a branch, commit or worktree of Flipside into the WoW AddOns folder.
 .DESCRIPTION
 Copies the git-tracked files minus the `ignore:` list of .pkgmeta into
 <AddOns>\<package-as>. It deletes the old <AddOns>\<package-as> folder first.
-It deletes nothing else. Use -WhatIf to see the plan without any change.
+Each move-folders: entry of .pkgmeta becomes its own folder (for example Flipside_Ledger), with the same
+delete-then-copy rule. It deletes nothing else. Use -WhatIf to see the plan without any change.
 
 .EXAMPLE
 .\scripts\install-dev.ps1 -Ref fix/selling-tree-insets
@@ -80,12 +81,18 @@ try {
     if (-not (Test-Path -LiteralPath $pkgmeta)) { throw ".pkgmeta not found in $root" }
     $packageAs = $null
     $ignore = @()
+    $moves = @()
     $inIgnore = $false
+    $inMove = $false
     foreach ($line in Get-Content -LiteralPath $pkgmeta) {
-        if ($line -match '^package-as:\s*(\S+)') { $packageAs = $Matches[1].Trim('"', "'"); $inIgnore = $false }
-        elseif ($line -match '^ignore:\s*$') { $inIgnore = $true }
+        if ($line -match '^package-as:\s*(\S+)') { $packageAs = $Matches[1].Trim('"', "'"); $inIgnore = $false; $inMove = $false }
+        elseif ($line -match '^ignore:\s*$') { $inIgnore = $true; $inMove = $false }
+        elseif ($line -match '^move-folders:\s*$') { $inMove = $true; $inIgnore = $false }
+        elseif ($inMove -and $line -match '^\s+(\S+?):\s*(\S+)\s*$') {
+            $moves += [pscustomobject]@{ From = $Matches[1].Trim('"', "'"); To = $Matches[2].Trim('"', "'") }
+        }
         elseif ($inIgnore -and $line -match '^\s+-\s*(.+?)\s*$') { $ignore += $Matches[1].Trim('"', "'") }
-        elseif ($line -match '^\S') { $inIgnore = $false }
+        elseif ($line -match '^\S') { $inIgnore = $false; $inMove = $false }
     }
     if (-not $packageAs) { throw 'package-as not found in .pkgmeta' }
     $ignore += 'scripts'   # safety net: the script never ships
@@ -102,10 +109,27 @@ try {
     }
     $keep = @($keep)
 
-    $target = Join-Path $AddOnsPath $packageAs
+    # Each move-folders entry (Flipside/Sub: Name) becomes its own addon folder.
+    $moved = @()
+    foreach ($m in $moves) {
+        $prefix = "$packageAs/"
+        if (-not $m.From.StartsWith($prefix)) { throw "Unsupported move-folders source: $($m.From)" }
+        $sub = $m.From.Substring($prefix.Length)
+        if ($sub -notmatch '^[A-Za-z0-9_.-]+$') { throw "Unsafe move-folders source: $($m.From)" }
+        if ($m.To -notmatch '^[A-Za-z0-9_.-]+$' -or $m.To -eq $packageAs) { throw "Unsafe move-folders target: $($m.To)" }
+        $moved += [pscustomobject]@{ Prefix = "$sub/"; Name = $m.To }
+    }
+    $targets = @()
+    $mainFiles = @($keep | Where-Object { $f = $_; -not ($moved | Where-Object { $f.StartsWith($_.Prefix) }) })
+    $targets += [pscustomobject]@{ Name = $packageAs; Strip = ''; Files = $mainFiles }
+    foreach ($m in $moved) {
+        $mine = @($keep | Where-Object { $_.StartsWith($m.Prefix) })
+        $targets += [pscustomobject]@{ Name = $m.Name; Strip = $m.Prefix; Files = $mine }
+    }
+
     Write-Host "Source : $Source"
     Write-Host "Ref    : $branchLabel @ $commit$(if ($Ref) { ' (exported)' } else { ' (working tree)' })"
-    Write-Host "Target : $target"
+    foreach ($t in $targets) { Write-Host "Target : $(Join-Path $AddOnsPath $t.Name) ($($t.Files.Count) files)" }
     Write-Host "Files  : $($keep.Count) of $(@($files).Count) (ignored: $(@($files).Count - $keep.Count))"
 
     $toc = Join-Path $root "$packageAs.toc"
@@ -120,29 +144,32 @@ try {
         Write-Warning 'WoW is running. The new files load on /reload or relog.'
     }
 
-    # Step 3: delete the old folder, copy, write the marker.
-    if (Test-Path -LiteralPath $target) {
-        if ($PSCmdlet.ShouldProcess($target, 'Delete old addon folder')) {
-            Remove-Item -LiteralPath $target -Recurse -Force
+    # Step 3: for each addon folder, delete the old folder, copy, write the marker.
+    foreach ($t in $targets) {
+        $target = Join-Path $AddOnsPath $t.Name
+        if (Test-Path -LiteralPath $target) {
+            if ($PSCmdlet.ShouldProcess($target, 'Delete old addon folder')) {
+                Remove-Item -LiteralPath $target -Recurse -Force
+            }
         }
-    }
-    if ($PSCmdlet.ShouldProcess($target, "Copy $($keep.Count) files")) {
-        foreach ($f in $keep) {
-            $dest = Join-Path $target $f
-            New-Item -ItemType Directory -Force (Split-Path -Parent $dest) | Out-Null
-            Copy-Item -LiteralPath (Join-Path $root $f) -Destination $dest
+        if ($PSCmdlet.ShouldProcess($target, "Copy $($t.Files.Count) files")) {
+            foreach ($f in $t.Files) {
+                $dest = Join-Path $target $f.Substring($t.Strip.Length)
+                New-Item -ItemType Directory -Force (Split-Path -Parent $dest) | Out-Null
+                Copy-Item -LiteralPath (Join-Path $root $f) -Destination $dest
+            }
+            $full = (Invoke-Git rev-parse ($(if ($Ref) { $resolved } else { 'HEAD' }))) -join ''
+            @(
+                "ref: $branchLabel"
+                "commit: $full"
+                "installed: $((Get-Date).ToString('o'))"
+                "source: $Source"
+            ) | Set-Content -LiteralPath (Join-Path $target '.dev-install')
+            Write-Host "Copied $($t.Files.Count) files to $($t.Name). Run /reload in game."
+        } else {
+            $t.Files | Select-Object -First 15 | ForEach-Object { Write-Host "  would copy $_" }
+            if ($t.Files.Count -gt 15) { Write-Host "  ... and $($t.Files.Count - 15) more" }
         }
-        $full = (Invoke-Git rev-parse ($(if ($Ref) { $resolved } else { 'HEAD' }))) -join ''
-        @(
-            "ref: $branchLabel"
-            "commit: $full"
-            "installed: $((Get-Date).ToString('o'))"
-            "source: $Source"
-        ) | Set-Content -LiteralPath (Join-Path $target '.dev-install')
-        Write-Host "Copied $($keep.Count) files. Run /reload in game."
-    } else {
-        $keep | Select-Object -First 15 | ForEach-Object { Write-Host "  would copy $_" }
-        if ($keep.Count -gt 15) { Write-Host "  ... and $($keep.Count - 15) more" }
     }
 }
 finally {

@@ -89,6 +89,7 @@ local function openSettingsDB()
     local ok, result = pcall(ns.SettingsDB.New, _G[name], {
         character = character,
         schemaVersion = 1,
+        defaults = { account = ns.LedgerRecord and ns.LedgerRecord.Defaults() or nil },
         onWarning = ns.ReportError,
     })
     if not ok then
@@ -661,6 +662,56 @@ local function openInventory()
     end
 end
 
+-- Create the ledger buffer and the loader of the ledger addon; they need the settings DB.
+-- The ledger addon has no Lua code: the client puts its saved table in the global of its name.
+local function openLedger()
+    if not (ns.db and ns.LedgerRecord and ns.LedgerBuffer and ns.LedgerStore and ns.LedgerLoader) then
+        return
+    end
+    local ok, err = pcall(function()
+        local loadAddOn = C_AddOns and C_AddOns.LoadAddOn or LoadAddOn
+        local region = detectRegion()
+        local loader
+        ns.ledgerBuffer = ns.LedgerBuffer.New(ns.db, {
+            warn = ns.ReportError,
+            onCap = function()
+                loader:RequestFlush()
+            end,
+        })
+        loader = ns.LedgerLoader.New({
+            bus = ns.bus,
+            buffer = ns.ledgerBuffer,
+            loadAddOn = loadAddOn,
+            inCombat = InCombatLockdown,
+            now = GetServerTime,
+            after = C_Timer.After,
+            setting = function(key)
+                return ns.db:Get("account", key)
+            end,
+            openStore = function()
+                local name = ns.Flavour.savedVariables.ledger
+                if type(_G[name]) ~= "table" then
+                    _G[name] = {}
+                end
+                return ns.LedgerStore.New(_G[name], {
+                    region = region,
+                    ruleset = ns.Flavour.ruleset,
+                    onWarning = ns.ReportError,
+                })
+            end,
+        })
+        ns.ledgerLoader = loader
+        ns.bus:Subscribe(ns.LedgerLoader.EVENT_FAILED, "Flipside.Init", function(_, reason)
+            ns.ReportError("the ledger addon did not load: " .. tostring(reason))
+        end)
+        loader:Attach()
+    end)
+    if not ok then
+        ns.ledgerBuffer, ns.ledgerLoader = nil, nil
+        ns.ReportError("the ledger is not available this session: " .. tostring(err))
+    end
+end
+
 -- Create the tooltip settings and attach the tooltip lines; they need the settings DB.
 local function openTooltip()
     if not (ns.db and ns.TooltipConfig and ns.Tooltip and ns.TooltipLines) then
@@ -720,6 +771,7 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
         openRules()
         openSearchLists()
         openInventory()
+        openLedger()
         openTooltip()
         openUI()
         if ns.RecipeSearch then

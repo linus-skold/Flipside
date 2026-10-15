@@ -1,5 +1,8 @@
 package-as: Flipside
 
+move-folders:
+  Flipside/Flipside_Ledger: Flipside_Ledger
+
 ignore:
   - Tests
   - docs

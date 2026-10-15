@@ -87,7 +87,8 @@ describe("Init on TBC", function()
         assert.is_false(f.hasCommodityMarket)
         assert.are.same({ 0, 1, 2, 3, 4 }, f.bagIDs())
         assert.are.same({ -1, 5, 6, 7, 8, 9, 10, 11 }, f.bankIDs())
-        assert.are.same({ main = "FlipsideDB_TBC", scan = "FlipsideScanDB_TBC" }, f.savedVariables)
+        assert.are.same(
+            { main = "FlipsideDB_TBC", scan = "FlipsideScanDB_TBC", ledger = "FlipsideLedgerDB_TBC" }, f.savedVariables)
     end)
 
     it("falls back to 4 bags and 7 bank bags without client constants", function()

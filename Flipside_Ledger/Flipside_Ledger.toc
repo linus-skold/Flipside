@@ -1,0 +1,10 @@
+## Interface: 16001
+## Title: Flipside Ledger
+## Notes: Ledger data of Flipside. Flipside loads this addon when it needs the ledger.
+## Author: linus-skold
+## Version: @project-version@
+## IconTexture: Interface\Icons\INV_Misc_Coin_02
+## LoadOnDemand: 1
+## Dependencies: Flipside
+## SavedVariables: FlipsideLedgerDB
+# This addon has no Lua file. The client creates the SavedVariables table; Flipside owns all ledger code.
