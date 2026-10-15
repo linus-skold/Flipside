@@ -1207,6 +1207,94 @@ describe("Kit", function()
         end)
     end)
 
+    describe("list skin", function()
+        local skin = {
+            backgroundAtlas = "bg", stripeAtlases = { "s1", "s2" }, highlightAtlas = "hover", selectAtlas = "pick",
+        }
+
+        it("puts the background atlas inside the inset border", function()
+            local inset = Kit.Inset(CreateFrame("Frame"), skin)
+            assert.are.equal("InsetFrameTemplate", inset.template)
+            assert.are.equal("bg", inset.skinBackground.atlas)
+            assert.are.same({ "TOPLEFT", inset, "TOPLEFT", 3, -3 }, inset.skinBackground.points[1])
+            assert.are.same({ "BOTTOMRIGHT", inset, "BOTTOMRIGHT", -3, 3 }, inset.skinBackground.points[2])
+        end)
+
+        it("adds no background without a skin", function()
+            assert.is_nil(Kit.Inset(CreateFrame("Frame")).skinBackground)
+        end)
+
+        it("skins a row with a stripe and a hover texture, and alternates the stripe", function()
+            local row = CreateFrame("Button")
+            assert.is_true(Kit.SkinRow(row, skin, true))
+            assert.are.equal("s1", row.kitStripe.atlas)
+            assert.are.equal("hover", row.kitHover.atlas)
+            assert.are.equal("ADD", row.kitHover.blendMode)
+            assert.are.equal("HIGHLIGHT", row.kitHover.layer)
+            assert.is_nil(row.highlightTexture)
+            Kit.SkinRow(row, skin, false)
+            assert.are.equal("s2", row.kitStripe.atlas)
+        end)
+
+        it("gives the Kit highlight texture to a row without a skin", function()
+            local row = CreateFrame("Button")
+            assert.is_false(Kit.SkinRow(row, nil))
+            assert.are.equal(Kit.Theme.rowHighlight, row.highlightTexture)
+        end)
+
+        it("makes the selection texture from the select atlas or the Kit texture", function()
+            local row = CreateFrame("Button")
+            local picked = Kit.SelectionTexture(row, skin, 0.4)
+            assert.are.equal("pick", picked.atlas)
+            assert.are.equal("ADD", picked.blendMode)
+            assert.are.equal(0.4, picked.alpha)
+            assert.are.equal(row, picked.allPoints)
+            assert.are.equal(Kit.Theme.rowHighlight, Kit.SelectionTexture(row).texture)
+        end)
+
+        it("registers the stripe alternation on the scroll box", function()
+            local callback
+            _G.ScrollUtil.RegisterAlternateRowBehavior = function(box, fn)
+                callback = { box = box, fn = fn }
+            end
+            local list = Kit.CreateList(CreateFrame("Frame"), { inset = true, skin = skin })
+            assert.are.equal(list.box, callback.box)
+            assert.are.equal("bg", list.frame.skinBackground.atlas)
+            local row = CreateFrame("Button")
+            callback.fn(row, true)
+            assert.are.equal("s1", row.kitStripe.atlas)
+            callback.fn(row, false)
+            assert.are.equal("s2", row.kitStripe.atlas)
+        end)
+
+        it("skins the rows of a list and a tree", function()
+            local list = Kit.CreateList(CreateFrame("Frame"), { skin = skin, initRow = function() end })
+            local row = CreateFrame("Button")
+            mock.scrollInit.view.initializer(row, {})
+            assert.are.equal("hover", row.kitHover.atlas)
+            local tree = Kit.CreateTree(CreateFrame("Frame"), { inset = true, skin = skin })
+            assert.are.equal("bg", tree.frame.skinBackground.atlas)
+            local treeRow = CreateFrame("Button")
+            mock.scrollInit.view.initializer(treeRow, {
+                GetData = function() return { id = "a", text = "A" } end,
+                GetDepth = function() return 1 end,
+                IsCollapsed = function() return false end,
+                GetNodes = function() return {} end,
+            })
+            assert.are.equal("pick", treeRow.selection.atlas)
+            assert.are.equal("hover", treeRow.kitHover.atlas)
+            assert.is_not_nil(list)
+        end)
+
+        it("stripes the fallback rows by position", function()
+            _G.ScrollUtil = nil
+            local list = Kit.CreateList(CreateFrame("Frame"), { skin = skin })
+            list:SetData({ "x", "y" })
+            assert.are.equal("s1", list.rows[1].kitStripe.atlas)
+            assert.are.equal("s2", list.rows[2].kitStripe.atlas)
+        end)
+    end)
+
     describe("IconButton", function()
         it("creates the client close button template and calls onClick", function()
             local got = 0

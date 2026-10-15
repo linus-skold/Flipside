@@ -7,6 +7,15 @@ ns.AuctionTabs = AuctionTabs
 
 local specs = {}
 
+-- Client atlases that give the lists in the Flipside tabs the look of Blizzard's Auction House lists.
+-- Source: Blizzard_AuctionHouseUI (AuctionHouseItemListTemplate, AuctionHouseItemListLineTemplate).
+AuctionTabs.Skin = {
+    backgroundAtlas = "auctionhouse-background-index",
+    stripeAtlases = { "auctionhouse-rowstripe-1", "auctionhouse-rowstripe-2" },
+    highlightAtlas = "auctionhouse-ui-row-highlight",
+    selectAtlas = "auctionhouse-ui-row-select",
+}
+
 -- spec: { id, label, create(deps) -> core, available(deps) -> boolean (optional) }.
 -- The core needs Mount, Unmount, Select, Leave, Deselect, IsActive and core.deps.bus.
 -- The same id replaces the earlier spec.

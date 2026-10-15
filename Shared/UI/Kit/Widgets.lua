@@ -428,12 +428,80 @@ function Kit.EditorDialog(name, options)
 end
 
 -- Give a frame the client inset background and border. Use the result as a frame.
-function Kit.Inset(parent)
+-- skin (optional) is { backgroundAtlas, stripeAtlases = { odd, even }, highlightAtlas, selectAtlas }.
+-- All values are client atlas names.
+-- A backgroundAtlas covers the inset background inside the border.
+function Kit.Inset(parent, skin)
     local ok, inset = pcall(CreateFrame, "Frame", nil, parent, "InsetFrameTemplate")
     if not ok then
         inset = CreateFrame("Frame", nil, parent)
     end
+    if skin and skin.backgroundAtlas then
+        local background = inset:CreateTexture(nil, "BACKGROUND", nil, -4)
+        background:SetAtlas(skin.backgroundAtlas)
+        background:SetPoint("TOPLEFT", inset, "TOPLEFT", 3, -3)
+        background:SetPoint("BOTTOMRIGHT", inset, "BOTTOMRIGHT", -3, 3)
+        inset.skinBackground = background
+    end
     return inset
+end
+
+-- Skin a list row once: a stripe texture and a hover texture from the atlases of the skin.
+-- alternate (optional) picks the stripe atlas: true gives the first, false the second.
+-- Without a skin the row gets the Kit highlight texture. Returns true when the row has the skin.
+function Kit.SkinRow(row, skin, alternate)
+    if not (skin and (skin.stripeAtlases or skin.highlightAtlas)) then
+        if not row.kitSkinned then
+            row.kitSkinned = true
+            row:SetHighlightTexture(Kit.Theme.rowHighlight, "ADD")
+        end
+        return false
+    end
+    if not row.kitSkinned then
+        row.kitSkinned = true
+        if skin.stripeAtlases then
+            row.kitStripe = row:CreateTexture(nil, "BACKGROUND", nil, -2)
+            row.kitStripe:SetAllPoints(row)
+        end
+        if skin.highlightAtlas then
+            row.kitHover = row:CreateTexture(nil, "HIGHLIGHT")
+            row.kitHover:SetAtlas(skin.highlightAtlas)
+            row.kitHover:SetBlendMode("ADD")
+            row.kitHover:SetAllPoints(row)
+        else
+            row:SetHighlightTexture(Kit.Theme.rowHighlight, "ADD")
+        end
+    end
+    if row.kitStripe and alternate ~= nil then
+        row.kitStripe:SetAtlas(alternate and skin.stripeAtlases[1] or skin.stripeAtlases[2])
+    end
+    return true
+end
+
+-- Create an additive selection texture over a row. A skin selectAtlas replaces the Kit highlight texture.
+-- alpha is optional.
+function Kit.SelectionTexture(row, skin, alpha)
+    local texture = row:CreateTexture(nil, "BACKGROUND")
+    if skin and skin.selectAtlas then
+        texture:SetAtlas(skin.selectAtlas)
+    else
+        texture:SetTexture(Kit.Theme.rowHighlight)
+    end
+    texture:SetBlendMode("ADD")
+    if alpha then
+        texture:SetAlpha(alpha)
+    end
+    texture:SetAllPoints(row)
+    return texture
+end
+
+-- Alternate the stripe atlas of the rows of a scroll box, as the client lists do.
+function Kit.AlternateStripes(box, skin)
+    if skin and skin.stripeAtlases and ScrollUtil and ScrollUtil.RegisterAlternateRowBehavior then
+        ScrollUtil.RegisterAlternateRowBehavior(box, function(row, alternate)
+            Kit.SkinRow(row, skin, alternate)
+        end)
+    end
 end
 
 local ICON_BUTTONS = {

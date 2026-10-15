@@ -163,6 +163,28 @@ describe("BuyingTab item tree", function()
         end)
     end)
 
+    describe("the look", function()
+        it("gives the item tree and the price level list the client Auction House background", function()
+            assert.are.equal("auctionhouse-background-index", ui.tree.frame.skinBackground.atlas)
+            assert.are.equal("auctionhouse-background-index", ui.rowsList.frame.skinBackground.atlas)
+        end)
+
+        it("gives the tree rows the client select and hover atlases", function()
+            local row = draw("i10")
+            assert.are.equal("auctionhouse-ui-row-select", row.selection.atlas)
+            assert.are.equal("auctionhouse-ui-row-highlight", row.kitHover.atlas)
+        end)
+
+        it("draws the selected and covered price level rows with the client select atlas", function()
+            local row = CreateFrame("Button")
+            tab.covered = { [5] = true }
+            tab:_InitLevelRow(row, { unitPrice = 5, state = "buy" })
+            assert.are.equal("auctionhouse-ui-row-select", row.selection.atlas)
+            assert.are.equal("auctionhouse-ui-row-select", row.cover.atlas)
+            assert.are.equal(0.4, row.cover.alpha)
+        end)
+    end)
+
     describe("the click", function()
         it("selects the item and starts the search at once", function()
             local row = draw("i10")
