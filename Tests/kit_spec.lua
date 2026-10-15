@@ -1134,6 +1134,23 @@ describe("Kit", function()
             assert.is_nil(Kit.CreateTree(CreateFrame("Frame"), {}).frame.template)
         end)
 
+        it("gives tree content insets on the ScrollBox path", function()
+            local plain = Kit.CreateTree(CreateFrame("Frame"), {})
+            assert.is_nil(plain.list)
+            assert.are.same({ left = 0, right = 16 }, plain.contentInsets)
+            local tree = Kit.CreateTree(CreateFrame("Frame"), { inset = true })
+            local pad = Kit.Theme.insetPadding
+            assert.are.same({ left = pad, right = 16 + pad }, tree.contentInsets)
+        end)
+
+        it("gives tree content insets on the fallback path", function()
+            _G.CreateTreeDataProvider = nil
+            _G.ScrollUtil = nil
+            local tree = Kit.CreateTree(CreateFrame("Frame"), { inset = true })
+            local pad = Kit.Theme.insetPadding
+            assert.are.same({ left = pad, right = pad }, tree.contentInsets)
+        end)
+
         it("wraps a fallback tree when inset is true", function()
             _G.CreateTreeDataProvider = nil
             _G.ScrollUtil = nil

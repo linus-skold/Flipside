@@ -1112,7 +1112,7 @@ function Tab:_BuildContent()
     ui.tree.frame:SetPoint("TOPLEFT", content, "TOPLEFT", 0, TREE_TOP)
     ui.tree.frame:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", 0, BAR_HEIGHT)
     -- The column titles over the tree.
-    local edge = ui.tree.list.contentInsets
+    local edge = ui.tree.contentInsets
     local headers = Kit.CreateColumnHeader(content, COLUMNS,
         { gap = COLUMN_GAP, left = edge.left, right = edge.right })
     headers.frame:SetPoint("TOPLEFT", content, "TOPLEFT", 0, DETAILS_TOP - DETAILS_HEIGHT - 4)
