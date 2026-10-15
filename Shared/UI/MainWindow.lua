@@ -7,6 +7,9 @@ ns.MainWindow = MainWindow
 
 local instance
 
+local MIN_WIDTH, MIN_HEIGHT = 800, 540
+local COG_ICON = "Interface\\Buttons\\UI-OptionsButton"
+
 -- The window if it exists, or nil.
 function MainWindow.Get()
     return instance
@@ -32,7 +35,7 @@ local function buildAbout(content, deps)
 end
 
 -- Create the window once. deps: rules, customSources, readBags, keyFor, subscribe, formulaRun, formulaSources,
--- itemCache, itemNameIndex, getVersionLine, windowPosition ({ get, set } for the saved position).
+-- itemCache, itemNameIndex, getVersionLine, windowPosition and windowSize ({ get, set } for the saved place and size).
 function MainWindow.Create(deps)
     if instance then
         return instance
@@ -45,6 +48,12 @@ function MainWindow.Create(deps)
         title = "Flipside",
         portrait = "Interface\\Icons\\INV_Misc_Coin_02",
         savePosition = deps.windowPosition,
+        resize = {
+            minWidth = MIN_WIDTH,
+            minHeight = MIN_HEIGHT,
+            get = deps.windowSize and deps.windowSize.get,
+            set = deps.windowSize and deps.windowSize.set,
+        },
     })
     local tooltipPage, ledgerPage, justBuilt
     local pages = {}
@@ -98,20 +107,6 @@ function MainWindow.Create(deps)
             end,
         })
     end
-    table.insert(pages, {
-        key = "formula",
-        title = "Formulas",
-        build = function(content)
-            ns.FormulaPage.Build(content, deps)
-        end,
-    })
-    table.insert(pages, {
-        key = "about",
-        title = "About",
-        build = function(content)
-            buildAbout(content, deps)
-        end,
-    })
     -- The page loads the ledger each time it opens; the first open is in its build.
     local function openLedger()
         if justBuilt then
@@ -137,7 +132,61 @@ function MainWindow.Create(deps)
             end)
         end
     end
-    local win = { frame = window, tabs = tabs }
+    -- The settings view (Formulas, About) opens over the page with the cog button in the title bar.
+    local settings = CreateFrame("Frame", nil, window)
+    settings:SetAllPoints(tabs.contents[1])
+    settings:Hide()
+    local settingsTabs = Kit.CreateTopTabs(settings, {
+        { key = "formula", title = "Formulas" },
+        { key = "about", title = "About" },
+    })
+    local settingsBuilt = false
+    local function showSettings(key)
+        if not settingsBuilt then
+            settingsBuilt = true
+            ns.FormulaPage.Build(settingsTabs:GetContent("formula"), deps)
+            buildAbout(settingsTabs:GetContent("about"), deps)
+        end
+        for _, content in ipairs(tabs.contents) do
+            content:Hide()
+        end
+        settings:Show()
+        if key then
+            settingsTabs:Select(key)
+        end
+    end
+    local function hideSettings()
+        if not settings:IsShown() then
+            return
+        end
+        settings:Hide()
+        local selected = tabs:GetSelected()
+        for index, page in ipairs(pages) do
+            tabs.contents[index]:SetShown(page.key == selected)
+        end
+    end
+    for _, button in ipairs(tabs.buttons) do
+        button:HookScript("OnClick", hideSettings)
+    end
+    local cog = CreateFrame("Button", nil, window)
+    cog:SetSize(20, 20)
+    if window.CloseButton then
+        cog:SetPoint("RIGHT", window.CloseButton, "LEFT", -2, 0)
+    else
+        cog:SetPoint("TOPRIGHT", window, "TOPRIGHT", -30, -4)
+    end
+    cog:SetFrameLevel(window:GetFrameLevel() + 10)
+    cog:SetNormalTexture(COG_ICON)
+    cog:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
+    cog:SetScript("OnClick", function()
+        if settings:IsShown() then
+            hideSettings()
+        else
+            showSettings()
+        end
+    end)
+
+    local win = { frame = window, tabs = tabs, settings = settings, settingsTabs = settingsTabs, cog = cog }
     function win:Show()
         self.frame:Show()
     end
@@ -151,6 +200,11 @@ function MainWindow.Create(deps)
         return self.frame:IsShown() and true or false
     end
     function win:SelectPage(key)
+        if key == "formula" or key == "about" then
+            showSettings(key)
+            return
+        end
+        hideSettings()
         local before = self.tabs:GetSelected()
         self.tabs:Select(key)
         if key == "ledger" and before ~= "ledger" and self.tabs:GetSelected() == "ledger" then
@@ -158,6 +212,9 @@ function MainWindow.Create(deps)
         end
     end
     function win:GetSelectedPage()
+        if settings:IsShown() then
+            return "settings"
+        end
         return self.tabs:GetSelected()
     end
     function win:ResetPosition()

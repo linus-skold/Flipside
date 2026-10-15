@@ -59,7 +59,7 @@ s service or chat output (D19).
 - Ledger modules in `Shared/Services/`: `LedgerRecord`, `LedgerBuffer`, `LedgerStore`, `LedgerLoader`. The load-on-demand addon `Flipside_Ledger/` (repo root) has only TOC files (`Flipside_Ledger.toc`, `Flipside_Ledger_TBC.toc`) and no Lua code (SPEC 5.8).
 - Rules modules in `Shared/Services/`: `ItemNameIndex`, `OperationSchema`, `GroupTree`, `BagItems`, `RulesStore`, `CustomSources`, `AHNameSearch`, `RulesExport`.
 - `Shared/UI/MainWindow.lua`, `Shared/UI/Pages/` (`GroupsPage`, `OperationsPage`, `FormulaPage`, `LedgerPage`), `Shared/Features/AuctionTab/` (panel); `AH_Forever/AuctionTabHost.lua` owns AuctionHouseFrame. Flavour folders `Core_<Flavour>/` and `AH_<Flavour>/` come later (D23).
-- UI: Flipside tabs inside Blizzard's AuctionHouseFrame, plus the Flipside window (800 x 540); only client assets.
+- UI: Flipside tabs inside Blizzard's AuctionHouseFrame, plus the Flipside window (800 x 540 minimum, resizable); only client assets.
 - Item keys follow D20; no battle pets in the MVP (D21); scan data is keyed by region and ruleset (D22).
 
 ## Commands

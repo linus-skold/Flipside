@@ -831,7 +831,7 @@ Gold, silver and copper coin amounts keep the game's own coin colours so money r
 
 - Every Auction House feature is embedded in Blizzard's Auction House frame (`AuctionHouseFrame`). Flipside adds its own tabs to it when needed. There is no replacement frame.
 - A separate Flipside window, like the reference main window, holds groups, operations, settings and the formula preview.
-- The Flipside window has a fixed size of 800 x 540, the same as the AH frame.
+- The Flipside window starts at 800 x 540, the same as the AH frame. The player resizes it with a grip in the bottom-right corner. The minimum is 800 x 540. The maximum is the screen size (`UIParent`). The character setting `ui.windowSize` (`{ width, height }`) saves the size when the drag stops. The window restores it on create. The Kit window takes the option `resize = { minWidth, minHeight, maxWidth, maxHeight, get, set }` and uses `SetResizeBounds`, or `SetMinResize` and `SetMaxResize` on an older client. The pages anchor to the content frame and fill the window.
 - The AH frame gets one tab, "Flipside". It has the full scan button, the cooldown, the scan status and the item price lookup.
 - **Price lookup input** (the AH tab box and `/flip price`). It accepts four forms:
   1. An item name (the name index and the choice list).
@@ -850,7 +850,8 @@ Gold, silver and copper coin amounts keep the game's own coin colours so money r
   - The player drags the button around the minimap edge. The account setting `ui.minimapAngle` (degrees) saves the place when the drag stops.
   - The account setting `ui.minimapHidden` (default false) hides the button. `/flip minimap` changes the setting and prints the new state.
   - The button is a Kit widget, `Kit.CreateMinimapButton`. It takes the icon, the tooltip lines and the callbacks as arguments. It uses no library (D18).
-- **Window pages.** The order of the tabs is Ledger, Groups, Operations, Tooltip, Formulas, About. The Ledger page is the first page.
+- **Window pages.** The order of the tabs is Ledger, Groups, Operations, Tooltip. The Ledger page is the first page.
+- **Settings page.** A cog button sits at the top right of the title bar, left of the close button. A click opens a Settings view in the window with the sub-tabs Formulas and About (`Kit.CreateTopTabs`). A second click on the cog, or a click on a main tab, closes the view and shows the selected main page.
 - **Window position.** The window keeps its last place on the screen.
   - The Kit window takes the option `savePosition = { get, set }`. When a drag stops, it calls `set` with `{ point, relativePoint, x, y }`. On create, it reads the value with `get`.
   - The account setting `ui.windowPosition` holds the value. Flipside does not use the client layout cache for this.
