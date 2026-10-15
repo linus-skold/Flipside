@@ -291,6 +291,19 @@ function frameMethods:GenerateMenu()
     self.menuGenerator(self, root)
 end
 
+-- Model of the drop-down click path (Menu.lua AcquireMenu). The client asserts and crashes when it
+-- gets a non-table owner or a description with a non-string text. The mock raises a Lua error.
+function frameMethods:OpenMenu()
+    assert(type(self) == "table", "owner region must be a table")
+    self:GenerateMenu()
+    for _, item in ipairs(self.menuItems) do
+        assert(type(item.text) == "string", "menu text must be a string")
+        assert(item.value ~= nil, "menu value must not be nil")
+        assert(type(item.isSelected()) == "boolean", "isSelected must give a boolean")
+    end
+    self.menuOpen = true
+end
+
 local function newTreeNode(parent, data)
     local node = { parent = parent, data = data, nodes = {}, collapsed = false }
     node.depth = (parent.depth or 0) + 1
