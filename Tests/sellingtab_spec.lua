@@ -4,7 +4,7 @@ local mock = require("Tests.wow_mock")
 local function loadModules()
     local ns = { ReportError = function() end }
     for _, name in ipairs({ "EventBus", "ItemString", "ScanKey", "BagItems", "SellingPlan", "Theme", "Widgets",
-        "List", "Tree", "AuctionTabs", "SellingTab" }) do
+        "List", "Columns", "Tree", "AuctionTabs", "SellingTab" }) do
         assert(loadfile(manifest.path(name)))("Flipside", ns)
     end
     return ns
@@ -320,13 +320,12 @@ describe("SellingTab", function()
             assert.are.equal("-", rows[6].sellParts.cells.operation.text)
         end)
 
-        it("has the columns Item, Your price, Operation, Lowest, Net and Info", function()
+        it("has the header columns Item, Your price, Operation, Lowest, Net and Info", function()
             local titles = {}
             for _, column in ipairs(ns.SellingTab.COLUMNS) do
-                titles[#titles + 1] = ui.headers[column.key].text
+                titles[#titles + 1] = ui.headers.labels[column.key].text
             end
-            assert.are.equal("Item", ui.headers.item.text)
-            assert.are.same({ "Your price", "Operation", "Lowest", "Net", "Info" }, titles)
+            assert.are.same({ "Item", "Your price", "Operation", "Lowest", "Net", "Info" }, titles)
         end)
 
         it("collapses and expands a group", function()

@@ -16,7 +16,10 @@ local NONE_ID = "none"
 local BASE_GROUP = 1
 local ROW_HEIGHT = 22
 local TREE_INDENT = 14
-local NAME_WIDTH = 190
+local ITEM_WIDTH = 244
+local ITEM_LEAD = 18
+local ICON_LEAD = 22
+local COLUMN_GAP = 6
 local DETAILS_TOP = -28
 local DETAILS_HEIGHT = 72
 local HEADER_HEIGHT = 18
@@ -27,14 +30,17 @@ local GREEN = { 0.4, 1, 0.4 }
 local WHITE = { 1, 1, 1 }
 local GREY = { 0.5, 0.5, 0.5 }
 
--- The columns of an item row: x from the left edge of the row, the width, and the text alignment.
+-- The columns of the item list (Kit.ColumnLayout): the header and every row share them.
+-- The item cell (icon and name) is drawn by the row itself. The Info column fills the rest.
 local COLUMNS = {
-    { key = "price", title = "Your price", x = 250, width = 78, justify = "RIGHT" },
-    { key = "operation", title = "Operation", x = 336, width = 80, justify = "LEFT" },
-    { key = "lowest", title = "Lowest", x = 420, width = 78, justify = "RIGHT" },
-    { key = "net", title = "Net", x = 504, width = 78, justify = "RIGHT" },
-    { key = "info", title = "Info", x = 590, width = 160, justify = "LEFT" },
+    { key = "item", title = "Item", width = ITEM_WIDTH, owned = true },
+    { key = "price", title = "Your price", width = 78, number = true },
+    { key = "operation", title = "Operation", width = 80 },
+    { key = "lowest", title = "Lowest", width = 78, number = true },
+    { key = "net", title = "Net", width = 78, number = true },
+    { key = "info", title = "Info" },
 }
+local COLUMN_OPTIONS = { gap = COLUMN_GAP }
 SellingTab.COLUMNS = COLUMNS
 
 local function money(copper)
@@ -802,18 +808,9 @@ function Tab:_InitTreeRow(row, node, depth, isCollapsed, hasChildren)
     local Kit = ns.Kit
     local parts = row.sellParts
     if not parts then
-        parts = { icon = row:CreateTexture(nil, "ARTWORK"), cells = {} }
+        parts = { icon = row:CreateTexture(nil, "ARTWORK") }
         parts.icon:SetSize(18, 18)
-        for _, column in ipairs(COLUMNS) do
-            local cell = Kit.Label(row, "", "small")
-            cell:SetPoint("LEFT", row, "LEFT", column.x, 0)
-            cell:SetWidth(column.width)
-            cell:SetJustifyH(column.justify)
-            if cell.SetWordWrap then
-                cell:SetWordWrap(false)
-            end
-            parts.cells[column.key] = cell
-        end
+        parts.cells = Kit.CreateColumnCells(row, COLUMNS, COLUMN_OPTIONS)
         row.sellParts = parts
     end
     local tree = self.ui.tree
@@ -827,7 +824,8 @@ function Tab:_InitTreeRow(row, node, depth, isCollapsed, hasChildren)
     end)
     row.selection:SetShown(tree.selected ~= nil and tree.selected == node.id)
     row.label:ClearAllPoints()
-    row.label:SetWidth(NAME_WIDTH)
+    row.label:SetWidth(math.max(20, ITEM_WIDTH - (depth - 1) * TREE_INDENT - ITEM_LEAD
+        - (node.kind == "group" and 0 or ICON_LEAD)))
     row.label:SetJustifyH("LEFT")
     if row.label.SetWordWrap then
         row.label:SetWordWrap(false)
@@ -852,9 +850,8 @@ function Tab:_InitTreeRow(row, node, depth, isCollapsed, hasChildren)
     row.label:SetText(self:_Name(entry) .. " x" .. tostring(entry.item.count))
     local cells = SellingTab.Cells(entry, self:_Vendor(entry))
     local grey = entry.status ~= "ready"
-    for _, column in ipairs(COLUMNS) do
-        local cell = parts.cells[column.key]
-        cell:SetText(cells[column.key])
+    Kit.SetColumnCells(parts.cells, COLUMNS, cells)
+    for _, cell in pairs(parts.cells) do
         paint(cell, grey and GREY or WHITE)
     end
     if cells.netNegative then
@@ -1103,21 +1100,7 @@ function Tab:_BuildContent()
     d.vs = line("small", 470, 54, 290)
     ui.details = d
 
-    -- The column titles over the tree.
-    local headers = { frame = CreateFrame("Frame", nil, content) }
-    headers.frame:SetPoint("TOPLEFT", content, "TOPLEFT", 0, DETAILS_TOP - DETAILS_HEIGHT - 4)
-    headers.frame:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, DETAILS_TOP - DETAILS_HEIGHT - 4)
-    headers.frame:SetHeight(HEADER_HEIGHT)
-    headers.item = Kit.Label(headers.frame, "Item", "highlight")
-    headers.item:SetPoint("LEFT", headers.frame, "LEFT", 34, 0)
-    for _, column in ipairs(COLUMNS) do
-        local title = Kit.Label(headers.frame, column.title, "highlight")
-        title:SetPoint("LEFT", headers.frame, "LEFT", column.x + 4, 0)
-        title:SetWidth(column.width)
-        title:SetJustifyH(column.justify)
-        headers[column.key] = title
-    end
-    ui.headers = headers
+
 
     ui.tree = Kit.CreateTree(content, { rowHeight = ROW_HEIGHT, inset = true,
         initRow = function(row, node, depth, isCollapsed, hasChildren)
@@ -1128,6 +1111,14 @@ function Tab:_BuildContent()
         end })
     ui.tree.frame:SetPoint("TOPLEFT", content, "TOPLEFT", 0, TREE_TOP)
     ui.tree.frame:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", 0, BAR_HEIGHT)
+    -- The column titles over the tree.
+    local edge = ui.tree.list.contentInsets
+    local headers = Kit.CreateColumnHeader(content, COLUMNS,
+        { gap = COLUMN_GAP, left = edge.left, right = edge.right })
+    headers.frame:SetPoint("TOPLEFT", content, "TOPLEFT", 0, DETAILS_TOP - DETAILS_HEIGHT - 4)
+    headers.frame:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, DETAILS_TOP - DETAILS_HEIGHT - 4)
+    headers.frame:SetHeight(HEADER_HEIGHT)
+    ui.headers = headers
     ui.logList = Kit.CreateList(content, { rowHeight = 18, inset = true, initRow = function(row, data)
         self:_InitLogRow(row, data)
     end })

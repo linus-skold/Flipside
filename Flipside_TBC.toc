@@ -53,6 +53,7 @@ Shared\UI\Kit\Window.lua
 Shared\UI\Kit\Widgets.lua
 Shared\UI\Kit\Tabs.lua
 Shared\UI\Kit\List.lua
+Shared\UI\Kit\Columns.lua
 Shared\UI\Kit\Tree.lua
 Shared\UI\Kit\Combat.lua
 Shared\UI\Pages\FormulaPage.lua
