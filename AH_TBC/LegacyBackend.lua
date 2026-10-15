@@ -532,7 +532,8 @@ end
 
 -- Posting (Selling tab). The legacy client posts the item in the sale slot: the code puts the bag item there, checks
 -- it, and calls PostAuction(start, buyout, duration, stackSize, numStacks). Each post is one stack (numStacks 1).
--- PostItem and ConfirmPostItem are protected: call them only inside a click handler. This code starts no timer for them.
+-- PostItem and ConfirmPostItem are protected: call them only inside a click handler.
+-- This code starts no timer for them.
 local POST_OWNER = "Flipside.LegacyBackend.Post"
 local POSTED_EVENT = "Flipside.LegacyPosted"
 local POST_WINDOW_SECONDS = 20
@@ -675,9 +676,10 @@ local function fillSellSlot(bag, slot, quantity, itemID)
 end
 
 local function hidePostDialogs()
-    if type(StaticPopup_Hide) == "function" then
-        pcall(StaticPopup_Hide, "AUCTION_HOUSE_POST_WARNING")
-        pcall(StaticPopup_Hide, "AUCTION_HOUSE_POST_ERROR")
+    local hide = _G.StaticPopup_Hide
+    if type(hide) == "function" then
+        pcall(hide, "AUCTION_HOUSE_POST_WARNING")
+        pcall(hide, "AUCTION_HOUSE_POST_ERROR")
     end
 end
 
@@ -692,7 +694,8 @@ end
 
 -- Post one stack of quantity items at the buyout (the price of the whole stack). bid is the start price; nil means
 -- the buyout. itemID is the planned item; if the bag slot holds another item, nothing is posted. Gives true if the
--- client asks to confirm (ConfirmPostItem finishes the post), false if the post is done. Protected: call it from a click.
+-- client asks to confirm (ConfirmPostItem finishes the post), false if the post is done.
+-- Protected: call it from a click.
 function Backend.PostItem(bag, slot, duration, quantity, bid, buyout, itemID)
     local index = Backend.DurationIndex(duration)
     checkPostNumbers(quantity, buyout)
@@ -727,7 +730,7 @@ end
 
 -- Finish a post that the client asked to confirm. The call must match the PostItem call, and the sale slot must still
 -- hold the item. A confirm works once. Protected: call it from a click.
-function Backend.ConfirmPostItem(bag, slot, duration, quantity, bid, buyout)
+function Backend.ConfirmPostItem(bag, slot, duration, quantity, _bid, buyout)
     local pending = post.pending
     post.pending = nil
     local index = Backend.DurationIndex(duration)
