@@ -45,6 +45,12 @@ function Buffer:Count()
     return type(list) == "table" and #list or 0
 end
 
+-- Returns the stored record list for reading. Do not change it. It is empty if the buffer has no list.
+function Buffer:Peek()
+    local list = self._db:Get("account", KEY)
+    return type(list) == "table" and list or {}
+end
+
 -- Returns the number of records dropped in this session.
 function Buffer:Dropped()
     return self._dropped

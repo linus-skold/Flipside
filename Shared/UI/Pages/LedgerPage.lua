@@ -12,9 +12,12 @@ local EMPTY_TEXT = "No records yet. The ledger records money from loot, vendors,
 local LOADING_TEXT = "Loading ledger..."
 local COMBAT_TEXT = "Loading ledger... It loads when combat ends."
 local OWNER = "Flipside.LedgerPage"
-local KEY_CHAR, KEY_RANGE = "ledger.view.char", "ledger.view.range"
+local KEY_CHAR, KEY_RANGE, KEY_GRAPH = "ledger.view.char", "ledger.view.range", "ledger.view.graph"
 local DEFAULT_RANGE = "30"
 local FILTER_HEIGHT = 28
+local GRAPH_HEIGHT = 130
+local NOTE_HEIGHT = 14
+local GRAPH_EMPTY_TEXT = "No balance to show."
 local HEADER_HEIGHT = 18
 local TOTALS_HEIGHT = 22
 local ROW_HEIGHT = 18
@@ -361,6 +364,7 @@ end
 -- now (optional), after(seconds, fn) (optional).
 function LedgerPage.Build(content, deps)
     local Kit = ns.Kit
+    local LedgerBalance = ns.LedgerBalance
     local page = { views = {}, tab = LedgerPage.TABS[1].key }
     local loader = deps.ledgerLoader
     local requested = {}
@@ -475,11 +479,53 @@ function LedgerPage.Build(content, deps)
         page.charDropdown:SetValue(page.filter.char)
     end
 
+    -- The balance graph. It follows the character and range filters. The button hides it to give the list room.
+
+    page.graphMode = "days"
+    page.graph = Kit.LineGraph(content, {
+        height = GRAPH_HEIGHT,
+        emptyText = GRAPH_EMPTY_TEXT,
+        formatY = money,
+        formatX = function(x)
+            return LedgerBalance.AxisText(x, page.graphMode, _G.date)
+        end,
+        onHover = function(point)
+            return LedgerBalance.HoverLines(point, page.graphMode, _G.date, money)
+        end,
+    })
+    page.graph:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -FILTER_HEIGHT - 2)
+    page.graph:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, -FILTER_HEIGHT - 2)
+    page.graphNote = Kit.Label(content, "", "small")
+    page.graphNote:SetPoint("TOPLEFT", page.graph, "BOTTOMLEFT", 4, -2)
+    page.graphNote:SetJustifyH("LEFT")
+    page.graphShown = readSetting(KEY_GRAPH, true) ~= false
+
     -- Tabs.
 
     local body = CreateFrame("Frame", nil, content)
-    body:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -FILTER_HEIGHT - 4)
     body:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", 0, 0)
+    local function layoutBody()
+        local top = -FILTER_HEIGHT - 4
+        if page.graphShown then
+            top = top - GRAPH_HEIGHT - NOTE_HEIGHT
+        end
+        body:ClearAllPoints()
+        body:SetPoint("TOPLEFT", content, "TOPLEFT", 0, top)
+        body:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", 0, 0)
+        page.graph:SetShown(page.graphShown)
+        page.graphNote:SetShown(page.graphShown)
+        page.graphToggle:SetText(page.graphShown and "Hide graph" or "Show graph")
+    end
+    page.graphToggle = Kit.Button(content, "", 100, function()
+        page.graphShown = not page.graphShown
+        if deps.db then
+            deps.db:Set("character", KEY_GRAPH, page.graphShown)
+        end
+        layoutBody()
+        page.DrawGraph()
+    end)
+    page.graphToggle:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, 0)
+    layoutBody()
     page.topTabs = Kit.CreateTopTabs(body, LedgerPage.TABS, {
         onSelect = function(key)
             page.tab = key
@@ -587,6 +633,85 @@ function LedgerPage.Build(content, deps)
         page.status:SetText(text or "")
     end
 
+    -- The names that the graph covers: the chosen character, or every known character for "All characters".
+    -- A character from the settings counts only if it has a saved balance.
+    local function graphCharacters(current)
+        if page.filter.char ~= ALL then
+            return { page.filter.char }
+        end
+        local names, seen = {}, {}
+        local function add(name)
+            if name and not seen[name] then
+                seen[name] = true
+                names[#names + 1] = name
+            end
+        end
+        for _, name in ipairs(current:Characters()) do
+            add(name)
+        end
+        add(deps.character)
+        if deps.db then
+            for _, name in ipairs(deps.db:ListCharacters()) do
+                if LedgerBalance.ReadSnapshot(deps.db, name) then
+                    add(name)
+                end
+            end
+        end
+        table.sort(names)
+        return names
+    end
+
+    -- Draw the balance graph. It computes the points only when the filter, the records or the balance change.
+    function page.DrawGraph()
+        local current = store()
+        if not (current and page.graphShown) then
+            return
+        end
+        local at = now(deps)
+        local getMoney = deps.getMoney or GetMoney
+        local copper = getMoney and getMoney() or nil
+        if type(copper) ~= "number" then
+            copper = nil
+        end
+        local buffer = deps.ledgerBuffer
+        local signature = table.concat({
+            page.filter.char, page.filter.range, current:Revision(), buffer and buffer:Count() or 0,
+            copper or "-", math.floor(at / 60),
+        }, "|")
+        if page.graphSignature == signature then
+            return
+        end
+        page.graphSignature = signature
+        local range = page.filter.range
+        local series = LedgerBalance.Series({
+            store = current,
+            characters = graphCharacters(current),
+            live = deps.character and copper and { char = deps.character, copper = copper } or nil,
+            snapshot = function(name)
+                return deps.db and LedgerBalance.ReadSnapshot(deps.db, name) or nil
+            end,
+            buffered = buffer and buffer:Peek() or nil,
+            now = at,
+            rangeKey = range,
+            rangeStart = LedgerPage.RangeStart(range, at),
+        })
+        page.series = series
+        page.graphMode = series.mode
+        local maxY = 0
+        for _, point in ipairs(series.points) do
+            maxY = math.max(maxY, point.y)
+        end
+        local scale = LedgerBalance.MoneyScale(maxY)
+        page.graphScale = scale
+        page.graph:SetPoints(series.points, { yMin = 0, yMax = scale.max, yTicks = scale.ticks })
+        if #series.omitted > 0 then
+            page.graphNote:SetText("Not in the graph, no balance known yet: " .. table.concat(series.omitted, ", ")
+                .. ". Log in with the character once.")
+        else
+            page.graphNote:SetText("")
+        end
+    end
+
     -- Draw the visible tab. Only the rows of this tab and range are built.
     function page.Draw()
         local current = store()
@@ -612,6 +737,7 @@ function LedgerPage.Build(content, deps)
         view.totals.moneyOut:SetCopper(totals.moneyOut)
         view.totals.net:SetCopper(totals.net)
         view.totals.count:SetText(totals.count .. (totals.count == 1 and " row" or " rows"))
+        page.DrawGraph()
         showStatus("")
     end
 

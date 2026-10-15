@@ -53,6 +53,7 @@ Shared\Services\LedgerBuffer.lua
 Shared\Services\LedgerStore.lua
 Shared\Services\LedgerLoader.lua
 Shared\Services\LedgerMoney.lua
+Shared\Services\LedgerBalance.lua
 Shared\UI\Kit\Theme.lua
 Shared\UI\Kit\Window.lua
 Shared\UI\Kit\Widgets.lua

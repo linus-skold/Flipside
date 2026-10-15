@@ -750,6 +750,23 @@ local function openLedgerMoney()
         ns.ReportError("the money tracker is not available this session: " .. tostring(err))
     end
 end
+-- Save the gold balance of this character for the Ledger graph, at login and at logout.
+local function saveBalance()
+    if not (ns.db and ns.LedgerBalance and type(GetMoney) == "function") then
+        return
+    end
+    local copper = GetMoney()
+    if type(issecretvalue) == "function" and issecretvalue(copper) then
+        return
+    end
+    ns.LedgerBalance.WriteSnapshot(ns.db, copper, GetServerTime())
+end
+
+local function openBalance()
+    saveBalance()
+    ns.bus:Subscribe("PLAYER_LOGOUT", "Flipside.LedgerBalance", saveBalance)
+end
+
 -- Create the tooltip settings and attach the tooltip lines; they need the settings DB.
 local function openTooltip()
     if not (ns.db and ns.TooltipConfig and ns.Tooltip and ns.TooltipLines) then
@@ -811,6 +828,7 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
         openInventory()
         openLedger()
         openLedgerMoney()
+        openBalance()
         openTooltip()
         openUI()
         if ns.RecipeSearch then
@@ -945,6 +963,8 @@ function ns.OpenMainWindow()
             end,
             buildPreview = ns.BuildTooltipPreview,
             ledgerLoader = ns.ledgerLoader,
+            ledgerBuffer = ns.ledgerBuffer,
+            getMoney = GetMoney,
             bus = ns.bus,
             db = ns.db,
             character = characterKey(),
