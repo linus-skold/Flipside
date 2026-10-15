@@ -705,6 +705,9 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
         openInventory()
         openTooltip()
         openUI()
+        if ns.RecipeSearch then
+            ns.RecipeSearch.Attach()
+        end
         ns.bus:Emit("Flipside.Login")
     end
     ns.bus:Emit(event, ...)

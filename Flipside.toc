@@ -70,4 +70,5 @@ AH_Forever\AuctionTabHost.lua
 Shared\Features\Inventory\InventoryCapture.lua
 Shared\Features\Tooltip\Tooltip.lua
 Core_Forever\TooltipHook.lua
+Core_Forever\RecipeSearch.lua
 Shared\Core\Init.lua
