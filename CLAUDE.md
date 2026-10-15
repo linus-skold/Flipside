@@ -24,7 +24,14 @@ Flipside is a World of Warcraft: Forever auction house addon. Lua 5.1. Licence M
 7. Mailbox parsing and the ledger; then Vendoring.
 
 ## Definition of done
-Unit tests pass; luacheck is clean; the feature's in-game checklist passes on WoW: Forever; the spec section is updated if behaviour changed; the Phase dropdown and Needs scoping status reflect reality.
+Unit tests pass and luacheck is clean. This means that the CI checks of the pull request are green. The feature's in-game checklist passes on WoW: Forever; the spec section is updated if behaviour changed; the Phase dropdown and Needs scoping status reflect reality.
+
+## Testing
+- Workers (implementer, explorer) do not run `busted` or `luacheck` on disk. GitHub Actions (`.github/workflows/ci.yml`) runs both on each pull request.
+- The implementer writes and updates the unit tests in `Tests/` for each change. Its report says: `tests: not run on disk (CI)`.
+- The orchestrator pushes the branch and opens the pull request. Then it runs `gh pr checks <pr> --watch`.
+- If a check fails, the orchestrator gets the failed lines with `gh run view <run-id> --log-failed`. It keeps only the last 60 lines and sends them to the same implementer.
+- The implementer fixes the failure with a new commit on its worktree branch. The orchestrator pushes again. Do not force-push.
 
 ## Pull requests
 Decision of 2026-10-15: use GitHub stacked PRs (`gh-stack`) for all new work, so that merges are easy.
@@ -56,5 +63,6 @@ s service or chat output (D19).
 - Item keys follow D20; no battle pets in the MVP (D21); scan data is keyed by region and ruleset (D22).
 
 ## Commands
+These commands are for CI and for the user. Agents do not run them.
 - Lint: `luacheck .`
 - Tests: `busted`
