@@ -75,6 +75,17 @@ jobs:
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
+      - name: Write the changelog since the previous tag
+        run: |
+          # The packager skips alpha tags, so it lists the full history. Write a short changelog here.
+          prev=$(git describe --tags --abbrev=0 --match 'v*' HEAD~ 2>/dev/null || true)
+          range=${prev:+$prev..}HEAD
+          {
+            echo "## Changes since ${prev:-the start}"
+            echo
+            git log --no-merges --pretty='- %s (%h)' "$range" | head -n 200
+          } | head -c 100000 > CHANGELOG.md
+          wc -c CHANGELOG.md
       - name: Package and release
         uses: BigWigsMods/packager@v2
       - name: Make the alpha build a normal release

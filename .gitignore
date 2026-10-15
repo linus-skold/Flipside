@@ -3,3 +3,4 @@ lua51/
 .lua/
 .luarocks/
 .release/
+CHANGELOG.md
