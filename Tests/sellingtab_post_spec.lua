@@ -34,9 +34,9 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
         c.AvailablePostCount = function() return 1000 end
         c.IsSellItemValid = function() return true end
         c.RefreshOwned = function() end
-        c.PostItem = function(bag, slot, duration, quantity, bid, buyout)
+        c.PostItem = function(bag, slot, duration, quantity, bid, buyout, itemID)
             c.posts[#c.posts + 1] = { kind = "item", bag = bag, slot = slot, duration = duration,
-                quantity = quantity, bid = bid, buyout = buyout }
+                quantity = quantity, bid = bid, buyout = buyout, itemID = itemID }
             return false
         end
         c.PostCommodity = function(bag, slot, duration, quantity, unitPrice)
@@ -284,6 +284,13 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
             assert.are.equal(12000 * 20, client.posts[2].buyout)
             local list = ns.SellingPlan.Log:List()
             assert.are.equal(12000, list[#list].price)
+        end)
+
+        it("gives the planned item ID to the post call", function()
+            selectCloth()
+            pick("i10")
+            click(ui.postNext)
+            assert.are.equal(10, client.posts[1].itemID)
         end)
 
         it("posts a commodity at the typed price for each item", function()

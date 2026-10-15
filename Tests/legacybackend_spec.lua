@@ -43,6 +43,15 @@ describe("LegacyBackend", function()
 
     local A = function() return ns.AuctionClient end
 
+    it("loads the Selling tab after the Buying tab and before the host in the TBC TOC", function()
+        local files = manifest.files(TOC)
+        local buying = manifest.indexOf(files, "BuyingTab")
+        local selling = manifest.indexOf(files, "SellingTab")
+        assert.is_truthy(buying and selling)
+        assert.are.equal(buying + 1, selling)
+        assert.is_true(selling < manifest.indexOf(files, "AuctionTabHost"))
+    end)
+
     it("can scan and has no commodity check", function()
         assert.is_true(A().CanScan())
         assert.is_nil(A().ItemIsCommodity(1))
@@ -400,6 +409,332 @@ describe("LegacyBackend", function()
                     assert.is_nil(events[key]:find("^[A-Z_]+$"))
                 end
             end)
+        end)
+    end)
+
+    describe("posting", function()
+        local NAMES = { "C_Container", "C_Timer", "ClickAuctionSellItemButton", "GetAuctionSellItemInfo", "PostAuction",
+            "GetAuctionDeposit", "ClearCursor", "CursorHasItem", "StaticPopup_Hide", "ERR_AUCTION_STARTED",
+            "GetOwnerAuctionItems" }
+        local keep, bag, cursor, sell, posts, postResult, hidden, timers, emitted, sellRejects, onPost
+
+        local function key(b, s) return b .. ":" .. s end
+
+        -- Picks up the item of a bag slot. As in the client, the item stays in the slot while the cursor holds it.
+        local function pickup(b, s)
+            local k = key(b, s)
+            if cursor == nil and bag[k] then
+                cursor = { key = k, item = bag[k] }
+            end
+        end
+
+        before_each(function()
+            keep = {}
+            for _, name in ipairs(NAMES) do
+                keep[name] = _G[name]
+            end
+            bag = { [key(0, 1)] = { itemID = 11, stackCount = 20, isBound = false } }
+            cursor, sell, postResult, sellRejects, onPost = nil, nil, true, false, nil
+            posts, hidden, timers, emitted = {}, {}, 0, {}
+            _G.C_Container = {
+                GetContainerItemInfo = function(b, s) return bag[key(b, s)] end,
+                PickupContainerItem = pickup,
+            }
+            _G.C_Timer = { After = function() timers = timers + 1 end }
+            _G.ClickAuctionSellItemButton = function()
+                if cursor and not sellRejects then
+                    sell, cursor = cursor, nil
+                elseif cursor == nil and sell then
+                    cursor, sell = sell, nil
+                end
+            end
+            _G.GetAuctionSellItemInfo = function()
+                if not sell then
+                    return nil
+                end
+                return "Copper Bar", 1, sell.item.stackCount, 1, true, 0, 0, 20, sell.item.stackCount, sell.item.itemID
+            end
+            _G.PostAuction = function(...)
+                posts[#posts + 1] = { n = select("#", ...), ... }
+                if onPost then
+                    onPost()
+                end
+                return postResult
+            end
+            _G.GetAuctionDeposit = function(...) return 66, ... end
+            _G.ClearCursor = function()
+                cursor = nil
+            end
+            _G.CursorHasItem = function() return cursor ~= nil end
+            _G.StaticPopup_Hide = function(which) hidden[#hidden + 1] = which end
+            _G.ERR_AUCTION_STARTED = "Auction created."
+            assert(loadfile(manifest.path("EventBus", TOC)))("Flipside", ns)
+            ns.bus = ns.EventBus.New({})
+            ns.bus:Subscribe("Flipside.LegacyPosted", "spec", function(name) emitted[#emitted + 1] = name end)
+        end)
+
+        after_each(function()
+            for _, name in ipairs(NAMES) do
+                _G[name] = keep[name]
+            end
+        end)
+
+        it("can post only with every client function", function()
+            assert.is_true(A().CanPost())
+            _G.PostAuction = nil
+            assert.is_false(A().CanPost())
+            _G.PostAuction = function() end
+            _G.C_Container.PickupContainerItem = nil
+            assert.is_false(A().CanPost())
+            _G.C_Container = nil
+            assert.is_false(A().CanPost())
+        end)
+
+        describe("duration", function()
+            it("maps 2 h, 8 h and 24 h to the index 1, 2 and 3", function()
+                local backend = A().Backend()
+                assert.are.equal(1, backend.DurationIndex(2))
+                assert.are.equal(2, backend.DurationIndex(8))
+                assert.are.equal(3, backend.DurationIndex(24))
+            end)
+
+            it("uses the nearest longer index for a value with no exact match", function()
+                local backend = A().Backend()
+                assert.are.equal(1, backend.DurationIndex(1))
+                assert.are.equal(2, backend.DurationIndex(4))
+                assert.are.equal(3, backend.DurationIndex(12))
+                assert.are.equal(3, backend.DurationIndex(48))
+            end)
+
+            it("refuses a value that is not a number of hours", function()
+                local backend = A().Backend()
+                assert.is_false((pcall(backend.DurationIndex, 0)))
+                assert.is_false((pcall(backend.DurationIndex, nil)))
+                assert.is_false((pcall(backend.DurationIndex, "24")))
+            end)
+
+            it("sends the index to PostAuction", function()
+                A().PostItem(0, 1, 8, 5, nil, 500, 11)
+                assert.are.equal(2, posts[1][3])
+            end)
+        end)
+
+        it("puts the bag item in the sale slot and posts one stack", function()
+            assert.is_false(A().PostItem(0, 1, 24, 5, nil, 500, 11))
+            assert.are.equal(1, #posts)
+            assert.are.same({ 500, 500, 3, 5, 1, n = 5 }, posts[1])
+            assert.are.equal(11, sell.item.itemID)
+            assert.is_nil(cursor)
+        end)
+
+        it("uses the bid as the start price", function()
+            A().PostItem(0, 1, 24, 5, 300, 500, 11)
+            assert.are.same({ 300, 500, 3, 5, 1, n = 5 }, posts[1])
+            assert.is_false((pcall(A().PostItem, 0, 1, 24, 5, 600, 500, 11)))
+            assert.are.equal(1, #posts)
+        end)
+
+        it("posts with no planned item ID", function()
+            A().PostItem(0, 1, 24, 5, nil, 500)
+            assert.are.equal(1, #posts)
+        end)
+
+        it("refuses a bag slot that holds another item", function()
+            bag[key(0, 1)].itemID = 12
+            local ok, err = pcall(A().PostItem, 0, 1, 24, 5, nil, 500, 11)
+            assert.is_false(ok)
+            assert.is_truthy(err:find("another item", 1, true))
+            assert.are.equal(0, #posts)
+            assert.is_nil(sell)
+            assert.is_nil(cursor)
+        end)
+
+        it("refuses a bag slot with fewer items than the plan", function()
+            bag[key(0, 1)].stackCount = 4
+            local ok, err = pcall(A().PostItem, 0, 1, 24, 5, nil, 500, 11)
+            assert.is_false(ok)
+            assert.is_truthy(err:find("fewer items", 1, true))
+            assert.are.equal(0, #posts)
+        end)
+
+        it("refuses an empty bag slot", function()
+            bag[key(0, 1)] = nil
+            local ok, err = pcall(A().PostItem, 0, 1, 24, 5, nil, 500, 11)
+            assert.is_false(ok)
+            assert.is_truthy(err:find("empty", 1, true))
+            assert.are.equal(0, #posts)
+        end)
+
+        it("refuses when the cursor holds an item", function()
+            cursor = { key = "9:9", item = { itemID = 5, stackCount = 1 } }
+            local ok, err = pcall(A().PostItem, 0, 1, 24, 5, nil, 500, 11)
+            assert.is_false(ok)
+            assert.is_truthy(err:find("cursor", 1, true))
+            assert.are.equal(0, #posts)
+            assert.is_not_nil(cursor)
+        end)
+
+        it("clears the cursor and posts nothing when the item does not go in the sale slot", function()
+            sellRejects = true
+            local ok, err = pcall(A().PostItem, 0, 1, 24, 5, nil, 500, 11)
+            assert.is_false(ok)
+            assert.is_truthy(err:find("sale slot", 1, true))
+            assert.are.equal(0, #posts)
+            assert.is_nil(cursor)
+            assert.is_not_nil(bag[key(0, 1)])
+        end)
+
+        it("empties the sale slot of an older item first", function()
+            sell = { key = key(0, 1), item = { itemID = 12, stackCount = 3 } }
+            A().PostItem(0, 1, 24, 5, nil, 500, 11)
+            assert.are.equal(11, sell.item.itemID)
+            assert.is_nil(cursor)
+            assert.are.equal(1, #posts)
+        end)
+
+        it("refuses a bad quantity or buyout before it touches the bags", function()
+            assert.is_false((pcall(A().PostItem, 0, 1, 24, 0, nil, 500, 11)))
+            assert.is_false((pcall(A().PostItem, 0, 1, 24, 1.5, nil, 500, 11)))
+            assert.is_false((pcall(A().PostItem, 0, 1, 24, 5, nil, 0, 11)))
+            assert.is_false((pcall(A().PostItem, 0, 1, 24, 5, nil, nil, 11)))
+            assert.are.equal(0, #posts)
+            assert.is_nil(sell)
+        end)
+
+        it("raises the client error and puts the item back", function()
+            _G.PostAuction = function() error("protected") end
+            local ok, err = pcall(A().PostItem, 0, 1, 24, 5, nil, 500, 11)
+            assert.is_false(ok)
+            assert.is_truthy(err:find("protected", 1, true))
+            assert.is_nil(sell)
+            assert.is_nil(cursor)
+        end)
+
+        it("starts no timer, so a post runs only in the click that calls it", function()
+            A().PostItem(0, 1, 24, 5, nil, 500, 11)
+            postResult = false
+            A().PostItem(0, 1, 24, 5, nil, 500, 11)
+            A().ConfirmPostItem(0, 1, 24, 5, nil, 500)
+            assert.are.equal(0, timers)
+        end)
+
+        describe("confirm", function()
+            it("asks to confirm when PostAuction gives false, and hides the client dialog", function()
+                postResult = false
+                assert.is_true(A().PostItem(0, 1, 24, 5, nil, 500, 11))
+                assert.are.same({ "AUCTION_HOUSE_POST_WARNING", "AUCTION_HOUSE_POST_ERROR" }, hidden)
+                assert.are.equal(1, #posts)
+            end)
+
+            it("posts with the confirm flag, once", function()
+                postResult = false
+                A().PostItem(0, 1, 24, 5, nil, 500, 11)
+                assert.is_false(A().ConfirmPostItem(0, 1, 24, 5, nil, 500, 11))
+                assert.are.same({ 500, 500, 3, 5, 1, true, n = 6 }, posts[2])
+                local ok, err = pcall(A().ConfirmPostItem, 0, 1, 24, 5, nil, 500, 11)
+                assert.is_false(ok)
+                assert.is_truthy(err:find("no post waits", 1, true))
+                assert.are.equal(2, #posts)
+            end)
+
+            it("refuses a confirm with no post, or with other arguments", function()
+                assert.is_false((pcall(A().ConfirmPostItem, 0, 1, 24, 5, nil, 500)))
+                postResult = false
+                A().PostItem(0, 1, 24, 5, nil, 500, 11)
+                assert.is_false((pcall(A().ConfirmPostItem, 0, 1, 24, 4, nil, 500)))
+                assert.are.equal(1, #posts)
+                A().PostItem(0, 1, 24, 5, nil, 500, 11)
+                assert.is_false((pcall(A().ConfirmPostItem, 0, 1, 24, 5, nil, 600)))
+                assert.are.equal(2, #posts)
+            end)
+
+            it("refuses a confirm when the sale slot changed", function()
+                postResult = false
+                A().PostItem(0, 1, 24, 5, nil, 500, 11)
+                sell = nil
+                local ok, err = pcall(A().ConfirmPostItem, 0, 1, 24, 5, nil, 500)
+                assert.is_false(ok)
+                assert.is_truthy(err:find("sale slot", 1, true))
+                assert.are.equal(1, #posts)
+            end)
+
+            it("raises the client error text and gives no confirm", function()
+                postResult = false
+                onPost = function()
+                    ns.bus:Emit("AUCTION_HOUSE_POST_ERROR")
+                end
+                local ok, err = pcall(A().PostItem, 0, 1, 24, 5, nil, 500, 11)
+                assert.is_false(ok)
+                assert.is_truthy(err:find("refused", 1, true))
+                assert.is_nil(sell)
+                assert.is_false((pcall(A().ConfirmPostItem, 0, 1, 24, 5, nil, 500)))
+            end)
+
+            it("raises a UI error text that comes during a refused call", function()
+                postResult = false
+                A().PostedEvent()
+                onPost = function()
+                    ns.bus:Emit("UI_ERROR_MESSAGE", 1, "Not enough money")
+                end
+                local ok, err = pcall(A().PostItem, 0, 1, 24, 5, nil, 500, 11)
+                assert.is_false(ok)
+                assert.is_truthy(err:find("Not enough money", 1, true))
+            end)
+
+            it("ignores a UI error text when the post went through", function()
+                A().PostedEvent()
+                onPost = function()
+                    ns.bus:Emit("UI_ERROR_MESSAGE", 1, "Something else")
+                end
+                assert.is_false(A().PostItem(0, 1, 24, 5, nil, 500, 11))
+            end)
+        end)
+
+        describe("posted event", function()
+            it("emits when the created text follows a post", function()
+                assert.are.equal("Flipside.LegacyPosted", A().PostedEvent())
+                ns.bus:Emit("CHAT_MSG_SYSTEM", "Auction created.")
+                assert.are.equal(0, #emitted)
+                A().PostItem(0, 1, 24, 5, nil, 500, 11)
+                ns.bus:Emit("CHAT_MSG_SYSTEM", "You won an auction for Iron Bar.")
+                assert.are.equal(0, #emitted)
+                ns.bus:Emit("CHAT_MSG_SYSTEM", "Auction created.")
+                assert.are.same({ "Flipside.LegacyPosted" }, emitted)
+            end)
+        end)
+
+        it("gives the item count of a bag slot", function()
+            assert.are.equal(20, A().AvailablePostCount(0, 1))
+            assert.are.equal(0, A().AvailablePostCount(0, 2))
+        end)
+
+        it("tells if a slot item can be posted", function()
+            assert.is_true(A().IsSellItemValid(0, 1))
+            assert.is_false(A().IsSellItemValid(0, 2))
+            bag[key(0, 1)].isBound = true
+            assert.is_false(A().IsSellItemValid(0, 1))
+        end)
+
+        describe("deposit", function()
+            it("is nil while the sale slot is empty", function()
+                assert.is_nil(A().Deposit(0, 1, 24, 5, false))
+            end)
+
+            it("asks the client when the sale slot holds the item", function()
+                pickup(0, 1)
+                _G.ClickAuctionSellItemButton()
+                assert.is_not_nil(sell)
+                local deposit, duration, start, buyout, size, stacks = A().Deposit(0, 1, 8, 5, false)
+                assert.are.equal(66, deposit)
+                assert.are.same({ 2, 1, 1, 5, 1 }, { duration, start, buyout, size, stacks })
+            end)
+        end)
+
+        it("asks for a fresh owned list", function()
+            local called = 0
+            _G.GetOwnerAuctionItems = function() called = called + 1 end
+            A().RefreshOwned()
+            assert.are.equal(1, called)
         end)
     end)
 
