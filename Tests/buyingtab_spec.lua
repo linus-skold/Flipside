@@ -3,8 +3,8 @@ local mock = require("Tests.wow_mock")
 
 local function loadModules()
     local ns = { ReportError = function() end, Flavour = { hasCommodityMarket = true } }
-    for _, name in ipairs({ "EventBus", "ItemString", "BuyingPlan", "Theme", "Widgets", "Window", "List", "Columns",
-        "AuctionTabs", "BuyingTab" }) do
+    for _, name in ipairs({ "EventBus", "ItemString", "BuyingPlan", "Theme", "Widgets", "Window", "List", "Tree",
+        "Columns", "AuctionTabs", "BuyingTab" }) do
         assert(loadfile(manifest.path(name)))("Flipside", ns)
     end
     return ns
@@ -91,6 +91,12 @@ describe("BuyingTab", function()
             ItemsIn = function()
                 return items
             end,
+            Children = function(_, id)
+                return id == 1 and { 2 } or {}
+            end,
+            Name = function()
+                return "Herbs"
+            end,
         }
     end
 
@@ -158,11 +164,11 @@ describe("BuyingTab", function()
         end)
 
         it("shows the list rows with the name and the max price", function()
-            local first = ui.list.rows[1]
-            assert.are.equal("Item10", first.parts.name.text)
+            local group, first = ui.tree.list.rows[1], ui.tree.list.rows[2]
+            assert.are.equal("Herbs", group.label.text)
+            assert.are.equal("Item10", first.label.text)
             assert.are.equal("100c", first.parts.price.text)
-            assert.are.equal("Herbs/Flowers", first.parts.sub.text)
-            assert.are.equal("no data", ui.list.rows[4].parts.price.text)
+            assert.are.equal("no data", ui.tree.list.rows[5].parts.price.text)
         end)
 
         it("refreshes the list on demand", function()
@@ -276,7 +282,7 @@ describe("BuyingTab", function()
             tab.deps.rules = rules
             tab:RefreshList()
             assert.is_true(tab.list[1].noMax)
-            assert.are.equal("no max", ui.list.rows[1].parts.price.text)
+            assert.are.equal("no max", ui.tree.list.rows[2].parts.price.text)
             client.rows[20] = { row(50, 1), row(90000, 1) }
             tab:Select_("20")
             tab:Search()
