@@ -25,6 +25,7 @@ ns.Flavour = {
     ruleset = "tbc-anniversary",
     scopeIncludesRealm = true, -- D24
     captureEnabled = true,
+    hasCommodityMarket = false, -- every listing is a stack with a stack buyout
     savedVariables = { main = "FlipsideDB_TBC", scan = "FlipsideScanDB_TBC" },
     -- Backpack and bag slots 0..NUM_BAG_SLOTS.
     bagIDs = function()
