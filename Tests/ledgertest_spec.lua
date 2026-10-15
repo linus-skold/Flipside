@@ -27,7 +27,9 @@ describe("LedgerTest probe", function()
         _G.GetMoney = function()
             return money
         end
-        _G.hooksecurefunc = function() end
+        _G.hooksecurefunc = function()
+            error("LedgerTest must not hook")
+        end
         loadProbe()
     end)
 
@@ -116,6 +118,16 @@ describe("LedgerTest probe", function()
         end
         assert.equals(2000, count)
         assert.is_true(LedgerTestDB.seq > 2100)
+    end)
+
+    it("installs no hook and shows secret values as text", function()
+        assert.equals(0, #entriesOf("HOOK_INSTALL"))
+        _G.issecretvalue = function(v)
+            return v == "s"
+        end
+        mock.fire("QUEST_TURNED_IN", "s", 5)
+        _G.issecretvalue = nil
+        assert.is_truthy(entriesOf("QUEST_TURNED_IN")[1].text:find("<secret> | 5", 1, true))
     end)
 
     it("debounces the inbox scan", function()
