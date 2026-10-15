@@ -242,11 +242,12 @@ function frameMethods:SetNumeric(numeric)
     self.numeric = numeric
 end
 
-function frameMethods:GetWidth()
+-- GetWidth and GetHeight are set per object in newObject; UIParent has none, as specs for the window rely on it.
+local function getWidth(self)
     return self.width or 0
 end
 
-function frameMethods:GetHeight()
+local function getHeight(self)
     return self.height or 0
 end
 
@@ -370,6 +371,9 @@ local function newObject(kind, name, parent, template)
     }, frameMethods)
     if M.objects then
         table.insert(M.objects, f)
+    end
+    if name ~= "UIParent" then
+        f.GetWidth, f.GetHeight = getWidth, getHeight
     end
     f.CreateFontString = function(self, fsName, layer, font)
         local fs = newObject("FontString", fsName, self)

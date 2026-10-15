@@ -788,6 +788,18 @@ Gold, silver and copper coin amounts keep the game's own coin colours so money r
   - Forever: `C_AuctionHouse.SendSearchQuery(itemKey, {}, true)` with an item key made from the item ID. The existing search capture events store the result.
   - A running Flipside scan or name search blocks the refresh. If the Auction House is closed, the lookup shows the stored data and the hint "open the Auction House to refresh this price".
 - `/flip` without arguments opens the Flipside window. A button on the Flipside AH tab opens it too.
+- **Minimap button.** A round button sits on the edge of the minimap (`Minimap`, round in Forever). It shows a client icon.
+  - A left click shows the window on the Ledger page. If the window already shows the Ledger page, the click hides the window.
+  - The tooltip shows "Flipside", "Left click: open the ledger" and a drag hint.
+  - The player drags the button around the minimap edge. The account setting `ui.minimapAngle` (degrees) saves the place when the drag stops.
+  - The account setting `ui.minimapHidden` (default false) hides the button. `/flip minimap` changes the setting and prints the new state.
+  - The button is a Kit widget, `Kit.CreateMinimapButton`. It takes the icon, the tooltip lines and the callbacks as arguments. It uses no library (D18).
+- **Window pages.** The order of the tabs is Ledger, Groups, Operations, Tooltip, Formulas, About. The Ledger page is the first page.
+- **Window position.** The window keeps its last place on the screen.
+  - The Kit window takes the option `savePosition = { get, set }`. When a drag stops, it calls `set` with `{ point, relativePoint, x, y }`. On create, it reads the value with `get`.
+  - The account setting `ui.windowPosition` holds the value. Flipside does not use the client layout cache for this.
+  - The Kit ignores a value that is not valid or is off the screen, and centres the window. The window is also clamped to the screen.
+  - `/flip resetpos` centres the window and clears the saved value.
 - The window can open in combat (plain show, no protected actions). Escape closes it.
 - One untinted theme table.
 - The chat commands stay for now: `/flip scan`, `scan stop`, `scan reset`, `price`, `formula` and `version`.

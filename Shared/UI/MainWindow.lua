@@ -7,6 +7,11 @@ ns.MainWindow = MainWindow
 
 local instance
 
+-- The window if it exists, or nil.
+function MainWindow.Get()
+    return instance
+end
+
 local ABOUT_TEXT = "Groups sort items into trees. Operations hold the rules. Formulas check and save price formulas."
 
 -- A page that says why it cannot open.
@@ -27,7 +32,7 @@ local function buildAbout(content, deps)
 end
 
 -- Create the window once. deps: rules, customSources, readBags, keyFor, subscribe, formulaRun, formulaSources,
--- itemCache, itemNameIndex, getVersionLine.
+-- itemCache, itemNameIndex, getVersionLine, windowPosition ({ get, set } for the saved position).
 function MainWindow.Create(deps)
     if instance then
         return instance
@@ -39,9 +44,21 @@ function MainWindow.Create(deps)
         height = 540,
         title = "Flipside",
         portrait = "Interface\\Icons\\INV_Misc_Coin_02",
+        savePosition = deps.windowPosition,
     })
     local tooltipPage, ledgerPage, justBuilt
-    local pages = {
+    local pages = {}
+    if ns.LedgerPage then
+        table.insert(pages, {
+            key = "ledger",
+            title = "Ledger",
+            build = function(content)
+                ledgerPage = ns.LedgerPage.Build(content, deps)
+                justBuilt = true
+            end,
+        })
+    end
+    local rest = {
         {
             key = "groups",
             title = "Groups",
@@ -65,6 +82,9 @@ function MainWindow.Create(deps)
             end,
         },
     }
+    for _, page in ipairs(rest) do
+        table.insert(pages, page)
+    end
     if ns.TooltipPage then
         table.insert(pages, {
             key = "tooltip",
@@ -75,16 +95,6 @@ function MainWindow.Create(deps)
                 else
                     buildUnavailable(content)
                 end
-            end,
-        })
-    end
-    if ns.LedgerPage then
-        table.insert(pages, {
-            key = "ledger",
-            title = "Ledger",
-            build = function(content)
-                ledgerPage = ns.LedgerPage.Build(content, deps)
-                justBuilt = true
             end,
         })
     end
@@ -102,6 +112,14 @@ function MainWindow.Create(deps)
             buildAbout(content, deps)
         end,
     })
+    -- The page loads the ledger each time it opens; the first open is in its build.
+    local function openLedger()
+        if justBuilt then
+            justBuilt = false
+        elseif ledgerPage then
+            ledgerPage.Open()
+        end
+    end
     local tabs = Kit.CreatePageTabs(window, pages)
     for index, page in ipairs(pages) do
         if page.key == "tooltip" then
@@ -111,17 +129,10 @@ function MainWindow.Create(deps)
                 end
             end)
         elseif page.key == "ledger" then
-            -- The page loads the ledger each time it opens; the first open is in its build.
-            tabs.buttons[index]:HookScript("OnClick", function()
-                if justBuilt then
-                    justBuilt = false
-                elseif ledgerPage then
-                    ledgerPage.Open()
-                end
-            end)
+            tabs.buttons[index]:HookScript("OnClick", openLedger)
             window:HookScript("OnShow", function()
-                if ledgerPage and tabs:GetSelected() == "ledger" then
-                    ledgerPage.Open()
+                if tabs:GetSelected() == "ledger" then
+                    openLedger()
                 end
             end)
         end
@@ -140,7 +151,17 @@ function MainWindow.Create(deps)
         return self.frame:IsShown() and true or false
     end
     function win:SelectPage(key)
+        local before = self.tabs:GetSelected()
         self.tabs:Select(key)
+        if key == "ledger" and before ~= "ledger" and self.tabs:GetSelected() == "ledger" then
+            openLedger()
+        end
+    end
+    function win:GetSelectedPage()
+        return self.tabs:GetSelected()
+    end
+    function win:ResetPosition()
+        self.frame:ResetPosition()
     end
     instance = win
     return win
