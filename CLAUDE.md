@@ -26,6 +26,17 @@ Flipside is a World of Warcraft: Forever auction house addon. Lua 5.1. Licence M
 ## Definition of done
 Unit tests pass; luacheck is clean; the feature's in-game checklist passes on WoW: Forever; the spec section is updated if behaviour changed; the Phase dropdown and Needs scoping status reflect reality.
 
+## Pull requests
+Decision of 2026-10-15: use GitHub stacked PRs (`gh-stack`) for all new work, so that merges are easy.
+- Stack each new PR on the top open PR branch. Use `main` as the base only when no PR is open.
+- A worker starts its branch from the top branch.
+- Create the PR with `gh pr create --base <top branch> --head <branch>`.
+- Then run `gh stack link <bottom> ... <top>` (branch names or PR numbers, bottom to top). To grow a stack, run `gh stack link <stack number> <new branch>`.
+- Merge with `gh stack merge` or the GitHub stack UI. It merges the stack bottom-up in one step.
+- Do not squash-merge one PR from the middle of a stack.
+- After a merge, run `gh stack sync`. If a branch has conflicts, merge the base into it.
+- Do not rebase a pushed branch. Never force-push. Never push to `main`.
+
 ## Layout
 Per D23 the layout moves to `Shared/`, `Core_<Flavour>/` and `AH_<Flavour>/` in a later pull request. The lists below show the current layout.
 `Shared/Core/` framework, `Shared/Services/`, `Shared/Features/<Name>/`, `Shared/UI/`, `Shared/UI/Kit/`, `Shared/UI/Pages/`, `Shared/Libs/` (empty, no third-party library), `Shared/Locales/`, `Tests/` (busted specs and `wow_mock.lua`), `ScanTest/` (throwaway Spike 0 addon), `Flipside_Ledger/` (load-on-demand ledger addon, `FlipsideLedgerDB`, D25 and spec §5.8; comes with step 7).
