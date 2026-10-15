@@ -8,6 +8,9 @@ ns.SellingPlan = SellingPlan
 local LOG_CAP = 200
 local DEFAULT_UNDERCUT = 1
 local DEFAULT_DURATION = 24
+
+-- The post durations in hours. On WoW: Forever they are the index 1, 2 and 3 (confirmed by the user, SPEC 27c).
+SellingPlan.DURATIONS = { 2, 8, 24 }
 local DEFAULT_MAX_AGE = 72
 local DEFAULT_SAMPLES = 3
 local FEW_SAMPLES_WHY = "few samples, using the cheapest listing"
@@ -236,9 +239,25 @@ function SellingPlan.Decide(candidate, rows, opts)
     end
     return {
         action = "post", price = price, quantity = quantity, auctions = auctions,
-        duration = tonumber(s.duration) or DEFAULT_DURATION, reason = why,
+        duration = SellingPlan.NormalizeDuration(s.duration), reason = why,
         key = candidate.key, competitor = competitor, commodity = commodity,
     }
+end
+
+-- Map the saved hours of a rule to a valid duration. An old 12 or 48 maps to the nearest value (8 and 24).
+-- No number gives the default (24). It changes no saved data.
+function SellingPlan.NormalizeDuration(hours)
+    hours = tonumber(hours)
+    if not hours then
+        return DEFAULT_DURATION
+    end
+    local best = DEFAULT_DURATION
+    for _, valid in ipairs(SellingPlan.DURATIONS) do
+        if math.abs(valid - hours) < math.abs(best - hours) then
+            best = valid
+        end
+    end
+    return best
 end
 
 -- The Auction House cut: the share of the sale price that the house keeps. UNVERIFIED: the Forever client
@@ -309,6 +328,7 @@ function Log:Add(candidate, decision)
         price = decision and decision.price,
         quantity = decision and decision.quantity,
         auctions = decision and decision.auctions,
+        duration = decision and decision.duration,
     }
     if #list > self._cap then
         table.remove(list, 1)

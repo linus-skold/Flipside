@@ -456,7 +456,7 @@ describe("SellingTab", function()
             -- One selected item that the rule skips shows in the pane; Post asks first.
             assert.are.equal("Linen Cloth", ui.details.name.text)
             assert.matches("The rule skips this item: below minimum", ui.details.warn.text)
-            assert.are.equal("", ui.details.net.text)
+            assert.matches("^Net:", ui.details.net.text)
             pick("g2")
             assert.are.equal("Nothing to post", ui.details.name.text)
         end)

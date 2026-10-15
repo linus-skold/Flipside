@@ -33,7 +33,6 @@ local GREY = { 0.5, 0.5, 0.5 }
 local ORANGE = { 1, 0.6, 0.2 }
 local MAX_PRICE = 100000000000
 local SYNC_INTERVAL = 1
-local DEFAULT_DURATION = 24
 -- Client arrow textures (pet battle strong and weak badges: a green arrow up and a red arrow down).
 local ARROW_UP = "|TInterface\\PetBattles\\BattleBar-AbilityBadge-Strong:14:14|t"
 local ARROW_DOWN = "|TInterface\\PetBattles\\BattleBar-AbilityBadge-Weak:14:14|t"
@@ -949,10 +948,11 @@ function Tab:_Reload()
 end
 
 -- Log one post of a unit.
-function Tab:_Record(entry, quantity, kind, price)
+function Tab:_Record(entry, quantity, kind, price, duration)
     local decision = entry.decision
     self.deps.log:Add(entry.candidate, {
         action = kind, reason = decision.reason, price = price or decision.price, quantity = quantity, auctions = 1,
+        duration = duration or decision.duration,
     })
 end
 
@@ -992,6 +992,7 @@ end
 -- Count one finished unit (a post or a skip). After the last unit of an entry, ask for a fresh owned list.
 function Tab:_Advance(entry, posted)
     entry.next = entry.next + 1
+    entry.manualQty, entry.manualHours = nil, nil
     if posted then
         entry.posted = entry.posted + 1
         self.postedCount = self.postedCount + 1
@@ -1069,7 +1070,7 @@ function Tab:_Confirmed()
         return self:_Fail(awaiting.entry, tostring(err))
     end
     awaiting.entry.real = true
-    self:_Record(awaiting.entry, awaiting.quantity, "post", awaiting.price)
+    self:_Record(awaiting.entry, awaiting.quantity, "post", awaiting.price, awaiting.duration)
     self:_Advance(awaiting.entry, true)
 end
 
@@ -1112,14 +1113,49 @@ function SellingTab.CanForce(entry)
     return (candidate.count or 0) - keep > 0
 end
 
+-- The most units that a manual post can hold: the count in the bags minus the keep quantity, at least 1.
+function SellingTab.MaxQuantity(candidate)
+    local stacks = candidate.stacks or {}
+    local count = candidate.count or (stacks[1] and stacks[1].count) or 1
+    return math.max(1, count - (tonumber(candidate.settings and candidate.settings.keepInBags) or 0))
+end
+
+-- Limit a typed quantity to a whole number from 1 to maxQuantity. Returns nil if the value is not a number.
+function SellingTab.ClampQuantity(value, maxQuantity)
+    local number = tonumber(value)
+    if not number or number ~= number then
+        return nil
+    end
+    return math.max(1, math.min(math.floor(number), math.max(1, maxQuantity)))
+end
+
+-- True if hours is one of the post durations (2, 8 or 24).
+function SellingTab.IsDuration(hours)
+    for _, valid in ipairs(ns.SellingPlan.DURATIONS) do
+        if valid == hours then
+            return true
+        end
+    end
+    return false
+end
+
+local function copyTable(source)
+    local copy = {}
+    for key, value in pairs(source) do
+        copy[key] = value
+    end
+    return copy
+end
+
 -- The decision and the units of a manual post of an item that the rule skips: one auction.
--- It follows the keep quantity and the max stack size of the rule.
-function Tab._ManualPlan(_, entry, price)
+-- It follows the keep quantity and the max stack size of the rule. The quantity and the duration that the
+-- user chose (entry.manualQty, entry.manualHours) replace the calculated ones, unless raw is true.
+function Tab._ManualPlan(_, entry, price, raw)
     local candidate, market = entry.candidate, entry.market or {}
     local stacks = candidate.stacks
     local commodity = market.commodity == true
     local settings = candidate.settings or {}
-    local available = math.max(1, (candidate.count or stacks[1].count) - (tonumber(settings.keepInBags) or 0))
+    local available = SellingTab.MaxQuantity(candidate)
     local quantity
     if commodity then
         quantity = available
@@ -1131,9 +1167,62 @@ function Tab._ManualPlan(_, entry, price)
         end
         quantity = math.min(size, stacks[1].count, available)
     end
+    local duration = ns.SellingPlan.NormalizeDuration(settings.duration)
+    if not raw then
+        quantity = SellingTab.ClampQuantity(entry.manualQty, available) or quantity
+        duration = entry.manualHours or duration
+    end
     local decision = { action = "post", price = price, quantity = quantity, auctions = 1, commodity = commodity,
-        reason = "manual post", key = candidate.key, duration = tonumber(settings.duration) or DEFAULT_DURATION }
+        reason = "manual post", key = candidate.key, duration = duration }
     return decision, SellingTab.BuildUnits(candidate, decision)
+end
+
+-- The decision and the unit of the next post of an entry. For Post (not all) the quantity and the duration
+-- that the user chose apply, with a new deposit quote. Post all (all) and raw use the plan as it is.
+function Tab:_NextPost(entry, price, all, raw)
+    local ready = entry.status == "ready"
+    if ready and (all or raw or not (entry.manualQty or entry.manualHours)) then
+        return entry.decision, entry.units[entry.next]
+    end
+    local decision, unit
+    if ready then
+        decision, unit = copyTable(entry.decision), copyTable(entry.units[entry.next])
+        decision.duration = entry.manualHours or decision.duration
+        unit.quantity = SellingTab.ClampQuantity(entry.manualQty, SellingTab.MaxQuantity(entry.candidate))
+            or unit.quantity
+    else
+        local units
+        decision, units = self:_ManualPlan(entry, price, raw)
+        unit = units[1]
+    end
+    if not raw then
+        local ok, deposit = pcall(self.deps.client.Deposit, unit.bag, unit.slot, decision.duration, unit.quantity,
+            decision.commodity == true)
+        unit.deposit = ok and type(deposit) == "number" and deposit or nil
+    end
+    return decision, unit
+end
+
+-- Set the quantity of the next manual post. The value is limited to 1 to the available count. nil clears it.
+function Tab:SetManualQuantity(value)
+    local entry = not self.awaiting and self:_Focus(false)
+    if not entry then
+        return false
+    end
+    entry.manualQty = SellingTab.ClampQuantity(value, SellingTab.MaxQuantity(entry.candidate))
+    self:_UpdateDetails()
+    return true, entry.manualQty
+end
+
+-- Set the duration in hours of the next manual post (2, 8 or 24). Another value or nil clears it.
+function Tab:SetManualDuration(hours)
+    local entry = not self.awaiting and self:_Focus(false)
+    if not entry then
+        return false
+    end
+    entry.manualHours = SellingTab.IsDuration(hours) and hours or nil
+    self:_UpdateDetails()
+    return true
 end
 
 -- Turn a skipped entry into a ready entry with one manual post.
@@ -1166,17 +1255,14 @@ end
 -- The warning lines for the next post of an entry at a price. An empty list means no warning.
 -- A line shows if the rule skips the item, if the price is under the minimum price or over the maximum price,
 -- or if the vendor pays more than the net of the post (this covers a price under the vendor price).
-function Tab:_Warnings(entry, price)
+function Tab:_Warnings(entry, price, all)
     local lines = {}
-    local unit
     local skipReason
-    if entry.status == "ready" then
-        unit = entry.units[entry.next]
-    else
+    if entry.status ~= "ready" then
         skipReason = entry.decision and entry.decision.reason or "no decision"
         lines[1] = "The rule skips this item: " .. (SKIP_TEXT[skipReason] or skipReason) .. "."
-        unit = select(2, self:_ManualPlan(entry, price))[1]
     end
+    local unit = select(2, self:_NextPost(entry, price, all))
     local candidate = entry.candidate or {}
     if candidate.minPrice and price < candidate.minPrice and skipReason ~= "below minimum" then
         lines[#lines + 1] = "The price is below the minimum price: " .. money(candidate.minPrice) .. "."
@@ -1266,7 +1352,7 @@ function Tab:_PostStep(all)
         return false, why
     end
     if not entry.warned then
-        local lines, unit = self:_Warnings(entry, price)
+        local lines, unit = self:_Warnings(entry, price, all)
         if #lines > 0 then
             self:_AskWarning(entry, price, lines, unit, all)
             return true
@@ -1275,8 +1361,7 @@ function Tab:_PostStep(all)
     if entry.status ~= "ready" then
         self:_ForcePlan(entry, price)
     end
-    local unit = entry.units[entry.next]
-    local decision = entry.decision
+    local decision, unit = self:_NextPost(entry, price, all)
     local client = self.deps.client
     local okValid, valid = pcall(client.IsSellItemValid, unit.bag, unit.slot)
     if okValid and valid == false then
@@ -1312,13 +1397,14 @@ function Tab:_PostStep(all)
         return self:_Fail(entry, tostring(needsConfirmation))
     end
     if needsConfirmation then
-        self.awaiting = { entry = entry, unit = unit, quantity = quantity, confirm = confirm, price = price }
+        self.awaiting = { entry = entry, unit = unit, quantity = quantity, confirm = confirm, price = price,
+            duration = decision.duration }
         self:_ShowConfirm()
         self:_Update()
         return true
     end
     entry.real = true
-    self:_Record(entry, quantity, "post", price)
+    self:_Record(entry, quantity, "post", price, decision.duration)
     self:_Advance(entry, true)
     return true
 end
@@ -1530,6 +1616,33 @@ local function clearDetails(d)
     d.warn:SetText("")
 end
 
+-- A view of an entry in which the next unit is the shown unit and the decision is the shown decision.
+local function shadowEntry(entry, decision, unit)
+    local units = {}
+    for index, each in ipairs(entry.units) do
+        units[index] = each
+    end
+    units[entry.next] = unit
+    return setmetatable({ decision = decision, units = units, status = "ready" }, { __index = entry })
+end
+
+-- Put the calculated quantity and duration in the controls when the shown post changes.
+function Tab:_SyncManual(entry, price)
+    local d = self.ui.details
+    local decision, unit = self:_NextPost(entry, price, false, true)
+    local shown = self.manualShown
+    if not (shown and shown.entry == entry and shown.next == entry.next and shown.qty == unit.quantity
+        and shown.hours == decision.duration) then
+        self.manualShown = { entry = entry, next = entry.next, qty = unit.quantity, hours = decision.duration }
+        self.syncing = true
+        d.qty:SetNumber(entry.manualQty or unit.quantity)
+        d.duration:SetValue(entry.manualHours or decision.duration)
+        self.syncing = false
+    end
+    d.qty:SetEnabled(true)
+    d.duration:SetEnabled(true)
+end
+
 -- Fill the details pane from the next post of the queue (or the one item that the rule skips).
 function Tab:_UpdateDetails()
     local d = self.ui.details
@@ -1542,6 +1655,11 @@ function Tab:_UpdateDetails()
             d.priceInput:SetCopper(nil)
         end
         d.priceInput:SetEnabled(false)
+        self.manualShown = nil
+        d.qty:SetNumber(nil)
+        d.qty:SetEnabled(false)
+        d.duration:SetValue(nil)
+        d.duration:SetEnabled(false)
         return
     end
     local decision = entry.decision
@@ -1555,14 +1673,24 @@ function Tab:_UpdateDetails()
     d.icon:SetTexture(icon)
     d.name:SetText(self:_Name(entry))
     d.operation:SetText("Operation: " .. tostring(entry.candidate and entry.candidate.operationName or "-"))
-    local values = ready and SellingTab.Details(entry, self:_Vendor(entry), typed)
-    if not values then
+    local shown = typed or decision.price or decision.suggested or 0
+    self:_SyncManual(entry, shown)
+    local nextDecision, nextUnit = self:_NextPost(entry, shown, false)
+    local values = nextUnit and SellingTab.Details(shadowEntry(entry, nextDecision, nextUnit),
+        self:_Vendor(entry), typed)
+    if not ready or not values then
         clearDetails(d)
         d.icon:SetTexture(icon)
         d.operation:SetText("Operation: " .. tostring(entry.candidate and entry.candidate.operationName or "-"))
         local reason = decision.reason or "no decision"
         d.warn:SetText("The rule skips this item: " .. (SKIP_TEXT[reason] or reason) .. ". Post asks you first.")
         paint(d.warn, ORANGE)
+        if values then
+            d.deposit:SetText("Deposit: " .. money(values.deposit))
+            local text, color = SellingTab.NetStyle(values.net)
+            d.net:SetText(text)
+            paint(d.net, color)
+        end
         return
     end
     d.price:SetText("Buyout " .. money(values.buyout) .. " per auction")
@@ -1706,6 +1834,35 @@ function Tab:_BuildContent()
     d.warn = line("small", 56, 56, 400)
     d.deposit = line("small", 470, 6, 290)
     d.net = line("small", 470, 22, 290)
+    -- The quantity and the duration of a manual post. The calculated values show until the user changes them.
+    d.qtyLabel = line("small", 470, 40, 56)
+    d.qtyLabel:SetText("Quantity:")
+    d.qty = Kit.NumberInput(pane, 44, { min = 1, hint = "1+", onChange = function(number)
+        local ok, clamped = self:SetManualQuantity(number)
+        if ok and clamped then
+            d.qty:SetNumber(clamped)
+        end
+    end })
+    d.qty:SetPoint("TOPLEFT", pane, "TOPLEFT", 528, -38)
+    if d.qty.HookScript then
+        d.qty:HookScript("OnTextChanged", function()
+            if not self.syncing then
+                self:SetManualQuantity(d.qty.GetNumber())
+            end
+        end)
+    end
+    Kit.Tooltip(d.qty, "Quantity", { "How many items the next post holds.",
+        "The most is your count minus the keep quantity." })
+    d.durationLabel = line("small", 610, 40, 40)
+    d.durationLabel:SetText("Time:")
+    local items = {}
+    for _, hours in ipairs(ns.SellingPlan.DURATIONS) do
+        items[#items + 1] = { value = hours, text = hours .. " h" }
+    end
+    d.duration = Kit.Dropdown(pane, 70, { items = items, onChange = function(hours)
+        self:SetManualDuration(hours)
+    end })
+    d.duration:SetPoint("TOPLEFT", pane, "TOPLEFT", 650, -34)
     ui.details = d
 
     ui.tree = Kit.CreateTree(content, { rowHeight = ROW_HEIGHT, inset = true,

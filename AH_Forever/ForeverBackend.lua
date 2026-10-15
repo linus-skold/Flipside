@@ -308,13 +308,13 @@ function Backend.BuyEvents()
 end
 -- Posting (Selling tab). Doc: AuctionHouseDocumentation.lua. PostItem and PostCommodity are protected.
 -- The duration argument is a luaIndex. The SellFrame menu lists AUCTION_DURATION_ONE, TWO and THREE as index 1, 2, 3.
--- The mapping 12 h = 1, 24 h = 2, 48 h = 3 is NOT verified: the hour text of those strings is not in the source.
-local DURATION_INDEX = { [12] = 1, [24] = 2, [48] = 3 }
+-- The mapping 2 h = 1, 8 h = 2, 24 h = 3 is confirmed by the user (WoW: Forever, 2026-10-15).
+local DURATION_INDEX = { [2] = 1, [8] = 2, [24] = 3 }
 
 local function durationIndex(hours)
     local index = DURATION_INDEX[hours]
     if not index then
-        error("duration must be 12, 24 or 48 hours", 0)
+        error("duration must be 2, 8 or 24 hours", 0)
     end
     return index
 end

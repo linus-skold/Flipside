@@ -49,9 +49,9 @@ local FIELDS = {
         {
             key = "duration", label = "Post duration", kind = "choice", default = 24,
             choices = {
-                { value = 12, label = "12 hours" },
+                { value = 2, label = "2 hours" },
+                { value = 8, label = "8 hours" },
                 { value = 24, label = "24 hours" },
-                { value = 48, label = "48 hours" },
             },
             help = "How long each auction runs. The Auction House offers these three values.",
         },
