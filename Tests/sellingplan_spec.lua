@@ -96,13 +96,26 @@ describe("SellingPlan", function()
             assert.equal("no data for max price: scanmarket missing, scan again", candidate().reason)
         end)
 
-        it("sets a reason for stale data and few samples", function()
+        it("sets a reason for stale data", function()
             stats = { ageHours = 100, samples = 10 }
             assert.matches("stale", candidate().reason)
-            stats = { ageHours = 1, samples = 2 }
-            assert.matches("few samples", candidate().reason)
             stats = { ageHours = 1, samples = 3 }
             assert.is_nil(candidate().reason)
+            assert.is_nil(candidate().fewSamples)
+        end)
+
+        it("marks few samples and does not block the candidate", function()
+            stats = { ageHours = 1, samples = 2 }
+            local c = candidate()
+            assert.is_nil(c.reason)
+            assert.equal("too few samples: 2 of 3", c.fewSamples)
+            stats = { ageHours = 100, samples = 2 }
+            assert.matches("stale", candidate().reason)
+        end)
+
+        it("does not check the samples when the operation needs no scan data", function()
+            stats = { ageHours = 1, samples = 0 }
+            assert.is_nil(candidate({ needScanData = false }).fewSamples)
         end)
     end)
 
@@ -192,10 +205,81 @@ describe("SellingPlan", function()
         end)
 
         it("posts a commodity as one listing", function()
-            local d = SP.Decide(candidate({ postCap = 4 }), { row(4500, false, true) }, { maxStack = 20 })
+            local d = SP.Decide(candidate(), { row(4500, false, true) }, { maxStack = 20 })
             assert.equal(40, d.quantity)
             assert.equal(1, d.auctions)
             assert.is_true(d.commodity)
+        end)
+
+        it("ignores the stack size for a commodity", function()
+            local d = SP.Decide(candidate({ stackSize = 5 }), { row(4500, false, true) }, { maxStack = 20 })
+            assert.equal(40, d.quantity)
+            assert.equal(1, d.auctions)
+        end)
+
+        it("counts the post quantity of a commodity in units", function()
+            local c = candidate({ postCap = 25 })
+            c.ownedUnits = 10
+            local d = SP.Decide(c, { row(4500, false, true) }, { maxStack = 20 })
+            assert.equal(15, d.quantity)
+            c.ownedUnits = 25
+            d = SP.Decide(c, { row(4500, false, true) }, { maxStack = 20 })
+            assert.equal("skip", d.action)
+            assert.equal("post cap reached", d.reason)
+        end)
+
+        it("passes the units that own auctions hold to the candidate", function()
+            ops[11].settings = settings()
+            local out = SP.Candidates({ rules = rules, formulaRun = run, bagItems = bag, ownedUnits = { ["100"] = 7 } })
+            assert.equal(7, out[1].ownedUnits)
+        end)
+
+        it("passes the post duration of the rule to the decision", function()
+            assert.equal(12, SP.Decide(candidate({ duration = 12 }), {}, { maxStack = 20 }).duration)
+            assert.equal(48, SP.Decide(candidate({ duration = 48 }), {}, { maxStack = 20 }).duration)
+        end)
+
+        describe("with too few samples", function()
+            before_each(function()
+                stats = { ageHours = 1, samples = 2 }
+            end)
+
+            it("prices from the cheapest listing minus the undercut, with a reason", function()
+                local d = SP.Decide(candidate({ undercut = 50 }), { row(4500), row(4800) }, { maxStack = 20 })
+                assert.equal("post", d.action)
+                assert.equal(4450, d.price)
+                assert.equal("few samples, using the cheapest listing", d.reason)
+            end)
+
+            it("uses the cheapest listing of another seller", function()
+                local d = SP.Decide(candidate(), { row(4500), row(5000, true) }, { maxStack = 20 })
+                assert.equal(4499, d.price)
+                local own = SP.Decide(candidate(), { row(4000, true), row(4500) }, { maxStack = 20 })
+                assert.equal("already lowest", own.reason)
+            end)
+
+            it("still keeps the minimum and maximum price of the rule", function()
+                local low = SP.Decide(candidate(), { row(500) }, { maxStack = 20 })
+                assert.equal("skip", low.action)
+                assert.equal("below minimum", low.reason)
+                local high = SP.Decide(candidate(), { row(20000) }, { maxStack = 20 })
+                assert.equal(9000, high.price)
+                assert.equal("above max, at max", high.reason)
+            end)
+
+            it("skips with the old reason when there is no listing", function()
+                local d = SP.Decide(candidate(), {}, { maxStack = 20 })
+                assert.equal("skip", d.action)
+                assert.equal("too few samples: 2 of 3", d.reason)
+            end)
+
+            it("posts at the market value with enough samples", function()
+                stats = { ageHours = 1, samples = 3 }
+                local d = SP.Decide(candidate(), {}, { maxStack = 20 })
+                assert.equal("post", d.action)
+                assert.equal(5000, d.price)
+                assert.equal("undercut", SP.Decide(candidate(), { row(4500) }, { maxStack = 20 }).reason)
+            end)
         end)
 
         it("skips on a safety failure", function()
@@ -210,6 +294,46 @@ describe("SellingPlan", function()
             local d = SP.Decide(candidate(), {}, { maxStack = 20 })
             assert.equal("skip", d.action)
             assert.equal("formula error: oops", d.reason)
+        end)
+    end)
+
+    describe("VendorSkip", function()
+        local post = { action = "post", price = 1000, quantity = 20, auctions = 1 }
+
+        it("skips when the vendor pays more than the net, with a reason", function()
+            -- 20000 gross - 1000 cut - 300 deposit = 18700 net; the vendor pays 20 x 1000 = 20000.
+            local d = SP.VendorSkip(candidate(), post, { { quantity = 20, deposit = 300 } }, 1000)
+            assert.equal("skip", d.action)
+            assert.equal("vendor pays more than the AH", d.reason)
+            assert.equal(1000, d.suggested)
+            assert.equal(20000, d.vendor)
+            assert.equal(18700, d.net)
+            assert.equal("100", d.key)
+        end)
+
+        it("is on by default and when the field is true", function()
+            local units = { { quantity = 20, deposit = 0 } }
+            assert.is_table(SP.VendorSkip(candidate(), post, units, 2000))
+            assert.is_table(SP.VendorSkip(candidate({ vendorSkip = true }), post, units, 2000))
+        end)
+
+        it("skips nothing when the field is false", function()
+            local units = { { quantity = 20, deposit = 0 } }
+            assert.is_nil(SP.VendorSkip(candidate({ vendorSkip = false }), post, units, 2000))
+        end)
+
+        it("skips nothing when the AH pays more or the vendor price is not known", function()
+            local units = { { quantity = 20, deposit = 300 } }
+            assert.is_nil(SP.VendorSkip(candidate(), post, units, 900))
+            assert.is_nil(SP.VendorSkip(candidate(), post, units, nil))
+            assert.is_nil(SP.VendorSkip(candidate(), post, {}, 5000))
+        end)
+
+        it("uses the cut and the deposit of all units", function()
+            local units = { { quantity = 10, deposit = 5000 }, { quantity = 10, deposit = 5000 } }
+            -- Net 20000 - 1000 - 10000 = 9000, below the vendor 10 x 500 x 2 = 10000.
+            assert.is_table(SP.VendorSkip(candidate(), post, units, 500))
+            assert.is_nil(SP.VendorSkip(candidate(), post, units, 400))
         end)
     end)
 

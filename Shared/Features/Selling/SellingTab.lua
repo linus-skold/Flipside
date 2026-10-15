@@ -274,6 +274,7 @@ local SKIP_TEXT = {
     ["keep in bags reached"] = "keep in bags reached",
     ["post cap reached"] = "post cap reached",
     ["already lowest"] = "you are already lowest",
+    ["vendor pays more than the AH"] = "vendor pays more, skipped",
     ["no response"] = "no response from the Auction House",
     ["skipped by user"] = "skipped by you",
 }
@@ -548,28 +549,30 @@ function Tab:_Current()
     return nil
 end
 
--- Count the own auctions of each bag item. Each owned row counts as one auction.
+-- Count the own auctions of each bag item (each owned row is one auction), and the units in them.
 function Tab:_OwnedCounts(bagItems)
     local client = self.deps.client
-    local owned = {}
+    local owned, units = {}, {}
     if not client.CanReadOwned() then
-        return owned
+        return owned, units
     end
     local ok, rows = pcall(client.OwnedAuctions)
     if not ok or type(rows) ~= "table" then
-        return owned
+        return owned, units
     end
-    local byID = {}
+    local byID, unitsByID = {}, {}
     for _, row in ipairs(rows) do
         local itemID = type(row) == "table" and type(row.itemKey) == "table" and row.itemKey.itemID
         if itemID then
             byID[itemID] = (byID[itemID] or 0) + 1
+            unitsByID[itemID] = (unitsByID[itemID] or 0) + (tonumber(row.quantity) or 1)
         end
     end
     for _, item in ipairs(bagItems) do
         owned[item.key] = byID[item.itemID]
+        units[item.key] = unitsByID[item.itemID]
     end
-    return owned
+    return owned, units
 end
 
 -- Ask the client for the deposit of each unit of an entry and store the sum.
@@ -609,6 +612,11 @@ function Tab:_Decide(entry, rows)
     if entry.decision.action == "post" then
         entry.status = "ready"
         self:_Quote(entry)
+        local skip = deps.plan.VendorSkip(candidate, entry.decision, entry.units, self:_Vendor(entry))
+        if skip then
+            entry.decision, entry.units, entry.status = skip, {}, "skip"
+            deps.log:Add(candidate, skip)
+        end
     else
         entry.status = "skip"
         deps.log:Add(candidate, entry.decision)
@@ -717,11 +725,13 @@ end
 -- The selling candidates of the bag items, by item key.
 function Tab:_CandidatesByKey(bagItems)
     local deps = self.deps
+    local owned, ownedUnits = self:_OwnedCounts(bagItems)
     local candidates = deps.plan.Candidates({
         rules = deps.rules,
         formulaRun = deps.formulaRun,
         bagItems = bagItems,
-        owned = self:_OwnedCounts(bagItems),
+        owned = owned,
+        ownedUnits = ownedUnits,
         dataStats = deps.getRecord and function(key)
             return SellingTab.DataStats(deps.getRecord(key), deps.now and deps.now() or nil)
         end or nil,
@@ -1058,24 +1068,38 @@ function Tab:_Focus(all)
     end
     local only = #self.selection == 1 and self.selectedId and self.selectedId:sub(1, 1) == "i" and self.selection[1]
     if only and only.status == "skip" and only.market and only.candidate
-        and #(only.candidate.stacks or {}) > 0 then
+        and #(only.candidate.stacks or {}) > 0 and SellingTab.CanForce(only) then
         return only
     end
     return nil
 end
 
+-- Tell if a manual post can override the skip of an entry. The kept items are never posted.
+function SellingTab.CanForce(entry)
+    local candidate = entry.candidate
+    local keep = tonumber(candidate.settings and candidate.settings.keepInBags) or 0
+    return (candidate.count or 0) - keep > 0
+end
+
 -- The decision and the units of a manual post of an item that the rule skips: one auction.
+-- It follows the keep quantity and the max stack size of the rule.
 function Tab._ManualPlan(_, entry, price)
     local candidate, market = entry.candidate, entry.market or {}
     local stacks = candidate.stacks
     local commodity = market.commodity == true
+    local settings = candidate.settings or {}
+    local available = math.max(1, (candidate.count or stacks[1].count) - (tonumber(settings.keepInBags) or 0))
     local quantity
     if commodity then
-        quantity = candidate.count or stacks[1].count
+        quantity = available
     else
-        quantity = math.min(math.max(1, market.maxStack or 1), stacks[1].count)
+        local size = math.max(1, market.maxStack or 1)
+        local limit = tonumber(settings.stackSize) or 0
+        if limit > 0 then
+            size = math.min(size, limit)
+        end
+        quantity = math.min(size, stacks[1].count, available)
     end
-    local settings = candidate.settings or {}
     local decision = { action = "post", price = price, quantity = quantity, auctions = 1, commodity = commodity,
         reason = "manual post", key = candidate.key, duration = tonumber(settings.duration) or DEFAULT_DURATION }
     return decision, SellingTab.BuildUnits(candidate, decision)
@@ -1109,7 +1133,8 @@ function Tab:_PostPrice(entry)
 end
 
 -- The warning lines for the next post of an entry at a price. An empty list means no warning.
-function Tab:_Warnings(entry, price)
+-- Post all gives no vendor warning: the vendorSkip rule already chose the entries of its queue.
+function Tab:_Warnings(entry, price, all)
     local lines = {}
     local unit
     if entry.status == "ready" then
@@ -1119,7 +1144,10 @@ function Tab:_Warnings(entry, price)
         lines[1] = "The rule skips this item: " .. (SKIP_TEXT[reason] or reason) .. "."
         unit = select(2, self:_ManualPlan(entry, price))[1]
     end
-    local vendor, net = SellingTab.VendorBetter(price, unit, self:_Vendor(entry))
+    local vendor, net
+    if not (all and entry.status == "ready") then
+        vendor, net = SellingTab.VendorBetter(price, unit, self:_Vendor(entry))
+    end
     if vendor then
         lines[#lines + 1] = "Sells for more at a vendor: " .. money(vendor) .. " (net on the AH: " .. money(net) .. ")."
     end
@@ -1167,7 +1195,7 @@ function Tab:_PostStep(all)
         return false, why
     end
     if not self.dryRun and not entry.warned then
-        local lines, unit = self:_Warnings(entry, price)
+        local lines, unit = self:_Warnings(entry, price, all)
         if #lines > 0 then
             self:_AskWarning(entry, price, lines, unit, all)
             return true

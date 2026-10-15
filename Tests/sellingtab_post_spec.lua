@@ -12,7 +12,7 @@ end
 
 -- These specs keep ScrollUtil: the game uses the ScrollBox path.
 describe("SellingTab price box, warnings, post all and bag sync", function()
-    local ns, bus, client, rules, tab, ui, bagItems, bagReads, warns, views, vendor
+    local ns, bus, client, rules, tab, ui, bagItems, bagReads, warns, views, vendor, opExtra
 
     local function makeClient()
         local c = { ready = true, searches = {}, rows = {}, commodity = {}, posts = {}, confirmed = {} }
@@ -73,9 +73,13 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
                 end
             end,
             GetOperation = function()
-                return { name = "Sell", settings = {
+                local settings = {
                     minPrice = "10", normalPrice = "100", maxPrice = "200", undercut = 1, duration = 24,
-                } }
+                }
+                for k, v in pairs(opExtra) do
+                    settings[k] = v
+                end
+                return { name = "Sell", settings = settings }
             end,
             Path = function(_, id) return groups[id].name end,
             ItemsIn = function() return {} end,
@@ -197,7 +201,7 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
         client = makeClient()
         client.commodity[10] = false
         client.commodity[11] = true
-        warns, bagReads, vendor = {}, 0, {}
+        warns, bagReads, vendor, opExtra = {}, 0, {}, { vendorSkip = false }
         rules = makeRules()
         bagItems = {
             { key = "11", itemID = 11, name = "Bolt of Linen", count = 12, stacks = {
@@ -453,13 +457,11 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
             assert.are.equal(0, #client.posts)
         end)
 
-        it("asks in the Post all queue too", function()
+        it("asks no vendor question in the Post all queue", function()
             vendor[10] = 200
             selectCloth()
             click(ui.postAll)
-            assert.are.equal(0, #client.posts)
-            assert.are.equal(1, #warns)
-            warns[1].onYes()
+            assert.are.equal(0, #warns)
             assert.are.equal(1, #client.posts)
         end)
 
@@ -603,6 +605,212 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
         end)
     end)
 
+    describe("the rule limits", function()
+        local function remount(extra)
+            opExtra = extra
+            tab = mount()
+            ui = tab.ui
+        end
+
+        local function postAllClicks()
+            local n = 0
+            while ui.postAll.enabled and n < 50 do
+                click(ui.postAll)
+                n = n + 1
+            end
+            return n
+        end
+
+        it("splits an item by the max stack size", function()
+            remount({ stackSize = 8 })
+            selectCloth()
+            local entry = entryOf("10")
+            -- A unit comes from one slot: two units of 8 fit in each stack of 20.
+            assert.are.equal(6, #entry.units)
+            assert.are.equal(8, entry.units[1].quantity)
+        end)
+
+        it("posts nothing of the kept quantity with Post all", function()
+            remount({ keepInBags = 30 })
+            selectCloth()
+            assert.are.equal("keep in bags reached", entryOf("11").decision.reason)
+            postAllClicks()
+            local units = 0
+            for _, post in ipairs(client.posts) do
+                units = units + post.quantity
+            end
+            -- 30 of 60 linen are free: one stack of 20 (a second needs 20, only 10 are left); 12 bolts are kept.
+            assert.are.equal(20, units)
+        end)
+
+        it("stops Post all at the post quantity", function()
+            remount({ postCap = 2 })
+            selectCloth()
+            assert.are.equal(2, #entryOf("10").units)
+            local n = postAllClicks()
+            assert.are.equal(n, #client.posts)
+            local items = 0
+            for _, post in ipairs(client.posts) do
+                if post.kind == "item" then
+                    items = items + 1
+                end
+            end
+            assert.are.equal(2, items)
+        end)
+
+        it("caps a commodity by the post quantity in units", function()
+            remount({ postCap = 5 })
+            selectCloth()
+            postAllClicks()
+            local commodity
+            for _, post in ipairs(client.posts) do
+                if post.kind == "commodity" then
+                    commodity = post
+                end
+            end
+            assert.are.equal(5, commodity.quantity)
+        end)
+
+        it("passes the post duration of the rule to the post call", function()
+            remount({ duration = 48 })
+            selectCloth()
+            postAllClicks()
+            assert.is_true(#client.posts > 0)
+            for _, post in ipairs(client.posts) do
+                assert.are.equal(48, post.duration)
+            end
+        end)
+
+        it("follows the max stack size in a manual post", function()
+            remount({ stackSize = 5 })
+            client.rows[10] = { row(5, 1) }
+            pick("i10")
+            fire("ITEM_RESULTS", 10)
+            ui.details.priceInput:SetText("25c")
+            click(ui.postNext)
+            warns[1].onYes()
+            assert.are.equal(5, client.posts[1].quantity)
+        end)
+
+        it("never offers a manual post of the kept quantity", function()
+            remount({ keepInBags = 60 })
+            client.rows[10] = { row(120, 1) }
+            pick("i10")
+            fire("ITEM_RESULTS", 10)
+            assert.are.equal("skip", entryOf("10").status)
+            assert.is_false(ui.postNext.enabled)
+        end)
+
+        it("keeps the kept quantity out of a manual commodity post", function()
+            remount({ keepInBags = 4, belowMin = "skip", minPrice = "1000" })
+            client.rows[11] = { row(150, 5) }
+            pick("i11")
+            fire("COMMODITY_RESULTS", 11)
+            assert.are.equal("skip", entryOf("11").status)
+            ui.details.priceInput:SetText("25c")
+            click(ui.postNext)
+            warns[1].onYes()
+            assert.are.equal(8, client.posts[1].quantity)
+        end)
+    end)
+    describe("the vendor skip rule", function()
+        local function remount(extra)
+            opExtra = extra
+            tab = mount()
+            ui = tab.ui
+        end
+
+        it("skips an item whose vendor price is higher than the net, by default", function()
+            remount({})
+            vendor[10] = 200
+            selectCloth()
+            local entry = entryOf("10")
+            assert.are.equal("skip", entry.status)
+            assert.are.equal("vendor pays more than the AH", entry.decision.reason)
+            assert.are.equal("vendor pays more, skipped", ns.SellingTab.InfoText(entry))
+            local last
+            for _, item in ipairs(ns.SellingPlan.Log:List()) do
+                if item.key == "10" then
+                    last = item
+                end
+            end
+            assert.are.equal("skip", last.decision)
+            assert.are.equal("vendor pays more than the AH", last.reason)
+        end)
+
+        it("keeps the item in the queue when the AH pays more", function()
+            remount({})
+            vendor[10] = 5
+            selectCloth()
+            assert.are.equal("ready", entryOf("10").status)
+        end)
+
+        it("posts the item when the rule is off", function()
+            remount({ vendorSkip = false })
+            vendor[10] = 200
+            selectCloth()
+            assert.are.equal("ready", entryOf("10").status)
+        end)
+
+        it("leaves the skipped item out of Post all", function()
+            remount({})
+            vendor[10] = 200
+            selectCloth()
+            assert.are.equal("Post all (0/1)", ui.postAll.text)
+            click(ui.postAll)
+            assert.are.equal("commodity", client.posts[1].kind)
+            assert.are.equal(0, #warns)
+        end)
+
+        it("still asks first on a manual post of the skipped item", function()
+            remount({})
+            vendor[10] = 200
+            selectCloth()
+            pick("i10")
+            assert.is_true(ui.postNext.enabled)
+            assert.are.equal("1s 19c", ui.details.priceInput.text)
+            click(ui.postNext)
+            assert.are.equal(0, #client.posts)
+            assert.matches("The rule skips this item: vendor pays more, skipped", warns[1].text)
+            assert.matches("Sells for more at a vendor", warns[1].text)
+            warns[1].onYes()
+            assert.are.equal(1, #client.posts)
+        end)
+    end)
+    describe("the sample fallback", function()
+        local function remount(samples)
+            tab = mount({
+                getRecord = function() return { latest = { time = 0 }, days = { { scans = samples } } } end,
+                now = function() return 3600 end,
+            })
+            ui = tab.ui
+        end
+
+        it("posts at the cheapest listing when the scan has too few samples", function()
+            remount(1)
+            selectCloth()
+            local entry = entryOf("10")
+            assert.are.equal("ready", entry.status)
+            assert.are.equal(119, entry.decision.price)
+            assert.are.equal("few samples, using the cheapest listing", entry.decision.reason)
+            assert.are.equal("few samples, using the cheapest listing", ns.SellingTab.InfoText(entry))
+        end)
+
+        it("skips with the old reason when no listing exists", function()
+            remount(1)
+            client.rows[10] = {}
+            pick("i10")
+            fire("ITEM_RESULTS", 10)
+            assert.are.equal("skip", entryOf("10").status)
+            assert.are.equal("too few samples: 1 of 3", entryOf("10").decision.reason)
+        end)
+
+        it("posts as before with enough samples", function()
+            remount(3)
+            selectCloth()
+            assert.are.equal("undercut", entryOf("10").decision.reason)
+        end)
+    end)
     describe("the bag sync after a post", function()
         it("drops an item from the list after its last post", function()
             selectCloth()

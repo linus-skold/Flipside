@@ -98,6 +98,45 @@ describe("RulesExport", function()
         assert.are.equal(2, summary.customNew)
     end)
 
+    it("round trips the selling rule fields", function()
+        local group = assert(rules:CreateGroup(1, "Limits"))
+        local op = assert(rules:CreateOperation("selling", "Limited"))
+        for key, value in pairs({ stackSize = 5, keepInBags = 7, postCap = 9, duration = 12, vendorSkip = false,
+            minSamples = 5 }) do
+            assert(rules:SetSetting(op, key, value))
+        end
+        assert(rules:AttachOperation(group, "selling", op))
+        local text = ns.RulesExport.Export(rules, cs, group)
+        local other = newEnv()
+        assert(ns.RulesExport.Apply(other.rules, other.cs, ns.RulesExport.Parse(text), 1, compile))
+        local imported = other.rules:Children(1)[1]
+        local s = other.rules:GetOperation(other.rules:EffectiveOperation(imported, "selling")).settings
+        assert.are.same({ 5, 7, 9, 12, false, 5 },
+            { s.stackSize, s.keepInBags, s.postCap, s.duration, s.vendorSkip, s.minSamples })
+    end)
+
+    it("imports an older export without vendorSkip as true", function()
+        local herbs = buildTree()
+        local text = ns.RulesExport.Export(rules, cs, herbs)
+        assert.is_truthy(text:find("|vendorSkip|", 1, true))
+        text = text:gsub("[^\n]*|vendorSkip|[^\n]*\n", "")
+        assert.is_nil(text:find("vendorSkip", 1, true))
+        local other = newEnv()
+        assert(ns.RulesExport.Apply(other.rules, other.cs, ns.RulesExport.Parse(text), 1, compile))
+        local imported = other.rules:Children(1)[1]
+        local s = other.rules:GetOperation(other.rules:EffectiveOperation(imported, "selling")).settings
+        assert.is_true(s.vendorSkip)
+    end)
+
+    it("refuses a vendorSkip value that is not a bool", function()
+        local herbs = buildTree()
+        local text = ns.RulesExport.Export(rules, cs, herbs)
+        text = text:gsub("(|vendorSkip|)b(|)true", "%1s%2yes")
+        local data, message = ns.RulesExport.Parse(text)
+        assert.is_nil(data)
+        assert.matches("vendorSkip", message)
+    end)
+
     it("exports the same text again after an import", function()
         local herbs = buildTree()
         local text = ns.RulesExport.Export(rules, cs, herbs)

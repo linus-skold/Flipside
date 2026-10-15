@@ -10,6 +10,7 @@ local DEFAULT_UNDERCUT = 1
 local DEFAULT_DURATION = 24
 local DEFAULT_MAX_AGE = 72
 local DEFAULT_SAMPLES = 3
+local FEW_SAMPLES_WHY = "few samples, using the cheapest listing"
 
 -- The names of the missing sources that a scan can fill (not the "later" sources).
 local function MissingSources(info)
@@ -43,7 +44,8 @@ local function PriceFor(run, text, key, label)
     return nil, reason
 end
 
--- Returns nil if the data is fresh and has enough samples, else a skip reason.
+-- Returns a skip reason if the data is old. Returns nil, text if the data is fresh but has too few samples
+-- (the text is the reason for a skip with no listing). Returns nil if the data is fine.
 local function SafetyReason(settings, stats)
     if not stats then
         return nil
@@ -57,7 +59,7 @@ local function SafetyReason(settings, stats)
         return "stale price: data older than " .. maxAge .. " h"
     end
     if (stats.samples or 0) < minSamples then
-        return "too few samples: " .. tostring(stats.samples or 0) .. " of " .. minSamples
+        return nil, "too few samples: " .. tostring(stats.samples or 0) .. " of " .. minSamples
     end
     return nil
 end
@@ -65,8 +67,9 @@ end
 -- deps.rules: RulesStore-like (GroupOf, Path, EffectiveOperation, GetOperation).
 -- deps.formulaRun: FormulaRun-like (Evaluate(text, key) returns copper and info).
 -- deps.bagItems: BagItems.Read result with stacks.
--- deps.owned: optional map key -> count of own auctions.
+-- deps.owned: optional map key -> count of own auctions. deps.ownedUnits: optional map key -> units in them.
 -- deps.dataStats: optional function(key) returning { ageHours, samples }.
+-- Old data gives a skip reason. Too few samples set candidate.fewSamples (a text) and Decide prices from the listings.
 -- Returns one candidate for each bag item whose group has a selling operation, own or inherited from Base.
 function SellingPlan.Candidates(deps)
     local rules, run = deps.rules, deps.formulaRun
@@ -96,6 +99,7 @@ function SellingPlan.Candidates(deps)
                 operationName = op.name,
                 settings = settings,
                 owned = owned[item.key] or 0,
+                ownedUnits = (deps.ownedUnits or {})[item.key] or 0,
             }
             local needData = settings.needScanData ~= false
             local reason
@@ -116,7 +120,7 @@ function SellingPlan.Candidates(deps)
                 end
             end
             if not candidate.reason and needData and deps.dataStats then
-                candidate.reason = SafetyReason(settings, deps.dataStats(item.key))
+                candidate.reason, candidate.fewSamples = SafetyReason(settings, deps.dataStats(item.key))
             end
             list[#list + 1] = candidate
         end
@@ -157,8 +161,14 @@ function SellingPlan.Decide(candidate, rows, opts)
     if available <= 0 then
         return Skip(candidate, "keep in bags reached")
     end
+    local commodity = opts.isCommodity
+    if commodity == nil then
+        commodity = rows[1] ~= nil and rows[1].isCommodity == true
+    end
+    -- Post quantity: auctions for an item, units for a commodity.
     local cap = tonumber(s.postCap) or 0
-    local room = cap > 0 and (cap - (candidate.owned or 0)) or math.huge
+    local have = commodity and (candidate.ownedUnits or 0) or (candidate.owned or 0)
+    local room = cap > 0 and (cap - have) or math.huge
     if room <= 0 then
         return Skip(candidate, "post cap reached")
     end
@@ -179,7 +189,10 @@ function SellingPlan.Decide(candidate, rows, opts)
     local price, why
     if competitor then
         price = competitor - undercut
-        why = "undercut"
+        why = candidate.fewSamples and FEW_SAMPLES_WHY or "undercut"
+    elseif candidate.fewSamples then
+        -- Too few samples: the market value is not safe, and no listing gives a price.
+        return Skip(candidate, candidate.fewSamples, info)
     elseif candidate.normalPrice then
         price = candidate.normalPrice
         why = "normal price"
@@ -207,13 +220,9 @@ function SellingPlan.Decide(candidate, rows, opts)
         return Skip(candidate, "already lowest", info)
     end
 
-    local commodity = opts.isCommodity
-    if commodity == nil then
-        commodity = rows[1] ~= nil and rows[1].isCommodity == true
-    end
     local quantity, auctions
     if commodity then
-        quantity, auctions = available, 1
+        quantity, auctions = math.min(available, room), 1
     else
         local maxStack = math.max(1, tonumber(opts.maxStack) or 1)
         local size = tonumber(s.stackSize) or 0
@@ -259,6 +268,23 @@ function SellingPlan.Profit(price, units, vendorPrice)
         gross = gross, cut = cut, deposit = deposit, net = net, quantity = quantity,
         vendor = vendor, vs = vendor and (net - vendor) or nil,
     }
+end
+
+-- The vendor skip rule. decision is a post decision, units are its units ({ quantity, deposit }).
+-- Returns a skip decision if the vendor sell price of the items is higher than the AH net, else nil.
+-- The rule is on unless the operation sets vendorSkip to false. With no vendor price it skips nothing.
+function SellingPlan.VendorSkip(candidate, decision, units, vendorPrice)
+    local s = candidate.settings or {}
+    if s.vendorSkip == false or decision.action ~= "post" or not vendorPrice or #units == 0 then
+        return nil
+    end
+    local profit = SellingPlan.Profit(decision.price, units, vendorPrice)
+    if profit.vendor <= profit.net then
+        return nil
+    end
+    return Skip(candidate, "vendor pays more than the AH", {
+        suggested = decision.price, competitor = decision.competitor, vendor = profit.vendor, net = profit.net,
+    })
 end
 
 local Log = {}

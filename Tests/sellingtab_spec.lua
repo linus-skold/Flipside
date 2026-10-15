@@ -113,6 +113,7 @@ describe("SellingTab", function()
             GetOperation = function()
                 return { name = "Sell", settings = {
                     minPrice = "10", normalPrice = "100", maxPrice = "200", undercut = 1, duration = 24,
+                    vendorSkip = false,
                 } }
             end,
             Path = function(_, id)

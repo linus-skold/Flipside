@@ -467,6 +467,49 @@ describe("OperationsPage", function()
             assert.are.equal(48, part.choice:GetValue())
         end)
 
+        it("saves the rule limits of a selling operation", function()
+            for key, value in pairs({ stackSize = 5, keepInBags = 7, postCap = 9 }) do
+                local part = page.FieldPart(key)
+                assert.is_table(part, key)
+                enter(part.number, tostring(value))
+                assert.are.equal(value, setting(key))
+            end
+            local part = page.FieldPart("stackSize")
+            enter(part.number, "1001")
+            assert.are.equal("Enter a number from 0 to 1000.", part.message:GetText())
+            assert.are.equal(5, setting("stackSize"))
+            assert.are.equal("Max stack size", part.label:GetText())
+        end)
+
+        it("shows and saves the vendor skip box, on by default", function()
+            local part = page.FieldPart("vendorSkip")
+            assert.are.equal("Skip if vendor pays more", part.label:GetText())
+            assert.is_true(part.check:GetChecked())
+            part.check:SetChecked(false)
+            part.check.scripts.OnClick(part.check)
+            assert.is_false(setting("vendorSkip"))
+        end)
+
+        it("shows the max price formula of a buying operation and lets it be empty", function()
+            pickType("buying")
+            typeName("B")
+            click(page.newButton)
+            local buyID
+            for _, op in ipairs(rules:ListOperations()) do
+                if op.type == "buying" then
+                    buyID = op.id
+                end
+            end
+            local part = page.FieldPart("maxPrice")
+            assert.is_table(part)
+            assert.are.equal("scanmarket", part.input:GetText())
+            enter(part.input, "1.5 * scanmarket")
+            assert.are.equal("1.5 * scanmarket", rules:GetOperation(buyID).settings.maxPrice)
+            enter(part.input, "")
+            assert.are.equal("", part.message:GetText())
+            assert.are.equal("", rules:GetOperation(buyID).settings.maxPrice)
+        end)
+
         it("keeps the old choice when the store refuses the value", function()
             local part = page.FieldPart("duration")
             local pick = part.choice.menuItems[1].pick
