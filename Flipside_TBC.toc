@@ -61,6 +61,7 @@ Shared\UI\Kit\List.lua
 Shared\UI\Kit\Columns.lua
 Shared\UI\Kit\Tree.lua
 Shared\UI\Kit\Combat.lua
+Shared\UI\Kit\Graph.lua
 Shared\UI\Pages\FormulaPage.lua
 Shared\UI\Pages\GroupsPage.lua
 Shared\UI\Pages\OperationsPage.lua
