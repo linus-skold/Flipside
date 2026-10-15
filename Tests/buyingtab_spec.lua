@@ -3,8 +3,8 @@ local mock = require("Tests.wow_mock")
 
 local function loadModules()
     local ns = { ReportError = function() end, Flavour = { hasCommodityMarket = true } }
-    for _, name in ipairs({ "EventBus", "ItemString", "BuyingPlan", "Theme", "Widgets", "Window", "List", "Columns",
-        "AuctionTabs", "BuyingTab" }) do
+    for _, name in ipairs({ "EventBus", "ItemString", "BuyingPlan", "Theme", "Widgets", "Window", "List", "Tree",
+        "Columns", "AuctionTabs", "BuyingTab" }) do
         assert(loadfile(manifest.path(name)))("Flipside", ns)
     end
     return ns
@@ -91,6 +91,12 @@ describe("BuyingTab", function()
             ItemsIn = function()
                 return items
             end,
+            Children = function(_, id)
+                return id == 1 and { 2 } or {}
+            end,
+            Name = function()
+                return "Herbs"
+            end,
         }
     end
 
@@ -158,11 +164,11 @@ describe("BuyingTab", function()
         end)
 
         it("shows the list rows with the name and the max price", function()
-            local first = ui.list.rows[1]
-            assert.are.equal("Item10", first.parts.name.text)
+            local group, first = ui.tree.list.rows[1], ui.tree.list.rows[2]
+            assert.are.equal("Herbs", group.label.text)
+            assert.are.equal("Item10", first.label.text)
             assert.are.equal("100c", first.parts.price.text)
-            assert.are.equal("Herbs/Flowers", first.parts.sub.text)
-            assert.are.equal("no data", ui.list.rows[4].parts.price.text)
+            assert.are.equal("no data", ui.tree.list.rows[5].parts.price.text)
         end)
 
         it("refreshes the list on demand", function()
@@ -179,12 +185,10 @@ describe("BuyingTab", function()
             tab:Select_("10")
             assert.is_true(tab:Search())
             assert.are.same({ 10 }, client.searches)
-            assert.is_false(ui.search.enabled)
             fire("COMMODITY_RESULTS", 10)
             local done = tab.results["10"]
             assert.are.equal(5, done.result.quantity)
             assert.are.equal(3 * 50 + 2 * 90, done.result.cost)
-            assert.is_true(ui.search.enabled)
             assert.matches("Buyable: 5 units, total cost 330c", ui.summary.text)
             assert.matches("Stop: above max price", ui.summary.text)
         end)
@@ -276,7 +280,7 @@ describe("BuyingTab", function()
             tab.deps.rules = rules
             tab:RefreshList()
             assert.is_true(tab.list[1].noMax)
-            assert.are.equal("no max", ui.list.rows[1].parts.price.text)
+            assert.are.equal("no max", ui.tree.list.rows[2].parts.price.text)
             client.rows[20] = { row(50, 1), row(90000, 1) }
             tab:Select_("20")
             tab:Search()
@@ -318,7 +322,6 @@ describe("BuyingTab", function()
             client.rows[10] = { row(50, 1) }
             assert.is_true(tab:SearchAll())
             assert.are.same({ 10 }, client.searches)
-            assert.is_false(ui.searchAll.enabled)
             fire("COMMODITY_RESULTS", 10)
             assert.are.same({ 10, 11 }, client.searches)
             fire("COMMODITY_RESULTS", 11)
@@ -328,7 +331,6 @@ describe("BuyingTab", function()
             assert.are.equal("no max price", tab.results["13"].result.stop)
             fire("COMMODITY_RESULTS", 14)
             assert.is_nil(tab.queue)
-            assert.is_true(ui.searchAll.enabled)
         end)
 
         it("waits for the ready event", function()

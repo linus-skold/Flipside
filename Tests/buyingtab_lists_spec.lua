@@ -4,7 +4,7 @@ local mock = require("Tests.wow_mock")
 local function loadModules()
     local ns = { ReportError = function() end }
     for _, name in ipairs({ "EventBus", "SettingsDB", "ItemString", "OperationSchema", "ItemNameIndex", "BuyingPlan",
-        "SearchLists", "Theme", "Widgets", "Window", "List", "Columns", "AuctionTabs", "BuyingTab" }) do
+        "SearchLists", "Theme", "Widgets", "Window", "List", "Tree", "Columns", "AuctionTabs", "BuyingTab" }) do
         assert(loadfile(manifest.path(name)))("Flipside", ns)
     end
     return ns
@@ -38,6 +38,8 @@ describe("BuyingTab search lists", function()
         }
         return {
             Walk = function(_, fn) fn(1) end,
+            Children = function(_, id) return id == 1 and { 2 } or {} end,
+            Name = function() return "Herbs" end,
             ItemsIn = function() return {} end,
             Path = function() return { "Base", "Herbs" } end,
             GroupOf = function(_, key) return key == "100" and 2 or nil end,
@@ -120,7 +122,7 @@ describe("BuyingTab search lists", function()
             assert.is_true(tab.list[2].noMax)
             assert.are.equal("Default", tab.list[2].operationName)
             assert.are.equal("Peacebloom", tab:_ItemName(tab.list[1]))
-            assert.are.equal("no max", ui.list.rows[2].parts.price.text)
+            assert.are.equal("no max", ui.tree.list.rows[4].parts.price.text)
             assert.are.equal("Search list: Recipe", tab.list[2].groupPath)
         end)
 
@@ -160,7 +162,7 @@ describe("BuyingTab search lists", function()
         it("removes an item with the remove button of its row", function()
             local id = lists:Create("A", { { itemID = 1 }, { itemID = 2 } })
             tab:SelectList(id)
-            local button = ui.list.rows[1].parts.remove
+            local button = ui.tree.list.rows[2].parts.remove
             assert.is_true(button:IsShown())
             button.scripts.OnClick(button)
             assert.are.equal(1, #tab.list)
