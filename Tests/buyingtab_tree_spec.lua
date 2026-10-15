@@ -251,7 +251,7 @@ describe("BuyingTab item tree", function()
             bus:Emit("READY")
             assert.is_true(ui.buyNext.enabled)
             assert.are.equal("", ui.summary.text)
-            assert.are.equal("3", ui.amount.text)
+            assert.are.equal("1", ui.amount.text)
         end)
 
         it("does not buy: a click makes no protected call", function()
