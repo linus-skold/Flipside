@@ -1121,6 +1121,7 @@ local LEVEL_COLUMNS = {
         end },
 }
 local LEVEL_OPTIONS = { gap = 6 }
+local STACK_COLUMN = LEVEL_COLUMNS[2]
 
 local function initRowsRow(row, data)
     local Kit = ns.Kit
@@ -1128,6 +1129,10 @@ local function initRowsRow(row, data)
     if not cells then
         cells = Kit.CreateColumnCells(row, LEVEL_COLUMNS, LEVEL_OPTIONS)
         row.cells = cells
+    end
+    if row.cellsHidden ~= STACK_COLUMN.hidden then
+        row.cellsHidden = STACK_COLUMN.hidden
+        Kit.LayoutColumnLabels(cells, row, LEVEL_COLUMNS, LEVEL_OPTIONS)
     end
     Kit.SetColumnCells(cells, LEVEL_COLUMNS, data)
     setColor(cells.unitPrice, data.state == "above")
@@ -1241,7 +1246,21 @@ function Tab:_Update()
     ui.summary:SetText(table.concat(lines, "\n"))
     ui.buyNext:SetEnabled(nextLevel ~= nil and reason == nil)
     local levels = done and self.deps.plan.PriceLevels(done.rows) or {}
+    self:_ShowStackColumn(not (levels[1] and BuyingTab.StackSize(levels[1]) == nil))
     ui.rowsList:SetData(BuyingTab.DescribeLevels(selected, levels, selected.showAboveMax))
+end
+
+-- Show or hide the Stack Price column (header and cells). A commodity level has no stack price.
+function Tab:_ShowStackColumn(show)
+    local Kit, ui = ns.Kit, self.ui
+    local hide = not show
+    if (STACK_COLUMN.hidden or false) == hide then
+        return
+    end
+    STACK_COLUMN.hidden = hide
+    local edge = ui.rowsList.contentInsets or { left = 0, right = 0 }
+    Kit.LayoutColumnLabels(ui.levelHeader.labels, ui.levelHeader.frame, LEVEL_COLUMNS,
+        { gap = LEVEL_OPTIONS.gap, left = edge.left, right = edge.right })
 end
 
 function Tab:IsActive()

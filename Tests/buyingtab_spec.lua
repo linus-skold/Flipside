@@ -462,7 +462,8 @@ describe("BuyingTab", function()
             assert.are.equal(2, #ui.rowsList.rows)
             local first = ui.rowsList.rows[1].cells
             assert.are.equal("50c", first.unitPrice.text)
-            assert.are.equal("", first.stackPrice.text)
+            assert.is_false(first.stackPrice.shown)
+            assert.is_false(ui.levelHeader.labels.stackPrice.shown)
             assert.are.equal("x5", first.quantity.text)
             assert.are.equal("2", first.listings.text)
             assert.are.equal("", first.status.text)
@@ -470,6 +471,35 @@ describe("BuyingTab", function()
             assert.are.equal("Unit Price", ui.levelHeader.labels.unitPrice.text)
             assert.are.equal("Stack Price", ui.levelHeader.labels.stackPrice.text)
             assert.are.equal("Status", ui.levelHeader.labels.status.text)
+        end)
+
+        it("shows the Stack Price column for an item level", function()
+            local item = { auctionID = 1, unitPrice = 50, quantity = 20, isCommodity = false }
+            searchItem({ item })
+            local cells = ui.rowsList.rows[1].cells
+            assert.is_true(cells.stackPrice.shown)
+            assert.is_true(ui.levelHeader.labels.stackPrice.shown)
+            assert.are.equal("1000c", cells.stackPrice.text)
+        end)
+
+        it("shows the Stack Price column again after an item follows a commodity", function()
+            searchItem({ row(50, 3) })
+            assert.is_false(ui.levelHeader.labels.stackPrice.shown)
+            client.rows[11] = { { auctionID = 2, unitPrice = 5, quantity = 4, isCommodity = false } }
+            tab:Select_("11")
+            tab:Search()
+            fire("ITEM_RESULTS", 11)
+            assert.is_true(ui.levelHeader.labels.stackPrice.shown)
+            assert.is_true(ui.rowsList.rows[1].cells.stackPrice.shown)
+            assert.are.equal("20c", ui.rowsList.rows[1].cells.stackPrice.text)
+        end)
+
+        it("shows the Stack Price column for a level on a client with no commodity market", function()
+            ns.Flavour.hasCommodityMarket = false
+            searchItem({ row(50, 3) })
+            assert.is_true(ui.levelHeader.labels.stackPrice.shown)
+            assert.is_true(ui.rowsList.rows[1].cells.stackPrice.shown)
+            assert.are.equal("150c", ui.rowsList.rows[1].cells.stackPrice.text)
         end)
 
         it("keeps the Dry run text and the jump label apart with relative anchors", function()
