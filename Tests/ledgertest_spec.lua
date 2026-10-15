@@ -43,6 +43,9 @@ describe("LedgerTest probe", function()
         _G.GetLootSlotInfo = nil
         _G.GetLootSlotType = nil
         _G.GetLootSlotLink = nil
+        _G.GetLootSourceInfo = nil
+        _G.UnitGUID = nil
+        _G.issecretvalue = nil
     end)
 
     it("prints one login line with the build info", function()
@@ -77,29 +80,71 @@ describe("LedgerTest probe", function()
         assert.equals(1, #entriesOf("LOOT_TARGET"))
     end)
 
-    it("logs a missing combat log API without an error", function()
-        mock.fire("COMBAT_LOG_EVENT_UNFILTERED")
-        mock.fire("COMBAT_LOG_EVENT_UNFILTERED")
-        local list = entriesOf("COMBAT_LOG")
-        assert.equals(1, #list)
-        assert.is_truthy(list[1].text:find("missing", 1, true))
+    it("never registers the restricted combat log event", function()
+        assert.is_false(mock.isRegistered("COMBAT_LOG_EVENT_UNFILTERED"))
+        assert.is_true(mock.isRegistered("LOOT_OPENED"))
+        assert.is_true(mock.isRegistered("PLAYER_TARGET_CHANGED"))
     end)
 
-    it("logs only the kill subevents", function()
-        _G.C_CombatLog = {
-            GetCurrentEventInfo = function()
-                return 5, mock.subevent, false, "src", "Me", 0, 0, "Creature-1", "Wolf"
-            end,
-        }
-        mock.subevent = "SWING_DAMAGE"
-        mock.fire("COMBAT_LOG_EVENT_UNFILTERED")
-        mock.subevent = "PARTY_KILL"
-        mock.fire("COMBAT_LOG_EVENT_UNFILTERED")
-        _G.C_CombatLog = nil
-        assert.equals(0, #entriesOf("COMBAT_SWING_DAMAGE"))
-        assert.equals(1, #entriesOf("COMBAT_PARTY_KILL"))
+    it("logs loot sources with cached names and creature ids", function()
+        local wolf = "Creature-0-4379-1-123-4567-0000AB12CD"
+        _G.UnitGUID = function()
+            return wolf
+        end
+        _G.UnitName = function()
+            return "Wolf"
+        end
+        mock.fire("PLAYER_TARGET_CHANGED")
+        _G.GetNumLootItems = function()
+            return 1
+        end
+        _G.GetLootSlotInfo = function()
+            return "icon", "Pelt", 1, 0, 1, false, false, false
+        end
+        _G.GetLootSlotType = function()
+            return 1
+        end
+        _G.GetLootSourceInfo = function()
+            return wolf, 1, "Creature-0-4379-1-123-9999-0000AB12CE", 1
+        end
+        mock.fire("LOOT_OPENED", false, false)
+        local list = entriesOf("LOOT_SOURCE_NAME")
+        _G.UnitGUID = nil
+        _G.GetLootSourceInfo = nil
+        assert.equals(2, #list)
+        assert.is_truthy(list[1].text:find("name | Wolf | guidType | Creature | npcId | 4567", 1, true))
+        assert.is_truthy(list[2].text:find("name | unknown | guidType | Creature | npcId | 9999", 1, true))
     end)
 
+    it("shows secret unit values as text and keeps the cache at 200", function()
+        _G.issecretvalue = function(v)
+            return v == "secret-guid"
+        end
+        _G.UnitGUID = function()
+            return "secret-guid"
+        end
+        mock.fire("UPDATE_MOUSEOVER_UNIT")
+        assert.is_truthy(entriesOf("UNIT_CACHE")[1].text:find("guid | <secret>", 1, true))
+        local n = 0
+        _G.UnitGUID = function()
+            n = n + 1
+            return "Creature-0-1-1-1-" .. n .. "-0"
+        end
+        for _ = 1, 250 do
+            mock.fire("NAME_PLATE_UNIT_ADDED", "nameplate1")
+        end
+        _G.issecretvalue = nil
+        _G.UnitGUID = nil
+        _G.GetLootSourceInfo = function()
+            return "Creature-0-1-1-1-1-0", 1
+        end
+        _G.GetNumLootItems = function()
+            return 1
+        end
+        mock.fire("LOOT_OPENED", false, false)
+        _G.GetLootSourceInfo = nil
+        assert.is_truthy(entriesOf("LOOT_SOURCE_NAME")[1].text:find("name | unknown", 1, true))
+    end)
     it("logs a failed event registration", function()
         mock.invalidEvents["TRADE_SHOW"] = true
         mock.fire("ADDON_LOADED", "LedgerTest")
