@@ -40,7 +40,7 @@ function MainWindow.Create(deps)
         title = "Flipside",
         portrait = "Interface\\Icons\\INV_Misc_Coin_02",
     })
-    local tooltipPage
+    local tooltipPage, ledgerPage, justBuilt
     local pages = {
         {
             key = "groups",
@@ -78,6 +78,16 @@ function MainWindow.Create(deps)
             end,
         })
     end
+    if ns.LedgerPage then
+        table.insert(pages, {
+            key = "ledger",
+            title = "Ledger",
+            build = function(content)
+                ledgerPage = ns.LedgerPage.Build(content, deps)
+                justBuilt = true
+            end,
+        })
+    end
     table.insert(pages, {
         key = "formula",
         title = "Formulas",
@@ -98,6 +108,20 @@ function MainWindow.Create(deps)
             tabs.buttons[index]:HookScript("OnClick", function()
                 if tooltipPage and tooltipPage.Refresh then
                     tooltipPage.Refresh()
+                end
+            end)
+        elseif page.key == "ledger" then
+            -- The page loads the ledger each time it opens; the first open is in its build.
+            tabs.buttons[index]:HookScript("OnClick", function()
+                if justBuilt then
+                    justBuilt = false
+                elseif ledgerPage then
+                    ledgerPage.Open()
+                end
+            end)
+            window:HookScript("OnShow", function()
+                if ledgerPage and tabs:GetSelected() == "ledger" then
+                    ledgerPage.Open()
                 end
             end)
         end

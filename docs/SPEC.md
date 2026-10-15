@@ -480,6 +480,14 @@ The user approved points 1 to 10 on 2026-10-15. They are binding. The idea is si
    - A dry run has no trade. Its log record is a row of its own in the Auctions tab, with the mark "dry run".
    - A row older than the log retention has no detail line.
    - CSV export stays in scope (build step 7 PR8, with a documented column format).
+   - Page design (PR7, `LedgerPage`). The page loads the ledger each time it opens (`LedgerLoader:Ensure`). It shows "Loading ledger..." until the ledger is loaded, or the reason of a failed load. It reads data only.
+   - Filters: the character (All characters, then the current character, then the others) and the date range (Today, 7 days, 30 days, 180 days, All). A range counts whole UTC ledger days and ends today. The default is the current character and 30 days. Flipside saves the last choice in the character scope (`ledger.view.char`, `ledger.view.range`).
+   - Each tab builds its rows only when it shows. The list is virtual. Rows are newest first. The time shows in local time. A daily sum shows as one row with the mark "daily total (count)" and the UTC date.
+   - Columns of the record tabs. All have Date, Item, Qty and Money. The Character column shows only for All characters. The last column is Buyer (Sales), Seller (Purchases), Detail (Auctions), Mob (Loot) or Type (Expenses). Loot also has a Value column (vendor price × quantity).
+   - Tab contents: Sales shows type `sale`. Purchases shows type `purchase`. Expenses shows type `expense`. Loot shows type `loot`. Auctions shows `post`, `expired`, `cancelled`, AH `purchase` and dry run logs.
+   - Income by source has the columns Source, Count, Money in, Money out and Net. It has one row for each source with money flow, largest flow first. Sources with no money (for example `ahExpired`) have no row.
+   - Each tab has a totals row with money in, money out and net of the visible rows, and the row count.
+   - If no record matches, the tab shows "No records yet. The ledger records money from loot, vendors, mail, trades, quests and the Auction House."
 10. **Money tracking.**
     - Flipside keeps the last value of `GetMoney()`. On `PLAYER_MONEY` it computes the change and labels it with the open context: merchant, loot, trade, mail, quest or Auction House.
     - A change with no open context gets the source "unknown".
