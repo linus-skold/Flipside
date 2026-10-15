@@ -117,34 +117,65 @@ function Kit.Tooltip(frame, title, lines)
     end)
 end
 
+-- Raise a normal Lua error when drop-down items are not an array of { value, text } with a string text.
+local function checkItems(items, level)
+    if type(items) ~= "table" then
+        error("Kit.Dropdown: items must be a table", level + 1)
+    end
+    for index, item in ipairs(items) do
+        if type(item) ~= "table" or item.value == nil or type(item.text) ~= "string" then
+            error("Kit.Dropdown: item " .. index .. " needs a value and a string text", level + 1)
+        end
+    end
+end
+
 -- Create a drop-down. options: items = { { value, text } }, value, onChange(value).
 -- Methods: SetItems(items), SetValue(value), GetValue(). SetValue does not call onChange.
+-- The items and the value live in a local table, not on the client frame. The menu code of the
+-- client reads only plain copies of the items, so a bad value gives a Lua error and not a crash.
 function Kit.Dropdown(parent, width, options)
     options = options or {}
+    if type(options) ~= "table" then
+        error("Kit.Dropdown: options must be a table", 2)
+    end
+    if options.onChange ~= nil and type(options.onChange) ~= "function" then
+        error("Kit.Dropdown: onChange must be a function", 2)
+    end
+    checkItems(options.items or {}, 2)
+
     local ok, dropdown = pcall(CreateFrame, "DropdownButton", nil, parent, "WowStyle1DropdownTemplate")
     local menu = ok and dropdown.SetupMenu ~= nil
+    local state = { items = {}, value = options.value }
+
+    local function copyItems(items)
+        local copy = {}
+        for index, item in ipairs(items) do
+            copy[index] = { value = item.value, text = item.text }
+        end
+        return copy
+    end
+    state.items = copyItems(options.items or {})
+
     if not menu then
         dropdown = Kit.Button(parent, "", width, function(self)
-            local items = self.items
+            local items = state.items
             if #items == 0 then
                 return
             end
             local index = 0
             for i, item in ipairs(items) do
-                if item.value == self.value then
+                if item.value == state.value then
                     index = i
                 end
             end
             self:SetValue(items[index % #items + 1].value)
             if options.onChange then
-                options.onChange(self.value)
+                options.onChange(state.value)
             end
         end)
     else
         dropdown:SetWidth(width or 120)
     end
-    dropdown.items = options.items or {}
-    dropdown.value = options.value
 
     local function refresh(self)
         if menu then
@@ -154,8 +185,8 @@ function Kit.Dropdown(parent, width, options)
             return
         end
         local text = ""
-        for _, item in ipairs(self.items) do
-            if item.value == self.value then
+        for _, item in ipairs(state.items) do
+            if item.value == state.value then
                 text = item.text
             end
         end
@@ -163,29 +194,31 @@ function Kit.Dropdown(parent, width, options)
     end
 
     function dropdown:SetItems(items)
-        self.items = items or {}
+        items = items or {}
+        checkItems(items, 2)
+        state.items = copyItems(items)
         refresh(self)
     end
     function dropdown:SetValue(value)
-        self.value = value
+        state.value = value
         refresh(self)
     end
-    function dropdown:GetValue()
-        return self.value
+    function dropdown.GetValue()
+        return state.value
     end
 
     if menu then
         local function isSelected(value)
-            return dropdown.value == value
+            return state.value == value
         end
         local function setSelected(value)
-            dropdown.value = value
+            state.value = value
             if options.onChange then
                 options.onChange(value)
             end
         end
         dropdown:SetupMenu(function(_, root)
-            for _, item in ipairs(dropdown.items) do
+            for _, item in ipairs(state.items) do
                 root:CreateRadio(item.text, isSelected, setSelected, item.value)
             end
         end)
@@ -193,7 +226,6 @@ function Kit.Dropdown(parent, width, options)
     refresh(dropdown)
     return dropdown
 end
-
 -- Create a number box. options: min, max, allowNegative, hint, onChange(number or nil).
 -- onChange runs on Enter and on focus loss when the number changed.
 -- Methods: SetNumber(n), GetNumber(). GetNumber gives nil for empty, bad or out-of-range text.
