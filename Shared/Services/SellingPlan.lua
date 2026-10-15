@@ -12,7 +12,23 @@ local DEFAULT_DURATION = 24
 local DEFAULT_MAX_AGE = 72
 local DEFAULT_SAMPLES = 3
 
-local function PriceFor(run, text, key)
+-- The names of the missing sources that a scan can fill (not the "later" sources).
+local function MissingSources(info)
+    local later = {}
+    for _, name in ipairs(info.later or {}) do
+        later[name] = true
+    end
+    local names = {}
+    for _, name in ipairs(info.missing or {}) do
+        if not later[name] then
+            names[#names + 1] = name
+        end
+    end
+    return names
+end
+
+-- label names the price in the reason, for example "min price".
+local function PriceFor(run, text, key, label)
     local copper, info = run:Evaluate(text, key)
     if copper ~= nil and copper > 0 then
         return copper
@@ -20,7 +36,12 @@ local function PriceFor(run, text, key)
     if info and info.kind == "error" then
         return nil, "formula error: " .. tostring(info.message)
     end
-    return nil, "no data"
+    local reason = "no data for " .. label
+    local names = info and MissingSources(info) or {}
+    if #names > 0 then
+        reason = reason .. ": " .. table.concat(names, ", ") .. " missing, scan again"
+    end
+    return nil, reason
 end
 
 -- Returns nil if the data is fresh and has enough samples, else a skip reason.
@@ -95,14 +116,14 @@ function SellingPlan.Candidates(deps)
                 owned = owned[item.key] or 0,
             }
             local reason
-            candidate.minPrice, reason = PriceFor(run, settings.minPrice, item.key)
+            candidate.minPrice, reason = PriceFor(run, settings.minPrice, item.key, "min price")
             candidate.reason = reason
             if not reason then
-                candidate.normalPrice, reason = PriceFor(run, settings.normalPrice, item.key)
+                candidate.normalPrice, reason = PriceFor(run, settings.normalPrice, item.key, "normal price")
                 candidate.reason = reason
             end
             if not reason then
-                candidate.maxPrice, reason = PriceFor(run, settings.maxPrice, item.key)
+                candidate.maxPrice, reason = PriceFor(run, settings.maxPrice, item.key, "max price")
                 candidate.reason = reason
             end
             if not reason and deps.dataStats then

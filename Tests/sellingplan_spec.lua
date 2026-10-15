@@ -86,6 +86,17 @@ describe("SellingPlan", function()
             assert.equal("formula error: bad", candidate().reason)
         end)
 
+        it("names the price and the missing source when there is no data", function()
+            prices.min = { kind = "invalid", missing = { "crafting", "scanmarket" }, later = { "crafting" } }
+            assert.equal("no data for min price: scanmarket missing, scan again", candidate().reason)
+            prices.min = 1000
+            prices.normal = { kind = "invalid", missing = {}, later = {} }
+            assert.equal("no data for normal price", candidate().reason)
+            prices.normal = 5000
+            prices.max = { kind = "invalid", missing = { "scanmarket" } }
+            assert.equal("no data for max price: scanmarket missing, scan again", candidate().reason)
+        end)
+
         it("sets a reason for stale data and few samples", function()
             stats = { ageHours = 100, samples = 10 }
             assert.matches("stale", candidate().reason)
