@@ -434,4 +434,79 @@ describe("RulesStore", function()
             assert.are.equal(op + 1, next)
         end)
     end)
+
+    describe("default selling operation", function()
+        local function seeded()
+            return newStore({ seedDefault = true })
+        end
+
+        it("makes nothing unless seedDefault is true", function()
+            assert.are.same({}, store:ListOperations())
+        end)
+
+        it("makes Default and attaches it to Base, with no change event", function()
+            local s = seeded()
+            local list = s:ListOperations("selling")
+            assert.are.equal(1, #list)
+            assert.are.equal("Default", list[1].name)
+            assert.are.equal(list[1].id, (s:EffectiveOperation(1, "selling")))
+            local settings = s:GetOperation(list[1].id).settings
+            assert.are.equal(1, settings.undercut)
+            assert.are.equal("first(vendorsell, 1)", settings.minPrice)
+            assert.is_false(settings.needScanData)
+            assert.are.same({}, changes)
+            assert.is_true(saved[PROFILE_OPS].defaultSeeded)
+        end)
+
+        it("is inherited by a group that has no selling operation", function()
+            local s = seeded()
+            local herbs = s:CreateGroup(1, "Herbs")
+            local own = s:CreateOperation("selling", "Own")
+            local ore = s:CreateGroup(1, "Ore")
+            s:AttachOperation(ore, "selling", own)
+            assert.are.equal(s:ListOperations("selling")[1].id, (s:EffectiveOperation(herbs, "selling")))
+            assert.are.equal(own, (s:EffectiveOperation(ore, "selling")))
+        end)
+
+        it("can be edited and renamed", function()
+            local s = seeded()
+            local id = s:ListOperations("selling")[1].id
+            assert.is_true(s:SetSetting(id, "undercut", 5))
+            assert.is_true(s:RenameOperation(id, "Basic"))
+            assert.are.equal(5, s:GetOperation(id).settings.undercut)
+        end)
+
+        it("makes it once: a deleted Default does not come back", function()
+            local s = seeded()
+            s:DeleteOperation(s:ListOperations("selling")[1].id)
+            local again = ns.RulesStore.New(newDB(saved), { seedDefault = true })
+            assert.are.same({}, again:ListOperations("selling"))
+            assert.is_nil((again:EffectiveOperation(1, "selling")))
+        end)
+
+        it("keeps an operation that Base already has", function()
+            local mine = store:CreateOperation("selling", "Mine")
+            store:AttachOperation(1, "selling", mine)
+            local again = ns.RulesStore.New(newDB(saved), { seedDefault = true })
+            assert.are.equal(mine, (again:EffectiveOperation(1, "selling")))
+            assert.are.equal(2, #again:ListOperations("selling"))
+        end)
+
+        it("picks another name when Default is taken", function()
+            store:CreateOperation("selling", "Default")
+            local again = ns.RulesStore.New(newDB(saved), { seedDefault = true })
+            local names = {}
+            for _, op in ipairs(again:ListOperations("selling")) do
+                names[#names + 1] = op.name
+            end
+            assert.are.same({ "Default", "Default (2)" }, names)
+        end)
+
+        it("makes nothing when the data is read-only", function()
+            saved[PROFILE_OPS] = { version = 9, nextID = 1, ops = {} }
+            local s = ns.RulesStore.New(newDB(saved), { seedDefault = true, onWarning = function() end })
+            assert.is_true(s:IsReadOnly())
+            assert.are.same({}, s:ListOperations())
+        end)
+    end)
 end)

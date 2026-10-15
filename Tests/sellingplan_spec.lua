@@ -26,8 +26,7 @@ describe("SellingPlan", function()
         stats = nil
         bag = { { key = "100", itemID = 100, name = "Herb", count = 40, stacks = {} } }
         rules = {
-            Walk = function(_, fn) return GT.Walk(groups, fn) end,
-            ItemsIn = function(_, id) return GT.ItemsIn(groups, id) end,
+            GroupOf = function(_, key) return GT.GroupOf(groups, key) end,
             Path = function(_, id) return GT.Path(groups, id) end,
             EffectiveOperation = function(_, id, t) return (GT.Effective(groups, id, t)) end,
             GetOperation = function(_, id) return ops[id] end,
@@ -84,6 +83,17 @@ describe("SellingPlan", function()
         it("sets a reason for a formula error", function()
             prices.normal = { kind = "error", message = "bad" }
             assert.equal("formula error: bad", candidate().reason)
+        end)
+
+        it("names the price and the missing source when there is no data", function()
+            prices.min = { kind = "invalid", missing = { "crafting", "scanmarket" }, later = { "crafting" } }
+            assert.equal("no data for min price: scanmarket missing, scan again", candidate().reason)
+            prices.min = 1000
+            prices.normal = { kind = "invalid", missing = {}, later = {} }
+            assert.equal("no data for normal price", candidate().reason)
+            prices.normal = 5000
+            prices.max = { kind = "invalid", missing = { "scanmarket" } }
+            assert.equal("no data for max price: scanmarket missing, scan again", candidate().reason)
         end)
 
         it("sets a reason for stale data and few samples", function()
@@ -203,8 +213,44 @@ describe("SellingPlan", function()
         end)
     end)
 
-    describe("Log", function()
-        it("keeps the newest entries", function()
+    describe("Profit", function()
+        it("takes a 5 percent cut and the deposit from the gross", function()
+            local p = SP.Profit(1000, { { quantity = 20, deposit = 300 }, { quantity = 20, deposit = 300 } }, nil)
+            assert.equal(40000, p.gross)
+            assert.equal(2000, p.cut)
+            assert.equal(600, p.deposit)
+            assert.equal(37400, p.net)
+            assert.is_nil(p.vs)
+            assert.equal(0.05, SP.AH_CUT)
+        end)
+
+        it("rounds the cut to the nearest copper", function()
+            assert.equal(5, SP.Cut(99))
+            assert.equal(4, SP.Cut(89))
+            assert.equal(0, SP.Cut(0))
+        end)
+
+        it("subtracts the vendor value of the same items for vs vendor", function()
+            local p = SP.Profit(1000, { { quantity = 10, deposit = 100 } }, 400)
+            assert.equal(10000 - 500 - 100, p.net)
+            assert.equal(4000, p.vendor)
+            assert.equal(9400 - 4000, p.vs)
+        end)
+
+        it("can be negative", function()
+            local p = SP.Profit(10, { { quantity = 5, deposit = 500 } }, 20)
+            assert.equal(50 - 3 - 500, p.net)
+            assert.is_true(p.net < 0)
+            assert.is_true(p.vs < p.net)
+        end)
+
+        it("counts a missing deposit as 0", function()
+            local p = SP.Profit(100, { { quantity = 2 } }, nil)
+            assert.equal(190, p.net)
+        end)
+    end)
+
+    describe("Log", function()        it("keeps the newest entries", function()
             local log = SP.NewLog(2)
             for i = 1, 3 do
                 log:Add({ key = tostring(i) }, { action = "skip", reason = "r" })

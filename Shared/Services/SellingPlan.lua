@@ -5,22 +5,42 @@ local _, ns = ...
 local SellingPlan = {}
 ns.SellingPlan = SellingPlan
 
-local BASE_ID = 1
 local LOG_CAP = 200
 local DEFAULT_UNDERCUT = 1
 local DEFAULT_DURATION = 24
 local DEFAULT_MAX_AGE = 72
 local DEFAULT_SAMPLES = 3
 
-local function PriceFor(run, text, key)
+-- The names of the missing sources that a scan can fill (not the "later" sources).
+local function MissingSources(info)
+    local later = {}
+    for _, name in ipairs(info.later or {}) do
+        later[name] = true
+    end
+    local names = {}
+    for _, name in ipairs(info.missing or {}) do
+        if not later[name] then
+            names[#names + 1] = name
+        end
+    end
+    return names
+end
+
+-- label names the price in the reason, for example "min price".
+local function PriceFor(run, text, key, label)
     local copper, info = run:Evaluate(text, key)
     if copper ~= nil and copper > 0 then
         return copper
     end
     if info and info.kind == "error" then
-        return nil, "formula error: " .. tostring(info.message)
+        return nil, "formula error: " .. tostring(info.message), true
     end
-    return nil, "no data"
+    local reason = "no data for " .. label
+    local names = info and MissingSources(info) or {}
+    if #names > 0 then
+        reason = reason .. ": " .. table.concat(names, ", ") .. " missing, scan again"
+    end
+    return nil, reason
 end
 
 -- Returns nil if the data is fresh and has enough samples, else a skip reason.
@@ -42,44 +62,27 @@ local function SafetyReason(settings, stats)
     return nil
 end
 
--- deps.rules: RulesStore-like (Walk, ItemsIn, Path, EffectiveOperation, GetOperation).
+-- deps.rules: RulesStore-like (GroupOf, Path, EffectiveOperation, GetOperation).
 -- deps.formulaRun: FormulaRun-like (Evaluate(text, key) returns copper and info).
 -- deps.bagItems: BagItems.Read result with stacks.
 -- deps.owned: optional map key -> count of own auctions.
 -- deps.dataStats: optional function(key) returning { ageHours, samples }.
--- Returns one candidate for each bag item that is in a group with a selling operation.
+-- Returns one candidate for each bag item whose group has a selling operation, own or inherited from Base.
 function SellingPlan.Candidates(deps)
     local rules, run = deps.rules, deps.formulaRun
     local owned = deps.owned or {}
-    local groupOf = {}
     local operations = {}
-    rules:Walk(function(groupID)
-        if groupID == BASE_ID then
-            return
-        end
+    local list = {}
+    for _, item in ipairs(deps.bagItems or {}) do
+        local groupID = rules:GroupOf(item.key)
         local opID = rules:EffectiveOperation(groupID, "selling")
-        if not opID then
-            return
-        end
-        local op = operations[opID]
-        if op == nil then
+        local op = opID and operations[opID]
+        if opID and op == nil then
             op = rules:GetOperation(opID) or false
             operations[opID] = op
         end
-        if not op then
-            return
-        end
-        for _, key in ipairs(rules:ItemsIn(groupID)) do
-            if groupOf[key] == nil then
-                groupOf[key] = { groupID = groupID, opID = opID, op = op }
-            end
-        end
-    end)
-    local list = {}
-    for _, item in ipairs(deps.bagItems or {}) do
-        local hit = groupOf[item.key]
-        if hit then
-            local settings = hit.op.settings or {}
+        if op then
+            local settings = op.settings or {}
             local candidate = {
                 key = item.key,
                 itemID = item.itemID,
@@ -87,25 +90,32 @@ function SellingPlan.Candidates(deps)
                 name = item.name,
                 count = item.count,
                 stacks = item.stacks,
-                groupID = hit.groupID,
-                groupPath = rules:Path(hit.groupID),
-                operationID = hit.opID,
-                operationName = hit.op.name,
+                groupID = groupID,
+                groupPath = rules:Path(groupID),
+                operationID = opID,
+                operationName = op.name,
                 settings = settings,
                 owned = owned[item.key] or 0,
             }
+            local needData = settings.needScanData ~= false
             local reason
-            candidate.minPrice, reason = PriceFor(run, settings.minPrice, item.key)
+            candidate.minPrice, reason = PriceFor(run, settings.minPrice, item.key, "min price")
             candidate.reason = reason
             if not reason then
-                candidate.normalPrice, reason = PriceFor(run, settings.normalPrice, item.key)
-                candidate.reason = reason
+                local isError
+                candidate.normalPrice, reason, isError = PriceFor(run, settings.normalPrice, item.key, "normal price")
+                if reason and (needData or isError) then
+                    candidate.reason = reason
+                end
             end
-            if not reason then
-                candidate.maxPrice, reason = PriceFor(run, settings.maxPrice, item.key)
-                candidate.reason = reason
+            if not candidate.reason then
+                local isError
+                candidate.maxPrice, reason, isError = PriceFor(run, settings.maxPrice, item.key, "max price")
+                if reason and (needData or isError) then
+                    candidate.reason = reason
+                end
             end
-            if not reason and deps.dataStats then
+            if not candidate.reason and needData and deps.dataStats then
                 candidate.reason = SafetyReason(settings, deps.dataStats(item.key))
             end
             list[#list + 1] = candidate
@@ -113,7 +123,6 @@ function SellingPlan.Candidates(deps)
     end
     return list
 end
-
 local function IsOwn(row, opts)
     if opts.isOwn then
         return opts.isOwn(row) == true
@@ -165,17 +174,19 @@ function SellingPlan.Decide(candidate, rows, opts)
     end
 
     local undercut = tonumber(s.undercut) or DEFAULT_UNDERCUT
+    local info = { competitor = competitor, floor = candidate.minPrice }
     local price, why
     if competitor then
         price = competitor - undercut
         why = "undercut"
-    else
+    elseif candidate.normalPrice then
         price = candidate.normalPrice
         why = "normal price"
+    else
+        return Skip(candidate, "no price: no competitor and no market value", info)
     end
-    local info = { competitor = competitor }
-    if price > candidate.maxPrice then
-        if s.aboveMax == "postAtNormal" then
+    if candidate.maxPrice and price > candidate.maxPrice then
+        if s.aboveMax == "postAtNormal" and candidate.normalPrice then
             price, why = candidate.normalPrice, "above max, at normal"
         else
             price, why = candidate.maxPrice, "above max, at max"
@@ -215,6 +226,35 @@ function SellingPlan.Decide(candidate, rows, opts)
         action = "post", price = price, quantity = quantity, auctions = auctions,
         duration = tonumber(s.duration) or DEFAULT_DURATION, reason = why,
         key = candidate.key, competitor = competitor, commodity = commodity,
+    }
+end
+
+-- The Auction House cut: the share of the sale price that the house keeps. UNVERIFIED: the Forever client
+-- source has no constant or API for it (the sale invoice mail shows the real cut after a sale). 5% is the usual rate.
+SellingPlan.AH_CUT = 0.05
+
+-- Returns the cut of a sale in copper.
+function SellingPlan.Cut(gross)
+    return math.floor(gross * SellingPlan.AH_CUT + 0.5)
+end
+
+-- Potential profit of some auctions. Each unit is { quantity, deposit } (deposit can be nil).
+-- price is the copper for one item. vendorPrice is the vendor sell price of one item, or nil if not known.
+-- Returns { gross, cut, deposit, net, vendor, vs, quantity }. net = gross - cut - deposit.
+-- vs = net - vendor (the vendor value of the same items); nil if the vendor price is not known.
+function SellingPlan.Profit(price, units, vendorPrice)
+    local quantity, deposit = 0, 0
+    for _, unit in ipairs(units) do
+        quantity = quantity + (unit.quantity or 0)
+        deposit = deposit + (unit.deposit or 0)
+    end
+    local gross = price * quantity
+    local cut = SellingPlan.Cut(gross)
+    local net = gross - cut - deposit
+    local vendor = vendorPrice and vendorPrice * quantity or nil
+    return {
+        gross = gross, cut = cut, deposit = deposit, net = net, quantity = quantity,
+        vendor = vendor, vs = vendor and (net - vendor) or nil,
     }
 end
 
