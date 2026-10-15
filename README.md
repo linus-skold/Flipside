@@ -26,6 +26,15 @@ Use the "x64 Native Tools Command Prompt for VS 2022". The C compiler needs its 
 7. Run the tests from the repository root: `busted`
 
 After step 5, the tools run in any shell that has `lua51\bin` in PATH. The `lua51` folder is not in git.
+## Development: install a branch in game
+Use `scripts/install-dev.ps1` (PowerShell 7) to copy a branch into the game AddOns folder. It copies the git-tracked files that the release package contains. It deletes only the old `Flipside` folder. The default target is the WoW: Forever folder `C:\Program Files (x86)\World of Warcraft\_classic_beta_\Interface\AddOns`. Set `-AddOnsPath` or `FLIPSIDE_ADDONS_PATH` to use another folder.
+
+```powershell
+.\scripts\install-dev.ps1 -Ref fix/selling-tree-insets   # export a branch, your checkout stays unchanged
+.\scripts\install-dev.ps1 -Source C:\path\to\worktree -WhatIf   # show the plan, change nothing
+```
+
+Run `/reload` in game after the copy.
 ## Libraries
 No third-party library is used at this time. The `Libs/` folder is empty.
 
