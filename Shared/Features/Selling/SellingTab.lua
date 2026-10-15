@@ -1625,6 +1625,9 @@ function Tab:Select()
         self:RefreshBags()
     elseif self.stale then
         self:_Reload()
+    else
+        -- Every later select reads the bags at once. An open post or a running queue stays.
+        self:_RunSync()
     end
     self:_Update()
 end

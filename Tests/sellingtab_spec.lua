@@ -382,10 +382,10 @@ describe("SellingTab", function()
             assert.is_nil(tab.SetDryRun)
         end)
 
-        it("reads the bags when the tab opens and does not read them again on a tab switch", function()
+        it("reads the bags when the tab opens and again on each tab select", function()
             assert.are.equal(1, bagReads)
             tab:Select()
-            assert.are.equal(1, bagReads)
+            assert.are.equal(2, bagReads)
         end)
     end)
 
@@ -1066,7 +1066,35 @@ describe("SellingTab", function()
             assert.are.equal(reads + 1, bagReads)
             assert.are.same({ "i13", "i10" }, idsOf(tab.nodes[2].children))
             tab:Select()
-            assert.are.equal(reads + 1, bagReads)
+            assert.are.equal(reads + 2, bagReads)
+        end)
+
+        it("shows the new bag contents when the tab is selected again", function()
+            tab:Deselect()
+            bagItems[#bagItems + 1] = {
+                key = "99", itemID = 99, name = "Fresh", count = 1,
+                stacks = { { bag = 0, slot = 9, count = 1 } },
+            }
+            tab:Select()
+            assert.is_not_nil(entryOf("99"))
+            local found = false
+            for _, group in ipairs(tab.nodes) do
+                for _, child in ipairs(group.children or {}) do
+                    found = found or child.id == "i99"
+                end
+            end
+            assert.is_true(found)
+        end)
+
+        it("keeps an open post when the tab is selected again", function()
+            selectCloth()
+            client.needsConfirmation = true
+            click(ui.postNext)
+            local open = tab.awaiting
+            assert.is_not_nil(open)
+            tab:Deselect()
+            tab:Select()
+            assert.are.equal(open, tab.awaiting)
         end)
 
         it("waits for an open server confirm", function()
