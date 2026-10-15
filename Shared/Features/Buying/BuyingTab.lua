@@ -32,6 +32,31 @@ local function withinMax(entry, price)
     return entry.maxPrice ~= nil and price <= entry.maxPrice
 end
 
+-- The stack size of a price level. An item level uses the quantity of the row that Buy next buys
+-- (the first row that is not yours). A commodity has no stack, so its stack size is 1.
+function BuyingTab.StackSize(level)
+    local first = level.rows and level.rows[1]
+    if not first or first.isCommodity ~= false then
+        return 1
+    end
+    for _, row in ipairs(level.rows) do
+        if not isOwn(row) then
+            return row.quantity or 1
+        end
+    end
+    return first.quantity or 1
+end
+
+-- The text of the Status column. Only "Yours" and "Above max" show; a level to buy shows no text.
+function BuyingTab.StatusText(state)
+    if state == "own" then
+        return "Yours"
+    elseif state == "above" then
+        return "Above max"
+    end
+    return ""
+end
+
 -- Build the price level rows to show. state is "buy", "above" or "own".
 -- Levels above the maximum show only if the operation sets showAboveMax.
 function BuyingTab.DescribeLevels(entry, levels, showAboveMax)
@@ -48,6 +73,7 @@ function BuyingTab.DescribeLevels(entry, levels, showAboveMax)
         if state then
             out[#out + 1] = {
                 unitPrice = level.unitPrice, quantity = level.quantity, listings = level.listings, state = state,
+                stackPrice = level.unitPrice * BuyingTab.StackSize(level),
             }
         end
     end
@@ -1063,38 +1089,35 @@ function Tab:_InitListRow(row, entry)
     end)
 end
 
+-- The columns of the price level list. The header and the row cells use the same definition.
+local LEVEL_COLUMNS = {
+    { key = "unitPrice", title = "Unit Price", width = 104, number = true, format = money },
+    { key = "stackPrice", title = "Stack Price", width = 104, number = true, format = money },
+    { key = "quantity", title = "Quantity", width = 50, number = true,
+        format = function(value)
+            return "x" .. tostring(value)
+        end },
+    { key = "listings", title = "Listings", width = 56, number = true },
+    { key = "status", title = "Status",
+        get = function(data)
+            return BuyingTab.StatusText(data.state)
+        end },
+}
+local LEVEL_OPTIONS = { gap = 6 }
+
 local function initRowsRow(row, data)
     local Kit = ns.Kit
-    local parts = row.parts
-    if not parts then
-        parts = {
-            price = Kit.Label(row, "", "normal"),
-            quantity = Kit.Label(row, "", "normal"),
-            listings = Kit.Label(row, "", "small"),
-            mark = Kit.Label(row, "", "small"),
-        }
-        parts.price:SetPoint("LEFT", row, "LEFT", 4, 0)
-        parts.price:SetWidth(120)
-        parts.price:SetJustifyH("LEFT")
-        parts.quantity:SetPoint("LEFT", row, "LEFT", 128, 0)
-        parts.quantity:SetWidth(50)
-        parts.quantity:SetJustifyH("LEFT")
-        parts.listings:SetPoint("LEFT", row, "LEFT", 182, 0)
-        parts.listings:SetWidth(70)
-        parts.listings:SetJustifyH("LEFT")
-        parts.mark:SetPoint("LEFT", row, "LEFT", 256, 0)
-        parts.mark:SetWidth(70)
-        parts.mark:SetJustifyH("LEFT")
-        row.parts = parts
+    local cells = row.cells
+    if not cells then
+        cells = Kit.CreateColumnCells(row, LEVEL_COLUMNS, LEVEL_OPTIONS)
+        row.cells = cells
     end
-    parts.price:SetText(money(data.unitPrice))
-    parts.quantity:SetText("x" .. data.quantity)
-    parts.listings:SetText(data.listings .. (data.listings == 1 and " listing" or " listings"))
-    parts.mark:SetText(data.state == "own" and "yours" or data.state == "above" and "above max" or "buy")
-    setColor(parts.price, data.state == "above")
-    setColor(parts.quantity, data.state == "above")
-    setColor(parts.listings, true)
-    setColor(parts.mark, data.state ~= "buy")
+    Kit.SetColumnCells(cells, LEVEL_COLUMNS, data)
+    setColor(cells.unitPrice, data.state == "above")
+    setColor(cells.stackPrice, data.state == "above")
+    setColor(cells.quantity, data.state == "above")
+    setColor(cells.listings, true)
+    setColor(cells.status, true)
 end
 
 function Tab:_InitLogRow(row, data)
@@ -1159,6 +1182,7 @@ function Tab:_Update()
     ui.logButton:SetText(self.showLog and "Items" or "Log")
     ui.list:SetData(self.list)
     ui.rowsList.frame:SetShown(not self.showLog)
+    ui.levelHeader.frame:SetShown(not self.showLog)
     ui.logList.frame:SetShown(self.showLog == true)
     ui.itemName:SetShown(not self.showLog)
     ui.summary:SetShown(not self.showLog)
@@ -1341,8 +1365,15 @@ function Tab:_BuildContent()
     ui.rowsList = Kit.CreateList(content, { rowHeight = 18, inset = true, initRow = function(row, data)
         initRowsRow(row, data)
     end })
-    ui.rowsList.frame:SetPoint("TOPLEFT", content, "TOPLEFT", rightX, -128)
+    ui.rowsList.frame:SetPoint("TOPLEFT", content, "TOPLEFT", rightX, -148)
     ui.rowsList.frame:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", 0, 30)
+    -- The column titles over the price level list.
+    local edge = ui.rowsList.contentInsets or { left = 0, right = 0 }
+    ui.levelHeader = Kit.CreateColumnHeader(content, LEVEL_COLUMNS,
+        { gap = LEVEL_OPTIONS.gap, left = edge.left, right = edge.right })
+    ui.levelHeader.frame:SetPoint("TOPLEFT", content, "TOPLEFT", rightX, -130)
+    ui.levelHeader.frame:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, -130)
+    ui.levelHeader.frame:SetHeight(18)
     ui.logList = Kit.CreateList(content, { rowHeight = 18, inset = true, initRow = function(row, data)
         self:_InitLogRow(row, data)
     end })
@@ -1359,13 +1390,14 @@ function Tab:_BuildContent()
     end)
     ui.dryRun:SetPoint("LEFT", ui.buyNext, "RIGHT", 4, 0)
     ui.dryRun:SetChecked(self.dryRun)
+    -- The jump label anchors to the end of the Dry run text, and the input anchors to the label.
+    ui.jumpLabel = Kit.Label(content, "Jump warning %", "small")
+    ui.jumpLabel:SetPoint("LEFT", ui.dryRun.Text or ui.dryRun, "RIGHT", ui.dryRun.Text and 14 or 70, 0)
     ui.jump = Kit.NumberInput(content, 36, { min = 1, max = 1000, hint = "1 - 1000", onChange = function(number)
         self:SetJumpPercent(number)
     end })
-    ui.jump:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", -110, 0)
+    ui.jump:SetPoint("LEFT", ui.jumpLabel, "RIGHT", 6, 0)
     ui.jump:SetNumber(self:GetJumpPercent())
-    ui.jumpLabel = Kit.Label(content, "Jump warning %", "small")
-    ui.jumpLabel:SetPoint("RIGHT", ui.jump, "LEFT", -6, 0)
 end
 
 -- Build the panel in the parent frame and listen for the search events.
