@@ -5,7 +5,6 @@ local _, ns = ...
 local SellingPlan = {}
 ns.SellingPlan = SellingPlan
 
-local BASE_ID = 1
 local LOG_CAP = 200
 local DEFAULT_UNDERCUT = 1
 local DEFAULT_DURATION = 24
@@ -34,7 +33,7 @@ local function PriceFor(run, text, key, label)
         return copper
     end
     if info and info.kind == "error" then
-        return nil, "formula error: " .. tostring(info.message)
+        return nil, "formula error: " .. tostring(info.message), true
     end
     local reason = "no data for " .. label
     local names = info and MissingSources(info) or {}
@@ -63,44 +62,27 @@ local function SafetyReason(settings, stats)
     return nil
 end
 
--- deps.rules: RulesStore-like (Walk, ItemsIn, Path, EffectiveOperation, GetOperation).
+-- deps.rules: RulesStore-like (GroupOf, Path, EffectiveOperation, GetOperation).
 -- deps.formulaRun: FormulaRun-like (Evaluate(text, key) returns copper and info).
 -- deps.bagItems: BagItems.Read result with stacks.
 -- deps.owned: optional map key -> count of own auctions.
 -- deps.dataStats: optional function(key) returning { ageHours, samples }.
--- Returns one candidate for each bag item that is in a group with a selling operation.
+-- Returns one candidate for each bag item whose group has a selling operation, own or inherited from Base.
 function SellingPlan.Candidates(deps)
     local rules, run = deps.rules, deps.formulaRun
     local owned = deps.owned or {}
-    local groupOf = {}
     local operations = {}
-    rules:Walk(function(groupID)
-        if groupID == BASE_ID then
-            return
-        end
+    local list = {}
+    for _, item in ipairs(deps.bagItems or {}) do
+        local groupID = rules:GroupOf(item.key)
         local opID = rules:EffectiveOperation(groupID, "selling")
-        if not opID then
-            return
-        end
-        local op = operations[opID]
-        if op == nil then
+        local op = opID and operations[opID]
+        if opID and op == nil then
             op = rules:GetOperation(opID) or false
             operations[opID] = op
         end
-        if not op then
-            return
-        end
-        for _, key in ipairs(rules:ItemsIn(groupID)) do
-            if groupOf[key] == nil then
-                groupOf[key] = { groupID = groupID, opID = opID, op = op }
-            end
-        end
-    end)
-    local list = {}
-    for _, item in ipairs(deps.bagItems or {}) do
-        local hit = groupOf[item.key]
-        if hit then
-            local settings = hit.op.settings or {}
+        if op then
+            local settings = op.settings or {}
             local candidate = {
                 key = item.key,
                 itemID = item.itemID,
@@ -108,25 +90,32 @@ function SellingPlan.Candidates(deps)
                 name = item.name,
                 count = item.count,
                 stacks = item.stacks,
-                groupID = hit.groupID,
-                groupPath = rules:Path(hit.groupID),
-                operationID = hit.opID,
-                operationName = hit.op.name,
+                groupID = groupID,
+                groupPath = rules:Path(groupID),
+                operationID = opID,
+                operationName = op.name,
                 settings = settings,
                 owned = owned[item.key] or 0,
             }
+            local needData = settings.needScanData ~= false
             local reason
             candidate.minPrice, reason = PriceFor(run, settings.minPrice, item.key, "min price")
             candidate.reason = reason
             if not reason then
-                candidate.normalPrice, reason = PriceFor(run, settings.normalPrice, item.key, "normal price")
-                candidate.reason = reason
+                local isError
+                candidate.normalPrice, reason, isError = PriceFor(run, settings.normalPrice, item.key, "normal price")
+                if reason and (needData or isError) then
+                    candidate.reason = reason
+                end
             end
-            if not reason then
-                candidate.maxPrice, reason = PriceFor(run, settings.maxPrice, item.key, "max price")
-                candidate.reason = reason
+            if not candidate.reason then
+                local isError
+                candidate.maxPrice, reason, isError = PriceFor(run, settings.maxPrice, item.key, "max price")
+                if reason and (needData or isError) then
+                    candidate.reason = reason
+                end
             end
-            if not reason and deps.dataStats then
+            if not candidate.reason and needData and deps.dataStats then
                 candidate.reason = SafetyReason(settings, deps.dataStats(item.key))
             end
             list[#list + 1] = candidate
@@ -134,7 +123,6 @@ function SellingPlan.Candidates(deps)
     end
     return list
 end
-
 local function IsOwn(row, opts)
     if opts.isOwn then
         return opts.isOwn(row) == true
@@ -186,17 +174,19 @@ function SellingPlan.Decide(candidate, rows, opts)
     end
 
     local undercut = tonumber(s.undercut) or DEFAULT_UNDERCUT
+    local info = { competitor = competitor, floor = candidate.minPrice }
     local price, why
     if competitor then
         price = competitor - undercut
         why = "undercut"
-    else
+    elseif candidate.normalPrice then
         price = candidate.normalPrice
         why = "normal price"
+    else
+        return Skip(candidate, "no price: no competitor and no market value", info)
     end
-    local info = { competitor = competitor }
-    if price > candidate.maxPrice then
-        if s.aboveMax == "postAtNormal" then
+    if candidate.maxPrice and price > candidate.maxPrice then
+        if s.aboveMax == "postAtNormal" and candidate.normalPrice then
             price, why = candidate.normalPrice, "above max, at normal"
         else
             price, why = candidate.maxPrice, "above max, at max"

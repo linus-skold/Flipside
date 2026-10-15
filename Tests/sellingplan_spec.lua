@@ -26,8 +26,7 @@ describe("SellingPlan", function()
         stats = nil
         bag = { { key = "100", itemID = 100, name = "Herb", count = 40, stacks = {} } }
         rules = {
-            Walk = function(_, fn) return GT.Walk(groups, fn) end,
-            ItemsIn = function(_, id) return GT.ItemsIn(groups, id) end,
+            GroupOf = function(_, key) return GT.GroupOf(groups, key) end,
             Path = function(_, id) return GT.Path(groups, id) end,
             EffectiveOperation = function(_, id, t) return (GT.Effective(groups, id, t)) end,
             GetOperation = function(_, id) return ops[id] end,

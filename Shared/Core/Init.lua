@@ -567,6 +567,7 @@ local function openRules()
         ns.rules = ns.RulesStore.New(ns.db, {
             onWarning = ns.ReportError,
             onChange = notifyRules,
+            seedDefault = true,
             compile = function(text)
                 return ns.formulaRun:Compile(text)
             end,

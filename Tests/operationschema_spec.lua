@@ -46,8 +46,8 @@ describe("OperationSchema", function()
 
     it("lists fields in sequence with safety fields last", function()
         assert.same({ "minPrice", "normalPrice", "maxPrice", "undercut", "duration", "postCap",
-            "stackSize", "keepInBags", "belowMin", "aboveMax", "cancelUndercut", "maxDataAgeHours",
-            "minSamples" }, keys("selling"))
+            "stackSize", "keepInBags", "belowMin", "aboveMax", "cancelUndercut", "needScanData",
+            "maxDataAgeHours", "minSamples" }, keys("selling"))
         assert.same({ "maxPrice", "showAboveMax", "maxDataAgeHours", "minSamples" }, keys("buying"))
         assert.same({ "sellToVendor", "keepInBags", "safetyMultiple",
             "maxDataAgeHours", "minSamples" }, keys("vendoring"))
@@ -64,9 +64,14 @@ describe("OperationSchema", function()
         assert.same({
             minPrice = DEFAULT, normalPrice = "scanmarket", maxPrice = "2 * scanmarket", undercut = 1,
             duration = 24, postCap = 0, stackSize = 0, keepInBags = 0, belowMin = "skip", aboveMax = "postAtMax",
-            cancelUndercut = true,
+            cancelUndercut = true, needScanData = true,
             maxDataAgeHours = 72, minSamples = 3,
         }, S.Defaults("selling"))
+        local builtIn = S.DefaultSellingSettings()
+        assert.equal(1, builtIn.undercut)
+        assert.equal("first(vendorsell, 1)", builtIn.minPrice)
+        assert.is_false(builtIn.needScanData)
+        assert.equal("scanmarket", builtIn.normalPrice)
         assert.same({ maxPrice = "scanmarket", showAboveMax = false, maxDataAgeHours = 72, minSamples = 3 },
             S.Defaults("buying"))
         assert.same({ sellToVendor = false, keepInBags = 0, safetyMultiple = 2, maxDataAgeHours = 72, minSamples = 3 },

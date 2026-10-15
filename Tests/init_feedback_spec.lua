@@ -216,7 +216,11 @@ describe("Init feedback", function()
             pickType(page, "selling")
             page.nameInput:SetText("Main")
             click(page.newButton)
-            id = ns.rules:ListOperations()[1].id
+            for _, op in ipairs(ns.rules:ListOperations()) do
+                if op.name == "Main" then
+                    id = op.id
+                end
+            end
         end)
 
         it("saves a formula from the ... editor", function()

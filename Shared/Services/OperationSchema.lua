@@ -8,6 +8,10 @@ local DEFAULT_MIN = "check(first(crafting, scanmarket), "
 
 OperationSchema.TYPES = { "selling", "buying", "vendoring" }
 
+-- The built-in selling operation: price 1c under the lowest auction, vendor price as the floor, no scan data needed.
+OperationSchema.DEFAULT_SELLING_NAME = "Default"
+OperationSchema.VENDOR_FLOOR = "first(vendorsell, 1)"
+
 local LABELS = { selling = "Selling", buying = "Buying", vendoring = "Vendoring" }
 
 local SAFETY = {
@@ -82,6 +86,11 @@ local FIELDS = {
             key = "cancelUndercut", label = "Cancel undercut", kind = "bool", default = true,
             help = "Cancel your auctions when another seller undercuts them.",
         },
+        {
+            key = "needScanData", label = "Needs scan data", kind = "bool", default = true,
+            help = "On: skip items with old or thin scan data. Off: skip no item for its data, "
+                .. "and a missing normal or maximum price does not stop the post.",
+        },
     },
     buying = {
         {
@@ -139,6 +148,15 @@ function OperationSchema.Defaults(type)
         out[f.key] = f.default
     end
     return out
+end
+
+-- Returns the settings of the built-in selling operation.
+function OperationSchema.DefaultSellingSettings()
+    local settings = OperationSchema.Defaults("selling")
+    settings.undercut = 1
+    settings.minPrice = OperationSchema.VENDOR_FLOOR
+    settings.needScanData = false
+    return settings
 end
 
 function OperationSchema.Normalize(type, settings)
