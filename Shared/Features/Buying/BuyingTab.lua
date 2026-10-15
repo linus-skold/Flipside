@@ -1471,7 +1471,7 @@ function Tab:_Update()
     ui.tree.selected = nodeID(self.selectedKey)
     ui.tree:SetNodes(self.nodes)
     if not selected then
-        local text = canSearch and "Pick an item of the list." or "Live search is not available."
+        local text = canSearch and "" or "Live search is not available."
         if self.source == "lists" and not self.listID then
             text = "Make or pick a search list, then add items."
         end
@@ -1673,14 +1673,14 @@ function Tab:_BuildContent()
     ui.rowsList = Kit.CreateList(content, { rowHeight = 18, inset = true, initRow = function(row, data)
         self:_InitLevelRow(row, data)
     end })
-    ui.rowsList.frame:SetPoint("TOPLEFT", content, "TOPLEFT", rightX, -62)
+    ui.rowsList.frame:SetPoint("TOPLEFT", content, "TOPLEFT", rightX, -38)
     ui.rowsList.frame:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", 0, 78)
     -- The column titles over the price level list.
     local edge = ui.rowsList.contentInsets or { left = 0, right = 0 }
     ui.levelHeader = Kit.CreateColumnHeader(content, LEVEL_COLUMNS,
         { gap = LEVEL_OPTIONS.gap, left = edge.left, right = edge.right })
-    ui.levelHeader.frame:SetPoint("TOPLEFT", content, "TOPLEFT", rightX, -44)
-    ui.levelHeader.frame:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, -44)
+    ui.levelHeader.frame:SetPoint("TOPLEFT", content, "TOPLEFT", rightX, -20)
+    ui.levelHeader.frame:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, -20)
     ui.levelHeader.frame:SetHeight(18)
     -- The totals row: same columns as the list, below the list. It is not a list row, so it is not selectable.
     local options = { gap = LEVEL_OPTIONS.gap, left = edge.left, right = edge.right, role = "highlight" }
