@@ -125,9 +125,12 @@ action("BuyItemAuction")
 -- that follows a post.
 query("CanPost", false)
 query("Deposit")
--- ReadDeposit(bag, slot, duration, quantity, start, buyout, itemID) is optional (legacy client). It puts the item in
--- the sale slot, reads the real deposit of one stack, and puts the item back. Protected: call it from a click.
-query("ReadDeposit")
+-- HoldSlot(bag, slot, quantity, itemID, numStacks) is optional (legacy client). It puts the item in the sale slot and
+-- keeps it there: Deposit then gives the real deposit with no new fill. It gives true, or false and a text.
+-- ReleaseSlot() puts the sale slot item back in its bag slot and gives true if the slot is empty after the call.
+-- Both are protected: call them from a click.
+query("HoldSlot")
+query("ReleaseSlot")
 query("AvailablePostCount")
 query("IsSellItemValid")
 query("PostedEvent")

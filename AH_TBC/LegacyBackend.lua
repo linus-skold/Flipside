@@ -746,8 +746,20 @@ local function checkSlot(bag, slot, quantity, itemID)
     return info
 end
 
+-- True if the sale slot already holds the item of the bag slot, with enough items for the post.
+local function slotHolds(bag, slot, quantity, itemID, stacks)
+    local sell, info = sellInfo(), slotInfo(bag, slot)
+    return sell ~= nil and info ~= nil and sell.itemID == info.itemID and (itemID == nil or itemID == info.itemID)
+        and (info.stackCount or 0) >= (stacks > 1 and 1 or quantity) and (sell.total or 0) >= quantity * stacks
+        and (sell.stack or 0) >= quantity
+end
+
 -- Empty the sale slot, check the bag slot, then put the bag item in the sale slot and read it back.
+-- A slot that holds the right item stays as it is: the kept slot of the Selling tab is not filled twice.
 local function fillSellSlot(bag, slot, quantity, itemID, stacks)
+    if slotHolds(bag, slot, quantity, itemID, stacks) then
+        return sellInfo().itemID
+    end
     if call("CursorHasItem") then
         error("the cursor holds an item, put it down first", 0)
     end
@@ -886,8 +898,8 @@ function Backend.ConfirmPostItem(bag, slot, duration, quantity, _bid, buyout, _i
 end
 
 -- The deposit in copper of numStacks stacks (default 1), or nil. The client computes it only for the item in the sale
--- slot, and this code
--- puts no item there outside a post click. So the value is nil unless the sale slot holds the item already.
+-- slot, and this code puts no item there outside a click (HoldSlot, PostItem). So the value is nil unless the sale
+-- slot holds the item already. It is a plain read: an event or a change handler may call it.
 -- start and buyout are the prices of the post. If they are nil, the values of the post that waits for a confirm
 -- are used (when it matches); if there are none, the value is nil.
 function Backend.Deposit(bag, slot, duration, quantity, _, start, buyout, numStacks)
@@ -909,29 +921,48 @@ function Backend.Deposit(bag, slot, duration, quantity, _, start, buyout, numSta
     return readDeposit(index, start, buyout, quantity, stacks)
 end
 
--- The real deposit in copper of numStacks stacks (default 1), read when the user selects an item.
--- The item goes in the sale slot, the code reads GetAuctionDeposit, and the item goes back to its bag slot in the
--- same call. It calls no PostAuction.
--- It gives nil if the cursor holds an item, the AH is closed, the bag slot does not match, or the client does not
--- fill the sale slot at once (the client may fill it later; this code does not wait and does not retry).
+-- Keep the bag item in the sale slot (Selling tab). The code does not release it. Deposit then gives the real deposit
+-- for each change of the arguments, with no new fill. quantity is the stack size and numStacks the number of stacks
+-- (default 1) that the later post needs in the slot. A slot that holds the right item is not filled again.
+-- Gives true, or false and a text if the slot cannot fill (the AH is closed, the cursor holds an item, the bag slot
+-- does not match, or the client does not accept the item). It never leaves an item on the cursor.
 -- Protected: call it only inside a click handler.
-function Backend.ReadDeposit(bag, slot, duration, quantity, start, buyout, itemID, numStacks)
+function Backend.HoldSlot(bag, slot, quantity, itemID, numStacks)
     local stacks = numStacks == nil and 1 or numStacks
     local frame = _G.AuctionFrame
     if type(frame) == "table" and type(frame.IsShown) == "function" and not frame:IsShown() then
-        return nil
+        return false, "the Auction House is closed"
     end
-    local okIndex, index = pcall(Backend.DurationIndex, duration)
-    if not okIndex or not Backend.CanPost() or type(start) ~= "number" or type(buyout) ~= "number" then
-        return nil
+    if not Backend.CanPost() then
+        return false, "the client cannot post"
+    end
+    local ok, err = pcall(function()
+        checkPostNumbers(quantity, 1, stacks)
+        fillSellSlot(bag, slot, quantity, itemID, stacks)
+    end)
+    if not ok then
+        return false, tostring(err)
+    end
+    return true
+end
+
+-- Put the sale slot item back in its bag slot. It does nothing if the slot is empty. It leaves the slot as it is if
+-- the cursor holds an item (a click would swap the items). Gives true if the sale slot is empty after the call.
+-- Protected: call it from a click handler.
+function Backend.ReleaseSlot()
+    if not Backend.CanPost() then
+        return true
+    end
+    local okInfo, held = pcall(sellInfo)
+    if okInfo and not held then
+        return true
     end
     if has("CursorHasItem") and _G.CursorHasItem() then
-        return nil
+        return false
     end
-    local okFill = pcall(fillSellSlot, bag, slot, quantity, itemID, stacks)
-    local deposit = okFill and readDeposit(index, start, buyout, quantity, stacks) or nil
     pcall(releaseSellSlot)
-    return deposit
+    local okAfter, still = pcall(sellInfo)
+    return okAfter and not still
 end
 
 ns.AuctionClient.Use(Backend)
