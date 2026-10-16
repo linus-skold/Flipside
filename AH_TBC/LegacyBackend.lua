@@ -819,5 +819,28 @@ function Backend.Deposit(bag, slot, duration, quantity, _, start, buyout)
     return readDeposit(index, start, buyout, quantity)
 end
 
+-- The real deposit in copper of one stack, read when the user selects an item. The item goes in the sale slot, the
+-- code reads GetAuctionDeposit, and the item goes back to its bag slot in the same call. It calls no PostAuction.
+-- It gives nil if the cursor holds an item, the AH is closed, the bag slot does not match, or the client does not
+-- fill the sale slot at once (the client may fill it later; this code does not wait and does not retry).
+-- Protected: call it only inside a click handler.
+function Backend.ReadDeposit(bag, slot, duration, quantity, start, buyout, itemID)
+    local frame = _G.AuctionFrame
+    if type(frame) == "table" and type(frame.IsShown) == "function" and not frame:IsShown() then
+        return nil
+    end
+    local okIndex, index = pcall(Backend.DurationIndex, duration)
+    if not okIndex or not Backend.CanPost() or type(start) ~= "number" or type(buyout) ~= "number" then
+        return nil
+    end
+    if has("CursorHasItem") and _G.CursorHasItem() then
+        return nil
+    end
+    local okFill = pcall(fillSellSlot, bag, slot, quantity, itemID)
+    local deposit = okFill and readDeposit(index, start, buyout, quantity) or nil
+    pcall(releaseSellSlot)
+    return deposit
+end
+
 ns.AuctionClient.Use(Backend)
 
