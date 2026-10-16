@@ -1614,9 +1614,14 @@ function Tab:_Update()
     self:_FillAmount(cover)
     ui.totals:SetShown(done ~= nil)
     local totals = BuyingTab.DescribeTotals(described)
-    ns.Kit.SetColumnCells(ui.totalCells, LEVEL_COLUMNS, { unitPrice = totals.cost, quantity = totals.quantity })
+    ns.Kit.SetColumnCells(ui.totalCells, LEVEL_COLUMNS,
+        { unitPrice = totals.cost, stackPrice = totals.cost, quantity = totals.quantity })
     -- The label is in the same text as the cost, so the two never overlap.
-    ui.totalCells.unitPrice:SetText("Total  " .. money(totals.cost))
+    -- With no commodity market (TBC) the cost is a sum of stack prices, so it sits under the Stack Price column.
+    local costKey = hasCommodityMarket() and "unitPrice" or "stackPrice"
+    ui.totalCells.unitPrice:SetText("")
+    ui.totalCells.stackPrice:SetText("")
+    ui.totalCells[costKey]:SetText("Total  " .. money(totals.cost))
     ui.buyNext:SetText(verb)
     ui.buyNext:SetEnabled(nextLevel ~= nil and reason == nil)
     self:_ShowStackColumn(not (levels[1] and BuyingTab.StackSize(levels[1]) == nil))
