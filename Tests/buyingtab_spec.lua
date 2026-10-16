@@ -599,6 +599,8 @@ describe("BuyingTab", function()
             client.rows[10] = { row(60, 1) }
             fire("COMMODITY_RESULTS", 10)
             assert.is_nil(dialog("FlipsideBuyJump") and dialog("FlipsideBuyJump"):IsShown() or nil)
+            assert.are.equal(2, #client.calls)
+            click(dialog("FlipsideBuyConfirm").yesButton)
             assert.are.equal("start", client.calls[3][1])
         end)
 
@@ -1109,6 +1111,7 @@ describe("BuyingTab", function()
             tab:SetAmount("")
             client.rows[10] = { row(50, 1), row(60, 2) }
             fire("COMMODITY_RESULTS", 10)
+            click(dialog("FlipsideBuyConfirm").yesButton)
             fire("QUOTE", 50, 50)
             click(dialog("FlipsideBuyConfirm").yesButton)
             fire("BOUGHT")
