@@ -19,7 +19,7 @@ local IMPORT_CONFIRM = "FLIPSIDE_IMPORT_CONFIRM"
 local EXPORT_DIALOG = "FLIPSIDE_EXPORT_DIALOG"
 local IMPORT_DIALOG = "FLIPSIDE_IMPORT_DIALOG"
 local RESULTS_WINDOW = "FlipsideAddItemsWindow"
-local TYPE_LABELS = { selling = "Selling", buying = "Buying", vendoring = "Vendoring" }
+local TYPE_LABELS = { selling = "Selling", buying = "Buying", vendoring = "Vendoring", mailing = "Mailing" }
 local SOURCE_LABELS = { scan = "scan data", client = "game cache", ah = "Auction House" }
 local AH_HINT = "This uses the Auction House search; Blizzard's Buy tab will show these results."
 
@@ -364,7 +364,7 @@ function GroupsPage.Build(content, deps)
     page.rulesInset = Kit.Inset(page.rulesPanel)
     page.rulesInset:SetPoint("TOPLEFT", page.rulesPanel, "TOPLEFT", 0, 0)
     page.rulesInset:SetPoint("TOPRIGHT", page.rulesPanel, "TOPRIGHT", 0, 0)
-    page.rulesInset:SetHeight(146)
+    page.rulesInset:SetHeight(190)
     local rulesBox = page.rulesInset
 
     for position, opType in ipairs(ns.OperationSchema.TYPES) do

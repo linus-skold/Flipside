@@ -38,10 +38,11 @@ describe("OperationSchema", function()
     end)
 
     it("lists types and labels", function()
-        assert.same({ "selling", "buying", "vendoring" }, S.TYPES)
+        assert.same({ "selling", "buying", "vendoring", "mailing" }, S.TYPES)
         assert.equal("Selling", S.TypeLabel("selling"))
         assert.equal("Buying", S.TypeLabel("buying"))
         assert.equal("Vendoring", S.TypeLabel("vendoring"))
+        assert.equal("Mailing", S.TypeLabel("mailing"))
     end)
 
     it("lists fields in sequence with safety fields last", function()
@@ -51,6 +52,7 @@ describe("OperationSchema", function()
         assert.same({ "maxPrice", "showAboveMax", "maxDataAgeHours", "minSamples" }, keys("buying"))
         assert.same({ "sellToVendor", "keepInBags", "safetyMultiple",
             "maxDataAgeHours", "minSamples" }, keys("vendoring"))
+        assert.same({ "recipient", "keep", "maxSend" }, keys("mailing"))
     end)
 
     it("errors for an unknown type", function()
@@ -76,15 +78,39 @@ describe("OperationSchema", function()
             S.Defaults("buying"))
         assert.same({ sellToVendor = false, keepInBags = 0, safetyMultiple = 2, maxDataAgeHours = 72, minSamples = 3 },
             S.Defaults("vendoring"))
+        assert.same({ recipient = "", keep = 0, maxSend = 0 }, S.Defaults("mailing"))
         assert.is_not.equal(S.Defaults("buying"), S.Defaults("buying"))
     end)
 
     it("compiles all default formulas and validates defaults", function()
         for _, t in ipairs(S.TYPES) do
             local ok, errors = S.Validate(t, S.Defaults(t), compile)
-            assert.same({}, errors)
-            assert.is_true(ok)
+            if t == "mailing" then
+                -- The recipient is required, so the default is not valid until the user types a name.
+                assert.same({ recipient = "Enter a character name." }, errors)
+            else
+                assert.same({}, errors)
+                assert.is_true(ok)
+            end
         end
+    end)
+
+    it("validates the mailing fields", function()
+        local function field(key, value) return (S.ValidateField("mailing", key, value, compile)) end
+        assert.is_true(field("recipient", "Alt"))
+        assert.is_true(field("recipient", "Alt-Realm"))
+        assert.is_false(field("recipient", ""))
+        assert.is_false(field("recipient", "   "))
+        assert.is_false(field("recipient", 5))
+        assert.is_false(field("recipient", string.rep("a", 65)))
+        assert.is_true(field("keep", 0))
+        assert.is_false(field("keep", -1))
+        assert.is_false(field("keep", 1.5))
+        assert.is_true(field("maxSend", 100))
+        assert.is_false(field("maxSend", nil))
+        local ok, errors = S.Validate("mailing", { recipient = "Alt", keep = 2, maxSend = 0 }, compile)
+        assert.is_true(ok)
+        assert.same({}, errors)
     end)
 
     it("gives each field a label, help and kind", function()
