@@ -11,6 +11,8 @@ end
 
 ns.Flavour = {
     id = "forever",
+    -- Auction durations in hours for the index 1, 2 and 3.
+    durations = { 2, 8, 24 },
     scanCooldownSeconds = 900,
     ruleset = "standard",
     scopeIncludesRealm = false,

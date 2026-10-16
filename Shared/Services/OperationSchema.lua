@@ -6,6 +6,9 @@ ns.OperationSchema = OperationSchema
 local DEFAULT_MIN = "check(first(crafting, scanmarket), "
     .. "max(0.25 * avg(crafting, scanmarket, scanhistorical), 1.5 * vendorsell))"
 
+-- The post durations in hours: 2, 8 and 24 on WoW: Forever, 12, 24 and 48 on TBC (ns.Flavour.durations).
+local DURATIONS = ns.Flavour and ns.Flavour.durations or { 2, 8, 24 }
+
 OperationSchema.TYPES = { "selling", "buying", "vendoring" }
 
 -- The built-in selling operation: price 1c under the lowest auction, vendor price as the floor, no scan data needed.
@@ -47,11 +50,11 @@ local FIELDS = {
             help = "The amount in copper to go below the lowest auction.",
         },
         {
-            key = "duration", label = "Post duration", kind = "choice", default = 24,
+            key = "duration", label = "Post duration", kind = "choice", default = DURATIONS[#DURATIONS],
             choices = {
-                { value = 2, label = "2 hours" },
-                { value = 8, label = "8 hours" },
-                { value = 24, label = "24 hours" },
+                { value = DURATIONS[1], label = DURATIONS[1] .. " hours" },
+                { value = DURATIONS[2], label = DURATIONS[2] .. " hours" },
+                { value = DURATIONS[3], label = DURATIONS[3] .. " hours" },
             },
             help = "How long each auction runs. The Auction House offers these three values.",
         },
