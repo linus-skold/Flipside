@@ -58,8 +58,9 @@ local function locationOf(deps, tooltip)
     if not make or type(owner) ~= "table" or not owner.GetID then
         return nil
     end
-    if owner.GetBagID then
-        return make:CreateFromBagAndSlot(owner:GetBagID(), owner:GetID())
+    local bagID = owner.GetBagID and owner:GetBagID()
+    if bagID then
+        return make:CreateFromBagAndSlot(bagID, owner:GetID())
     end
     local parent = owner.GetParent and owner:GetParent()
     local parentName = type(parent) == "table" and parent.GetName and parent:GetName()
