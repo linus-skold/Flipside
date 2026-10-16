@@ -1060,6 +1060,28 @@ function Tab._ForgetDeposits(_, entry)
     entry.deposit, entry.depositPrice = total, nil
 end
 
+-- A selected item that the user skipped is a normal item again. It gets its first post back and the vendor and
+-- price answers of the old run are forgotten, so the checks of the Post click run again. An item that the rule
+-- skipped (or that was forced) goes back to the rule skip: Post still asks first.
+function Tab:_Revive(entry)
+    if entry.status ~= "skipped" then
+        return
+    end
+    entry.vendorForce, entry.warned, entry.manual = nil, nil, nil
+    entry.manualQty, entry.manualHours, entry.manualStacks = nil, nil, nil
+    entry.next = 1
+    if entry.skipDecision then
+        entry.decision, entry.skipDecision, entry.units = entry.skipDecision, nil, {}
+    end
+    local decision = entry.decision
+    if decision and decision.action == "post" and #entry.units > 0 then
+        entry.status = "ready"
+        self:_Restack(entry, entry.item)
+    else
+        entry.status = "skip"
+    end
+end
+
 -- Select a tree node: the group and its subgroups, or one item. Start the live searches of the entries that
 -- have no result yet. fromClick is true when a mouse click selects the node: then the item of the pane goes in the
 -- sale slot and stays there (a protected step), and the slot item of the old selection goes back. Other calls make no
@@ -1079,6 +1101,9 @@ function Tab:SelectNode(node, fromClick)
     self.priceEntry = nil
     self.allRun = nil
     self:_Unlock()
+    if fromClick and #self.selection == 1 and node.id:sub(1, 1) == "i" then
+        self:_Revive(self.selection[1])
+    end
     if fromClick then
         self:_Hold()
     else
