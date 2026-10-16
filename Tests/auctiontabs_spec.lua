@@ -186,13 +186,26 @@ describe("AuctionTabs registry and Forever host", function()
             assert.are.equal(0, attached)
         end)
 
-        it("is a no-op on the TBC host", function()
+        it("drops the skin atlases that the client does not know", function()
+            local saved = _G.C_Texture
+            _G.C_Texture = { GetAtlasInfo = function(name)
+                return name:find("rowstripe", 1, true) == nil and {} or nil
+            end }
+            local skin = loadModules("Flipside_TBC.toc").AuctionTabs.Skin
+            _G.C_Texture = saved
+            assert.are.equal("auctionhouse-background-index", skin.backgroundAtlas)
+            assert.is_nil(skin.stripeAtlases)
+            assert.are.equal("auctionhouse-ui-row-select", skin.selectAtlas)
+        end)
+
+        it("attaches each registered tab on the TBC host", function()
             local tbc = loadModules("Flipside_TBC.toc")
-            tbc.AuctionTabs.Register({ id = "a", label = "A", create = function()
-                error("must not create")
-            end })
-            assert.is_nil(tbc.AuctionTabHost.multiTab)
-            assert.are.same({}, tbc.AuctionTabs.AttachAll({ bus = bus }))
+            tbc.AuctionTabs.Register({ id = "a", label = "A", create = makeCore })
+            tbc.AuctionTabs.Register({ id = "b", label = "B", create = makeCore })
+            assert.is_true(tbc.AuctionTabHost.multiTab)
+            local cores = tbc.AuctionTabs.AttachAll({ bus = bus })
+            assert.is_not_nil(cores.a)
+            assert.is_not_nil(cores.b)
         end)
 
         it("reports a create error and goes on", function()

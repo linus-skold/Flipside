@@ -401,6 +401,97 @@ describe("AuctionTabHost (TBC)", function()
         end)
     end)
 
+    describe("with a second tab", function()
+        local second
+
+        before_each(function()
+            makeBlizzard(3)
+            second = makeCore()
+        end)
+
+        it("adds the tab after the first one with its label", function()
+            local first = ns.AuctionTabHost.Attach(core)
+            local state = ns.AuctionTabHost.Attach(second, { id = "buying", label = "Buying" })
+            assert.is_true(ns.AuctionTabHost.multiTab)
+            assert.are.equal(5, state.index)
+            assert.are.equal("Buying", state.tab:GetText())
+            assert.are.equal("Flipside", first.tab:GetText())
+            assert.are.same({ "LEFT", first.tab, "RIGHT", -8, 0 }, state.tab.points[1])
+            assert.are.equal(5, ah.numTabs)
+            assert.are.equal(1, second.mounts)
+        end)
+
+        it("hooks the Blizzard click once", function()
+            local hooks = 0
+            local original = _G.hooksecurefunc
+            _G.hooksecurefunc = function(name, hook)
+                hooks = hooks + 1
+                return original(name, hook)
+            end
+            ns.AuctionTabHost.Attach(core)
+            ns.AuctionTabHost.Attach(second, { label = "Buying" })
+            assert.are.equal(1, hooks)
+        end)
+
+        it("shows one panel at a time and hides both for a Blizzard tab", function()
+            local first = ns.AuctionTabHost.Attach(core)
+            local other = ns.AuctionTabHost.Attach(second, { label = "Buying" })
+            openFrame()
+            click(first.tab)
+            assert.is_true(core:IsActive())
+            assert.is_false(second:IsActive())
+            click(other.tab)
+            assert.is_false(core:IsActive())
+            assert.is_false(core.content:IsShown())
+            assert.is_true(second:IsActive())
+            assert.is_true(second.content:IsShown())
+            assert.are.equal(5, ah.selectedTab)
+            assert.are.equal("selected", visual[other.tab])
+            click(first.tab)
+            assert.is_true(core:IsActive())
+            assert.is_false(second:IsActive())
+            click(other.tab)
+            click(tabs[2])
+            assert.is_false(core:IsActive())
+            assert.is_false(second:IsActive())
+            assert.is_true(panes[2]:IsShown())
+        end)
+
+        it("waits for ADDON_LOADED with two tabs and builds each once", function()
+            local bus = core.deps.bus
+            second.deps.bus = bus
+            local ahFrame = _G.AuctionFrame
+            _G.AuctionFrame = nil
+            local first = ns.AuctionTabHost.Attach(core)
+            local other = ns.AuctionTabHost.Attach(second, { label = "Buying" })
+            assert.is_nil(first.frame)
+            assert.is_nil(other.frame)
+            _G.AuctionFrame = ahFrame
+            bus:Emit("ADDON_LOADED", "Blizzard_AuctionUI")
+            assert.are.equal(4, first.index)
+            assert.are.equal(5, other.index)
+            assert.are.equal(1, core.mounts)
+            assert.are.equal(1, second.mounts)
+            bus:Emit("ADDON_LOADED", "Blizzard_AuctionUI")
+            assert.are.equal(1, second.mounts)
+        end)
+
+        it("reports a failed second tab and keeps the first", function()
+            local first = ns.AuctionTabHost.Attach(core)
+            second.Mount = function()
+                error("boom")
+            end
+            local other = ns.AuctionTabHost.Attach(second, { label = "Buying" })
+            assert.are.equal(1, #reports)
+            assert.is_truthy(reports[1]:find("Buying", 1, true))
+            assert.is_nil(other.frame)
+            assert.is_not_nil(first.frame)
+            openFrame()
+            click(first.tab)
+            assert.is_true(core:IsActive())
+        end)
+    end)
+
     describe("start page placement", function()
         it("gives the Browse page, the Blizzard frame and a top right anchor", function()
             makeBlizzard(3)
