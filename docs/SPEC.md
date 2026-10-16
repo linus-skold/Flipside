@@ -696,6 +696,7 @@ Operations and formulas (§4.2–4.3), tooltips and inventory tracking (referenc
 9. **Default lines.** The price table (point 15), group path, selling operation, and counts per character. The formula lines Market, Min and Max are no longer defaults.
 10a. **Quest items.** Flipside adds no tooltip line to a quest item (item class 12, read with `C_Item.GetItemInfoInstant`); if the class is not known, the lines show as usual.
 10b. **Items with no vendor value.** Flipside adds no tooltip line to an item with a vendor sell price of 0 (11th return of `C_Item.GetItemInfo`), because such an item usually cannot be sold on the AH. If a scan record exists for the item key, the lines show. If the sell price is not known, the lines show as usual.
+10c. **Keys and soulbound items.** Flipside adds no tooltip line to a key (item class 13), even with scan data. It adds none to an item with bind type bind-on-pickup (1) or quest (4), or account-bound where the client defines it (14th return of `C_Item.GetItemInfo`). It adds none to an item that `C_Item.IsBound` reports as bound, but only when the tooltip owner is a bag or equipment slot. A chat link or AH row has no owner, so that check is skipped. If the class or bind type is not known, the lines show as usual.
 10. **Combat and missing data.** Tooltip lines show in combat too. Items without data show "invalid price".
 11. **Budget.** At most 1 ms per tooltip once the data is loaded. This is measured in game.
 12. **Dashboard.** Phase 2, as in the feature list. The scan time and cooldown stay on the AH tab.

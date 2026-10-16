@@ -22,6 +22,68 @@ local function isQuestItem(deps, link)
     return classID == QUEST_ITEM_CLASS
 end
 
+local KEY_CLASS = Enum and Enum.ItemClass and Enum.ItemClass.Key or 13
+local BIND = Enum and Enum.ItemBind or {}
+local NEVER_ON_AH = { [BIND.OnAcquire or 1] = true, [BIND.Quest or 4] = true }
+-- Account bind types exist only on a client that defines them.
+for _, name in ipairs({ "ToWoWAccount", "ToBnetAccount" }) do
+    if BIND[name] then
+        NEVER_ON_AH[BIND[name]] = true
+    end
+end
+
+-- Returns true if the item is a key. An unknown class gives false.
+local function isKey(deps, link)
+    local instant = deps.itemInfoInstant or (C_Item and C_Item.GetItemInfoInstant)
+    if not instant then
+        return false
+    end
+    local _, _, _, _, _, classID = instant(link)
+    return classID == KEY_CLASS
+end
+
+-- Returns true if the bind type (14th return of GetItemInfo) is soulbound for good. An unknown type gives false.
+local function isBindNever(deps, link)
+    local getInfo = deps.itemInfo or (C_Item and C_Item.GetItemInfo)
+    if not getInfo then
+        return false
+    end
+    return NEVER_ON_AH[select(14, getInfo(link))] == true
+end
+
+-- Returns an ItemLocation for the bag slot or equipment slot that owns the tooltip, or nil.
+local function locationOf(deps, tooltip)
+    local make = deps.itemLocation or (ItemLocation and ItemLocation.CreateFromBagAndSlot and ItemLocation)
+    local owner = tooltip.GetOwner and tooltip:GetOwner()
+    if not make or type(owner) ~= "table" or not owner.GetID then
+        return nil
+    end
+    local bagID = owner.GetBagID and owner:GetBagID()
+    if bagID then
+        return make:CreateFromBagAndSlot(bagID, owner:GetID())
+    end
+    local parent = owner.GetParent and owner:GetParent()
+    local parentName = type(parent) == "table" and parent.GetName and parent:GetName()
+    if type(parentName) == "string" and parentName:match("^ContainerFrame%d+$") then
+        return make:CreateFromBagAndSlot(parent:GetID(), owner:GetID())
+    end
+    local name = owner.GetName and owner:GetName()
+    if type(name) == "string" and name:match("^Character%a+Slot$") then
+        return make:CreateFromEquipmentSlot(owner:GetID())
+    end
+    return nil
+end
+
+-- Returns true if the item at the tooltip owner is bound now. An unknown owner gives false.
+local function isBoundNow(deps, tooltip)
+    local isBound = deps.isBound or (C_Item and C_Item.IsBound)
+    if not isBound then
+        return false
+    end
+    local location = locationOf(deps, tooltip)
+    return location ~= nil and isBound(location) == true
+end
+
 -- Returns true if the vendor sell price is 0 and no scan record exists. An unknown price gives false.
 local function isUnsellable(deps, link)
     local getInfo = deps.itemInfo or (C_Item and C_Item.GetItemInfo)
@@ -135,6 +197,7 @@ function Tooltip.Rows(deps, input, stackMode, stackCount, config)
 end
 
 -- deps: itemInfoInstant (optional, default C_Item.GetItemInfoInstant), itemInfo (optional, default C_Item.GetItemInfo),
+-- isBound (default C_Item.IsBound), itemLocation (default ItemLocation),
 -- tooltipConfig, formulaRun, rules, holdings, getRecord, now, isAltDown, containerItemInfo, clock, report.
 -- deps.hook (default ns.TooltipHook) has Install(onItem, opts); it calls onItem(tooltip, link) for each item tooltip.
 function Tooltip.Attach(deps)
@@ -154,7 +217,8 @@ function Tooltip.Attach(deps)
         if ns.TooltipTable then
             ns.TooltipTable.Release(tooltip)
         end
-        if not link or isQuestItem(deps, link) or isUnsellable(deps, link) then
+        if not link or isQuestItem(deps, link) or isKey(deps, link) or isBindNever(deps, link)
+            or isBoundNow(deps, tooltip) or isUnsellable(deps, link) then
             return
         end
         local stackMode = deps.isAltDown and deps.isAltDown() or false
