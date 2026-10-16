@@ -141,6 +141,15 @@ describe("BuyingTab totals, amount and columns", function()
             search()
             assert.are.equal("x7", ui.totalCells.quantity.text)
             assert.are.equal("Total  430c", ui.totalCells.unitPrice.text)
+            assert.are.equal("", ui.totalCells.stackPrice.text)
+        end)
+
+        it("puts the cost under the Stack Price column on a client with no commodity market", function()
+            ns.Flavour.hasCommodityMarket = false
+            search()
+            assert.are.equal("Total  430c", ui.totalCells.stackPrice.text)
+            assert.are.equal("", ui.totalCells.unitPrice.text)
+            assert.are.equal("x7", ui.totalCells.quantity.text)
         end)
 
         it("hides with no item and has a tooltip", function()
