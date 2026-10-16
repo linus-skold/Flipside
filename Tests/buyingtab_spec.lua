@@ -556,9 +556,14 @@ describe("BuyingTab", function()
             assert.are.same({ 10, 10 }, client.searches)
             client.rows[10] = { row(60, 2) }
             fire("COMMODITY_RESULTS", 10)
-            -- The box stays open and asks for a quote of the next level.
+            -- The box stays open with an estimate. The quote starts only on a click.
+            assert.are.same({ { "start", 10, 3 }, { "confirm", 10, 3 } }, client.calls)
+            assert.is_true(confirm:IsShown())
+            assert.are.equal("Get quote", confirm.yesButton.text)
+            click(confirm.yesButton)
             assert.are.same({ { "start", 10, 3 }, { "confirm", 10, 3 }, { "start", 10, 2 } }, client.calls)
             fire("QUOTE", 60, 120)
+            assert.are.equal("Confirm", confirm.yesButton.text)
             assert.is_true(confirm:IsShown())
             assert.matches("Buy 2 x Item10", confirm.text.text)
             assert.are.same({}, client.violations)
@@ -1386,6 +1391,16 @@ describe("BuyingTab", function()
             client.rows[10] = { row(60, 1) }
             fire("COMMODITY_RESULTS", 10)
             assert.is_true(confirm:IsShown())
+            assert.are.equal("Get quote", confirm.yesButton.text)
+            assert.is_true(confirm.yesButton.enabled)
+            assert.are.same({ "start", "confirm" }, (function()
+                local out = {}
+                for _, call in ipairs(client.calls) do
+                    out[#out + 1] = call[1]
+                end
+                return out
+            end)())
+            click(confirm.yesButton)
             assert.is_false(confirm.yesButton.enabled)
             fire("QUOTE", 60, 60)
             assert.is_true(confirm.yesButton.enabled)

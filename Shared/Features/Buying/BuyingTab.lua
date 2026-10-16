@@ -977,15 +977,30 @@ function Tab:_StartBuy(entry, cover)
         self:_Update()
         return true
     end
-    local ok, err = pcall(client.StartCommodityPurchase, entry.itemID, cover.quantity)
+    local buy = { entry = entry, level = level, row = first, phase = "quoting", itemID = entry.itemID,
+        quantity = cover.quantity, complete = cover.complete }
+    if self.previewQuote then
+        -- StartCommodityPurchase is protected: no event may call it. The box shows an estimate and the
+        -- Get quote button (a click) asks for the quote.
+        buy.phase, buy.unit, buy.total = "preview", cover.cost / cover.quantity, cover.cost
+        self.buy = buy
+        self:_ShowConfirm()
+        self:_Update()
+        return true
+    end
+    return self:_RequestQuote(buy)
+end
+
+-- Ask for the quote of a commodity buy. Call it only from a click.
+function Tab:_RequestQuote(buy)
+    local entry = buy.entry
+    local ok, err = pcall(self.deps.client.StartCommodityPurchase, buy.itemID, buy.quantity)
     if not ok then
         self.deps.log:Add(entry, "buy failed", tostring(err))
         self:_Say("the quote was refused")
         return false, "the quote was refused"
     end
-    local buy = { entry = entry, level = level, row = first, phase = "quoting", itemID = entry.itemID,
-        quantity = cover.quantity,
-        complete = cover.complete }
+    buy.phase = "quoting"
     self.buy = buy
     self:_Say("waiting for the quote of " .. self:_ItemName(entry))
     self.deps.after(QUOTE_WAIT, function()
@@ -1051,10 +1066,21 @@ function Tab:_ShowConfirm()
             end
         end)
     end
-    makeDialog("FlipsideBuyConfirm"):Open("Confirm purchase", text, {
-        yes = over and "Buy anyway" or "Confirm", no = "Cancel", red = over, keep = true,
+    local preview = buy.phase == "preview"
+    if preview then
+        text = text .. "\nThis is an estimate. Get the quote first."
+    end
+    makeDialog("FlipsideBuyConfirm"):Open(preview and "Next purchase" or "Confirm purchase", text, {
+        yes = preview and "Get quote" or (over and "Buy anyway" or "Confirm"),
+        no = "Cancel", red = over, keep = true,
         onYes = function()
-            self:_Confirm()
+            if preview then
+                if not self:_RequestQuote(buy) then
+                    self:_CancelQuote("the quote was refused")
+                end
+            else
+                self:_Confirm()
+            end
         end,
         onNo = function()
             self.continueKey = nil
@@ -1225,7 +1251,9 @@ function Tab:_ContinueBuy()
         return
     end
     self.levelSel = cover.last.unitPrice
+    self.previewQuote = true
     self:BuyNext()
+    self.previewQuote = nil
     -- A price jump warning or a refusal leaves no open buy: close the box.
     if not self.buy then
         self:_CloseConfirm()
