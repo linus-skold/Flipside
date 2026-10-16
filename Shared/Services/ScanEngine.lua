@@ -11,6 +11,8 @@ Engine.__index = Engine
 local EVENT_REPLICATE = "REPLICATE_ITEM_LIST_UPDATE"
 local EVENT_CLOSED = "AUCTION_HOUSE_CLOSED" -- default; deps.api.closeEvent overrides it
 local EVENT_FINISHED = "Flipside.ScanFinished"
+local EVENT_PROGRESS = "Flipside.ScanProgress"
+local PROGRESS_INTERVAL_SECONDS = 0.2
 local CHANGED_RATIO = 0.30
 local FRAME_GAP_MS = 1
 
@@ -144,6 +146,37 @@ function Engine:GetProgress()
         return nil
     end
     return self.mode, run.page, run.pages
+end
+
+-- Returns a copy of the progress of the running scan, or nil. The fields are mode, phase, done, total and rows.
+-- Phases: waiting (for the server), pages, reading, loading, saving. done and total are nil when the count is unknown.
+function Engine:GetScanProgress()
+    local run = self.run
+    if not (self.running and run and run.phase) then
+        return nil
+    end
+    return { mode = self.mode, phase = run.phase, done = run.done, total = run.total, rows = run.rowsRead }
+end
+
+-- Emits the progress event. A forced emit always goes out; other emits wait for the interval.
+function Engine:_EmitProgress(force)
+    local run = self.run
+    if not run or run.concluded then
+        return
+    end
+    local now = self.deps.seconds()
+    if not force and run.lastEmitAt and now - run.lastEmitAt < PROGRESS_INTERVAL_SECONDS then
+        return
+    end
+    run.lastEmitAt = now
+    self.deps.bus:Emit(EVENT_PROGRESS, self:GetScanProgress())
+end
+
+-- Starts a phase. The count is unknown until SetProgress gives it.
+function Engine:_SetPhase(phase)
+    local run = self.run
+    run.phase, run.done, run.total = phase, nil, nil
+    self:_EmitProgress(true)
 end
 
 function Engine:Cancel()
@@ -289,6 +322,10 @@ local function clockedJob(job, run, ms)
     end
     view.SetProgress = function(_, done, total)
         job:SetProgress(done, total)
+        if run.engine then
+            run.done, run.total = done, total
+            run.engine:_EmitProgress(total ~= nil and done >= total)
+        end
     end
     view.IsCancelled = function()
         return job:IsCancelled()
@@ -685,6 +722,7 @@ function Engine:_CollectAll(jobView, run, summary)
         self:_Conclude(summary)
         return false
     end
+    self:_SetPhase("waiting")
     local arrived = self:_WaitForEvent(jobView)
     if arrived == nil then
         return nil
@@ -700,6 +738,7 @@ function Engine:_CollectAll(jobView, run, summary)
         return false
     end
     local readStart = deps.seconds()
+    self:_SetPhase("reading")
     local rows = ns.ScanRows.Read(jobView, readApi(deps.api, run))
     run.readSeconds = deps.seconds() - readStart
     return rows
@@ -713,6 +752,7 @@ function Engine:_CollectPages(jobView, run, summary)
     local merged = ns.ScanRows.NewResult()
     local readView = setmetatable({ SetProgress = function() end }, { __index = jobView })
     local page = 0
+    self:_SetPhase("pages")
     while true do
         local ready = self:_WaitFor(jobView, api.canQueryPage, PAGE_QUERY_WAIT_SECONDS)
         if ready == nil then
@@ -759,6 +799,7 @@ function Engine:_CollectPages(jobView, run, summary)
         ns.ScanRows.Merge(merged, rows)
         page = page + 1
         run.page = page
+        run.rowsRead = merged.stats.rows
         jobView:SetProgress(page, run.pages)
         if page >= run.pages or rows.stats.rows == 0 then
             break
@@ -781,6 +822,7 @@ function Engine:_Run(job)
         pendingRows = 0, readSeconds = 0,
     }
     self.run = run
+    run.engine = self
     local jobView = clockedJob(job, run, deps.ms)
     local summary = newSummary()
 
@@ -809,6 +851,9 @@ function Engine:_Run(job)
         return
     end
     -- Page rows were refreshed one page at a time; their row indexes are no longer valid, so no refresh here.
+    if not isPage then
+        self:_SetPhase("loading")
+    end
     if not isPage and deps.api.canKeyWithoutLink then
         local seconds = deps.api.refreshSeconds and deps.api.refreshSeconds(self.mode) or 0
         if not self:_Refresh(jobView, rows, seconds, run) then
@@ -831,6 +876,7 @@ function Engine:_Run(job)
         end
         ns.ScanRows.RereadLinks(jobView, deps.api, rows, loadedList)
     end
+    self:_SetPhase("saving")
     local groups, used, noKey, resolver, itemCounts, partialKeys = self:_BuildGroups(jobView, rows)
     local snaps, keyCount = {}, 0
     for key, auctions in pairs(groups) do

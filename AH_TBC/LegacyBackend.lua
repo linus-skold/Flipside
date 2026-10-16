@@ -530,6 +530,25 @@ function Backend.BuyItemAuction(auctionID, buyout)
     live.rows = {}
 end
 
+-- Info of one list row by index, for the ledger: itemLink, quantity, buyoutAmount. The ledger reads it before the
+-- buy call, while the row is still in the list. Gives nil if the row has no item.
+function Backend.AuctionInfo(auctionID)
+    if not has("GetAuctionItemInfo") or type(auctionID) ~= "number" then
+        return nil
+    end
+    local ok, info = pcall(function()
+        return { call("GetAuctionItemInfo", "list", auctionID) }
+    end)
+    if not ok or info[INFO_ITEM_ID] == nil then
+        return nil
+    end
+    local link = has("GetAuctionItemLink") and _G.GetAuctionItemLink("list", auctionID) or nil
+    if link == nil then
+        link = "item:" .. info[INFO_ITEM_ID]
+    end
+    return { itemLink = link, quantity = info[INFO_COUNT], buyoutAmount = info[10] }
+end
+
 -- Posting (Selling tab). The legacy client posts the item in the sale slot: the code puts the bag item there, checks
 -- it, and calls PostAuction(start, buyout, duration, stackSize, numStacks). Each post is one stack (numStacks 1).
 -- PostItem and ConfirmPostItem are protected: call them only inside a click handler.

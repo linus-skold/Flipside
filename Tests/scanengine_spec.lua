@@ -1011,3 +1011,101 @@ end)
 
 
 
+
+
+describe("ScanEngine progress", function()
+    local function Collect(w)
+        local events = {}
+        w.bus:Subscribe("Flipside.ScanProgress", events, function(_, progress)
+            events[#events + 1] = progress
+        end)
+        return events
+    end
+
+    it("emits waiting, reading, loading and saving phases for a get all scan", function()
+        local w = MakeWorld({ rows = bigRows(), forever = true })
+        local events = Collect(w)
+        Run(w)
+        local order, last = {}, nil
+        for _, event in ipairs(events) do
+            if event.phase ~= last then
+                order[#order + 1] = event.phase
+                last = event.phase
+            end
+        end
+        assert.are.same({ "waiting", "reading", "loading", "saving" }, order)
+        assert.is_nil(events[1].done)
+        assert.is_nil(events[1].total)
+    end)
+
+    it("ends the reading phase with done equal to total", function()
+        local w = MakeWorld({ rows = bigRows(), forever = true })
+        local events = Collect(w)
+        Run(w)
+        local final
+        for _, event in ipairs(events) do
+            if event.phase == "reading" then
+                final = event
+            end
+        end
+        assert.are.equal(2500, final.total)
+        assert.are.equal(2500, final.done)
+    end)
+
+    it("limits the events inside the interval but not a forced one", function()
+        local w = MakeWorld({ rows = bigRows(), forever = true })
+        local events = Collect(w)
+        assert.is_true(w.engine:Start())
+        Tick(w)
+        local before = #events
+        w.sec = w.sec + 10
+        w.engine:_EmitProgress(false)
+        w.engine:_EmitProgress(false)
+        w.sec = w.sec + 0.1
+        w.engine:_EmitProgress(false)
+        assert.are.equal(before + 1, #events)
+        w.sec = w.sec + 0.3
+        w.engine:_EmitProgress(false)
+        assert.are.equal(before + 2, #events)
+        w.engine:_EmitProgress(true)
+        assert.are.equal(before + 3, #events)
+    end)
+    it("gives a copy of the progress while the scan runs and nil after", function()
+        local w = MakeWorld({ rows = bigRows(), forever = true })
+        assert.is_nil(w.engine:GetScanProgress())
+        assert.is_true(w.engine:Start())
+        Tick(w)
+        assert.are.equal("waiting", w.engine:GetScanProgress().phase)
+        Pump(w)
+        assert.is_nil(w.engine:GetScanProgress())
+    end)
+
+    it("reports pages and rows in the page mode", function()
+        local w = MakeWorld({ rows = {}, legacy = true, refresh = 2 })
+        w.api.modes = { "full", "fast", "page" }
+        w.api.pageSize = 2
+        w.api.canKeyWithoutLink = function() return true end
+        w.api.canQueryPage = function() return true end
+        w.api.pageTotal = function() return 4 end
+        w.api.pageQuery = function(page)
+            local id = 5000 + page * 2
+            w.rows = {
+                { item = id + 1, count = 1, buyout = 100, link = "|Hitem:" .. (id + 1) .. "::::::::60:::::|h[X]|h" },
+                { item = id + 2, count = 1, buyout = 200, link = "|Hitem:" .. (id + 2) .. "::::::::60:::::|h[X]|h" },
+            }
+            w.fireAt = w.tick + 1
+        end
+        local events = Collect(w)
+        assert.is_true(w.engine:Start("page"))
+        Pump(w)
+        local final
+        for _, event in ipairs(events) do
+            if event.phase == "pages" and event.done then
+                final = event
+            end
+        end
+        assert.are.equal(2, final.total)
+        assert.are.equal(2, final.done)
+        assert.are.equal(4, final.rows)
+    end)
+end)
