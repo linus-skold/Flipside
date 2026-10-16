@@ -10,6 +10,18 @@ Tooltip.stats = { count = 0, total = 0, max = 0 }
 local HEADER_COLOR = { 1, 0.82, 0 }
 local DIM_COLOR = { 0.6, 0.6, 0.6 }
 
+local QUEST_ITEM_CLASS = Enum and Enum.ItemClass and Enum.ItemClass.Questitem or 12
+
+-- Returns true if the item is a quest item. An unknown class gives false.
+local function isQuestItem(deps, link)
+    local instant = deps.itemInfoInstant or (C_Item and C_Item.GetItemInfoInstant)
+    if not instant then
+        return false
+    end
+    local _, _, _, _, _, classID = instant(link)
+    return classID == QUEST_ITEM_CLASS
+end
+
 -- Returns the stack count of the bag slot that owns the tooltip, or nil.
 local function stackCountOf(deps, tooltip)
     if not (deps.containerItemInfo and tooltip.GetOwner) then
@@ -108,7 +120,8 @@ function Tooltip.Rows(deps, input, stackMode, stackCount, config)
     })
 end
 
--- deps: tooltipConfig, formulaRun, rules, holdings, getRecord, now, isAltDown, containerItemInfo, clock, report.
+-- deps: itemInfoInstant (optional, default C_Item.GetItemInfoInstant),
+-- tooltipConfig, formulaRun, rules, holdings, getRecord, now, isAltDown, containerItemInfo, clock, report.
 -- deps.hook (default ns.TooltipHook) has Install(onItem, opts); it calls onItem(tooltip, link) for each item tooltip.
 function Tooltip.Attach(deps)
     local stats = { count = 0, total = 0, max = 0 }
@@ -127,7 +140,7 @@ function Tooltip.Attach(deps)
         if ns.TooltipTable then
             ns.TooltipTable.Release(tooltip)
         end
-        if not link then
+        if not link or isQuestItem(deps, link) then
             return
         end
         local stackMode = deps.isAltDown and deps.isAltDown() or false
