@@ -113,14 +113,14 @@ function Kit.RadioGroup(parent, options)
         state.buttons[index] = button
     end
     group:SetSize(math.max(1, #state.buttons * width), 22)
-    function group:SetValue(value)
+    function group.SetValue(_, value)
         state.value = value
         refresh()
     end
     function group.GetValue()
         return state.value
     end
-    function group:SetEnabled(enabled)
+    function group.SetEnabled(_, enabled)
         for _, button in ipairs(state.buttons) do
             button:SetEnabled(enabled)
         end
