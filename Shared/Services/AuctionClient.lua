@@ -112,8 +112,10 @@ action("CancelCommodityPurchase")
 action("BuyItemAuction")
 
 -- Posting (optional). The item is a bag slot. duration is in hours of the flavour (2, 8 or 24; TBC 12, 24 or 48).
--- PostItem(bag, slot, duration, quantity, bid, buyout, itemID, guard) (itemID is the planned item; the legacy backend
--- refuses a slot with another item, Forever ignores it. guard(deposit) is optional: the legacy backend calls it with
+-- PostItem(bag, slot, duration, quantity, bid, buyout, itemID, guard, numStacks) (numStacks is the number of stacks
+-- of quantity items, legacy client only, default 1; the bid and the buyout are for one stack; itemID is the planned
+-- item; the legacy backend refuses a slot with another item, Forever ignores it. guard(deposit) is optional: the
+-- legacy backend calls it with
 -- the real deposit before it posts, and if it gives false the backend posts nothing and gives "held", deposit.
 -- Forever ignores guard) and PostCommodity(bag, slot, duration, quantity, unitPrice)
 -- are protected: call them only inside a click handler. They give needsConfirmation (true or false); if it is true,
@@ -126,6 +128,9 @@ query("Deposit")
 query("AvailablePostCount")
 query("IsSellItemValid")
 query("PostedEvent")
+-- MultisellEvent() gives the event name of a multi-stack post (legacy client only). The event carries "start",
+-- "update" or "failure", the number of stacks created, the total, and for a failure a text.
+query("MultisellEvent")
 
 -- Search capture: nil means capture is off.
 -- AuctionInfo(auctionID) gives a table with itemLink, buyoutAmount and maybe quantity, or nil.

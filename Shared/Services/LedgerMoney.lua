@@ -450,12 +450,15 @@ function Tracker:_OnCall(name, ...)
     elseif name == "PostItem" or name == "ConfirmPostItem" or name == "PostCommodity"
         or name == "ConfirmPostCommodity" then
         local bag, slot, duration, quantity, bid, buyout = ...
+        -- A multi-stack post (TBC) gives one post hint and one created event for each stack.
+        local stacks = (name == "PostItem" or name == "ConfirmPostItem") and select(9, ...) or 1
+        stacks = (type(stacks) == "number" and stacks >= 1) and math.floor(stacks) or 1
         local commodity = name == "PostCommodity" or name == "ConfirmPostCommodity"
         if commodity then
             buyout = type(bid) == "number" and type(quantity) == "number" and bid * quantity or nil
         end
         hint = {
-            kind = "post", qty = quantity, buyout = buyout,
+            kind = "post", qty = quantity, buyout = buyout, stacks = stacks,
             item = deps.itemKey(deps.bagLink and deps.bagLink(bag, slot), commodity),
             deposit = deps.deposit and deps.deposit(bag, slot, duration, quantity, commodity) or nil,
         }
@@ -473,6 +476,14 @@ function Tracker:_OnCall(name, ...)
     hint.time, hint.seen = self._now(), {}
     hint.ctx = self:Context("ah")
     self._hints[#self._hints + 1] = hint
+    for _ = 2, hint.kind == "post" and hint.stacks or 1 do
+        local copy = {}
+        for k, v in pairs(hint) do
+            copy[k] = v
+        end
+        copy.seen = {}
+        self._hints[#self._hints + 1] = copy
+    end
     self:_Ring("call", name)
     self:_ResolveHeld()
 end

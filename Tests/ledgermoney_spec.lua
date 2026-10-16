@@ -400,6 +400,55 @@ describe("LedgerMoney", function()
             assert.are.equal(post.ctx, deposit.ctx)
         end)
 
+        it("writes one post record and one deposit for each stack of a multi-stack post", function()
+            calls("PostItem", 0, 3, 24, 20, nil, 800, 11, nil, 3)
+            for id = 1, 3 do
+                bus:Emit("AUCTION_HOUSE_AUCTION_CREATED", id)
+                change(-40)
+            end
+            local posts, deposits = 0, 0
+            for _, record in ipairs(records) do
+                if record.source == "ahPost" then
+                    posts = posts + 1
+                    assert.are.equal(20, record.qty)
+                    assert.are.equal(800, record.buyout)
+                    assert.are.equal("e:bag0.3", record.item)
+                elseif record.source == "ahDeposit" then
+                    deposits = deposits + 1
+                    assert.are.equal(40, record.money)
+                end
+            end
+            assert.are.equal(3, posts)
+            assert.are.equal(3, deposits)
+        end)
+
+        it("writes only the stacks that the client created", function()
+            calls("PostItem", 0, 3, 24, 20, nil, 800, 11, nil, 3)
+            bus:Emit("AUCTION_HOUSE_AUCTION_CREATED", 1)
+            bus:Emit("AUCTION_HOUSE_AUCTION_CREATED", 2)
+            local posts = 0
+            for _, record in ipairs(records) do
+                if record.source == "ahPost" and record.item == "e:bag0.3" then
+                    posts = posts + 1
+                end
+            end
+            assert.are.equal(2, posts)
+        end)
+
+        it("replaces the stack hints by the confirm call", function()
+            calls("PostItem", 0, 3, 24, 20, nil, 800, 11, nil, 3)
+            calls("ConfirmPostItem", 0, 3, 24, 20, nil, 800, 11, nil, 3)
+            for id = 1, 3 do
+                bus:Emit("AUCTION_HOUSE_AUCTION_CREATED", id)
+            end
+            local posts = 0
+            for _, record in ipairs(records) do
+                if record.source == "ahPost" and record.item == "e:bag0.3" then
+                    posts = posts + 1
+                end
+            end
+            assert.are.equal(3, posts)
+        end)
         it("takes the commodity price as the unit price times the quantity", function()
             calls("PostCommodity", 1, 1, 12, 5, 30)
             bus:Emit("AUCTION_HOUSE_AUCTION_CREATED", 1)
