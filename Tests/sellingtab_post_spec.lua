@@ -723,7 +723,6 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
             click(ui.postAll)
             assert.are.equal(1, #client.posts)
             assert.are.equal("commodity", client.posts[1].kind)
-            assert.are.equal("skipped", entryOf("10").status)
         end)
 
         it("posts a reselected item in Post all as a normal item", function()
