@@ -556,9 +556,11 @@ describe("BuyingTab", function()
             assert.are.same({ 10, 10 }, client.searches)
             client.rows[10] = { row(60, 2) }
             fire("COMMODITY_RESULTS", 10)
-            assert.is_true(ui.buyNext.enabled)
-            assert.are.equal("2", ui.amount.text)
-            assert.are.equal("120c", ui.amountTotal.text)
+            -- The box stays open and asks for a quote of the next level.
+            assert.are.same({ { "start", 10, 3 }, { "confirm", 10, 3 }, { "start", 10, 2 } }, client.calls)
+            fire("QUOTE", 60, 120)
+            assert.is_true(confirm:IsShown())
+            assert.matches("Buy 2 x Item10", confirm.text.text)
             assert.are.same({}, client.violations)
             -- The refresh adds no "would buy" line to the log.
             assert.are.equal("bought 3 at 50c", lastLog().decision)
@@ -571,9 +573,9 @@ describe("BuyingTab", function()
             fire("BOUGHT")
             client.rows[10] = { row(65, 2) }
             fire("COMMODITY_RESULTS", 10)
-            click(ui.buyNext)
             local warning = dialog("FlipsideBuyJump")
             assert.is_true(warning:IsShown())
+            assert.is_false(dialog("FlipsideBuyConfirm"):IsShown())
             assert.are.equal("Price jumps from 50c to 65c (+30%). Keep buying?", warning.text.text)
             assert.are.equal("Keep buying", warning.yesButton.text)
             assert.are.equal("Stop", warning.noButton.text)
@@ -591,7 +593,6 @@ describe("BuyingTab", function()
             fire("BOUGHT")
             client.rows[10] = { row(60, 1) }
             fire("COMMODITY_RESULTS", 10)
-            click(ui.buyNext)
             assert.is_nil(dialog("FlipsideBuyJump") and dialog("FlipsideBuyJump"):IsShown() or nil)
             assert.are.equal("start", client.calls[3][1])
         end)
@@ -618,7 +619,6 @@ describe("BuyingTab", function()
             fire("BOUGHT")
             client.rows[10] = { row(60, 1) }
             fire("COMMODITY_RESULTS", 10)
-            click(ui.buyNext)
             assert.is_true(dialog("FlipsideBuyJump"):IsShown())
         end)
 
@@ -629,7 +629,6 @@ describe("BuyingTab", function()
             fire("BOUGHT")
             client.rows[10] = { row(65, 1) }
             fire("COMMODITY_RESULTS", 10)
-            click(ui.buyNext)
             click(dialog("FlipsideBuyJump").noButton)
             assert.are.same({ "start", "confirm" }, names())
             assert.is_nil(tab.run)
@@ -1105,7 +1104,6 @@ describe("BuyingTab", function()
             tab:SetAmount("")
             client.rows[10] = { row(50, 1), row(60, 2) }
             fire("COMMODITY_RESULTS", 10)
-            click(ui.buyNext)
             fire("QUOTE", 50, 50)
             click(dialog("FlipsideBuyConfirm").yesButton)
             fire("BOUGHT")
@@ -1246,6 +1244,164 @@ describe("BuyingTab", function()
             assert.matches("Unit price: 30c   Total: 30c", confirm.text.text)
         end)
     end)
+    describe("the confirm box after a buy", function()
+        local function click(button)
+            client.inClick = true
+            button.scripts.OnClick(button)
+            client.inClick = false
+        end
+
+        local function box()
+            for _, frame in ipairs(mock.frames) do
+                if frame.name == "FlipsideBuyConfirm" then
+                    return frame
+                end
+            end
+        end
+
+        local function auction(id, price)
+            return { auctionID = id, unitPrice = price, quantity = 1, isCommodity = false, buyout = price,
+                ownerItem = false }
+        end
+
+        -- Search the item 10 with these item rows and open the box for the first one.
+        local function openBox(rows)
+            client.rows[10] = rows or { auction(1, 30), auction(2, 36), auction(3, 40) }
+            tab:Select_("10")
+            tab:Search()
+            fire("ITEM_RESULTS", 10)
+            click(ui.buyNext)
+            return box()
+        end
+
+        -- Confirm the first row and give the next rows.
+        local function buyFirst(nextRows)
+            click(box().yesButton)
+            fire("ITEMBOUGHT", 1)
+            client.rows[10] = nextRows
+            fire("ITEM_RESULTS", 10)
+        end
+
+        it("shows the next row after a buy and needs a click to buy it", function()
+            local confirm = openBox()
+            buyFirst({ auction(2, 36), auction(3, 40) })
+            assert.is_true(confirm:IsShown())
+            assert.matches("Total: 36c", confirm.text.text)
+            assert.is_true(confirm.yesButton.enabled)
+            assert.are.same({ { "bid", 1, 30 } }, client.calls)
+            click(confirm.yesButton)
+            assert.are.same({ { "bid", 1, 30 }, { "bid", 2, 36 } }, client.calls)
+            assert.are.same({}, client.violations)
+        end)
+
+        it("turns Confirm off while the buy waits and ignores a second click", function()
+            local confirm = openBox()
+            click(box().yesButton)
+            assert.is_true(confirm:IsShown())
+            assert.is_false(confirm.yesButton.enabled)
+            tab:_Confirm()
+            assert.are.same({ { "bid", 1, 30 } }, client.calls)
+            fire("ITEMBOUGHT", 1)
+            assert.is_false(confirm.yesButton.enabled)
+        end)
+
+        it("moves the selection to the row in the box", function()
+            openBox()
+            buyFirst({ auction(2, 36), auction(3, 40) })
+            assert.are.equal(36, tab.levelSel)
+            assert.is_true(ui.rowsList.rows[1].selection:IsShown())
+        end)
+
+        it("closes the box when there is no next row", function()
+            openBox()
+            buyFirst({})
+            assert.is_false(box():IsShown())
+            assert.is_nil(tab.buy)
+        end)
+
+        it("closes the box when the next row is above the max price", function()
+            openBox()
+            buyFirst({ auction(2, 150) })
+            assert.is_false(box():IsShown())
+            assert.are.equal("above max price", ui.message.text)
+            assert.are.same({ { "bid", 1, 30 } }, client.calls)
+        end)
+
+        it("closes the box and shows the error when the buy fails", function()
+            openBox()
+            click(box().yesButton)
+            fire("ITEMERR", 5)
+            assert.is_false(box():IsShown())
+            assert.are.equal("buy failed: error 5", ui.message.text)
+        end)
+
+        it("shows no next row after Cancel", function()
+            openBox()
+            click(box().yesButton)
+            click(box().noButton)
+            fire("ITEMBOUGHT", 1)
+            client.rows[10] = { auction(2, 36) }
+            fire("ITEM_RESULTS", 10)
+            assert.is_false(box():IsShown())
+            assert.are.same({ { "bid", 1, 30 } }, client.calls)
+        end)
+
+        it("closes the box when the item changes", function()
+            openBox()
+            click(box().yesButton)
+            tab:Select_("11")
+            assert.is_false(box():IsShown())
+            fire("ITEMBOUGHT", 1)
+            client.rows[10] = { auction(2, 36) }
+            fire("ITEM_RESULTS", 10)
+            assert.is_false(box():IsShown())
+        end)
+
+        it("closes the box when the tab is left", function()
+            openBox()
+            click(box().yesButton)
+            tab:Deselect()
+            assert.is_false(box():IsShown())
+        end)
+
+        it("closes the box when the search for the new rows gets no response", function()
+            openBox()
+            click(box().yesButton)
+            fire("ITEMBOUGHT", 1)
+            assert.is_true(box():IsShown())
+            timers[#timers].fn()
+            assert.is_false(box():IsShown())
+        end)
+
+        it("asks for a new quote of a commodity before the next confirm", function()
+            client.rows[10] = { row(50, 1), row(60, 1) }
+            tab:Select_("10")
+            tab:Search()
+            fire("COMMODITY_RESULTS", 10)
+            click(ui.buyNext)
+            fire("QUOTE", 50, 50)
+            local confirm = box()
+            click(confirm.yesButton)
+            fire("BOUGHT")
+            client.rows[10] = { row(60, 1) }
+            fire("COMMODITY_RESULTS", 10)
+            assert.is_true(confirm:IsShown())
+            assert.is_false(confirm.yesButton.enabled)
+            fire("QUOTE", 60, 60)
+            assert.is_true(confirm.yesButton.enabled)
+            assert.matches("Total: 60c", confirm.text.text)
+            click(confirm.yesButton)
+            assert.are.same({ "start", "confirm", "start", "confirm" }, (function()
+                local out = {}
+                for _, call in ipairs(client.calls) do
+                    out[#out + 1] = call[1]
+                end
+                return out
+            end)())
+            assert.are.same({}, client.violations)
+        end)
+    end)
+
     describe("registry", function()
         it("registers the Buying tab for hosts with many tabs", function()
             local spec = ns.AuctionTabs.List()[1]
