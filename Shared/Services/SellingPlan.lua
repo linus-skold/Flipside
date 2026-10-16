@@ -9,9 +9,9 @@ local LOG_CAP = 200
 local DEFAULT_UNDERCUT = 1
 
 -- The post durations in hours for the index 1, 2 and 3 (confirmed by the user, SPEC 27c). The flavour sets them:
--- 2, 8 and 24 on WoW: Forever, 12, 24 and 48 on TBC Anniversary. The default is the longest.
+-- 2, 8 and 24 on WoW: Forever, 12, 24 and 48 on TBC Anniversary. The default is 24 h on both.
 SellingPlan.DURATIONS = ns.Flavour and ns.Flavour.durations or { 2, 8, 24 }
-local DEFAULT_DURATION = SellingPlan.DURATIONS[#SellingPlan.DURATIONS]
+local DEFAULT_DURATION = ns.Flavour and ns.Flavour.defaultDuration or 24
 local DEFAULT_MAX_AGE = 72
 local DEFAULT_SAMPLES = 3
 local FEW_SAMPLES_WHY = "few samples, using the cheapest listing"
@@ -261,7 +261,7 @@ function SellingPlan.Multisell()
 end
 
 -- Map the saved hours of a rule to a valid duration: the nearest value of SellingPlan.DURATIONS.
--- No number gives the default (the longest). It changes no saved data.
+-- No number gives the default (24 h). It changes no saved data.
 function SellingPlan.NormalizeDuration(hours)
     hours = tonumber(hours)
     if not hours then
