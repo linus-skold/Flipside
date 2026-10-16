@@ -144,6 +144,53 @@ describe("Tooltip", function()
         end)
     end)
 
+    describe("keys and soulbound items", function()
+        local bagOwner = { GetBagID = function() return 0 end, GetID = function() return 1 end }
+        local function run(opts)
+            ns.ItemString = { ToExactKey = function(link) return link end }
+            callbackDeps.itemInfoInstant = function() return 5, "n", "t", "", 1, opts.class or 4, 0 end
+            callbackDeps.itemInfo = function()
+                return "n", "l", 1, 1, 1, "t", "s", 1, "", 1, 10, 4, 0, opts.bind
+            end
+            callbackDeps.getRecord = function() return { latest = {} } end
+            callbackDeps.itemLocation = {
+                CreateFromBagAndSlot = function() return "loc" end,
+                CreateFromEquipmentSlot = function() return "loc" end,
+            }
+            callbackDeps.isBound = function() return opts.bound == true end
+            ns.Tooltip.Attach(callbackDeps)
+            local tip = newTooltip(opts.owner)
+            registered[1].fn(tip, "item:5")
+            return #tip.lines
+        end
+
+        it("adds nothing to a key even with scan data", function()
+            assert.are.equal(0, run({ class = 13 }))
+        end)
+        it("adds nothing to a bind-on-pickup item", function()
+            assert.are.equal(0, run({ bind = 1 }))
+        end)
+        it("adds nothing to a quest-bind item", function()
+            assert.are.equal(0, run({ bind = 4 }))
+        end)
+        it("adds lines to an unbound bind-on-equip item in a bag", function()
+            assert.are.equal(4, run({ bind = 2, owner = bagOwner }))
+        end)
+        it("adds nothing to a bound bind-on-equip item in a bag", function()
+            assert.are.equal(0, run({ bind = 2, owner = bagOwner, bound = true }))
+        end)
+        it("adds nothing to a bound item in an equipment slot", function()
+            local slot = { GetID = function() return 3 end, GetName = function() return "CharacterHeadSlot" end }
+            assert.are.equal(0, run({ bind = 2, owner = slot, bound = true }))
+        end)
+        it("adds lines for an unknown bind type", function()
+            assert.are.equal(4, run({ bind = nil, owner = bagOwner }))
+        end)
+        it("adds lines to a bind-on-equip chat link with no owner", function()
+            assert.are.equal(4, run({ bind = 2, bound = true }))
+        end)
+    end)
+
     it("adds lines to a normal item and to an item with unknown class", function()
         callbackDeps.itemInfoInstant = function() return 5, "Armor", "Cloth", "", 1, 4, 1 end
         ns.Tooltip.Attach(callbackDeps)
