@@ -223,6 +223,7 @@ local dialogs = {}
 -- A small dialog with a text and two buttons, made from the Kit window. One dialog for each name.
 -- dialog:Open(title, text, options): options.yes and options.no are the button labels, onYes and onNo run in the click.
 -- Escape or the close button counts as "no". options.red shows the text in red.
+-- options.keep keeps the box open after yes, with the yes button off, until the next Open.
 local function makeDialog(name)
     if dialogs[name] then
         return dialogs[name]
@@ -253,8 +254,14 @@ local function makeDialog(name)
     dialog.text:SetJustifyH("CENTER")
     local function press(key)
         local callback = dialog[key]
-        dialog.onYes, dialog.onNo = nil, nil
-        dialog:Hide()
+        if key == "onYes" and dialog.keep then
+            -- The box stays open. The yes button is off until the next Open.
+            dialog.onYes = nil
+            dialog.yesButton:SetEnabled(false)
+        else
+            dialog.onYes, dialog.onNo = nil, nil
+            dialog:Hide()
+        end
         if callback then
             callback()
         end
@@ -277,6 +284,8 @@ local function makeDialog(name)
 
     function dialog:Open(title, text, options)
         self.onYes, self.onNo = options.onYes, options.onNo
+        self.keep = options.keep == true
+        self.yesButton:SetEnabled(true)
         if self.SetTitle then
             self:SetTitle(title or "")
         end
@@ -563,6 +572,12 @@ end
 
 function Tab:Select_(key)
     if key ~= self.selectedKey then
+        -- The confirm box closes when the item changes. A purchase in flight stays.
+        if self.buy then
+            self:_CancelQuote("the item changed")
+        else
+            self:_CloseConfirm()
+        end
         self.run = nil
         self.levelSel = nil
         self.amount, self.amountBad, self.amountEdit = DEFAULT_AMOUNT, false, false
@@ -608,6 +623,9 @@ function Tab:_Start(entry, silent)
         local pending = self.pending
         if pending and pending.token == token then
             self.pending = nil
+            if self.continueKey == entry.key then
+                self:_CloseConfirm()
+            end
             self.deps.log:Add(entry, "no response")
             self:_Say("no response for " .. self:_ItemName(entry))
             self:_Update()
@@ -704,6 +722,9 @@ function Tab:_OnResult(arg)
     self.pending = nil
     self:_Finish(pending.entry, self.deps.client.LiveRows(pending.itemID), pending.silent)
     self:_Say("")
+    if self.continueKey and self.continueKey == pending.entry.key then
+        self:_ContinueBuy()
+    end
     self:_RunHeldSearch()
     self:_Next()
 end
@@ -711,6 +732,10 @@ end
 -- The throttle is ready again. A search result can come while the client is still not ready, so the buy controls
 -- must be drawn again here.
 function Tab:_OnReady()
+    -- A refresh after a buy waits for the throttle. Start it as soon as the client is ready.
+    if self.refreshEntry and not self.pending then
+        self:_Refresh(self.refreshEntry)
+    end
     if self.queue and not self.pending then
         self:_Next()
     end
@@ -928,7 +953,6 @@ end
 
 -- Start the buy of one level. Call it only from a click. A commodity asks for a quote; an item goes to the confirm.
 function Tab:_StartBuy(entry, cover)
-    local client = self.deps.client
     local level = cover.last
     local first = level.rows[1]
     if first.isCommodity == false then
@@ -952,15 +976,30 @@ function Tab:_StartBuy(entry, cover)
         self:_Update()
         return true
     end
-    local ok, err = pcall(client.StartCommodityPurchase, entry.itemID, cover.quantity)
+    local buy = { entry = entry, level = level, row = first, phase = "quoting", itemID = entry.itemID,
+        quantity = cover.quantity, complete = cover.complete }
+    if self.previewQuote then
+        -- StartCommodityPurchase is protected: no event may call it. The box shows an estimate and the
+        -- Get quote button (a click) asks for the quote.
+        buy.phase, buy.unit, buy.total = "preview", cover.cost / cover.quantity, cover.cost
+        self.buy = buy
+        self:_ShowConfirm()
+        self:_Update()
+        return true
+    end
+    return self:_RequestQuote(buy)
+end
+
+-- Ask for the quote of a commodity buy. Call it only from a click.
+function Tab:_RequestQuote(buy)
+    local entry = buy.entry
+    local ok, err = pcall(self.deps.client.StartCommodityPurchase, buy.itemID, buy.quantity)
     if not ok then
         self.deps.log:Add(entry, "buy failed", tostring(err))
         self:_Say("the quote was refused")
         return false, "the quote was refused"
     end
-    local buy = { entry = entry, level = level, row = first, phase = "quoting", itemID = entry.itemID,
-        quantity = cover.quantity,
-        complete = cover.complete }
+    buy.phase = "quoting"
     self.buy = buy
     self:_Say("waiting for the quote of " .. self:_ItemName(entry))
     self.deps.after(QUOTE_WAIT, function()
@@ -1026,12 +1065,24 @@ function Tab:_ShowConfirm()
             end
         end)
     end
-    makeDialog("FlipsideBuyConfirm"):Open("Confirm purchase", text, {
-        yes = over and "Buy anyway" or "Confirm", no = "Cancel", red = over,
+    local preview = buy.phase == "preview"
+    if preview then
+        text = text .. "\nThis is an estimate. Get the quote first."
+    end
+    makeDialog("FlipsideBuyConfirm"):Open(preview and "Next purchase" or "Confirm purchase", text, {
+        yes = preview and "Get quote" or (over and "Buy anyway" or "Confirm"),
+        no = "Cancel", red = over, keep = true,
         onYes = function()
-            self:_Confirm()
+            if preview then
+                if not self:_RequestQuote(buy) then
+                    self:_CancelQuote("the quote was refused")
+                end
+            else
+                self:_Confirm()
+            end
         end,
         onNo = function()
+            self.continueKey = nil
             self:_CancelQuote("cancelled")
         end,
     })
@@ -1080,12 +1131,22 @@ function Tab:_OnQuoteUnavailable()
     end
 end
 
+-- Close the confirm box and stop the move to the next row. A purchase in flight stays.
+function Tab:_CloseConfirm()
+    self.continueKey = nil
+    if dialogs.FlipsideBuyConfirm then
+        dialogs.FlipsideBuyConfirm:Close()
+    end
+end
+
 -- Cancel an open quote or confirm box. A purchase in flight stays.
 function Tab:_CancelQuote(why)
     local buy = self.buy
     if not buy or buy.phase == "confirming" then
+        self:_CloseConfirm()
         return
     end
+    self.continueKey = nil
     self.buy = nil
     if dialogs.FlipsideBuyConfirm then
         dialogs.FlipsideBuyConfirm:Close()
@@ -1125,6 +1186,8 @@ function Tab:_Confirm()
     end
     local client = self.deps.client
     buy.phase = "confirming"
+    -- The box stays open after the buy and shows the next row (see _ContinueBuy).
+    self.continueKey = buy.entry.key
     local ok, err
     if buy.isItem then
         ok, err = pcall(client.BuyItemAuction, buy.auctionID, buy.total)
@@ -1156,10 +1219,48 @@ function Tab:_Succeed(buy)
         "total " .. money(buy.total))
     self:_Say("bought " .. buy.quantity .. " x " .. self:_ItemName(buy.entry))
     self:_Refresh(buy.entry)
+    if self.continueKey then
+        -- Wait for the new rows. If no search for this item is on its way, close the box.
+        local waiting = (self.pending and self.pending.entry.key == self.continueKey)
+            or (self.pending == nil and self.refreshEntry ~= nil)
+        if not waiting then
+            self:_CloseConfirm()
+        end
+    end
     self:_Update()
 end
 
+-- The new rows came after a buy. Show the next row in the open confirm box, or close the box.
+-- This only shows the row; the buy needs a click on Confirm.
+function Tab:_ContinueBuy()
+    local key = self.continueKey
+    self.continueKey = nil
+    local box = dialogs.FlipsideBuyConfirm
+    if not key or key ~= self.selectedKey or not (box and box:IsShown()) then
+        self:_CloseConfirm()
+        return
+    end
+    -- The selection moves to the row in the box.
+    self.levelSel = nil
+    local _, _, _, reason, cover = self:_NextBuy()
+    if reason or self.dryRun then
+        self:_CloseConfirm()
+        self:_Say(reason or "")
+        self:_Update()
+        return
+    end
+    self.levelSel = cover.last.unitPrice
+    self.previewQuote = true
+    self:BuyNext()
+    self.previewQuote = nil
+    -- A price jump warning or a refusal leaves no open buy: close the box.
+    if not self.buy then
+        self:_CloseConfirm()
+    end
+end
+
 function Tab:_Fail(buy, reason)
+    self:_CloseConfirm()
     self.buy = nil
     self.deps.log:Add(buy.entry, "buy failed", reason)
     self:_Say("buy failed: " .. reason)
