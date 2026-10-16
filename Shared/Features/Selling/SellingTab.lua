@@ -11,6 +11,8 @@ local DIALOG = "FLIPSIDE_CONFIRM_POST"
 local SEARCH_TIMEOUT = 10
 local RETRY_SECONDS = 5
 local POST_DELAY = 1.0
+local MULTI_TIMEOUT = 15
+local MULTI_TIMEOUT_PER_STACK = 3
 SellingTab.POST_DELAY = POST_DELAY
 local SECONDS_PER_HOUR = 3600
 
@@ -159,8 +161,38 @@ function SellingTab.DataStats(record, now)
     return { ageHours = age, samples = samples }
 end
 
+-- The bag stack for a post of need items: the first stack that holds that many, else the biggest stack.
+function SellingTab.StackFor(candidate, need)
+    local best
+    for _, stack in ipairs(candidate.stacks or {}) do
+        if stack.count >= need then
+            return stack
+        end
+        if not best or stack.count > best.count then
+            best = stack
+        end
+    end
+    return best
+end
+
+-- Units for a client that posts several stacks in one call: one unit with all the full stacks, then one unit with
+-- the smaller rest (decision.remainder). A unit is { bag, slot, quantity (of one stack), stacks }.
+local function multisellUnits(candidate, decision)
+    local units = {}
+    local size = math.max(1, decision.quantity)
+    local first = SellingTab.StackFor(candidate, size)
+    units[1] = { bag = first.bag, slot = first.slot, quantity = size, stacks = math.max(1, decision.auctions or 1) }
+    local rest = tonumber(decision.remainder) or 0
+    if rest > 0 then
+        local stack = SellingTab.StackFor(candidate, rest)
+        units[2] = { bag = stack.bag, slot = stack.slot, quantity = rest, stacks = 1 }
+    end
+    return units
+end
+
 -- Split a post decision into units. A unit is one protected post: { bag, slot, quantity }.
 -- A commodity is one unit. An item gives one unit for each auction, taken from the stacks in bag order.
+-- On TBC an item gives one unit for all the full stacks and one for the rest (stacks is the stack count of a unit).
 function SellingTab.BuildUnits(candidate, decision)
     local stacks = candidate.stacks or {}
     local units = {}
@@ -170,6 +202,9 @@ function SellingTab.BuildUnits(candidate, decision)
     if decision.commodity then
         units[1] = { bag = stacks[1].bag, slot = stacks[1].slot, quantity = decision.quantity }
         return units
+    end
+    if ns.SellingPlan.Multisell() then
+        return multisellUnits(candidate, decision)
     end
     local size = math.max(1, decision.quantity)
     for _, stack in ipairs(stacks) do
@@ -211,6 +246,9 @@ function SellingTab.Describe(entry)
         parts = string.format("post %d @ %s", decision.quantity, money(decision.price))
     else
         parts = string.format("post %d x %d @ %s", decision.auctions, decision.quantity, money(decision.price))
+        if decision.remainder then
+            parts = parts .. string.format(" + 1 x %d", decision.remainder)
+        end
     end
     local text = parts .. " | " .. tostring(decision.duration) .. " h"
     if entry.next > 1 then
@@ -290,7 +328,10 @@ function SellingTab.EntryProfit(entry, vendorPrice, price)
         return nil
     end
     local profit = ns.SellingPlan.Profit(price or entry.decision.price, left, vendorPrice)
-    profit.auctions = #left
+    profit.auctions = 0
+    for _, unit in ipairs(left) do
+        profit.auctions = profit.auctions + (unit.stacks or 1)
+    end
     return profit
 end
 
@@ -308,6 +349,7 @@ function SellingTab.Details(entry, vendorPrice, price)
         unitPrice = price,
         buyout = price * unit.quantity,
         auctions = profit.auctions,
+        nextStacks = unit.stacks or 1,
         stackSize = unit.quantity,
         duration = decision.duration,
         deposit = profit.depositKnown and profit.deposit or nil,
@@ -557,7 +599,7 @@ function Tab:_Quote(entry)
     local total
     for _, unit in ipairs(entry.units) do
         local ok, deposit = pcall(self.deps.client.Deposit, unit.bag, unit.slot, decision.duration,
-            unit.quantity, decision.commodity == true)
+            unit.quantity, decision.commodity == true, nil, nil, unit.stacks)
         if ok and type(deposit) == "number" then
             total = (total or 0) + deposit
             unit.deposit = deposit
@@ -676,6 +718,9 @@ end
 
 -- Read the bags again and build the tree. It starts no search and makes no protected call.
 function Tab:RefreshBags()
+    if self.multi then
+        return false, "wait for the post to end first"
+    end
     if self.awaiting then
         return false, "confirm or skip the open post first"
     end
@@ -767,8 +812,21 @@ function Tab._Restack(_, entry, item)
     for index = #entry.units, entry.next, -1 do
         entry.units[index] = nil
     end
-    local fresh = SellingTab.BuildUnits(candidate, { quantity = decision.quantity, auctions = left,
-        commodity = decision.commodity })
+    local fresh
+    if not decision.commodity and ns.SellingPlan.Multisell() then
+        -- Keep the size and the stack count of each unit that is left; only the bag slot is new.
+        fresh = {}
+        for _, unit in ipairs(old) do
+            local stack = SellingTab.StackFor(candidate, unit.quantity)
+            if stack then
+                fresh[#fresh + 1] = { bag = stack.bag, slot = stack.slot, quantity = unit.quantity,
+                    stacks = unit.stacks }
+            end
+        end
+    else
+        fresh = SellingTab.BuildUnits(candidate, { quantity = decision.quantity, auctions = left,
+            commodity = decision.commodity })
+    end
     for index, unit in ipairs(fresh) do
         unit.deposit = old[index] and old[index].deposit
         entry.units[#entry.units + 1] = unit
@@ -789,7 +847,7 @@ end
 -- Read the bags again after a post, with no wait for a tab switch. It keeps the decisions of the entries.
 -- An item that is posted leaves the list. If part of the stack stays in the bags, the rest shows as a new entry.
 function Tab:SyncBags()
-    if self.awaiting or not self.ui or not self.loaded then
+    if self.awaiting or self.multi or not self.ui or not self.loaded then
         return false
     end
     local bagItems = self.deps.readBags()
@@ -878,13 +936,16 @@ function Tab:_ReadDeposits(entry)
     for index = entry.next, #entry.units do
         local unit = entry.units[index]
         local size = unit.quantity
-        if bySize[size] == nil then
+        local stacks = unit.stacks or 1
+        local id = size .. "x" .. stacks
+        if bySize[id] == nil then
             local buyout = decision.price * size
-            local ok, deposit = pcall(read, unit.bag, unit.slot, decision.duration, size, buyout, buyout, plannedID)
-            bySize[size] = ok and type(deposit) == "number" and deposit or false
+            local ok, deposit = pcall(read, unit.bag, unit.slot, decision.duration, size, buyout, buyout, plannedID,
+                unit.stacks)
+            bySize[id] = ok and type(deposit) == "number" and deposit or false
         end
-        if bySize[size] then
-            unit.deposit, unit.depositRead = bySize[size], true
+        if bySize[id] then
+            unit.deposit, unit.depositRead = bySize[id], true
             entry.depositPrice = decision.price
         end
         if unit.deposit then
@@ -912,8 +973,8 @@ end
 -- have no result yet. fromClick is true when a mouse click selects the node: then the real deposit of the ready
 -- entries is read (a protected sale slot step). Other calls make no protected call.
 function Tab:SelectNode(node, fromClick)
-    if self.awaiting then
-        self:_Say("confirm or skip the open post first")
+    if self.awaiting or self.multi then
+        self:_Say(self.multi and "wait for the post to end first" or "confirm or skip the open post first")
         if self.ui then
             self.ui.tree.selected = self.selectedId
             self.ui.tree:Refresh()
@@ -1005,7 +1066,7 @@ end
 
 function Tab:_RunSync()
     self.lastSync = self.deps.time()
-    if not self:SyncBags() and self.awaiting then
+    if not self:SyncBags() and (self.awaiting or self.multi) then
         self.syncAgain = true
     end
 end
@@ -1019,7 +1080,7 @@ function Tab:_OnRules()
     end
     if not self.active then
         self.stale = true
-    elseif self.awaiting then
+    elseif self.awaiting or self.multi then
         self.reloadAgain = true
     else
         self:_Reload()
@@ -1064,7 +1125,7 @@ end
 
 -- Update the view. If the selection has no post left and no search runs, say so and read the bags again.
 function Tab:_AfterStep()
-    if not self.awaiting then
+    if not (self.awaiting or self.multi) then
         if self.reloadAgain then
             self:_Reload()
             return
@@ -1085,12 +1146,13 @@ function Tab:_AfterStep()
 end
 
 -- Count one finished unit (a post or a skip). After the last unit of an entry, ask for a fresh owned list.
-function Tab:_Advance(entry, posted)
+-- count is the number of auctions that the unit made (default 1).
+function Tab:_Advance(entry, posted, count)
     entry.next = entry.next + 1
-    entry.manualQty, entry.manualHours = nil, nil
+    entry.manualQty, entry.manualHours, entry.manualStacks = nil, nil, nil
     if posted then
-        entry.posted = entry.posted + 1
-        self.postedCount = self.postedCount + 1
+        entry.posted = entry.posted + (count or 1)
+        self.postedCount = self.postedCount + (count or 1)
     end
     local following
     if entry.next > #entry.units then
@@ -1159,12 +1221,21 @@ function Tab:_Confirmed()
     if not awaiting then
         return
     end
+    local stacks = awaiting.stacks or 1
+    if stacks > 1 then
+        self:_StartMulti(awaiting.entry, awaiting.quantity, stacks, awaiting.price, awaiting.duration, awaiting.all)
+    end
     local ok, err = pcall(awaiting.confirm)
     self.awaiting = nil
     if not ok then
+        self.multi = nil
         return self:_Fail(awaiting.entry, tostring(err))
     end
     awaiting.entry.real = true
+    if stacks > 1 then
+        self:_ArmMulti()
+        return
+    end
     self:_Record(awaiting.entry, awaiting.quantity, "post", awaiting.price, awaiting.duration)
     if self.allRun then
         self:_Lock()
@@ -1227,6 +1298,28 @@ function SellingTab.ClampQuantity(value, maxQuantity)
     return math.max(1, math.min(math.floor(number), math.max(1, maxQuantity)))
 end
 
+-- Limit a typed stack count to a whole number from 1 to the stacks of size items that fit in maxQuantity.
+-- Returns nil if the value is not a number.
+function SellingTab.ClampStacks(value, size, maxQuantity)
+    local number = tonumber(value)
+    if not number or number ~= number then
+        return nil
+    end
+    local fit = math.max(1, math.floor(math.max(1, maxQuantity) / math.max(1, size)))
+    return math.max(1, math.min(math.floor(number), fit))
+end
+
+-- The most items in one stack of a manual post: the count above the keep quantity. On TBC an item stack
+-- also stays under the item maximum stack.
+function SellingTab.StackLimit(entry)
+    local limit = SellingTab.MaxQuantity(entry.candidate)
+    local market = entry.market or {}
+    if ns.SellingPlan.Multisell() and not market.commodity and market.maxStack then
+        limit = math.max(1, math.min(limit, market.maxStack))
+    end
+    return limit
+end
+
 -- True if hours is one of the post durations (SellingPlan.DURATIONS).
 function SellingTab.IsDuration(hours)
     for _, valid in ipairs(ns.SellingPlan.DURATIONS) do
@@ -1254,7 +1347,9 @@ function Tab._ManualPlan(_, entry, price, raw)
     local commodity = market.commodity == true
     local settings = candidate.settings or {}
     local available = SellingTab.MaxQuantity(candidate)
+    local multisell = ns.SellingPlan.Multisell() and not commodity
     local quantity
+    local auctions = 1
     if commodity then
         quantity = available
     else
@@ -1263,14 +1358,17 @@ function Tab._ManualPlan(_, entry, price, raw)
         if limit > 0 then
             size = math.min(size, limit)
         end
-        quantity = math.min(size, stacks[1].count, available)
+        quantity = math.min(size, multisell and available or stacks[1].count, available)
     end
     local duration = ns.SellingPlan.NormalizeDuration(settings.duration)
     if not raw then
-        quantity = SellingTab.ClampQuantity(entry.manualQty, available) or quantity
+        quantity = SellingTab.ClampQuantity(entry.manualQty, SellingTab.StackLimit(entry)) or quantity
         duration = entry.manualHours or duration
     end
-    local decision = { action = "post", price = price, quantity = quantity, auctions = 1, commodity = commodity,
+    if multisell and not raw then
+        auctions = SellingTab.ClampStacks(entry.manualStacks, quantity, available) or 1
+    end
+    local decision = { action = "post", price = price, quantity = quantity, auctions = auctions, commodity = commodity,
         reason = "manual post", key = candidate.key, duration = duration }
     return decision, SellingTab.BuildUnits(candidate, decision)
 end
@@ -1279,15 +1377,18 @@ end
 -- that the user chose apply, with a new deposit quote. Post all (all) and raw use the plan as it is.
 function Tab:_NextPost(entry, price, all, raw)
     local ready = entry.status == "ready"
-    if ready and (all or raw or not (entry.manualQty or entry.manualHours)) then
+    if ready and (all or raw or not (entry.manualQty or entry.manualHours or entry.manualStacks)) then
         return entry.decision, entry.units[entry.next]
     end
     local decision, unit
     if ready then
         decision, unit = copyTable(entry.decision), copyTable(entry.units[entry.next])
         decision.duration = entry.manualHours or decision.duration
-        unit.quantity = SellingTab.ClampQuantity(entry.manualQty, SellingTab.MaxQuantity(entry.candidate))
-            or unit.quantity
+        unit.quantity = SellingTab.ClampQuantity(entry.manualQty, SellingTab.StackLimit(entry)) or unit.quantity
+        if unit.stacks then
+            local room = SellingTab.MaxQuantity(entry.candidate)
+            unit.stacks = SellingTab.ClampStacks(entry.manualStacks or unit.stacks, unit.quantity, room) or unit.stacks
+        end
     else
         local units
         decision, units = self:_ManualPlan(entry, price, raw)
@@ -1295,7 +1396,7 @@ function Tab:_NextPost(entry, price, all, raw)
     end
     if not raw then
         local ok, deposit = pcall(self.deps.client.Deposit, unit.bag, unit.slot, decision.duration, unit.quantity,
-            decision.commodity == true)
+            decision.commodity == true, nil, nil, unit.stacks)
         unit.deposit = ok and type(deposit) == "number" and deposit or nil
     end
     return decision, unit
@@ -1303,18 +1404,32 @@ end
 
 -- Set the quantity of the next manual post. The value is limited to 1 to the available count. nil clears it.
 function Tab:SetManualQuantity(value)
-    local entry = not self.awaiting and self:_Focus(false)
+    local entry = not self.awaiting and not self.multi and self:_Focus(false)
     if not entry then
         return false
     end
-    entry.manualQty = SellingTab.ClampQuantity(value, SellingTab.MaxQuantity(entry.candidate))
+    entry.manualQty = SellingTab.ClampQuantity(value, SellingTab.StackLimit(entry))
     self:_UpdateDetails()
     return true, entry.manualQty
 end
 
+-- Set the number of stacks of the next manual post (TBC). The value is limited to the stacks that the bags hold
+-- at the stack size of the post. nil clears it.
+function Tab:SetManualStacks(value)
+    local entry = not self.awaiting and not self.multi and self:_Focus(false)
+    if not entry or not ns.SellingPlan.Multisell() then
+        return false
+    end
+    local _, unit = self:_NextPost(entry, 1, false, true)
+    entry.manualStacks = unit and SellingTab.ClampStacks(value, entry.manualQty or unit.quantity,
+        SellingTab.MaxQuantity(entry.candidate)) or nil
+    self:_UpdateDetails()
+    return true, entry.manualStacks
+end
+
 -- Set the duration in hours of the next manual post (SellingPlan.DURATIONS). Another value or nil clears it.
 function Tab:SetManualDuration(hours)
-    local entry = not self.awaiting and self:_Focus(false)
+    local entry = not self.awaiting and not self.multi and self:_Focus(false)
     if not entry then
         return false
     end
@@ -1460,6 +1575,10 @@ end
 -- The first click of a run asks for a confirm with the total deposit. The accept click makes the first post.
 -- The later clicks of the run post at once. It needs a selected group, "[No group]" or item.
 function Tab:PostAll()
+    if self.multi then
+        self:_Say(self:_MultiText())
+        return false, "posting"
+    end
     if self.awaiting or self.allRun then
         if not self.awaiting and self.locked then
             return false, "wait"
@@ -1487,6 +1606,10 @@ function Tab:PostAll()
 end
 
 function Tab:_PostStep(all)
+    if self.multi then
+        self:_Say(self:_MultiText())
+        return false, "posting"
+    end
     if self.awaiting then
         self:_ShowConfirm()
         return true
@@ -1523,8 +1646,10 @@ function Tab:_PostStep(all)
         return self:_Fail(entry, "the item cannot be posted")
     end
     local quantity = unit.quantity
+    local stacks = not decision.commodity and unit.stacks or 1
     local okCount, available = pcall(client.AvailablePostCount, unit.bag, unit.slot)
-    if okCount and type(available) == "number" then
+    -- Several stacks may come from several bag slots, so the slot count limits one stack only.
+    if okCount and type(available) == "number" and stacks == 1 then
         quantity = math.min(quantity, available)
     end
     if quantity < 1 then
@@ -1556,21 +1681,31 @@ function Tab:_PostStep(all)
                 end
                 unit.deposit = deposit
                 held = { deposit = deposit }
-                held.vendor, held.net = SellingTab.VendorBetter(price, { quantity = quantity, deposit = deposit },
-                    vendor)
+                held.vendor, held.net = SellingTab.VendorBetter(price,
+                    { quantity = quantity, stacks = stacks, deposit = deposit }, vendor)
                 return held.vendor == nil
             end
         end
         call = function()
-            return client.PostItem(unit.bag, unit.slot, decision.duration, quantity, nil, buyout, plannedID, guard)
+            return client.PostItem(unit.bag, unit.slot, decision.duration, quantity, nil, buyout, plannedID, guard,
+                stacks > 1 and stacks or nil)
         end
         confirm = function()
-            return client.ConfirmPostItem(unit.bag, unit.slot, decision.duration, quantity, nil, buyout, plannedID)
+            return client.ConfirmPostItem(unit.bag, unit.slot, decision.duration, quantity, nil, buyout, plannedID,
+                nil, stacks > 1 and stacks or nil)
         end
+    end
+    -- The multisell events can come while the call runs. The state exists before the call.
+    if stacks > 1 then
+        self:_StartMulti(entry, quantity, stacks, price, decision.duration, all)
     end
     local ok, needsConfirmation = pcall(call)
     if not ok then
+        self.multi = nil
         return self:_Fail(entry, tostring(needsConfirmation))
+    end
+    if needsConfirmation == "held" or needsConfirmation then
+        self.multi = nil
     end
     if needsConfirmation == "held" then
         if not held then
@@ -1581,12 +1716,16 @@ function Tab:_PostStep(all)
     end
     if needsConfirmation then
         self.awaiting = { entry = entry, unit = unit, quantity = quantity, confirm = confirm, price = price,
-            duration = decision.duration }
+            duration = decision.duration, stacks = stacks, all = all }
         self:_ShowConfirm()
         self:_Update()
         return true
     end
     entry.real = true
+    if stacks > 1 then
+        self:_ArmMulti()
+        return true
+    end
     self:_Record(entry, quantity, "post", price, decision.duration)
     if all then
         self:_Lock()
@@ -1595,8 +1734,92 @@ function Tab:_PostStep(all)
     return true
 end
 
+-- The state of a multi-stack post (TBC). It blocks Post, Post all and Skip until the post ends.
+function Tab:_StartMulti(entry, quantity, stacks, price, duration, all)
+    self.multiToken = (self.multiToken or 0) + 1
+    self.multi = { entry = entry, quantity = quantity, stacks = stacks, price = price, duration = duration,
+        all = all, created = 0, total = stacks, token = self.multiToken }
+end
+
+function Tab:_MultiText()
+    local m = self.multi
+    return string.format("posting %s: %d of %d stacks", self:_Name(m.entry), m.created, m.total)
+end
+
+-- The call returned: wait for the events. A timer ends a post that gets no answer.
+function Tab:_ArmMulti()
+    local m = self.multi
+    if not m then
+        return
+    end
+    m.armed = true
+    local token = m.token
+    self.deps.after(MULTI_TIMEOUT + MULTI_TIMEOUT_PER_STACK * m.stacks, function()
+        if self.multi and self.multi.token == token then
+            self:_EndMulti("no answer from the Auction House")
+        end
+    end)
+    self:_CheckMulti()
+end
+
+-- A multisell event of the client: kind is "start", "update" or "failure".
+function Tab:_OnMultisell(kind, created, total, text)
+    local m = self.multi
+    if not m then
+        return
+    end
+    if type(created) == "number" then
+        m.created = math.max(m.created, created)
+    end
+    if type(total) == "number" and total > 0 then
+        m.total = total
+    end
+    if kind == "failure" then
+        m.failure = text or "the Auction House stopped the post"
+    end
+    if m.armed then
+        self:_CheckMulti()
+    end
+end
+
+function Tab:_CheckMulti()
+    local m = self.multi
+    if m.failure then
+        self:_EndMulti(m.failure)
+    elseif m.created >= m.total then
+        self:_EndMulti()
+    else
+        self:_Say(self:_MultiText())
+        self:_Update()
+    end
+end
+
+-- End a multi-stack post: log each stack that the client made. A failure marks the entry failed with the count.
+function Tab:_EndMulti(failure)
+    local m = self.multi
+    self.multi = nil
+    local entry = m.entry
+    local created = math.min(m.created, m.stacks)
+    for _ = 1, created do
+        self:_Record(entry, m.quantity, "post", m.price, m.duration)
+    end
+    if failure then
+        entry.posted = entry.posted + created
+        self.postedCount = self.postedCount + created
+        return self:_Fail(entry, string.format("%s (%d of %d stacks made)", failure, created, m.stacks))
+    end
+    if m.all then
+        self:_Lock()
+    end
+    self:_Say("")
+    self:_Advance(entry, true, created)
+end
+
 -- Leave the next auction of the queue without a post. Makes no protected call.
 function Tab:Skip()
+    if self.multi then
+        return false, "posting"
+    end
     local entry = self.awaiting and self.awaiting.entry or self:_Focus(false)
     if not entry then
         return false, "nothing to skip"
@@ -1740,20 +1963,27 @@ function Tab:_InitTreeRow(row, node, depth, isCollapsed, hasChildren)
     end
 end
 
--- Count the units of the selection: total to post and done (posted or skipped). Also the deposit still to pay.
+-- Count the auctions of the selection: total to post and done (posted or skipped). Also the deposit still to pay.
+-- A unit with several stacks (TBC) counts each stack.
 function Tab:_Progress()
     local total, done, deposit = 0, 0, nil
     for _, entry in ipairs(self.selection) do
         if entry.decision and entry.decision.action == "post" then
-            local count = #entry.units
-            done = done + math.min(entry.next - 1, count)
+            local count, before = 0, 0
+            for index, unit in ipairs(entry.units) do
+                count = count + (unit.stacks or 1)
+                if index < entry.next then
+                    before = before + (unit.stacks or 1)
+                end
+            end
+            done = done + before
             if entry.status == "ready" or entry.status == "done" then
                 total = total + count
             else
-                total = total + math.min(entry.next - 1, count)
+                total = total + before
             end
             if entry.status == "ready" and entry.deposit and count > 0 then
-                deposit = (deposit or 0) + entry.deposit * (count - (entry.next - 1)) / count
+                deposit = (deposit or 0) + entry.deposit * (count - before) / count
             end
         end
     end
@@ -1770,6 +2000,9 @@ end
 
 -- The progress text: "Posting 3 of 60" while a post is left, else empty.
 function Tab:ProgressText()
+    if self.multi then
+        return string.format("Posting %d of %d stacks", self.multi.created, self.multi.total)
+    end
     local total, done = self:_Progress()
     if total > 0 and (self.awaiting or self:_Current()) then
         return string.format("Posting %d of %d", math.min(done + 1, total), total)
@@ -1817,15 +2050,23 @@ function Tab:_SyncManual(entry, price)
     local d = self.ui.details
     local decision, unit = self:_NextPost(entry, price, false, true)
     local shown = self.manualShown
+    local stacks = unit.stacks or 1
     if not (shown and shown.entry == entry and shown.next == entry.next and shown.qty == unit.quantity
-        and shown.hours == decision.duration) then
-        self.manualShown = { entry = entry, next = entry.next, qty = unit.quantity, hours = decision.duration }
+        and shown.hours == decision.duration and shown.stacks == stacks) then
+        self.manualShown = { entry = entry, next = entry.next, qty = unit.quantity, hours = decision.duration,
+            stacks = stacks }
         self.syncing = true
+        if d.stacks then
+            d.stacks:SetNumber(entry.manualStacks or stacks)
+        end
         d.qty:SetNumber(entry.manualQty or unit.quantity)
         d.duration:SetValue(entry.manualHours or decision.duration)
         self.syncing = false
     end
     d.qty:SetEnabled(true)
+    if d.stacks then
+        d.stacks:SetEnabled(true)
+    end
     d.duration:SetEnabled(true)
 end
 
@@ -1844,6 +2085,10 @@ function Tab:_UpdateDetails()
         self.manualShown = nil
         d.qty:SetNumber(nil)
         d.qty:SetEnabled(false)
+        if d.stacks then
+            d.stacks:SetNumber(nil)
+            d.stacks:SetEnabled(false)
+        end
         d.duration:SetValue(nil)
         d.duration:SetEnabled(false)
         return
@@ -1883,7 +2128,8 @@ function Tab:_UpdateDetails()
         return
     end
     d.price:SetText("Buyout " .. money(values.buyout) .. " per auction")
-    d.stack:SetText(string.format("%d x %d", values.auctions, values.stackSize))
+    d.stack:SetText(string.format("%d x %d", ns.SellingPlan.Multisell() and values.nextStacks or values.auctions,
+        values.stackSize))
     d.deposit:SetText(SellingTab.DepositText(values.deposit))
     local netText, netColor = SellingTab.NetStyle(values.net, values.deposit == nil)
     d.net:SetText(netText)
@@ -1914,11 +2160,12 @@ function Tab:_Update()
     ui.tree:Refresh()
     local current = self:_Current()
     ui.postNext:SetText(self:PostLabel())
-    ui.postNext:SetEnabled(client.CanPost() and (self.awaiting ~= nil or self:_Focus(false) ~= nil))
+    local busy = self.multi ~= nil
+    ui.postNext:SetEnabled(client.CanPost() and not busy and (self.awaiting ~= nil or self:_Focus(false) ~= nil))
     ui.postAll:SetText(self:PostAllLabel())
-    ui.postAll:SetEnabled(client.CanPost() and self.awaiting == nil and #self.selection > 0 and current ~= nil
-        and not self.locked)
-    ui.skip:SetEnabled(self.awaiting ~= nil or self:_Focus(false) ~= nil)
+    ui.postAll:SetEnabled(client.CanPost() and not busy and self.awaiting == nil and #self.selection > 0
+        and current ~= nil and not self.locked)
+    ui.skip:SetEnabled(not busy and (self.awaiting ~= nil or self:_Focus(false) ~= nil))
     ui.progress:SetText(self:ProgressText())
     self:_UpdateDetails()
 end
@@ -2028,7 +2275,8 @@ function Tab:_BuildContent()
     d.net = line("small", 470, 22, 290)
     -- The quantity and the duration of a manual post. The calculated values show until the user changes them.
     d.qtyLabel = line("small", 470, 40, 56)
-    d.qtyLabel:SetText("Quantity:")
+    local multisell = ns.SellingPlan.Multisell()
+    d.qtyLabel:SetText(multisell and "Stack size:" or "Quantity:")
     d.qty = Kit.NumberInput(pane, 44, { min = 1, hint = "1+", onChange = function(number)
         local ok, clamped = self:SetManualQuantity(number)
         if ok and clamped then
@@ -2043,8 +2291,29 @@ function Tab:_BuildContent()
             end
         end)
     end
-    Kit.Tooltip(d.qty, "Quantity", { "How many items the next post holds.",
+    Kit.Tooltip(d.qty, multisell and "Stack size" or "Quantity", { "How many items the next post holds.",
         "The most is your count minus the keep quantity." })
+    if multisell then
+        -- TBC: the number of stacks that one Post click makes (the client multisell).
+        d.stacksLabel = line("small", 470, 56, 56)
+        d.stacksLabel:SetText("Stacks:")
+        d.stacks = Kit.NumberInput(pane, 44, { min = 1, hint = "1+", onChange = function(number)
+            local ok, clamped = self:SetManualStacks(number)
+            if ok and clamped then
+                d.stacks:SetNumber(clamped)
+            end
+        end })
+        d.stacks:SetPoint("TOPLEFT", pane, "TOPLEFT", 528, -54)
+        if d.stacks.HookScript then
+            d.stacks:HookScript("OnTextChanged", function()
+                if not self.syncing then
+                    self:SetManualStacks(d.stacks.GetNumber())
+                end
+            end)
+        end
+        Kit.Tooltip(d.stacks, "Stacks", { "How many stacks one Post click makes.",
+            "The most is what your bags hold at this stack size." })
+    end
     d.durationLabel = line("small", 610, 40, 40)
     d.durationLabel:SetText("Time:")
     local items = {}
@@ -2130,6 +2399,13 @@ function Tab:Mount(parent, api)
             self:_OnPosted()
         end)
         self.events[#self.events + 1] = posted
+    end
+    local multisell = client.MultisellEvent and client.MultisellEvent()
+    if multisell then
+        bus:Subscribe(multisell, OWNER, function(_, kind, created, total, text)
+            self:_OnMultisell(kind, created, total, text)
+        end)
+        self.events[#self.events + 1] = multisell
     end
     -- The bags change after a post: read them again so that a posted item leaves the list.
     bus:Subscribe("BAG_UPDATE_DELAYED", OWNER, function()

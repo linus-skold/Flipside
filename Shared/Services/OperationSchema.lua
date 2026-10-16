@@ -9,6 +9,9 @@ local DEFAULT_MIN = "check(first(crafting, scanmarket), "
 -- The post durations in hours: 2, 8 and 24 on WoW: Forever, 12, 24 and 48 on TBC (ns.Flavour.durations).
 local DURATIONS = ns.Flavour and ns.Flavour.durations or { 2, 8, 24 }
 
+-- TBC posts several stacks per click (ns.Flavour.multisell): the selling operation has a stack size and a stack count.
+local MULTISELL = ns.Flavour ~= nil and ns.Flavour.multisell == true
+
 OperationSchema.TYPES = { "selling", "buying", "vendoring" }
 
 -- The built-in selling operation: price 1c under the lowest auction, vendor price as the floor, no scan data needed.
@@ -64,8 +67,10 @@ local FIELDS = {
                 .. "units for a commodity. 0 means no cap.",
         },
         {
-            key = "stackSize", label = "Max stack size", kind = "number", default = 0, min = 0, max = 1000,
-            help = "The most units in one item auction. 0 means a full stack. The client limit caps it. "
+            key = "stackSize", label = MULTISELL and "Stack size" or "Max stack size", kind = "number", default = 0,
+            min = 0, max = 1000,
+            help = MULTISELL and "The units in each stack. 0 means the item maximum (a full stack)."
+                or "The most units in one item auction. 0 means a full stack. The client limit caps it. "
                 .. "A commodity has no stack, so this does nothing for it.",
         },
         {
@@ -128,6 +133,20 @@ local FIELDS = {
         },
     },
 }
+
+-- Only the TBC selling operation has the Max stacks field: a commodity has no stacks.
+if MULTISELL then
+    for index, f in ipairs(FIELDS.selling) do
+        if f.key == "stackSize" then
+            table.insert(FIELDS.selling, index + 1, {
+                key = "maxStacks", label = "Max stacks", kind = "number", default = 0, min = 0, max = 1000,
+                help = "The most stacks to post for one item. 0 means all the full stacks in your bags. "
+                    .. "The rest, less than a full stack, posts as one smaller stack (only when this is 0).",
+            })
+            break
+        end
+    end
+end
 
 local LISTS = {}
 for type, own in pairs(FIELDS) do

@@ -30,6 +30,7 @@ ns.Flavour = {
     scopeIncludesRealm = true, -- D24
     captureEnabled = true,
     hasCommodityMarket = false, -- every listing is a stack with a stack buyout
+    multisell = true, -- PostAuction posts several stacks in one click; the operation has the Max stacks field
     hasMailInvoices = false, -- the TBC invoice fields are not checked yet; only the mail headers are read
     -- Tab templates from the TBC client. Bottom tabs look like the Character and Auction House frame tabs.
     pageTabTemplate = "CharacterFrameTabButtonTemplate",

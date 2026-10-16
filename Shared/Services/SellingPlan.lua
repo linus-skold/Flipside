@@ -224,7 +224,7 @@ function SellingPlan.Decide(candidate, rows, opts)
         return Skip(candidate, "already lowest", info)
     end
 
-    local quantity, auctions
+    local quantity, auctions, remainder
     if commodity then
         quantity, auctions = math.min(available, room), 1
     else
@@ -235,14 +235,29 @@ function SellingPlan.Decide(candidate, rows, opts)
         quantity = size
         if auctions == 0 then
             quantity, auctions = available, 1
+        elseif SellingPlan.Multisell() then
+            -- The user limit on the stacks; the rest of a full-stack run posts as one smaller stack.
+            local limit = tonumber(s.maxStacks) or 0
+            if limit > 0 then
+                auctions = math.min(auctions, limit)
+            end
+            local left = available - auctions * size
+            if limit == 0 and left > 0 and auctions < room then
+                remainder = left
+            end
         end
         auctions = math.min(auctions, room)
     end
     return {
-        action = "post", price = price, quantity = quantity, auctions = auctions,
+        action = "post", price = price, quantity = quantity, auctions = auctions, remainder = remainder,
         duration = SellingPlan.NormalizeDuration(s.duration), reason = why,
         key = candidate.key, competitor = competitor, commodity = commodity,
     }
+end
+
+-- True on a client that posts several stacks in one call (TBC): ns.Flavour.multisell.
+function SellingPlan.Multisell()
+    return ns.Flavour ~= nil and ns.Flavour.multisell == true
 end
 
 -- Map the saved hours of a rule to a valid duration: the nearest value of SellingPlan.DURATIONS.
@@ -278,7 +293,7 @@ end
 function SellingPlan.Profit(price, units, vendorPrice)
     local quantity, deposit, known = 0, 0, #units > 0
     for _, unit in ipairs(units) do
-        quantity = quantity + (unit.quantity or 0)
+        quantity = quantity + (unit.quantity or 0) * (unit.stacks or 1)
         deposit = deposit + (unit.deposit or 0)
         if type(unit.deposit) ~= "number" then
             known = false

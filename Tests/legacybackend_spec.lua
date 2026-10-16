@@ -724,6 +724,148 @@ describe("LegacyBackend", function()
             end)
         end)
 
+        describe("multisell", function()
+            local steps
+
+            before_each(function()
+                steps = {}
+                -- The sale slot reports the items in all bags: 60 here, in a 20-item stack slot.
+                _G.GetAuctionSellItemInfo = function()
+                    if not sell then
+                        return nil
+                    end
+                    return "Copper Bar", 1, 20, 1, true, 0, 0, 20, 60, sell.item.itemID
+                end
+                _G.ERR_AUCTION_DATABASE_ERROR = "Auction House database error."
+                ns.bus:Subscribe("Flipside.LegacyMultisell", "spec", function(_, kind, created, total, text)
+                    steps[#steps + 1] = { kind = kind, created = created, total = total, text = text }
+                end)
+                A().MultisellEvent()
+            end)
+
+            after_each(function()
+                _G.ERR_AUCTION_DATABASE_ERROR = nil
+            end)
+
+            it("gives its own event name", function()
+                assert.are.equal("Flipside.LegacyMultisell", A().MultisellEvent())
+            end)
+
+            it("sends the stack size and the stack count with the prices of one stack", function()
+                assert.is_true(A().PostItem(0, 1, 24, 20, 300, 500, 11, nil, 3) == false)
+                assert.are.same({ 300, 500, 2, 20, 3, n = 5 }, posts[1])
+            end)
+
+            it("takes the stacks from all bags: only the total must hold the items", function()
+                bag[key(0, 1)].stackCount = 7
+                assert.is_false(A().PostItem(0, 1, 24, 20, nil, 500, 11, nil, 3))
+                assert.are.same({ 500, 500, 2, 20, 3, n = 5 }, posts[1])
+            end)
+
+            it("refuses more stacks than the bags hold", function()
+                local ok, err = pcall(A().PostItem, 0, 1, 24, 20, nil, 500, 11, nil, 4)
+                assert.is_false(ok)
+                assert.is_truthy(err:find("sale slot", 1, true))
+                assert.are.equal(0, #posts)
+                assert.is_nil(sell)
+            end)
+
+            it("refuses a bad stack count", function()
+                assert.is_false((pcall(A().PostItem, 0, 1, 24, 20, nil, 500, 11, nil, 0)))
+                assert.is_false((pcall(A().PostItem, 0, 1, 24, 20, nil, 500, 11, nil, 1.5)))
+                assert.are.equal(0, #posts)
+            end)
+
+            it("passes the stack count to the confirm call", function()
+                postResult = false
+                assert.is_true(A().PostItem(0, 1, 24, 20, nil, 500, 11, nil, 3))
+                assert.is_false((pcall(A().ConfirmPostItem, 0, 1, 24, 20, nil, 500, 11, nil, 2)))
+                postResult = false
+                A().PostItem(0, 1, 24, 20, nil, 500, 11, nil, 3)
+                assert.is_false(A().ConfirmPostItem(0, 1, 24, 20, nil, 500, 11, nil, 3))
+                assert.are.same({ 500, 500, 2, 20, 3, true, n = 6 }, posts[#posts])
+            end)
+
+            it("sends the real prices and the stack count to GetAuctionDeposit", function()
+                pickup(0, 1)
+                _G.ClickAuctionSellItemButton()
+                assert.are.equal(66, A().Deposit(0, 1, 24, 20, false, 300, 500, 3))
+                assert.are.same({ 2, 300, 500, 20, 3, n = 5 }, depositCalls[1])
+            end)
+
+            it("gives no deposit when the bags hold fewer items than the stacks", function()
+                pickup(0, 1)
+                _G.ClickAuctionSellItemButton()
+                assert.is_nil(A().Deposit(0, 1, 24, 20, false, 300, 500, 4))
+            end)
+
+            it("reads the deposit of all stacks on select and puts the item back", function()
+                assert.are.equal(66, A().ReadDeposit(0, 1, 24, 20, 300, 500, 11, 3))
+                assert.are.same({ 2, 300, 500, 20, 3, n = 5 }, depositCalls[1])
+                assert.is_nil(sell)
+                assert.are.equal(0, #posts)
+            end)
+            it("gives the guard the deposit of all stacks", function()
+                local seen
+                A().PostItem(0, 1, 24, 20, 300, 500, 11, function(deposit)
+                    seen = deposit
+                    return true
+                end, 3)
+                assert.are.equal(66, seen)
+                assert.are.same({ 2, 300, 500, 20, 3, n = 5 }, depositCalls[1])
+            end)
+
+            it("sends the update steps and the created count", function()
+                A().PostItem(0, 1, 24, 20, nil, 500, 11, nil, 3)
+                ns.bus:Emit("AUCTION_MULTISELL_START", 3)
+                ns.bus:Emit("AUCTION_MULTISELL_UPDATE", 1, 3)
+                ns.bus:Emit("AUCTION_MULTISELL_UPDATE", 3, 3)
+                assert.are.same({ kind = "start", created = 0, total = 3 }, steps[1])
+                assert.are.same({ kind = "update", created = 1, total = 3 }, steps[2])
+                assert.are.same({ kind = "update", created = 3, total = 3 }, steps[3])
+            end)
+
+            it("sends a failure with the created count for AUCTION_MULTISELL_FAILURE", function()
+                A().PostItem(0, 1, 24, 20, nil, 500, 11, nil, 3)
+                ns.bus:Emit("AUCTION_MULTISELL_START", 3)
+                ns.bus:Emit("AUCTION_MULTISELL_UPDATE", 2, 3)
+                ns.bus:Emit("AUCTION_MULTISELL_FAILURE")
+                assert.are.equal("failure", steps[3].kind)
+                assert.are.equal(2, steps[3].created)
+                assert.are.equal(3, steps[3].total)
+            end)
+
+            it("sends a failure for an ERR_AUCTION_* UI error inside the post window", function()
+                A().PostItem(0, 1, 24, 20, nil, 500, 11, nil, 3)
+                ns.bus:Emit("AUCTION_MULTISELL_START", 3)
+                ns.bus:Emit("AUCTION_MULTISELL_UPDATE", 1, 3)
+                ns.bus:Emit("UI_ERROR_MESSAGE", 1, "Something else")
+                assert.are.equal(2, #steps)
+                ns.bus:Emit("UI_ERROR_MESSAGE", 1, "Auction House database error.")
+                assert.are.equal("failure", steps[3].kind)
+                assert.are.equal(1, steps[3].created)
+                assert.are.equal("Auction House database error.", steps[3].text)
+            end)
+
+            it("sends a failure for AUCTION_HOUSE_POST_ERROR after the call returned", function()
+                A().PostItem(0, 1, 24, 20, nil, 500, 11, nil, 3)
+                ns.bus:Emit("AUCTION_HOUSE_POST_ERROR")
+                assert.are.equal("failure", steps[1].kind)
+                assert.are.equal(0, steps[1].created)
+            end)
+
+            it("sends no failure for a UI error with no multisell", function()
+                ns.bus:Emit("UI_ERROR_MESSAGE", 1, "Auction House database error.")
+                assert.are.equal(0, #steps)
+            end)
+
+            it("ends the window when the last update comes", function()
+                A().PostItem(0, 1, 24, 20, nil, 500, 11, nil, 3)
+                ns.bus:Emit("AUCTION_MULTISELL_UPDATE", 3, 3)
+                ns.bus:Emit("UI_ERROR_MESSAGE", 1, "Auction House database error.")
+                assert.are.equal(1, #steps)
+            end)
+        end)
         it("gives the item count of a bag slot", function()
             assert.are.equal(20, A().AvailablePostCount(0, 1))
             assert.are.equal(0, A().AvailablePostCount(0, 2))
