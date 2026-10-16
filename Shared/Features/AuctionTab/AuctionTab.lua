@@ -135,13 +135,16 @@ function Tab:Refresh()
     ui.status:SetText(self:_StatusText())
     if ui.progress then
         local fraction = 0
-        if engine and engine:IsRunning() and engine.GetProgress then
+        local running = engine ~= nil and engine:IsRunning()
+        if running and engine.GetScanProgress then
+            fraction = ns.ScanBar.ProgressFraction(engine:GetScanProgress()) or 0
+        elseif running and engine.GetProgress then
             local _, page, pages = engine:GetProgress()
             if page and pages and pages > 0 then
                 fraction = page / pages
             end
         end
-        self:_SetProgress(fraction)
+        self:_SetProgress(fraction, running)
     end
 end
 
@@ -442,6 +445,9 @@ function Tab:_BuildStartPageCheck(content, ui, y)
     end
     ui.startCheck = check
 end
+-- Forward declaration: the bar builder is below.
+local buildProgress
+
 -- The default layout: large headings, scan block, status block and price lookup in one column.
 function Tab:_BuildClassic(content, ui)
     local Kit = ns.Kit
@@ -463,6 +469,7 @@ function Tab:_BuildClassic(content, ui)
     end)
     ui.openMain:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, 0)
     ui.message = leftAligned(place(Kit.Label(content, "", "small"), 0, -54), WIDTH)
+    buildProgress(content, ui, 0, -56, 360, true)
 
     place(Kit.Label(content, "Status", "title"), 0, -80)
     ui.status = leftAligned(place(Kit.Label(content, "", "normal"), 0, -102), WIDTH)
@@ -498,7 +505,7 @@ end
 -- The progress bar of the compact layout: a dark back, a fill and the status text on top. It uses client art only.
 local BAR_TEXTURE = "Interface\\TargetingFrame\\UI-StatusBar"
 
-local function buildProgress(content, ui, x, y, width)
+function buildProgress(content, ui, x, y, width, hideIdle)
     local frame = CreateFrame("Frame", nil, content)
     frame:SetSize(width, 18)
     frame:SetPoint("TOPLEFT", content, "TOPLEFT", x, y)
@@ -512,15 +519,21 @@ local function buildProgress(content, ui, x, y, width)
     fill:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 0, 0)
     fill:SetWidth(1)
     fill:Hide()
-    ui.progress = { frame = frame, fill = fill, width = width }
+    ui.progress = { frame = frame, fill = fill, width = width, hideIdle = hideIdle }
+    if hideIdle then
+        frame:Hide()
+    end
     return frame
 end
 
 -- Set the fill of the progress bar to a fraction from 0 to 1.
-function Tab:_SetProgress(fraction)
+function Tab:_SetProgress(fraction, running)
     local progress = self.ui.progress
     if not progress then
         return
+    end
+    if progress.hideIdle then
+        progress.frame:SetShown(running == true)
     end
     if fraction > 0 then
         progress.fill:SetWidth(math.max(1, progress.width * math.min(fraction, 1)))

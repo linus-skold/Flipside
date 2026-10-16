@@ -210,6 +210,38 @@ describe("ScanBar", function()
                 ns.ScanBar.ResultText({ label = "full scan", result = "ok", items = 9, pending = 7 }))
         end)
 
+        it("shows the text and the fraction of a progress event", function()
+            engine.running = true
+            local bar = build()
+            deps.bus:Emit("Flipside.ScanProgress", { phase = "waiting" })
+            assert.are.equal("Waiting for server", bar.status:GetText())
+            deps.bus:Emit("Flipside.ScanProgress", { phase = "reading", done = 1234, total = 5678 })
+            assert.are.equal("Scanning 1234 / 5678 (21%)", bar.status:GetText())
+            assert.are.equal(1234 / 5678, ns.ScanBar.ProgressFraction(bar.progress))
+            deps.bus:Emit("Flipside.ScanProgress", { phase = "loading", done = 5, total = 10 })
+            assert.are.equal("Loading items 5 / 10 (50%)", bar.status:GetText())
+            deps.bus:Emit("Flipside.ScanProgress", { phase = "saving" })
+            assert.are.equal("Saving", bar.status:GetText())
+        end)
+
+        it("shows page and row counts of the page scan", function()
+            local text = ns.ScanBar.ProgressText({ phase = "pages", done = 3, total = 40, rows = 150 })
+            assert.are.equal("Page scan: page 3 of 40, 150 rows", text)
+            assert.are.equal("page 3 of 40", ns.ScanBar.ProgressText({ phase = "pages", done = 3, total = 40 }, true))
+            assert.is_nil(ns.ScanBar.ProgressFraction({ phase = "waiting" }))
+        end)
+
+        it("clears the progress when the scan finishes", function()
+            engine.running = true
+            local bar = build()
+            deps.bus:Emit("Flipside.ScanProgress", { phase = "reading", done = 1, total = 2 })
+            assert.is_not_nil(bar.progress)
+            engine.running = false
+            deps.bus:Emit("Flipside.ScanFinished", { label = "full scan", result = "ok", items = 1 })
+            assert.is_nil(bar.progress)
+            bar:Refresh()
+            assert.are.equal("Cooldown: ready", bar.status:GetText())
+        end)
         it("shows short progress", function()
             engine.running = true
             engine.progress = { "page", 5, 40 }
