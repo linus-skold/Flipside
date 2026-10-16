@@ -1638,18 +1638,31 @@ function Tab:_AskVendor(entry, all, held)
         return self.awaiting ~= nil or self:_Focus(all) ~= entry
     end
     local text = SellingTab.VendorText(held.vendor, held.net)
-    self.deps.warn("Check the deposit", text, function()
+    -- The title names the item (item link in the quality colour), so the body is only the two lines.
+    local title = "Check the deposit: " .. (self:_ItemLink(entry) or self:_Name(entry))
+    self.deps.warn(title, text, function()
         if stale() then
             return
         end
         entry.vendorForce = true
         self:_PostStep(all)
-    end, nil, function()
+    end, function()
         if stale() then
             return
         end
-        self:SkipItem(entry, "vendor pays more than the AH")
-    end, { post = "Post anyway", skip = false, cancel = "Cancel" })
+        self:SkipItem(entry)
+    end, function()
+        if stale() then
+            return
+        end
+        if all then
+            -- In a Post all run, Cancel ends the run. The item stays in the queue.
+            self.allRun = nil
+            self:_Say("stopped")
+        else
+            self:SkipItem(entry, "vendor pays more than the AH")
+        end
+    end, { post = "Post anyway", skip = all and "Skip" or false, cancel = "Cancel" })
 end
 
 -- Lock the Post all button after a post. A timer unlocks it after POST_DELAY once the AH is ready.
