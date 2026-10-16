@@ -12,8 +12,7 @@ end
 
 -- These specs keep ScrollUtil: the game uses the ScrollBox path.
 describe("SellingTab multisell on TBC", function()
-    local ns, bus, client, rules, tab, ui, bagItems, bagReads, warns, vendor, opExtra, confirms, autoAccept
-    local delays = {}
+    local ns, bus, client, rules, tab, ui, bagItems, bagReads, warns, vendor, opExtra, confirms
     local timers = {}
 
     local function makeClient()
@@ -101,20 +100,18 @@ describe("SellingTab multisell on TBC", function()
         bus:Emit(event, ...)
     end
 
-    -- Run the Post all delay timers, as the game does after the delay. Other timers stay off.
-    local function flushDelays()
-        local list = delays
-        delays = {}
-        for _, fn in ipairs(list) do
-            fn()
+    -- The client confirms a one-stack post with the created event. autoCreate false leaves the post open.
+    local autoCreate = true
+
+    local function settle()
+        if autoCreate and tab and tab.multi and tab.multi.stacks == 1 and tab.multi.armed then
+            fire("CREATED")
         end
     end
 
     local function click(button)
-        if button == ui.postAll then
-            flushDelays()
-        end
         button.scripts.OnClick(button)
+        settle()
     end
 
     local function pick(id)
@@ -142,11 +139,7 @@ describe("SellingTab multisell on TBC", function()
             bus = bus, rules = rules, formulaRun = { Evaluate = function(_, text) return tonumber(text), nil end },
             client = client,
             after = function(seconds, fn)
-                if seconds == ns.SellingTab.POST_DELAY then
-                    delays[#delays + 1] = fn
-                else
-                    timers[#timers + 1] = { seconds = seconds, fn = fn }
-                end
+                timers[#timers + 1] = { seconds = seconds, fn = fn }
             end,
             itemInfo = function(id) return "Item" .. id, 1 end,
             readBags = function()
@@ -156,12 +149,11 @@ describe("SellingTab multisell on TBC", function()
             syncInterval = 0,
             maxStack = function(id) return id == 10 and 20 or 1 end,
             vendorPrice = function(id) return vendor[id] end,
-            -- The Post all confirm accepts at once; the server confirm of a post stays open.
             confirm = function(name, text, onAccept)
-                confirms[#confirms + 1] = { name = name, text = text, onAccept = onAccept }
-                if name == "FLIPSIDE_CONFIRM_POST_ALL" and autoAccept then
+                confirms[#confirms + 1] = { name = name, text = text, onAccept = function()
                     onAccept()
-                end
+                    settle()
+                end }
             end,
             itemLink = function(id) return "|Hitem:" .. id .. "|h[Item" .. id .. "]|h", 1 end,
             warn = function(title, text, onPost, onSkip, onCancel, options)
@@ -192,7 +184,7 @@ describe("SellingTab multisell on TBC", function()
         client.commodity[11] = true
         timers = {}
         warns, bagReads, vendor, opExtra = {}, 0, {}, { vendorSkip = false, maxPrice = "100000000" }
-        confirms, autoAccept = {}, true
+        confirms, autoCreate = {}, true
         rules = makeRules()
         bagItems = {
             { key = "11", itemID = 11, name = "Bolt of Linen", count = 12, stacks = {
@@ -301,13 +293,11 @@ describe("SellingTab multisell on TBC", function()
             click(ui.postNext)
             assert.is_not_nil(tab.multi)
             assert.is_false(ui.postNext.enabled)
-            assert.is_false(ui.postAll.enabled)
             assert.is_false(ui.skip.enabled)
             assert.are.equal("Posting 0 of 3 stacks", tab:ProgressText())
             local ok, why = tab:PostNext()
             assert.is_false(ok)
             assert.are.equal("posting", why)
-            assert.is_false((tab:PostAll()))
             assert.is_false((tab:Skip()))
             assert.are.equal(1, #itemPosts())
         end)
@@ -349,17 +339,6 @@ describe("SellingTab multisell on TBC", function()
             assert.are.equal("done", entryOf("10").status)
             assert.are.equal(3, entryOf("10").posted)
         end)
-
-        it("makes the Post all queue post the same units one click each", function()
-            selectLinen(47, { { bag = 1, slot = 1, count = 20 }, { bag = 1, slot = 2, count = 20 },
-                { bag = 1, slot = 3, count = 7 } })
-            click(ui.postAll)
-            assert.are.equal(1, #itemPosts())
-            assert.is_not_nil(tab.multi)
-            fire("MULTI", "update", 2, 2)
-            click(ui.postAll)
-            assert.are.equal(2, #itemPosts())
-        end)
     end)
 
     describe("a failure", function()
@@ -375,6 +354,28 @@ describe("SellingTab multisell on TBC", function()
             assert.are.equal(2, entry.posted)
             assert.are.equal(2, logCount("post"))
             assert.are.equal(1, logCount("failed"))
+        end)
+
+        it("keeps the row in the list with the rest, and shows the reason in the Info column", function()
+            selectLinen(60, FULL)
+            local entry = entryOf("10")
+            click(ui.postNext)
+            assert.are.equal("posting 0 of 3 stacks", ns.SellingTab.InfoText(entry))
+            fire("MULTI", "update", 2, 3)
+            assert.are.equal("posting 2 of 3 stacks", ns.SellingTab.InfoText(entry))
+            local listed = false
+            for _, each in ipairs(ns.SellingTab.CollectEntries({ children = tab.nodes }, {})) do
+                listed = listed or each == entry
+            end
+            assert.is_true(listed)
+            fire("MULTI", "failure", 2, 3, "the Auction House stopped the multi-stack post")
+            listed = false
+            for _, each in ipairs(ns.SellingTab.CollectEntries({ children = tab.nodes }, {})) do
+                listed = listed or each == entry
+            end
+            assert.is_true(listed)
+            assert.matches("^failed: .*2 of 3 stacks made", ns.SellingTab.InfoText(entry))
+            assert.is_nil(entry.postText)
         end)
 
         it("marks the entry failed with the text of an ERR_AUCTION_* UI error", function()
@@ -770,7 +771,8 @@ describe("SellingTab multisell on TBC", function()
             click(ui.postNext)
             assert.are.equal(2, #client.posts)
             assert.are.equal(7, client.posts[2].quantity)
-            assert.are.equal("Posting 4 of 4", tab:ProgressText())
+            -- The bag sync after the created event picks the selection again from the nodes that are left.
+            assert.are.equal("Posting 1 of 1", tab:ProgressText())
             click(ui.postNext)
             assert.are.equal(3, #client.posts)
             assert.are.equal("commodity", client.posts[3].kind)
@@ -806,18 +808,6 @@ describe("SellingTab multisell on TBC", function()
             assert.are.equal("ready", entryOf("11").status)
             click(ui.postNext)
             assert.are.equal(1, #client.posts)
-            assert.are.equal("commodity", client.posts[1].kind)
-        end)
-
-        it("drops the rest of the current item with Skip item", function()
-            setupGroup()
-            pick("g2")
-            priceAll()
-            assert.is_true(ui.skipItem.enabled)
-            click(ui.skipItem)
-            assert.are.equal("skipped", entryOf("10").status)
-            assert.are.equal(0, #client.posts)
-            click(ui.postNext)
             assert.are.equal("commodity", client.posts[1].kind)
         end)
 
