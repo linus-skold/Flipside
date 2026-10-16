@@ -577,10 +577,11 @@ describe("SellingTab multisell on TBC", function()
 
         it("lower the stack count when a bigger stack size leaves no room", function()
             selectLinen(60, FULL)
-            tab:SetManualQuantity(10)
-            tab:SetManualStacks(6)
-            ui.details.qty:SetText("20")
-            ui.details.qty.scripts.OnEnterPressed(ui.details.qty)
+            -- Type in the boxes as the user does: the number box reports only a changed number.
+            for _, box in ipairs({ { ui.details.qty, "10" }, { ui.details.stacks, "6" }, { ui.details.qty, "20" } }) do
+                box[1]:SetText(box[2])
+                box[1].scripts.OnEnterPressed(box[1])
+            end
             assert.are.equal(3, entryOf("10").manualStacks)
             assert.are.equal(3, ui.details.stacks:GetNumber())
         end)
