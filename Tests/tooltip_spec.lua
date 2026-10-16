@@ -103,6 +103,27 @@ describe("Tooltip", function()
         assert.are.equal(0, #built)
     end)
 
+    it("adds nothing to a quest item", function()
+        callbackDeps.itemInfoInstant = function() return 5, "Quest", "Quest", "", 1, 12, 0 end
+        ns.Tooltip.Attach(callbackDeps)
+        local tip = newTooltip()
+        registered[1].fn(tip, "item:5")
+        assert.are.equal(0, #tip.lines)
+        assert.are.equal(0, #built)
+    end)
+
+    it("adds lines to a normal item and to an item with unknown class", function()
+        callbackDeps.itemInfoInstant = function() return 5, "Armor", "Cloth", "", 1, 4, 1 end
+        ns.Tooltip.Attach(callbackDeps)
+        local tip = newTooltip()
+        registered[1].fn(tip, "item:5")
+        assert.are.equal(4, #tip.lines)
+        callbackDeps.itemInfoInstant = function() return nil end
+        local tip2 = newTooltip()
+        registered[1].fn(tip2, "item:6")
+        assert.are.equal(4, #tip2.lines)
+    end)
+
     it("gives the stack count only with Alt", function()
         local owner = { GetBagID = function() return 0 end, GetID = function() return 1 end }
         ns.Tooltip.Attach(callbackDeps)
