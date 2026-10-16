@@ -90,7 +90,7 @@ Fifteen improvements, each specified in the section named.
 | Vendoring safety check | Never vendor something worth far more on the AH | §5.7 |
 | Open import/export and ledger CSV | Your data is yours and portable | §7.4, §5.8 |
 | Separate Scan DB | Reset or share price data without touching settings | §7.1 |
-| Mail lists exportable | Share mailing setups with recipients as placeholders | §5.5 |
+| Mailing operations exportable | Share mailing setups with the groups and operations (recipient as typed) | §5.5 |
 
 ## Feature list
 
@@ -102,7 +102,7 @@ Nine features come from your list, twelve are ones TSM users rely on that are ea
 | Buying | Search the AH, buy below a max price, restock materials | Same as Shopping; adds "% of market" and data-age columns | You | MVP |
 | Selling | Post and cancel by rules with min / max / normal prices | Same as Auctioning; adds dry run and decision log | You | MVP |
 | Item groups | Organise items into a tree that rules apply to | Same model; adds starter groups and auto profession groups (later; not in build step 4) | You | MVP |
-| Mail lists | Send grouped items to named characters automatically | Same as Mailing operations; adds reusable recipient lists | You | Phase 2 |
+| Mailing | Send grouped items to a named character: the mailing operation of a group (replaces the mail list, decided 2026-10-16) | Same as Mailing operations; the panel runs the mail groups at the mailbox | You | MVP |
 | Keep stock | Hold target quantities per character and location | Unifies TSM restock settings from Mailing, Banking and Shopping | You | Phase 2 |
 | Vendoring | Sell junk and low-value items, buy vendor reagents | Same as Vendoring; adds "never vendor above X" safety | You | MVP |
 | Ledger | Record sales, purchases, fees and failures; show profit | Same as Accounting; adds documented CSV export | You | MVP |
@@ -114,7 +114,7 @@ Nine features come from your list, twelve are ones TSM users rely on that are ea
 | Crafting and queue | Profit per recipe, restock queue, craft next | Same | Added | Phase 2 |
 | Banking | Move groups between bags, bank and warband bank | Folded into Keep stock rules | Added | Phase 2 |
 | Profiles | Swap rule sets per character | Same | Added | Phase 2 |
-| Import and export | Share groups and operations as text (MVP); mail lists and keep-stock rules later (Phase 2) | Open, documented format | Added | MVP |
+| Import and export | Share groups and operations as text (MVP, mailing operations included); keep-stock rules later (Phase 2) | Open, documented format | Added | MVP |
 | Dashboard | Gold over time and profit summary | Same, from local ledger only | Added | Phase 2 |
 | Account sync | Share inventory, ledger and scan data across accounts | Also shares scan history (fills gaps) | Added | Phase 3 |
 | Task List | Step-by-step guide through a crafting session | Same | Added | Phase 3 |
@@ -305,7 +305,7 @@ On TBC Anniversary the Flipside tab uses the Bids art of the Blizzard frame (ful
 2. **Names for items without scan data.** First use the game client's item cache. If the Auction House is open, then search the AH for the name. No item database ships with Flipside.
 3. **Group page.** The page has two inner tabs: "Items" (add and remove items) and "Rules" (the operations for each type). "Items" is the first tab and the default (changed 2026-10-15). The Items tab is a split pane. The left pane lists the bag items. The right pane lists the items of the selected group. Both panes anchor to the page frame and follow its size. A bag item that is already in the selected group is hidden in the left pane. A row is selected by a highlight, with no check box. A click toggles one row. A Shift-click adds the rows from the last clicked row to the clicked row. The right-arrow button (">") between the panes adds the selected bag items to the group. An item that is in another group moves to this group. The left-arrow button ("<") removes the selected group items from the group. Both selections clear after a move, and both lists update at once. The add box (name, link or id) is above the right pane. The bag list reads the bags again when the tab opens and when the page refreshes. The list selection is a Kit.List option (`multiSelect`) with no Flipside name in the Kit (D19).
 4. **Drag and drop.** The player drags a group into a parent group or out of it (a move). Lists stay sorted by name. No manual order is stored. Operations sort by name.
-5. **Keep amount.** Selling and vendoring operations get a "Keep in bags" setting: a number for each item, default 0. That many units of each item stay in the bags. Bank counts are tracked in the MVP (see §5.10), but "Keep in bags" still counts the bags only. Keep-stock rules (D8) have priority over it when they exist.
+5. **Keep amount.** Selling, vendoring and mailing operations get a "Keep in bags" setting (the mailing field is `keep`, §5.5): a number for each item, default 0. That many units of each item stay in the bags. Bank counts are tracked in the MVP (see §5.10), but "Keep in bags" still counts the bags only. Keep-stock rules (D8) have priority over it when they exist.
 6. **Export and import of groups** (MVP, see §7.4). The format is a documented, readable, versioned Flipside text format. It holds a group, its sub-groups, their items, and copies of the operations they use. Import shows a summary and asks before it changes anything. It never imports TSM strings (D13). Import rules:
    - The import goes under a parent group that the player picks.
    - If a group name already exists under that parent, the new group gets the suffix " (2)".
@@ -451,14 +451,40 @@ s.searchLists keeps the request (:Requested() gives { id, autoSearch }, :ClearRe
     - **f. Manual post.** A manual Post (point 26) follows the max stack size (one auction of at most that many units). It never posts the kept quantity. If no free unit is left, Post is off for the item.
     - **g. Queue limits.** Each queue entry has the auctions that the stack size, the keep quantity and the post quantity allow. The progress count follows these limits.
 
-### 5.5 Mail lists (reference §5.4 Mailing)
+### 5.5 Mailing (reference §5.4 Mailing)
 
-- A **mail list** is a named rule set: "send group X to character Y, keep N, send up to M".
-- Recipients can be saved once and reused across lists (alt names, Name-Realm).
-- One button sends everything due at this mailbox; a summary shows what will be sent before sending.
-- Inbox: open by type, with a running gold total. There is no open-all button in the MVP. When the user opens the mail, Flipside reads the invoices and feeds the ledger (§5.8, decided 2026-10-15).
-- Unlike TSM, mail lists *can* be exported, with recipient names stripped and replaced by placeholders.
+Decision of 2026-10-16: mailing is a fourth operation type, "mailing", on groups, like selling, buying and vendoring. It replaces the separate mail list. Groups and subgroups inherit it in the usual way (§5.2): a group uses the mailing operation of the nearest group above it. Mailing moves from Phase 2 into the MVP work.
 
+**Operation fields** (`OperationSchema`, type `mailing`; no safety fields, because the operation reads no prices):
+
+| Key | Label | Default | Range | Meaning |
+| --- | --- | --- | --- | --- |
+| `recipient` | Recipient | empty (required) | 1 to 64 characters | The character that gets the mail: `Name` or `Name-Realm`. Any name is allowed. |
+| `keep` | Keep in bags | 0 | 0 to 10000 | Units of each item that stay in the bags. 0 means send all. |
+| `maxSend` | Send up to | 0 | 0 to 100000 | The most units of each item to send in one run. 0 means no limit. |
+
+**Planner** (`Shared/Services/MailingPlan.lua`, pure, no WoW call). Input: the groups to run, each with its items and its effective mailing operation; the bag slots (item key, bag, slot, count, flags `soulbound`, `quest`, `unmailable`); the name of the own character. Output: a list of mails and a list of skipped slots with the reason. Item keys follow D20.
+- For each item: sendable = (total in all its bag slots - keep), capped by `maxSend` when `maxSend` is above 0. The total counts every slot, also a slot that cannot be mailed.
+- The planner sends whole bag slots only (no stack split). It takes slots **largest first** (then by bag and slot), because this needs the fewest attachments. A slot that is larger than the units left to send is not sent. The next smaller slot can still fit.
+- A mail has one recipient and up to 12 attachments. The planner collects the attachments for each recipient, in group order and item order, and starts a new mail after 12. Recipient names match without regard to case.
+- An item follows the first group that lists it. Items that no selected group lists are not touched.
+- Skip reasons: `keep` (the slot does not fit in the units above the keep amount), `send limit` (it does not fit in `maxSend`), `soulbound`, `quest item`, `unmailable`, `no recipient` (the operation is missing or has an empty recipient), `recipient is self`. A name without a realm matches the own character by name; if both names have a realm, the whole name must match.
+- `MailingPlan.GroupsFor(rules, groupIDs)` lists the selected groups and their subgroups with their items and effective mailing operation.
+
+**Orchestrator defaults** (the user can change them later):
+- The recipient is a field of the operation. Any name is allowed. If the name is not a known own character from the holdings (§5.10), the panel shows a warning but still allows the run.
+- One summary and one confirm for each run: the panel lists the mails and the skipped items, then the user confirms once.
+- Postage is recorded in the ledger as an expense (§5.8).
+- An item that needs the confirm for an unrefundable mail (items that the recipient cannot return) is skipped and reported.
+- Soulbound, quest and unmailable items are skipped and reported.
+
+**Mail panel and send run (not built yet).** The user selects mail groups in a panel beside the `MailFrame` (not a tab) and runs them: Flipside puts as many items of a group as fit in a mail, sends it and repeats until nothing is left. The send mode is open: one click for the whole run, or one click for each mail (D26 limits protected calls). An in-game probe decides it (open question). The panel, the client and the send run wait for the probe result.
+
+**Keep stock (D8).** D8 says keep stock beats every outgoing rule. The `keep` field of a mailing operation is a per-operation floor, as `keepInBags` is for selling. When keep-stock rules exist (Phase 2), the planner reads the keep-stock target of an item and uses the larger of the two numbers. Going below the target needs the same **Override stock** button, for one run only. Mailing does not change D8.
+
+**Export.** The rules export lists the mailing operation like any other operation. The recipient is exported as typed (no placeholder in this step).
+
+**Inbox (unchanged).** Open by type, with a running gold total. There is no open-all button in the MVP. When the user opens the mail, Flipside reads the invoices and feeds the ledger (§5.8, decided 2026-10-15).
 ### 5.6 Keep stock (new, unifies reference restock settings)
 
 Keep stock is one rule type that says *how many of an item should be where*. Other features read it instead of each having their own restock fields.
@@ -471,9 +497,9 @@ Keep stock is one rule type that says *how many of an item should be where*. Oth
 | Sources | Where to refill from, in order: own bank, alts by mail, AH buy, craft |
 | Excess | What to do above target: leave, move to bank, mail to seller, post |
 
-How features use it: Banking moves to and from the bank; Mail lists send shortfalls from alts; Buying limits group purchases to the shortfall; Crafting restock queues the shortfall; Selling never posts below the keep amount.
+How features use it: Banking moves to and from the bank; Mailing sends shortfalls from alts; Buying limits group purchases to the shortfall; Crafting restock queues the shortfall; Selling never posts below the keep amount.
 
-**Precedence (D8).** Keep stock beats every outgoing rule — selling, mail lists, vendoring and excess moves. Example: a selling rule says "sell all Runecloth" and a keep-stock rule says "keep 2 stacks of Runecloth". Selling posts everything above 2 stacks and logs "kept for stock: 2 stacks" in the decision log. Going below the target needs an explicit **Override stock** button, which applies to that one run only and is recorded in the decision log.
+**Precedence (D8).** Keep stock beats every outgoing rule — selling, mailing, vendoring and excess moves. Example: a selling rule says "sell all Runecloth" and a keep-stock rule says "keep 2 stacks of Runecloth". Selling posts everything above 2 stacks and logs "kept for stock: 2 stacks" in the decision log. Going below the target needs an explicit **Override stock** button, which applies to that one run only and is recorded in the decision log.
 
 ### 5.7 Vendoring (reference §5.5)
 
@@ -731,7 +757,7 @@ On Retail the deposit is returned on sale and lost on expiry; the AH keeps a cut
 ### 5.15 Presets and undo (new)
 
 - **Presets:** ready-made operations to start from, e.g. "Safe seller" (never below 80% of market), "Fast undercut", "Material buyer" (max 90% of market, buy up to stock) and "Flipper" (buy below 60%, sell at market). Presets are copied, never linked, so editing one doesn't change others.
-- **Undo:** every change to groups, operations, keep-stock rules and mail lists is recorded per profile. Undo and redo the last 50 changes, plus *Restore snapshot* for a full profile state saved daily (last 7 kept).
+- **Undo:** every change to groups, operations and keep-stock rules is recorded per profile. Undo and redo the last 50 changes, plus *Restore snapshot* for a full profile state saved daily (last 7 kept).
 
 ## TBC Anniversary port
 
@@ -918,7 +944,7 @@ A corrupted or oversized scan DB or ledger DB can be wiped from settings without
 
 ### 7.2 Profiles
 
-As in the reference §8.1: per-character profile, reset / rename / duplicate / create, global-operations option, per-realm and per-character ignore on each operation. Keep-stock rules and mail lists live in the profile; recipient names are kept separately per account so a shared profile works on every account.
+As in the reference §8.1: per-character profile, reset / rename / duplicate / create, global-operations option, per-realm and per-character ignore on each operation. Keep-stock rules live in the profile. The recipient of a mailing operation is part of the operation and so lives in the profile too.
 
 ### 7.3 Account sync
 
@@ -930,8 +956,8 @@ As in the reference §8.2 (pairing, single-writer rows, timestamp versioning, th
 
 ### 7.4 Import and export
 
-- One documented, readable, versioned text format for groups, operations, custom sources, keep-stock rules and mail lists (recipients replaced by placeholders).
-- **MVP (feedback decision 2026-10-14):** export and import of groups, with their sub-groups, items, the operations they use and the custom sources those operations use. Keep-stock rules and mail lists stay Phase 2. The import rules are in §5.2. D13 still applies: no TSM strings.
+- One documented, readable, versioned text format for groups, operations, custom sources and keep-stock rules.
+- **MVP (feedback decision 2026-10-14):** export and import of groups, with their sub-groups, items, the operations they use and the custom sources those operations use. Keep-stock rules stay Phase 2. Mailing operations are in the MVP export (§5.5). The import rules are in §5.2. D13 still applies: no TSM strings.
 - A version header and a human-readable preview before import, with item and operation deselection (reference §9.2). In the MVP the import shows a summary and asks before it changes anything.
 - Plain item lists accepted, as in the reference §9.3.
 - Ledger CSV export (§5.8).
@@ -943,8 +969,8 @@ The MVP is done when a player on WoW: Forever can scan, see prices in tooltips, 
 
 | Phase | Goal | Features | Done when |
 | --- | --- | --- | --- |
-| MVP | Scan → price → buy / sell → profit, one realm | Full scan, groups, operations and formulas, tooltips, inventory tracking, buying, selling (dry run and decision log: Buying tab and ledger only), vendoring, ledger, Great Deals, export and import of groups and operations | A week of daily use on one realm with no errors, under 5 s of scan processing on a mid-size realm (Flipside processing time; see §3.2 scan engine design) |
-| Phase 2 | Run a multi-character business | Mail lists, keep stock, banking, crafting and queue, sniper, profiles, import/export of mail lists and keep-stock rules, dashboard, price history chart, deposit-aware posting, craft profit ranking, presets and undo | A crafter-and-seller pair of alts restocks and sells through one session without manual moves |
+| MVP | Scan → price → buy / sell → profit, one realm | Full scan, groups, operations and formulas, tooltips, inventory tracking, buying, selling (dry run and decision log: Buying tab and ledger only), vendoring, mailing (the mailing operation and the mail panel, §5.5), ledger, Great Deals, export and import of groups and operations | A week of daily use on one realm with no errors, under 5 s of scan processing on a mid-size realm (Flipside processing time; see §3.2 scan engine design) |
+| Phase 2 | Run a multi-character business | Keep stock, banking, crafting and queue, sniper, profiles, import/export of keep-stock rules, dashboard, price history chart, deposit-aware posting, craft profit ranking, presets and undo | A crafter-and-seller pair of alts restocks and sells through one session without manual moves |
 | Phase 3 | Multi-account and polish | Account sync (incl. scan data), Task List, destroying, guild scan sharing, then Retail | Two accounts on one realm share inventory, ledger and prices |
 
 **Spike 0: full-scan test (build first).** A throwaway addon, *ScanTest*, that answers whether the full scan works on WoW: Forever before the scan engine is built.
@@ -980,7 +1006,7 @@ The MVP is done when a player on WoW: Forever can scan, see prices in tooltips, 
 4. Groups and operations UI.
 5. Tooltips and inventory tracking. The tooltip price lines are configurable with the same formula language as operations. The player can show min, max and average values.
 6. AH tabs in Blizzard's Auction House frame: Buying, then Selling with dry run and decision log. Two new tabs, Selling and Buying (similar to the well-known Auctionator layout, in our own design), work from the player's groups and their operations.
-7. Mailbox parsing and the ledger; then Vendoring. The ledger design is in §5.8. The work is split into pull requests (decided 2026-10-15):
+7. Mailbox parsing and the ledger; then Vendoring; then Mailing (the mailing operation and planner first, §5.5; the send run and the mail panel after an in-game probe). The ledger design is in §5.8. The work is split into pull requests (decided 2026-10-15):
 
 | PR | Content | Depends on |
 | --- | --- | --- |
@@ -1007,6 +1033,7 @@ TSM behaviours this spec doesn't cover yet. Change the status as each one gets s
 | --- | --- | --- | --- |
 | UI and flow | Windows, AH tabs, settings layout, contextual frames | §6 | Partly scoped (2026-10-14: AH tabs, Flipside window, size, entry points; page layouts open; Groups and Operations pages: build step 4) |
 | TBC AH tabs | Buying tab and Selling tab in the TBC `AuctionFrame`: done (Buying 2026-10-16; Selling 2026-10-16; TBC multisell posting of several stacks in one click, with the Stack size and Max stacks fields, 2026-10-16, in this pull request; in-game checklists open, see §3 items 7 and 14a) | §3, §6 | Scoped (in-game checks open) |
+| Mailing | The mailing operation, the planner and the mail panel (§5.5) | §5.4 | Partly scoped (2026-10-16: operation, planner and rules; open: send mode, one click for all or one click per mail, pending an in-game probe; panel and send run not built) |
 | Onboarding | First-run steps: starter groups, presets, guild-sharing choice (D7), first scan (starter groups moved here, 2026-10-14) | §6.3 | Needs scoping |
 | One-click macro and keybinds | Bindable button for post, cancel, buy, craft next | §3, §6.2 | Partly scoped (2026-10-14: no keybinds in v1; every buy is one click, D26) |
 | My Auctions view | Own auctions list replacing Blizzard's Auctions tab (Blizzard's Auctions tab stays; decision B) | §3 | Needs scoping |

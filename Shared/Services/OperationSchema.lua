@@ -13,14 +13,14 @@ local DEFAULT_DURATION = ns.Flavour and ns.Flavour.defaultDuration or 24
 -- TBC posts several stacks per click (ns.Flavour.multisell): the selling operation has a stack size and a stack count.
 local MULTISELL = ns.Flavour ~= nil and ns.Flavour.multisell == true
 
-OperationSchema.TYPES = { "selling", "buying", "vendoring" }
+OperationSchema.TYPES = { "selling", "buying", "vendoring", "mailing" }
 
 -- The built-in selling operation: price 1c under the lowest auction, vendor price as the floor, no scan data needed.
 OperationSchema.DEFAULT_SELLING_NAME = "Default"
 OperationSchema.VENDOR_FLOOR = "first(vendorsell, 1)"
 OperationSchema.DEFAULT_BUYING_NAME = "Default"
 
-local LABELS = { selling = "Selling", buying = "Buying", vendoring = "Vendoring" }
+local LABELS = { selling = "Selling", buying = "Buying", vendoring = "Vendoring", mailing = "Mailing" }
 
 local SAFETY = {
     {
@@ -133,6 +133,20 @@ local FIELDS = {
             help = "List for review items that sell for more than this multiple of the vendor price.",
         },
     },
+    mailing = {
+        {
+            key = "recipient", label = "Recipient", kind = "text", default = "", maxLength = 64,
+            help = "The character that gets the mail. Use Name or Name-Realm.",
+        },
+        {
+            key = "keep", label = "Keep in bags", kind = "number", default = 0, min = 0, max = 10000,
+            help = "This many of each item stay in your bags. 0 means send all.",
+        },
+        {
+            key = "maxSend", label = "Send up to", kind = "number", default = 0, min = 0, max = 100000,
+            help = "The most units of each item to send in one run. 0 means no limit.",
+        },
+    },
 }
 
 -- Only the TBC selling operation has the Max stacks field: a commodity has no stacks.
@@ -155,8 +169,11 @@ for type, own in pairs(FIELDS) do
     for _, f in ipairs(own) do
         list[#list + 1] = f
     end
-    for _, f in ipairs(SAFETY) do
-        list[#list + 1] = f
+    -- A mailing operation reads no prices, so it has no safety fields.
+    if type ~= "mailing" then
+        for _, f in ipairs(SAFETY) do
+            list[#list + 1] = f
+        end
     end
     LISTS[type] = list
 end
@@ -235,6 +252,14 @@ local function checkField(f, value, compile)
         end
         if value < f.min or value > f.max then
             return false, "Enter a number from " .. f.min .. " to " .. f.max .. "."
+        end
+        return true
+    elseif kind == "text" then
+        if type(value) ~= "string" or value:match("^%s*$") then
+            return false, "Enter a character name."
+        end
+        if #value > f.maxLength then
+            return false, "Enter at most " .. f.maxLength .. " characters."
         end
         return true
     elseif kind == "choice" then

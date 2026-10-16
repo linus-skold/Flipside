@@ -211,7 +211,7 @@ describe("OperationsPage", function()
                     local part = page.FieldPart(field.key)
                     assert.is_table(part, field.key)
                     local value = field.default
-                    if field.kind == "formula" then
+                    if field.kind == "formula" or field.kind == "text" then
                         assert.are.equal(value, part.input:GetText())
                     elseif field.kind == "money" or field.kind == "number" then
                         assert.are.equal(tostring(value), part.number:GetText())

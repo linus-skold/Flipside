@@ -86,6 +86,9 @@ function OperationsPage.Build(content, deps)
                 part.moneyText:SetText(ns.TooltipLines.FormatMoney(value or 0))
             end
             setEnabled(part.number, not ro)
+        elseif kind == "text" then
+            part.input:SetText(value or "")
+            setEnabled(part.input, not ro)
         elseif kind == "choice" then
             part.choice:SetValue(value)
             setEnabled(part.choice, not ro)
@@ -152,6 +155,15 @@ function OperationsPage.Build(content, deps)
                 part.moneyText = add(Kit.Label(row, "", "small"))
                 part.moneyText:SetPoint("TOPLEFT", row, "TOPLEFT", 360, -8)
             end
+        elseif kind == "text" then
+            local function save(text)
+                text = trim(text)
+                if text ~= stored(field.key) then
+                    commit(part, text)
+                end
+            end
+            part.input = tipOn(add(Kit.Input(row, 220, save, save)))
+            part.input:SetPoint("TOPLEFT", row, "TOPLEFT", 176, -4)
         elseif kind == "choice" then
             local items = {}
             for _, choice in ipairs(field.choices) do
