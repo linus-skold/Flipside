@@ -227,7 +227,7 @@ describe("Init", function()
         it("creates a new FlipsideDB at PLAYER_LOGIN", function()
             mock.fire("PLAYER_LOGIN")
             assert.is_table(ns.db)
-            assert.are.equal(1, _G.FlipsideDB._schema)
+            assert.are.equal(2, _G.FlipsideDB._schema)
             assert.are.equal("Default", ns.db:GetProfile())
             local found = false
             for _, value in pairs(_G.FlipsideDB) do
@@ -245,7 +245,7 @@ describe("Init", function()
             mock.fire("PLAYER_LOGIN")
             assert.are.equal(saved, _G.FlipsideDB)
             assert.are.same({ a = 1 }, saved.futureKey)
-            assert.are.equal(1, saved._schema)
+            assert.are.equal(2, saved._schema)
         end)
 
         it("replaces a FlipsideDB that is not a table", function()

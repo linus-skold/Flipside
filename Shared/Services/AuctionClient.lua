@@ -111,7 +111,7 @@ action("ConfirmCommodityPurchase")
 action("CancelCommodityPurchase")
 action("BuyItemAuction")
 
--- Posting (optional). The item is a bag slot. duration is in hours: 2, 8 or 24.
+-- Posting (optional). The item is a bag slot. duration is in hours of the flavour (2, 8 or 24; TBC 12, 24 or 48).
 -- PostItem(bag, slot, duration, quantity, bid, buyout, itemID, guard) (itemID is the planned item; the legacy backend
 -- refuses a slot with another item, Forever ignores it. guard(deposit) is optional: the legacy backend calls it with
 -- the real deposit before it posts, and if it gives false the backend posts nothing and gives "held", deposit.

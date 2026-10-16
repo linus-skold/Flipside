@@ -76,6 +76,31 @@ local function characterKey()
 end
 
 -- Open the settings DB; leave ns.db nil and print one line if that is not possible.
+-- Version 2: the saved post durations of an operation use the hours of the flavour (TBC: 2, 8, 24 became 12, 24, 48).
+-- A flavour without legacyDurations needs no change.
+local function migrateDurations(data)
+    local old, new = ns.Flavour.legacyDurations, ns.Flavour.durations
+    if not (old and new) then
+        return
+    end
+    for key, value in pairs(data) do
+        if type(key) == "string" and key:match("^p/.+/operations$") and type(value) == "table"
+            and type(value.ops) == "table" then
+            for _, op in pairs(value.ops) do
+                local hours = type(op) == "table" and type(op.settings) == "table" and op.settings.duration
+                for index, oldHours in ipairs(old) do
+                    if hours == oldHours then
+                        op.settings.duration = new[index]
+                        break
+                    end
+                end
+            end
+        end
+    end
+end
+
+ns.MigrateDurations = migrateDurations
+
 local function openSettingsDB()
     local character = characterKey()
     if not character then
@@ -88,7 +113,8 @@ local function openSettingsDB()
     end
     local ok, result = pcall(ns.SettingsDB.New, _G[name], {
         character = character,
-        schemaVersion = 1,
+        schemaVersion = 2,
+        migrations = { [2] = migrateDurations },
         defaults = { account = ns.LedgerRecord and ns.LedgerRecord.Defaults() or nil },
         onWarning = ns.ReportError,
     })

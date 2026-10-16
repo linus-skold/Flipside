@@ -559,15 +559,15 @@ local POST_WINDOW_SECONDS = 20
 local CONFIRM_WINDOW_SECONDS = 120
 local post = { subscribed = false, pending = nil, at = nil, refused = nil }
 
--- Duration in hours to the legacy index: 1 = 2 h, 2 = 8 h, 3 = 24 h. A value with no exact match gives the nearest
--- longer index that exists, and 3 above 24 h.
+-- Duration in hours to the legacy index: 1 = 12 h, 2 = 24 h, 3 = 48 h. A value with no exact match gives the nearest
+-- longer index that exists, and 3 above 48 h.
 function Backend.DurationIndex(hours)
     if type(hours) ~= "number" or hours <= 0 then
         error("duration must be a number of hours", 0)
     end
-    if hours <= 2 then
+    if hours <= 12 then
         return 1
-    elseif hours <= 8 then
+    elseif hours <= 24 then
         return 2
     end
     return 3

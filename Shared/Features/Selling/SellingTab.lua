@@ -1171,7 +1171,7 @@ function SellingTab.ClampQuantity(value, maxQuantity)
     return math.max(1, math.min(math.floor(number), math.max(1, maxQuantity)))
 end
 
--- True if hours is one of the post durations (2, 8 or 24).
+-- True if hours is one of the post durations (SellingPlan.DURATIONS).
 function SellingTab.IsDuration(hours)
     for _, valid in ipairs(ns.SellingPlan.DURATIONS) do
         if valid == hours then
@@ -1256,7 +1256,7 @@ function Tab:SetManualQuantity(value)
     return true, entry.manualQty
 end
 
--- Set the duration in hours of the next manual post (2, 8 or 24). Another value or nil clears it.
+-- Set the duration in hours of the next manual post (SellingPlan.DURATIONS). Another value or nil clears it.
 function Tab:SetManualDuration(hours)
     local entry = not self.awaiting and self:_Focus(false)
     if not entry then
