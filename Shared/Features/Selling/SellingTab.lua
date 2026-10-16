@@ -25,22 +25,21 @@ local ITEM_WIDTH = 244
 local ITEM_LEAD = 18
 local ICON_LEAD = 22
 local COLUMN_GAP = 6
-local ACTION_TOP = -28
-local DETAILS_TOP = -56
-local DETAILS_HEIGHT = 72
+local DETAILS_TOP = -28
+local DETAILS_HEIGHT = 100
+-- Left offsets in the details pane: the stack count box, and the stack size or quantity box.
+local STACKS_X = 320
+local QTY_X = 414
+local SINGLE_QTY_X = 392
 local HEADER_HEIGHT = 18
 local TOP_ROOM = 28 -- height that the lower part gains when the Stop button and the message line are empty
 local TREE_TOP = DETAILS_TOP - DETAILS_HEIGHT - 4 - HEADER_HEIGHT
 local RED = { 1, 0.3, 0.3 }
-local GREEN = { 0.4, 1, 0.4 }
 local WHITE = { 1, 1, 1 }
 local GREY = { 0.5, 0.5, 0.5 }
 local ORANGE = { 1, 0.6, 0.2 }
 local MAX_PRICE = 100000000000
 local SYNC_INTERVAL = 1
--- Client arrow textures (pet battle strong and weak badges: a green arrow up and a red arrow down).
-local ARROW_UP = "|TInterface\\PetBattles\\BattleBar-AbilityBadge-Strong:14:14|t"
-local ARROW_DOWN = "|TInterface\\PetBattles\\BattleBar-AbilityBadge-Weak:14:14|t"
 
 -- The columns of the item list (Kit.ColumnLayout): the header and every row share them.
 -- The item cell (icon and name) is drawn by the row itself. The Info column fills the rest.
@@ -54,8 +53,6 @@ local COLUMNS = {
 }
 local COLUMN_OPTIONS = { gap = COLUMN_GAP }
 SellingTab.COLUMNS = COLUMNS
-SellingTab.ARROW_UP = ARROW_UP
-SellingTab.ARROW_DOWN = ARROW_DOWN
 
 local function money(copper)
     if ns.TooltipLines and ns.TooltipLines.FormatMoney then
@@ -359,21 +356,31 @@ function SellingTab.Details(entry, vendorPrice, price)
     }
 end
 
--- The text of the net line and its colour: green with an up arrow above 0, red with a down arrow below 0.
--- beforeDeposit is true if the deposit is not known: the label says that the net does not count the deposit.
-function SellingTab.NetStyle(net, beforeDeposit)
-    local label = beforeDeposit and "Net (before deposit): " or "Net: "
-    if net > 0 then
-        return label .. ARROW_UP .. " " .. money(net), GREEN
-    elseif net < 0 then
-        return label .. ARROW_DOWN .. " " .. money(net), RED
-    end
-    return label .. money(net), WHITE
+-- The deposit as text: "unknown" if the deposit is nil (never 0).
+function SellingTab.DepositValue(deposit)
+    return deposit and money(deposit) or "unknown"
 end
 
--- The text of the deposit line: "unknown" if the deposit is nil.
+-- The text of the deposit line of a warning: "unknown" if the deposit is nil.
 function SellingTab.DepositText(deposit)
-    return "Deposit: " .. (deposit and money(deposit) or "unknown")
+    return "Deposit: " .. SellingTab.DepositValue(deposit)
+end
+
+-- The price of one item from the price of one stack. The result is rounded down to whole copper:
+-- a stack price of 1005c for 10 items gives 100c each. A stack size under 1 counts as 1.
+function SellingTab.UnitFromStack(stackPrice, size)
+    size = math.max(1, math.floor(tonumber(size) or 1))
+    return math.floor(math.max(0, tonumber(stackPrice) or 0) / size)
+end
+
+-- The price of one stack from the price of one item: the price of one item times the stack size.
+function SellingTab.StackFromUnit(unitPrice, size)
+    return math.max(0, tonumber(unitPrice) or 0) * math.max(1, math.floor(tonumber(size) or 1))
+end
+
+-- The total price of one post: the price of one item times the items of one stack times the stacks of the unit.
+function SellingTab.TotalPrice(unitPrice, unit)
+    return math.max(0, tonumber(unitPrice) or 0) * unit.quantity * (unit.stacks or 1)
 end
 
 -- Tell if the vendor pays more than the AH for the next post. Returns the vendor total and the net, or nil.
@@ -516,7 +523,7 @@ function Tab:_Say(text)
     end
 end
 
--- Move the action row, the details pane and the list up when the top row is empty. The list bottom stays.
+-- Move the details pane and the list up when the top row is empty. The list bottom stays.
 function Tab:_Layout()
     local ui = self.ui
     if not (ui and ui.postNext) then
@@ -525,8 +532,6 @@ function Tab:_Layout()
     local up = (ui.message:IsShown() or ui.stop:IsShown()) and 0 or TOP_ROOM
     local content = self.content
     local headerTop = DETAILS_TOP - DETAILS_HEIGHT - 4 + up
-    ui.postNext:ClearAllPoints()
-    ui.postNext:SetPoint("TOPLEFT", content, "TOPLEFT", 0, ACTION_TOP + up)
     ui.details.frame:ClearAllPoints()
     ui.details.frame:SetPoint("TOPLEFT", content, "TOPLEFT", 0, DETAILS_TOP + up)
     ui.details.frame:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, DETAILS_TOP + up)
@@ -1496,6 +1501,17 @@ function Tab:SetManualQuantity(value)
         return false
     end
     entry.manualQty = SellingTab.ClampQuantity(value, SellingTab.StackLimit(entry))
+    -- A bigger stack size leaves room for fewer stacks: the typed stack count follows.
+    local stacksBox = self.ui and self.ui.details.stacks
+    if entry.manualStacks and entry.manualQty then
+        entry.manualStacks = SellingTab.ClampStacks(entry.manualStacks, entry.manualQty,
+            SellingTab.MaxQuantity(entry.candidate))
+        if stacksBox and stacksBox.GetNumber() ~= entry.manualStacks then
+            self.syncing = true
+            stacksBox:SetNumber(entry.manualStacks)
+            self.syncing = false
+        end
+    end
     self:_UpdateDetails()
     return true, entry.manualQty
 end
@@ -2132,10 +2148,8 @@ end
 local function clearDetails(d)
     d.icon:SetTexture(nil)
     d.operation:SetText("")
-    d.price:SetText("")
-    d.stack:SetText("")
     d.deposit:SetText("")
-    d.net:SetText("")
+    d.total:SetText("")
     d.warn:SetText("")
 end
 
@@ -2155,29 +2169,77 @@ function Tab:_SyncManual(entry, price)
     local decision, unit = self:_NextPost(entry, price, false, true)
     local shown = self.manualShown
     local stacks = unit.stacks or 1
+    local size = SellingTab.ClampQuantity(entry.manualQty, SellingTab.StackLimit(entry)) or unit.quantity
+    self:_Shape(entry.market ~= nil and entry.market.commodity == true)
+    d.stacksMax:SetText("Max: " .. math.max(1, math.floor(SellingTab.MaxQuantity(entry.candidate) / size)))
+    d.qtyMax:SetText("Max: " .. SellingTab.StackLimit(entry))
     if not (shown and shown.entry == entry and shown.next == entry.next and shown.qty == unit.quantity
         and shown.hours == decision.duration and shown.stacks == stacks) then
         self.manualShown = { entry = entry, next = entry.next, qty = unit.quantity, hours = decision.duration,
             stacks = stacks }
         self.syncing = true
-        if d.stacks then
-            d.stacks:SetNumber(entry.manualStacks or stacks)
-        end
+        d.stacks:SetNumber(entry.manualStacks or stacks)
         d.qty:SetNumber(entry.manualQty or unit.quantity)
         d.duration:SetValue(entry.manualHours or decision.duration)
         self.syncing = false
     end
     d.qty:SetEnabled(true)
-    if d.stacks then
-        d.stacks:SetEnabled(true)
-    end
+    d.stacks:SetEnabled(true)
     d.duration:SetEnabled(true)
+    return size
+end
+
+-- Show the boxes of the post size that fit the item: stacks of a size (TBC), a stack size, or a commodity quantity.
+-- A commodity has no stacks, so the stack price box hides. Forever posts one auction for each click.
+function Tab:_Shape(commodity)
+    local d = self.ui.details
+    local mode = commodity and "commodity" or (ns.SellingPlan.Multisell() and "multi" or "single")
+    if d.mode == mode then
+        return
+    end
+    d.mode = mode
+    local multi = mode == "multi"
+    d.stacks:SetShown(multi)
+    d.stackOf:SetShown(multi)
+    d.stacksMax:SetShown(multi)
+    d.qtyLabel:SetShown(not multi)
+    d.qtyLabel:SetText(commodity and "Quantity:" or "Stack size:")
+    d.stackLabel:SetShown(not commodity)
+    d.stackInput:SetShown(not commodity)
+    local x = multi and QTY_X or SINGLE_QTY_X
+    d.qty:ClearAllPoints()
+    d.qty:SetPoint("TOPLEFT", d.frame, "TOPLEFT", x, -38)
+    d.qtyMax:ClearAllPoints()
+    d.qtyMax:SetPoint("TOPLEFT", d.frame, "TOPLEFT", x, -60)
+end
+
+-- The user typed a stack price: the unit price is the stack price divided by the stack size, rounded down.
+-- The stack price box keeps the typed text.
+function Tab:_OnStackPrice(copper)
+    local entry = self.awaiting and self.awaiting.entry or self:_Focus(false)
+    if not entry then
+        return
+    end
+    local _, unit = self:_NextPost(entry, 1, false, true)
+    local size = SellingTab.ClampQuantity(entry.manualQty, SellingTab.StackLimit(entry)) or unit.quantity
+    self.ui.details.priceInput:SetCopper(SellingTab.UnitFromStack(copper, size))
+    self.stackEdit = true
+    self:_UpdateDetails()
+    self.stackEdit = false
 end
 
 -- Fill the details pane from the next post of the queue (or the one item that the rule skips).
 function Tab:_UpdateDetails()
     local d = self.ui.details
     local entry = self.awaiting and self.awaiting.entry or self:_Focus(false)
+    -- An edit of the stack size, the stack count or the duration holds until another item shows.
+    local old = self.shownEntry
+    if old ~= entry then
+        if old then
+            old.manualQty, old.manualHours, old.manualStacks = nil, nil, nil
+        end
+        self.shownEntry = entry
+    end
     if not entry then
         clearDetails(d)
         d.name:SetText(#self.selection == 0 and "Pick a group or an item" or "Nothing to post")
@@ -2186,13 +2248,15 @@ function Tab:_UpdateDetails()
             d.priceInput:SetCopper(nil)
         end
         d.priceInput:SetEnabled(false)
+        d.stackInput:SetCopper(nil)
+        d.stackInput:SetEnabled(false)
+        d.stacksMax:SetText("")
+        d.qtyMax:SetText("")
         self.manualShown = nil
         d.qty:SetNumber(nil)
         d.qty:SetEnabled(false)
-        if d.stacks then
-            d.stacks:SetNumber(nil)
-            d.stacks:SetEnabled(false)
-        end
+        d.stacks:SetNumber(nil)
+        d.stacks:SetEnabled(false)
         d.duration:SetValue(nil)
         d.duration:SetEnabled(false)
         return
@@ -2203,6 +2267,7 @@ function Tab:_UpdateDetails()
         self:_FillPrice(entry, ready and decision.price or decision.suggested)
     end
     d.priceInput:SetEnabled(true)
+    d.stackInput:SetEnabled(true)
     local typed, why = SellingTab.CheckPrice(d.priceInput:GetCopper())
     local _, icon = self.deps.itemInfo(entry.item.itemID or 0)
     d.icon:SetTexture(icon)
@@ -2212,7 +2277,11 @@ function Tab:_UpdateDetails()
         self:_ForgetDeposits(entry)
     end
     local shown = typed or decision.price or decision.suggested or 0
-    self:_SyncManual(entry, shown)
+    local size = self:_SyncManual(entry, shown)
+    -- The stack price follows the unit price, unless the user types in the stack price box.
+    if not self.stackEdit then
+        d.stackInput:SetCopper(typed and SellingTab.StackFromUnit(typed, size) or nil)
+    end
     local nextDecision, nextUnit = self:_NextPost(entry, shown, false)
     self:_ReadHeld(entry, typed, nextDecision, nextUnit)
     local values = nextUnit and SellingTab.Details(shadowEntry(entry, nextDecision, nextUnit),
@@ -2225,20 +2294,13 @@ function Tab:_UpdateDetails()
         d.warn:SetText("The rule skips this item: " .. (SKIP_TEXT[reason] or reason) .. ". Post asks you first.")
         paint(d.warn, ORANGE)
         if values then
-            d.deposit:SetText(SellingTab.DepositText(values.deposit))
-            local text, color = SellingTab.NetStyle(values.net, values.deposit == nil)
-            d.net:SetText(text)
-            paint(d.net, color)
+            d.deposit:SetText(SellingTab.DepositValue(nextUnit.deposit))
+            d.total:SetText(money(SellingTab.TotalPrice(values.unitPrice, nextUnit)))
         end
         return
     end
-    d.price:SetText("Buyout " .. money(values.buyout) .. " per auction")
-    d.stack:SetText(string.format("%d x %d", ns.SellingPlan.Multisell() and values.nextStacks or values.auctions,
-        values.stackSize))
-    d.deposit:SetText(SellingTab.DepositText(values.deposit))
-    local netText, netColor = SellingTab.NetStyle(values.net, values.deposit == nil)
-    d.net:SetText(netText)
-    paint(d.net, netColor)
+    d.deposit:SetText(SellingTab.DepositValue(nextUnit.deposit))
+    d.total:SetText(money(SellingTab.TotalPrice(values.unitPrice, nextUnit)))
     -- One line for a problem: a bad price first, then the vendor warning for the next post.
     if not typed then
         d.warn:SetText("Invalid price: " .. why)
@@ -2363,35 +2425,69 @@ function Tab:_BuildContent()
         end
         return label
     end
+    -- A line at the right edge of the pane: fromRight is the distance of its left edge from the right edge.
+    local function rline(role, fromRight, y, width)
+        local label = Kit.Label(pane, "", role)
+        label:SetPoint("TOPLEFT", pane, "TOPRIGHT", -fromRight, -y)
+        label:SetWidth(width)
+        label:SetJustifyH("LEFT")
+        if label.SetWordWrap then
+            label:SetWordWrap(false)
+        end
+        return label
+    end
     d.name = line("highlight", 56, 6, 400)
-    d.operation = line("small", 56, 22, 190)
-    d.stack = line("small", 250, 22, 150)
-    -- The price box: gold, silver and copper boxes for the price of each item.
-    d.priceLabel = line("small", 56, 40, 66)
-    d.priceLabel:SetText("Price each:")
+    d.operation = line("small", 56, 22, 290)
+    -- The price of one item and the price of one stack. Each follows the other (see SellingTab.UnitFromStack).
+    d.priceLabel = line("small", 56, 43, 64)
+    d.priceLabel:SetText("Unit Price")
     d.priceInput = Kit.MoneyInput(pane, { onChange = function()
         self:_UpdateDetails()
     end })
-    d.priceInput:SetPoint("TOPLEFT", pane, "TOPLEFT", 122, -38)
+    d.priceInput:SetPoint("TOPLEFT", pane, "TOPLEFT", 120, -38)
     for _, key in ipairs({ "gold", "silver", "copper" }) do
-        Kit.Tooltip(d.priceInput[key], "Price for each item", { "Type the gold, silver and copper of one item.",
+        Kit.Tooltip(d.priceInput[key], "Unit price", { "Type the gold, silver and copper of one item.",
             "An empty box counts as 0. Post uses this price." })
     end
-    d.price = line("small", 322, 40, 144)
-    d.warn = line("small", 56, 56, 400)
-    d.deposit = line("small", 470, 6, 290)
-    d.net = line("small", 470, 22, 290)
-    -- The quantity and the duration of a manual post. The calculated values show until the user changes them.
-    d.qtyLabel = line("small", 470, 40, 56)
-    local multisell = ns.SellingPlan.Multisell()
-    d.qtyLabel:SetText(multisell and "Stack size:" or "Quantity:")
-    d.qty = Kit.NumberInput(pane, 44, { min = 1, hint = "1+", onChange = function(number)
+    d.stackLabel = line("small", 56, 65, 64)
+    d.stackLabel:SetText("Stack Price")
+    d.stackInput = Kit.MoneyInput(pane, { onChange = function(copper)
+        self:_OnStackPrice(copper)
+    end })
+    d.stackInput:SetPoint("TOPLEFT", pane, "TOPLEFT", 120, -60)
+    for _, key in ipairs({ "gold", "silver", "copper" }) do
+        Kit.Tooltip(d.stackInput[key], "Stack price", { "The price of one full stack.",
+            "The unit price is this price divided by the stack size, rounded down to whole copper." })
+    end
+    d.warn = line("small", 56, 84, 410)
+    -- The stack count and the stack size (or the quantity) of a manual post. The calculated values show until
+    -- the user changes them. The labels under the boxes tell the most that the bags allow.
+    d.stacks = Kit.NumberInput(pane, 40, { min = 1, hint = "1+", onChange = function(number)
+        local ok, clamped = self:SetManualStacks(number)
+        if ok and clamped then
+            d.stacks:SetNumber(clamped)
+        end
+    end })
+    d.stacks:SetPoint("TOPLEFT", pane, "TOPLEFT", STACKS_X, -38)
+    if d.stacks.HookScript then
+        d.stacks:HookScript("OnTextChanged", function()
+            if not self.syncing then
+                self:SetManualStacks(d.stacks.GetNumber())
+            end
+        end)
+    end
+    Kit.Tooltip(d.stacks, "Stacks", { "How many stacks one Post click makes.",
+        "The most is what your bags hold at this stack size." })
+    d.stackOf = line("small", STACKS_X + 44, 43, 46)
+    d.stackOf:SetText("stack of")
+    d.qtyLabel = line("small", STACKS_X, 43, 68)
+    d.qty = Kit.NumberInput(pane, 40, { min = 1, hint = "1+", onChange = function(number)
         local ok, clamped = self:SetManualQuantity(number)
         if ok and clamped then
             d.qty:SetNumber(clamped)
         end
     end })
-    d.qty:SetPoint("TOPLEFT", pane, "TOPLEFT", 528, -38)
+    d.qty:SetPoint("TOPLEFT", pane, "TOPLEFT", QTY_X, -38)
     if d.qty.HookScript then
         d.qty:HookScript("OnTextChanged", function()
             if not self.syncing then
@@ -2399,40 +2495,47 @@ function Tab:_BuildContent()
             end
         end)
     end
-    Kit.Tooltip(d.qty, multisell and "Stack size" or "Quantity", { "How many items the next post holds.",
-        "The most is your count minus the keep quantity." })
-    if multisell then
-        -- TBC: the number of stacks that one Post click makes (the client multisell).
-        d.stacksLabel = line("small", 470, 56, 56)
-        d.stacksLabel:SetText("Stacks:")
-        d.stacks = Kit.NumberInput(pane, 44, { min = 1, hint = "1+", onChange = function(number)
-            local ok, clamped = self:SetManualStacks(number)
-            if ok and clamped then
-                d.stacks:SetNumber(clamped)
-            end
-        end })
-        d.stacks:SetPoint("TOPLEFT", pane, "TOPLEFT", 528, -54)
-        if d.stacks.HookScript then
-            d.stacks:HookScript("OnTextChanged", function()
-                if not self.syncing then
-                    self:SetManualStacks(d.stacks.GetNumber())
-                end
-            end)
-        end
-        Kit.Tooltip(d.stacks, "Stacks", { "How many stacks one Post click makes.",
-            "The most is what your bags hold at this stack size." })
-    end
-    d.durationLabel = line("small", 610, 40, 40)
-    d.durationLabel:SetText("Time:")
+    Kit.Tooltip(d.qty, "Stack size", { "How many items one stack of the next post holds.",
+        "The most is your count minus the keep quantity, and the stack size of the item." })
+    d.stacksMax = line("small", STACKS_X, 61, 70)
+    d.qtyMax = line("small", QTY_X, 61, 70)
+    -- The progress text of a run, under the operation name.
+    ui.progress = line("small", 350, 22, 110)
+    -- The duration, the buttons, and the deposit and total price block, along the right edge of the pane.
+    local durationLabel = rline("small", 312, 6, 100)
+    durationLabel:SetText("Duration (hours)")
     local items = {}
     for _, hours in ipairs(ns.SellingPlan.DURATIONS) do
-        items[#items + 1] = { value = hours, text = hours .. " h" }
+        items[#items + 1] = { value = hours, text = tostring(hours) }
     end
-    d.duration = Kit.Dropdown(pane, 70, { items = items, onChange = function(hours)
+    d.duration = Kit.RadioGroup(pane, { items = items, width = 46, onChange = function(hours)
         self:SetManualDuration(hours)
     end })
-    d.duration:SetPoint("TOPLEFT", pane, "TOPLEFT", 650, -34)
+    d.duration:SetPoint("TOPLEFT", pane, "TOPRIGHT", -312, -20)
+    -- The post button posts in its own click handler: the protected call needs the click.
+    ui.postNext = Kit.Button(pane, "Post", 80, nil)
+    ui.postNext:SetPoint("TOPLEFT", pane, "TOPRIGHT", -312, -46)
+    ui.postNext:SetScript("OnClick", function()
+        self:PostNext()
+    end)
+    ui.skip = Kit.Button(pane, "Skip", 54, function()
+        self:Skip()
+    end)
+    ui.skip:SetPoint("LEFT", ui.postNext, "RIGHT", 6, 0)
+    -- Post all is a queue: each click posts one auction, the next one of the selection. The post needs the click.
+    ui.postAll = Kit.Button(pane, "Post all", 140, nil)
+    ui.postAll:SetPoint("TOPLEFT", pane, "TOPRIGHT", -312, -72)
+    ui.postAll:SetScript("OnClick", function()
+        self:PostAll()
+    end)
+    local depositLabel = rline("small", 164, 6, 156)
+    depositLabel:SetText("Deposit:")
+    d.deposit = rline("highlight", 164, 22, 156)
+    local totalLabel = rline("small", 164, 44, 156)
+    totalLabel:SetText("Total Price:")
+    d.total = rline("highlight", 164, 60, 156)
     ui.details = d
+    self:_Shape(false)
 
     ui.tree = Kit.CreateTree(content, { rowHeight = ROW_HEIGHT, inset = true, skin = skin,
         initRow = function(row, node, depth, isCollapsed, hasChildren)
@@ -2452,30 +2555,6 @@ function Tab:_BuildContent()
     headers.frame:SetHeight(HEADER_HEIGHT)
     ui.headers = headers
 
-    -- The action row above the list. The post button posts in its own click handler: the protected call needs
-    -- the click.
-    ui.postNext = Kit.Button(content, "Post", 100, nil)
-    ui.postNext:SetPoint("TOPLEFT", content, "TOPLEFT", 0, ACTION_TOP)
-    ui.postNext:SetScript("OnClick", function()
-        self:PostNext()
-    end)
-    -- Post all is a queue: each click posts one auction, the next one of the selection. The post needs the click.
-    ui.postAll = Kit.Button(content, "Post all", 120, nil)
-    ui.postAll:SetPoint("LEFT", ui.postNext, "RIGHT", 6, 0)
-    ui.postAll:SetScript("OnClick", function()
-        self:PostAll()
-    end)
-    ui.skip = Kit.Button(content, "Skip", 60, function()
-        self:Skip()
-    end)
-    ui.skip:SetPoint("LEFT", ui.postAll, "RIGHT", 6, 0)
-    ui.progress = Kit.Label(content, "", "small")
-    ui.progress:SetPoint("LEFT", ui.skip, "RIGHT", 8, 0)
-    ui.progress:SetWidth(160)
-    ui.progress:SetJustifyH("LEFT")
-    if ui.progress.SetWordWrap then
-        ui.progress:SetWordWrap(false)
-    end
     ui.message:Hide()
     ui.stop:Hide()
     self:_Layout()

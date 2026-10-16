@@ -488,6 +488,55 @@ describe("Kit", function()
         end)
     end)
 
+    describe("RadioGroup", function()
+        local group, got
+        before_each(function()
+            got = nil
+            group = Kit.RadioGroup(CreateFrame("Frame"), { value = 24, width = 40,
+                items = { { value = 12, text = "12" }, { value = 24, text = "24" }, { value = 48, text = "48" } },
+                onChange = function(value)
+                    got = value
+                end })
+        end)
+
+        it("makes one button for each item and checks the start value", function()
+            assert.are.equal(3, #group.buttons)
+            assert.are.same({ false, true, false }, { group.buttons[1].checked, group.buttons[2].checked,
+                group.buttons[3].checked })
+            assert.are.equal(24, group.GetValue())
+        end)
+
+        it("checks one button on a click and calls onChange", function()
+            group.buttons[3].scripts.OnClick(group.buttons[3])
+            assert.are.equal(48, got)
+            assert.are.equal(48, group.GetValue())
+            assert.is_true(group.buttons[3].checked)
+            assert.is_false(group.buttons[2].checked)
+        end)
+
+        it("keeps a button checked when the user clicks it again", function()
+            group.buttons[2]:SetChecked(false)
+            group.buttons[2].scripts.OnClick(group.buttons[2])
+            assert.is_true(group.buttons[2].checked)
+        end)
+
+        it("sets a value without onChange, and disables the buttons", function()
+            group:SetValue(12)
+            assert.is_nil(got)
+            assert.is_true(group.buttons[1].checked)
+            group:SetValue(nil)
+            assert.is_false(group.buttons[1].checked)
+            group:SetEnabled(false)
+            assert.is_false(group.buttons[1].enabled)
+        end)
+
+        it("uses the check template when the radio template is missing", function()
+            mock.missingTemplates.UIRadioButtonTemplate = true
+            local fallback = Kit.RadioGroup(CreateFrame("Frame"), { items = { { value = 1, text = "1" } } })
+            assert.are.equal("UICheckButtonTemplate", fallback.buttons[1].template)
+        end)
+    end)
+
     describe("Dropdown", function()
         local parent, items, got
         before_each(function()
