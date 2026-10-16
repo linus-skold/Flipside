@@ -470,8 +470,15 @@ describe("LegacyBackend", function()
                 end
                 return "Copper Bar", 1, sell.item.stackCount, 1, true, 0, 0, 20, sell.item.stackCount, sell.item.itemID
             end
+            -- As the client: six arguments (prices, duration index, stack size, stack count, warning flag).
             _G.PostAuction = function(...)
-                posts[#posts + 1] = { n = select("#", ...), ... }
+                local n = select("#", ...)
+                local a, b, c, d, e, f = ...
+                if n ~= 6 or type(a) ~= "number" or type(b) ~= "number" or type(c) ~= "number"
+                    or type(d) ~= "number" or type(e) ~= "number" or type(f) ~= "boolean" then
+                    error("Usage: PostAuction(minBid, buyoutPrice, runTime, stackSize, numStacks, warning)", 2)
+                end
+                posts[#posts + 1] = { n = n, ... }
                 if onPost then
                     onPost()
                 end
@@ -543,14 +550,14 @@ describe("LegacyBackend", function()
         it("puts the bag item in the sale slot and posts one stack", function()
             assert.is_false(A().PostItem(0, 1, 24, 5, nil, 500, 11))
             assert.are.equal(1, #posts)
-            assert.are.same({ 500, 500, 2, 5, 1, n = 5 }, posts[1])
+            assert.are.same({ 500, 500, 2, 5, 1, false, n = 6 }, posts[1])
             assert.are.equal(11, sell.item.itemID)
             assert.is_nil(cursor)
         end)
 
         it("uses the bid as the start price", function()
             A().PostItem(0, 1, 24, 5, 300, 500, 11)
-            assert.are.same({ 300, 500, 2, 5, 1, n = 5 }, posts[1])
+            assert.are.same({ 300, 500, 2, 5, 1, false, n = 6 }, posts[1])
             assert.is_false((pcall(A().PostItem, 0, 1, 24, 5, 600, 500, 11)))
             assert.are.equal(1, #posts)
         end)
@@ -753,13 +760,13 @@ describe("LegacyBackend", function()
 
             it("sends the stack size and the stack count with the prices of one stack", function()
                 assert.is_true(A().PostItem(0, 1, 24, 20, 300, 500, 11, nil, 3) == false)
-                assert.are.same({ 300, 500, 2, 20, 3, n = 5 }, posts[1])
+                assert.are.same({ 300, 500, 2, 20, 3, false, n = 6 }, posts[1])
             end)
 
             it("takes the stacks from all bags: only the total must hold the items", function()
                 bag[key(0, 1)].stackCount = 7
                 assert.is_false(A().PostItem(0, 1, 24, 20, nil, 500, 11, nil, 3))
-                assert.are.same({ 500, 500, 2, 20, 3, n = 5 }, posts[1])
+                assert.are.same({ 500, 500, 2, 20, 3, false, n = 6 }, posts[1])
             end)
 
             it("refuses more stacks than the bags hold", function()
@@ -1072,7 +1079,7 @@ describe("LegacyBackend", function()
                 A().PostItem(0, 1, 24, 5, nil, 500, 11, function() return false end)
                 assert.is_false(A().PostItem(0, 1, 24, 5, nil, 500, 11))
                 assert.are.equal(1, #posts)
-                assert.are.same({ 500, 500, 2, 5, 1, n = 5 }, posts[1])
+                assert.are.same({ 500, 500, 2, 5, 1, false, n = 6 }, posts[1])
             end)
 
             it("clears the sale slot and raises when the guard fails", function()
