@@ -290,12 +290,12 @@ describe("SellingTab multisell on TBC", function()
                 end
             end
             assert.is_true(found)
-            assert.are.equal("Deposit: 600c", ui.details.deposit.text)
+            assert.are.equal("600c", ui.details.deposit.text)
+            assert.are.equal("7140c", ui.details.total.text)
         end)
 
         it("shows the stack size and the stack count and keeps the post blocked until the end", function()
             selectLinen(60, FULL)
-            assert.are.equal("3 x 20", ui.details.stack.text)
             assert.are.equal(20, ui.details.qty:GetNumber())
             assert.are.equal(3, ui.details.stacks:GetNumber())
             click(ui.postNext)
@@ -436,7 +436,8 @@ describe("SellingTab multisell on TBC", function()
         it("post the stack count the user types", function()
             selectLinen(60, FULL)
             tab:SetManualStacks(2)
-            assert.are.equal("2 x 20", ui.details.stack.text)
+            assert.are.equal("400c", ui.details.deposit.text)
+            assert.are.equal("4760c", ui.details.total.text)
             click(ui.postNext)
             assert.are.equal(2, itemPosts()[1].stacks)
         end)
@@ -472,6 +473,224 @@ describe("SellingTab multisell on TBC", function()
             click(ui.postNext)
             assert.is_false((tab:SetManualStacks(1)))
             assert.is_false((tab:SetManualQuantity(5)))
+        end)
+    end)
+
+    -- Fill the gold, silver and copper boxes as the user does, from a text like "1g 20s 5c".
+    local function typeMoney(box, text)
+        box.gold:SetText(text:match("(%d+)g") or "")
+        box.silver:SetText(text:match("(%d+)s") or "")
+        box.copper:SetText(text:match("(%d+)c") or "")
+        box.gold.scripts.OnTextChanged(box.gold)
+    end
+
+    describe("the duration radio buttons", function()
+        it("show the rule duration and set the duration of the next post", function()
+            selectLinen(60, FULL)
+            local radios, hours = ui.details.duration, ns.SellingPlan.DURATIONS
+            assert.are.equal(#hours, #radios.buttons)
+            assert.are.equal(24, radios.GetValue())
+            assert.is_true(radios.buttons[#hours].checked)
+            radios.buttons[1].scripts.OnClick(radios.buttons[1])
+            assert.are.equal(hours[1], entryOf("10").manualHours)
+            assert.is_true(radios.buttons[1].checked)
+            assert.is_false(radios.buttons[#hours].checked)
+            click(ui.postNext)
+            assert.are.equal(hours[1], itemPosts()[1].duration)
+        end)
+
+        it("keep the chosen button after a second click on it", function()
+            selectLinen(60, FULL)
+            local radios = ui.details.duration
+            radios.buttons[2].scripts.OnClick(radios.buttons[2])
+            radios.buttons[2]:SetChecked(false)
+            radios.buttons[2].scripts.OnClick(radios.buttons[2])
+            assert.is_true(radios.buttons[2].checked)
+            assert.are.equal(ns.SellingPlan.DURATIONS[2], radios.GetValue())
+        end)
+
+        it("read the deposit again with the new duration", function()
+            selectLinen(60, FULL)
+            local radios = ui.details.duration
+            local before = #client.deposits
+            radios.buttons[1].scripts.OnClick(radios.buttons[1])
+            assert.is_true(#client.deposits > before)
+        end)
+    end)
+
+    describe("the unit price and the stack price", function()
+        it("show the stack price as the unit price times the stack size", function()
+            selectLinen(60, FULL)
+            assert.are.equal(119, ui.details.priceInput:GetCopper())
+            assert.are.equal(119 * 20, ui.details.stackInput:GetCopper())
+        end)
+
+        it("update the stack price when the unit price changes", function()
+            selectLinen(60, FULL)
+            typeMoney(ui.details.priceInput, "1g")
+            assert.are.equal(10000 * 20, ui.details.stackInput:GetCopper())
+            assert.are.equal("600000c", ui.details.total.text)
+        end)
+
+        it("update the unit price when the stack price changes, rounded down to whole copper", function()
+            selectLinen(60, FULL)
+            typeMoney(ui.details.stackInput, "10g 5c")
+            -- 100005c for 20 items: 5000.25c each, so 5000c.
+            assert.are.equal(5000, ui.details.priceInput:GetCopper())
+            assert.are.equal(100005, ui.details.stackInput:GetCopper())
+            assert.are.equal("300000c", ui.details.total.text)
+            typeMoney(ui.details.stackInput, "19s 99c")
+            assert.are.equal(99, ui.details.priceInput:GetCopper())
+        end)
+
+        it("keep the unit price and change the stack price when the stack size changes", function()
+            selectLinen(60, FULL)
+            tab:SetManualQuantity(10)
+            assert.are.equal(119, ui.details.priceInput:GetCopper())
+            assert.are.equal(1190, ui.details.stackInput:GetCopper())
+        end)
+
+        it("round with the helper functions", function()
+            assert.are.equal(99, ns.SellingTab.UnitFromStack(1999, 20))
+            assert.are.equal(100, ns.SellingTab.UnitFromStack(1005, 10))
+            assert.are.equal(7, ns.SellingTab.UnitFromStack(7, 0))
+            assert.are.equal(0, ns.SellingTab.UnitFromStack(5, 10))
+            assert.are.equal(1190, ns.SellingTab.StackFromUnit(119, 10))
+        end)
+    end)
+
+    describe("the stack count and the stack size boxes", function()
+        it("show the most that the bags and the item allow", function()
+            selectLinen(60, FULL)
+            assert.are.equal("Max: 3", ui.details.stacksMax.text)
+            assert.are.equal("Max: 20", ui.details.qtyMax.text)
+            tab:SetManualQuantity(10)
+            assert.are.equal("Max: 6", ui.details.stacksMax.text)
+        end)
+
+        it("limit the typed numbers to the maximum", function()
+            selectLinen(60, FULL)
+            tab:SetManualQuantity(10)
+            assert.are.equal(6, select(2, tab:SetManualStacks(9)))
+            assert.are.equal(20, select(2, tab:SetManualQuantity(99)))
+        end)
+
+        it("lower the stack count when a bigger stack size leaves no room", function()
+            selectLinen(60, FULL)
+            -- Type in the boxes as the user does: the number box reports only a changed number.
+            for _, box in ipairs({ { ui.details.qty, "10" }, { ui.details.stacks, "6" }, { ui.details.qty, "20" } }) do
+                box[1]:SetText(box[2])
+                box[1].scripts.OnEnterPressed(box[1])
+            end
+            assert.are.equal(3, entryOf("10").manualStacks)
+            assert.are.equal(3, ui.details.stacks:GetNumber())
+        end)
+
+        it("update the total price, the deposit and the post when they change", function()
+            selectLinen(60, FULL)
+            tab:SetManualQuantity(10)
+            tab:SetManualStacks(4)
+            assert.are.same({ quantity = 10, stacks = 4 }, client.deposits[#client.deposits])
+            assert.are.equal("400c", ui.details.deposit.text)
+            assert.are.equal(tostring(119 * 10 * 4) .. "c", ui.details.total.text)
+            click(ui.postNext)
+            local post = itemPosts()[1]
+            assert.are.same({ 10, 4, 119 * 10 }, { post.quantity, post.stacks, post.buyout })
+        end)
+    end)
+
+    describe("the suggestion of the stacks", function()
+        it("suggests full stacks of the item maximum stack", function()
+            tab = mount({ maxStack = function() return 10 end })
+            ui = tab.ui
+            selectLinen(66, { { bag = 1, slot = 1, count = 10 }, { bag = 1, slot = 2, count = 10 },
+                { bag = 1, slot = 3, count = 10 }, { bag = 1, slot = 4, count = 10 },
+                { bag = 1, slot = 5, count = 10 }, { bag = 1, slot = 6, count = 10 },
+                { bag = 1, slot = 7, count = 6 } })
+            assert.are.equal(6, ui.details.stacks:GetNumber())
+            assert.are.equal(10, ui.details.qty:GetNumber())
+            assert.are.equal("Max: 6", ui.details.stacksMax.text)
+            assert.are.equal("Max: 10", ui.details.qtyMax.text)
+        end)
+
+        it("suggests one stack of all items when they are fewer than one maximum stack", function()
+            selectLinen(7, { { bag = 1, slot = 1, count = 7 } })
+            assert.are.equal(1, ui.details.stacks:GetNumber())
+            assert.are.equal(7, ui.details.qty:GetNumber())
+        end)
+
+        it("uses the stack size of the operation", function()
+            opExtra.stackSize = 5
+            selectLinen(60, FULL)
+            assert.are.equal(5, ui.details.qty:GetNumber())
+            assert.are.equal(12, ui.details.stacks:GetNumber())
+        end)
+
+        it("keeps a user edit until the item changes", function()
+            selectLinen(60, FULL)
+            local d = ui.details
+            for _, box in ipairs({ { d.qty, "10" }, { d.stacks, "2" } }) do
+                box[1]:SetText(box[2])
+                box[1].scripts.OnEnterPressed(box[1])
+            end
+            typeMoney(ui.details.priceInput, "50c")
+            assert.are.equal(10, entryOf("10").manualQty)
+            assert.are.equal(2, entryOf("10").manualStacks)
+            assert.are.equal(10, ui.details.qty:GetNumber())
+            pick("i11")
+            pick("i10")
+            assert.are.equal(20, ui.details.qty:GetNumber())
+            assert.are.equal(3, ui.details.stacks:GetNumber())
+        end)
+    end)
+
+    describe("the deposit and the total price texts", function()
+        it("show the deposit and the total price of the next post", function()
+            selectLinen(60, FULL)
+            assert.are.equal("600c", ui.details.deposit.text)
+            assert.are.equal("7140c", ui.details.total.text)
+            assert.is_nil(ui.details.net)
+        end)
+
+        it("show unknown, never 0, when the deposit is unknown", function()
+            client.Deposit = function() return nil end
+            selectLinen(60, FULL)
+            assert.are.equal("unknown", ui.details.deposit.text)
+            assert.are.equal("7140c", ui.details.total.text)
+            assert.are.equal("unknown", ns.SellingTab.DepositValue(nil))
+            assert.are.equal("0c", ns.SellingTab.DepositValue(0))
+        end)
+
+        it("clear when no item shows", function()
+            selectLinen(60, FULL)
+            pick("g6")
+            assert.are.equal("", ui.details.deposit.text)
+            assert.are.equal("", ui.details.total.text)
+        end)
+    end)
+
+    describe("the row of the stack size", function()
+        it("shows the stack boxes for an item", function()
+            selectLinen(60, FULL)
+            local d = ui.details
+            for _, widget in ipairs({ d.stacks, d.stackOf, d.stacksMax, d.stackInput, d.stackLabel, d.qty }) do
+                assert.is_true(widget:IsShown())
+            end
+            assert.is_false(d.qtyLabel:IsShown())
+        end)
+
+        it("hides the stack row and the stack price for a commodity", function()
+            selectCloth()
+            pick("i11")
+            local d = ui.details
+            for _, widget in ipairs({ d.stacks, d.stackOf, d.stacksMax, d.stackInput, d.stackLabel }) do
+                assert.is_false(widget:IsShown())
+            end
+            assert.is_true(d.qty:IsShown())
+            assert.is_true(d.priceInput:IsShown())
+            assert.are.equal("Quantity:", d.qtyLabel.text)
+            assert.are.equal(12, d.qty:GetNumber())
+            assert.are.equal("Max: 12", d.qtyMax.text)
         end)
     end)
 

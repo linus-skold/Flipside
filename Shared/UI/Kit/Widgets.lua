@@ -80,6 +80,56 @@ function Kit.Check(parent, label, onChange)
     return check
 end
 
+-- Create a row of radio buttons. options: items = { { value, text } }, value, width (of one button with its text,
+-- default 56), onChange(value). Methods: SetValue(value) (does not call onChange), GetValue(), SetEnabled(enabled).
+-- A click on the chosen button keeps it chosen. The group uses the client radio template, else the check template.
+function Kit.RadioGroup(parent, options)
+    options = options or {}
+    local width = options.width or 56
+    local group = CreateFrame("Frame", nil, parent)
+    local state = { value = options.value, buttons = {} }
+    local function refresh()
+        for _, button in ipairs(state.buttons) do
+            button:SetChecked(button.value == state.value)
+        end
+    end
+    for index, item in ipairs(options.items or {}) do
+        local ok, button = pcall(CreateFrame, "CheckButton", nil, group, "UIRadioButtonTemplate")
+        if not ok then
+            button = CreateFrame("CheckButton", nil, group, "UICheckButtonTemplate")
+        end
+        button:SetSize(20, 20)
+        button:SetPoint("LEFT", group, "LEFT", (index - 1) * width, 0)
+        local text = Kit.Label(group, item.text, "small")
+        text:SetPoint("LEFT", button, "RIGHT", 2, 0)
+        button.value = item.value
+        button:SetScript("OnClick", function(self)
+            state.value = self.value
+            refresh()
+            if options.onChange then
+                options.onChange(self.value)
+            end
+        end)
+        state.buttons[index] = button
+    end
+    group:SetSize(math.max(1, #state.buttons * width), 22)
+    function group.SetValue(_, value)
+        state.value = value
+        refresh()
+    end
+    function group.GetValue()
+        return state.value
+    end
+    function group.SetEnabled(_, enabled)
+        for _, button in ipairs(state.buttons) do
+            button:SetEnabled(enabled)
+        end
+    end
+    group.buttons = state.buttons
+    refresh()
+    return group
+end
+
 -- Create a horizontal divider line from a client atlas.
 function Kit.Divider(parent)
     local line = parent:CreateTexture(nil, "ARTWORK")
