@@ -756,6 +756,7 @@ describe("LegacyBackend", function()
             end)
 
             it("takes the prices of the post that waits for a confirm", function()
+                postResult = false
                 assert.is_true(A().PostItem(0, 1, 24, 5, 300, 500, 11))
                 assert.are.equal(66, A().Deposit(0, 1, 24, 5, false))
                 assert.are.same({ 3, 300, 500, 5, 1, n = 5 }, depositCalls[#depositCalls])
