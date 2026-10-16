@@ -1220,86 +1220,184 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
         end)
     end)
 
-    describe("the deposit read at the select click (TBC)", function()
-        local reads
+    describe("the kept sale slot (TBC)", function()
+        local slotItem, holds, releases, holdFails
 
         before_each(function()
-            -- The legacy client gives no deposit until the item is in the sale slot.
-            reads = {}
+            slotItem, holds, releases, holdFails = nil, {}, 0, false
+            client.HoldSlot = function(bag, slot, quantity, itemID, stacks)
+                holds[#holds + 1] = { bag = bag, slot = slot, quantity = quantity, itemID = itemID, stacks = stacks }
+                if holdFails then
+                    return false, "the cursor holds an item"
+                end
+                slotItem = itemID
+                return true
+            end
+            client.ReleaseSlot = function()
+                releases = releases + 1
+                slotItem = nil
+                return true
+            end
+            -- The legacy client gives a deposit only for the item in the sale slot and with the real prices.
+            client.Deposit = function(_, _, hours, quantity, _, start)
+                if not slotItem or type(start) ~= "number" then
+                    return nil
+                end
+                return quantity * 2 + hours + math.floor(start / quantity / 100)
+            end
+        end)
+
+        it("shows unknown, not 0, when the client has no kept slot and gives no deposit", function()
+            client.HoldSlot, client.ReleaseSlot = nil, nil
             client.Deposit = function() return nil end
-            client.ReadDeposit = function(...)
-                reads[#reads + 1] = { ... }
-                return 50
-            end
-        end)
-
-        it("shows unknown, not 0, when the client gives no deposit", function()
-            client.ReadDeposit = nil
             selectCloth()
             pick("i10")
             assert.are.equal("Deposit: unknown", ui.details.deposit.text)
             assert.matches("^Net %(before deposit%): ", ui.details.net.text)
         end)
 
-        it("reads the deposit with the planned arguments and never posts", function()
+        it("puts the item in the sale slot on the select click and keeps it there", function()
             selectCloth()
             pick("i10")
-            assert.are.equal(1, #reads)
-            assert.are.same({ 1, 1, 24, 20, 119 * 20, 119 * 20, 10 }, reads[1])
+            assert.are.same({ bag = 1, slot = 1, quantity = 20, itemID = 10 }, holds[#holds])
+            assert.are.equal(10, slotItem)
+            assert.are.equal(0, releases)
             assert.are.equal(0, #client.posts)
-            -- 3 auctions of 20 items: the deposit of each auction adds up.
-            assert.are.equal("Deposit: 150c", ui.details.deposit.text)
-            assert.are.equal("Net: " .. ns.SellingTab.ARROW_UP .. " 6633c", ui.details.net.text)
-            assert.are.equal(150, entryOf("10").deposit)
+            -- 3 auctions of 20 items at 119 each: 20 x 2 + 24 + 1 for each auction.
+            assert.are.equal("Deposit: 195c", ui.details.deposit.text)
+            assert.matches("^Net: ", ui.details.net.text)
+            assert.are.equal(195, entryOf("10").deposit)
         end)
 
-        it("keeps the deposit unknown when the read gives nil", function()
-            client.ReadDeposit = function(...)
-                reads[#reads + 1] = { ... }
-                return nil
-            end
+        it("fills the slot with the one item that the pane shows when a group is selected", function()
             selectCloth()
-            pick("i10")
-            assert.are.equal(1, #reads)
-            assert.are.equal("Deposit: unknown", ui.details.deposit.text)
-            assert.matches("^Net %(before deposit%): ", ui.details.net.text)
+            assert.are.equal(1, #holds)
+            assert.are.same({ bag = 1, slot = 1, quantity = 1, itemID = 10 }, holds[1])
+            assert.are.equal("Deposit: 195c", ui.details.deposit.text)
         end)
 
-        it("keeps the deposit unknown when the read raises an error", function()
-            client.ReadDeposit = function()
-                error("boom", 0)
-            end
-            selectCloth()
-            pick("i10")
-            assert.are.equal("Deposit: unknown", ui.details.deposit.text)
-        end)
-
-        it("reads nothing for an entry that has no decision yet", function()
+        it("fills the slot before the decision and reads the deposit when the decision event arrives", function()
+            client.rows[10] = { row(120, 1) }
             pick("g2")
-            assert.are.equal(0, #reads)
+            assert.are.equal(1, #holds)
+            assert.are.same({ bag = 1, slot = 1, quantity = 1, itemID = 10 }, holds[1])
+            fire("ITEM_RESULTS", 10)
+            assert.are.equal(1, #holds)
+            assert.are.equal(0, releases)
+            assert.are.equal("Deposit: 195c", ui.details.deposit.text)
         end)
 
-        it("makes the deposit unknown again when the price changes", function()
+        it("reads again when the price, the stack size or the duration changes, with no new fill", function()
             selectCloth()
             pick("i10")
-            assert.are.equal("Deposit: 150c", ui.details.deposit.text)
+            local fills = #holds
             type_("1g 20s")
+            assert.are.equal("Deposit: " .. 3 * (20 * 2 + 24 + 120) .. "c", ui.details.deposit.text)
+            type_("119c")
+            assert.are.equal("Deposit: 195c", ui.details.deposit.text)
+            assert.is_true(tab:SetManualQuantity(5))
+            assert.are.equal("Deposit: " .. ((5 * 2 + 24 + 1) + 2 * 65) .. "c", ui.details.deposit.text)
+            assert.is_true(tab:SetManualQuantity(nil))
+            assert.is_true(tab:SetManualDuration(8))
+            assert.are.equal("Deposit: " .. 3 * (20 * 2 + 8 + 1) .. "c", ui.details.deposit.text)
+            assert.are.equal(fills, #holds)
+            assert.are.equal(0, releases)
+        end)
+
+        it("keeps the deposit unknown when the slot cannot fill", function()
+            holdFails = true
+            selectCloth()
+            pick("i10")
             assert.are.equal("Deposit: unknown", ui.details.deposit.text)
             assert.matches("^Net %(before deposit%): ", ui.details.net.text)
+            assert.is_nil(slotItem)
         end)
 
-        it("makes the deposit unknown again when the quantity or the duration changes", function()
+        it("keeps the deposit unknown when the fill raises an error", function()
+            client.HoldSlot = function() error("boom", 0) end
             selectCloth()
             pick("i10")
-            tab:SetManualQuantity(5)
-            assert.are.equal("Deposit: unknown", ui.details.deposit.text)
-            tab:SetManualQuantity(nil)
-            tab:SetManualDuration(2)
             assert.are.equal("Deposit: unknown", ui.details.deposit.text)
         end)
 
-        it("leaves the Forever deposit as it is", function()
-            client.ReadDeposit = nil
+        it("fills the slot with the new item in the click that selects another item", function()
+            client.commodity[11] = false
+            selectCloth()
+            pick("i10")
+            pick("i11")
+            assert.are.equal(0, holds[#holds].bag)
+            assert.are.equal(4, holds[#holds].slot)
+            assert.are.equal(11, holds[#holds].itemID)
+            assert.are.equal(11, slotItem)
+        end)
+
+        it("releases the slot when the new selection has no item to hold", function()
+            selectCloth()
+            pick("i10")
+            pick("g6")
+            assert.are.equal(1, releases)
+            assert.is_nil(slotItem)
+        end)
+
+        it("releases the slot when the tab is left, once", function()
+            selectCloth()
+            pick("i10")
+            tab:Deselect()
+            assert.are.equal(1, releases)
+            assert.is_nil(slotItem)
+            tab:Deselect()
+            assert.are.equal(1, releases)
+        end)
+
+        it("releases the slot when the AH closes", function()
+            client.CloseEvent = function() return "AH_CLOSED" end
+            tab = mount()
+            ui = tab.ui
+            selectCloth()
+            pick("i10")
+            fire("AH_CLOSED")
+            assert.are.equal(1, releases)
+            assert.is_nil(slotItem)
+        end)
+
+        it("releases the slot when the user skips the item", function()
+            selectCloth()
+            pick("i10")
+            tab:SkipItem(entryOf("10"))
+            assert.are.equal(1, releases)
+            assert.is_nil(slotItem)
+        end)
+
+        it("stops the reads without a release when the item leaves the plan, and releases on the leave", function()
+            selectCloth()
+            pick("i10")
+            tab:RefreshBags()
+            assert.are.equal(0, releases)
+            assert.is_nil(tab.held.entry)
+            tab:Deselect()
+            assert.are.equal(1, releases)
+        end)
+
+        it("posts with the kept slot: no new fill, no release, and the post owns the slot", function()
+            selectCloth()
+            pick("i10")
+            local fills, seen = #holds, nil
+            local post = client.PostItem
+            client.PostItem = function(...)
+                seen = slotItem
+                return post(...)
+            end
+            click(ui.postNext)
+            assert.are.equal(10, seen)
+            assert.are.equal(1, #client.posts)
+            assert.are.equal(fills, #holds)
+            assert.are.equal(0, releases)
+            tab:Deselect()
+            assert.are.equal(0, releases)
+        end)
+
+        it("keeps the Forever deposit as it is", function()
+            client.HoldSlot, client.ReleaseSlot = nil, nil
             client.Deposit = function(_, _, _, quantity) return quantity * 10 end
             selectCloth()
             pick("i10")

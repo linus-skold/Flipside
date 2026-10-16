@@ -921,33 +921,117 @@ function Tab:_Reselect(search)
     self:_Update()
 end
 
--- Read the real deposit of the units left of a ready entry, if the client can (TBC). The client puts the item in the
--- sale slot and back in the same call, so call this only inside the click that selects the entry. One read for each
--- stack size. An entry without a decision stays unknown. A failed read leaves the deposit as it was.
-function Tab:_ReadDeposits(entry)
-    local read = self.deps.client.ReadDeposit
-    local decision = entry.decision
-    if type(read) ~= "function" or entry.status ~= "ready" or not decision or decision.action ~= "post"
-        or decision.commodity or type(decision.price) ~= "number" then
+-- The kept sale slot (TBC). The client gives the deposit only for the item in the sale slot. A select click puts the
+-- item of the pane in the slot (client.HoldSlot, a protected step) and the tab keeps it there. self.held is
+-- { entry = the entry that owns the slot, or nil when no entry owns it now }. While the entry owns the slot, every
+-- redraw of the pane reads the deposit again (client.Deposit, a plain read). The slot is released (client.ReleaseSlot,
+-- a protected step, so only in a click) on a new select click, a Skip click, a tab leave and an AH close.
+
+-- The entry whose item the slot should hold: the entry that the pane shows or Post posts next, else the first entry of
+-- the selection that waits for its decision (its bag stack goes in the slot now, the decision comes later).
+function Tab:_HoldTarget()
+    local focus = self:_Focus(false)
+    if focus then
+        return focus
+    end
+    for _, entry in ipairs(self.selection) do
+        local candidate = entry.candidate
+        if (entry.status == "waiting" or entry.status == "searching") and candidate and candidate.stacks
+            and candidate.stacks[1] then
+            return entry
+        end
+    end
+    return nil
+end
+
+-- The bag slot, the stack size and the number of stacks to put in the sale slot for an entry, or nil.
+function Tab._HoldArgs(_, entry)
+    local unit = entry.status == "ready" and entry.units[entry.next]
+    if unit and entry.decision and not entry.decision.commodity then
+        return unit.bag, unit.slot, unit.quantity, unit.stacks or 1
+    end
+    local stack = entry.candidate and entry.candidate.stacks and entry.candidate.stacks[1]
+    if stack and not (entry.decision and entry.decision.commodity) then
+        return stack.bag, stack.slot, 1, 1
+    end
+    return nil
+end
+
+-- Put the item of the target entry in the sale slot and keep it there. A slot that fails to fill (cursor busy, locked
+-- item, combat, AH hidden) leaves the deposit unknown. Call it only inside a click handler.
+function Tab:_Hold()
+    local hold = self.deps.client.HoldSlot
+    if type(hold) ~= "function" then
+        return
+    end
+    local entry = self:_HoldTarget()
+    local bag, slot, quantity, stacks
+    if entry then
+        bag, slot, quantity, stacks = self:_HoldArgs(entry)
+    end
+    if not bag then
+        self:_Release()
         return
     end
     local plannedID = entry.item and entry.item.itemID or entry.candidate and entry.candidate.itemID
-    local bySize, total = {}, nil
-    for index = entry.next, #entry.units do
-        local unit = entry.units[index]
-        local size = unit.quantity
-        local stacks = unit.stacks or 1
-        local id = size .. "x" .. stacks
-        if bySize[id] == nil then
-            local buyout = decision.price * size
-            local ok, deposit = pcall(read, unit.bag, unit.slot, decision.duration, size, buyout, buyout, plannedID,
-                unit.stacks)
-            bySize[id] = ok and type(deposit) == "number" and deposit or false
+    local ok, placed = pcall(hold, bag, slot, quantity, plannedID, stacks > 1 and stacks or nil)
+    if ok and placed then
+        self.held = { entry = entry }
+    else
+        self:_Release()
+    end
+end
+
+-- Put the kept item back in its bag slot. Call it only inside a click handler, or when the AH closes or the tab leaves.
+function Tab:_Release()
+    local held = self.held
+    self.held = nil
+    local release = self.deps.client.ReleaseSlot
+    if held and type(release) == "function" then
+        pcall(release)
+    end
+end
+
+-- No entry owns the slot after a change that is not a click: the deposit reads stop, and the next click, the tab leave
+-- or the AH close releases the slot.
+function Tab:_CheckHeld()
+    local held = self.held
+    if not held or not held.entry then
+        return
+    end
+    local status = held.entry.status
+    local kept = false
+    for _, entry in ipairs(self.selection) do
+        kept = kept or entry == held.entry
+    end
+    if not kept or status == "done" or status == "skipped" or status == "failed" or status == "noop" then
+        held.entry = nil
+    end
+end
+
+-- With the item in the sale slot, read the real deposit of the next post and of the units behind it. A plain read:
+-- no fill, no protected call. price is the price of one item. nextUnit is the unit that the pane shows. A read that
+-- gives nothing leaves the deposit as it was.
+function Tab:_ReadHeld(entry, price, decision, nextUnit)
+    local held = self.held
+    local read = self.deps.client.Deposit
+    if not (held and held.entry == entry and decision and nextUnit and not decision.commodity
+        and type(price) == "number" and price >= 1) then
+        return
+    end
+    local ready = entry.status == "ready"
+    for index = entry.next, ready and #entry.units or entry.next do
+        local unit = index == entry.next and nextUnit or entry.units[index]
+        local buyout = price * unit.quantity
+        local ok, deposit = pcall(read, unit.bag, unit.slot, decision.duration, unit.quantity, false, buyout, buyout,
+            unit.stacks)
+        if ok and type(deposit) == "number" then
+            unit.deposit, unit.depositRead = deposit, true
+            entry.depositPrice = price
         end
-        if bySize[id] then
-            unit.deposit, unit.depositRead = bySize[id], true
-            entry.depositPrice = decision.price
-        end
+    end
+    local total
+    for _, unit in ipairs(entry.units) do
         if unit.deposit then
             total = (total or 0) + unit.deposit
         end
@@ -970,8 +1054,9 @@ function Tab._ForgetDeposits(_, entry)
 end
 
 -- Select a tree node: the group and its subgroups, or one item. Start the live searches of the entries that
--- have no result yet. fromClick is true when a mouse click selects the node: then the real deposit of the ready
--- entries is read (a protected sale slot step). Other calls make no protected call.
+-- have no result yet. fromClick is true when a mouse click selects the node: then the item of the pane goes in the
+-- sale slot and stays there (a protected step), and the slot item of the old selection goes back. Other calls make no
+-- protected call.
 function Tab:SelectNode(node, fromClick)
     if self.awaiting or self.multi then
         self:_Say(self.multi and "wait for the post to end first" or "confirm or skip the open post first")
@@ -987,11 +1072,13 @@ function Tab:SelectNode(node, fromClick)
     self.priceEntry = nil
     self.allRun = nil
     self:_Unlock()
+    if fromClick then
+        self:_Hold()
+    else
+        self:_CheckHeld()
+    end
     local list = {}
     for _, entry in ipairs(self.selection) do
-        if fromClick then
-            self:_ReadDeposits(entry)
-        end
         if entry.status == "waiting" then
             list[#list + 1] = entry
         end
@@ -1695,6 +1782,9 @@ function Tab:_PostStep(all)
                 nil, stacks > 1 and stacks or nil)
         end
     end
+    -- The post call reuses the kept slot when it holds the right item, else it fills the slot. After the call the
+    -- post owns the slot: the tab does not release it, and the slot is empty after the post.
+    self.held = nil
     -- The multisell events can come while the call runs. The state exists before the call.
     if stacks > 1 then
         self:_StartMulti(entry, quantity, stacks, price, decision.duration, all)
@@ -1825,6 +1915,9 @@ function Tab:Skip()
         return false, "nothing to skip"
     end
     self.awaiting = nil
+    if self.held and self.held.entry == entry and entry.next >= #entry.units then
+        self:_Release()
+    end
     self.deps.log:Add(entry.candidate, { action = "skip", reason = "skipped by user" })
     self:_Advance(entry, false)
     return true
@@ -1832,6 +1925,9 @@ end
 
 -- Leave all the auctions that are left of one item (the Skip button of the warning box). No protected call.
 function Tab:SkipItem(entry, reason)
+    if self.held and self.held.entry == entry then
+        self:_Release()
+    end
     self.deps.log:Add(entry.candidate, { action = "skip", reason = reason or "skipped by user" })
     entry.next = #entry.units
     self:_Advance(entry, false)
@@ -2110,6 +2206,7 @@ function Tab:_UpdateDetails()
     local shown = typed or decision.price or decision.suggested or 0
     self:_SyncManual(entry, shown)
     local nextDecision, nextUnit = self:_NextPost(entry, shown, false)
+    self:_ReadHeld(entry, typed, nextDecision, nextUnit)
     local values = nextUnit and SellingTab.Details(shadowEntry(entry, nextDecision, nextUnit),
         self:_Vendor(entry), typed)
     if not ready or not values then
@@ -2155,6 +2252,7 @@ function Tab:_Update()
         return
     end
     local client = self.deps.client
+    self:_CheckHeld()
     ui.stop:SetShown(self.queue ~= nil or self.locked == true)
     self:_Layout()
     ui.tree:Refresh()
@@ -2177,6 +2275,8 @@ end
 -- Hide the panel; the host or Blizzard's own code takes over.
 function Tab:Deselect()
     self.active = false
+    -- A Blizzard tab or a hide takes over: its sale slot must not hold our item.
+    self:_Release()
     if self.content then
         self.content:Hide()
     end
@@ -2406,6 +2506,14 @@ function Tab:Mount(parent, api)
             self:_OnMultisell(kind, created, total, text)
         end)
         self.events[#self.events + 1] = multisell
+    end
+    -- The AH closes: the client gives the sale slot item back; the tab drops its hold and asks for the release too.
+    local closeEvent = client.CloseEvent and client.CloseEvent()
+    if closeEvent then
+        bus:Subscribe(closeEvent, OWNER, function()
+            self:_Release()
+        end)
+        self.events[#self.events + 1] = closeEvent
     end
     -- The bags change after a post: read them again so that a posted item leaves the list.
     bus:Subscribe("BAG_UPDATE_DELAYED", OWNER, function()

@@ -799,11 +799,20 @@ describe("LegacyBackend", function()
                 assert.is_nil(A().Deposit(0, 1, 24, 20, false, 300, 500, 4))
             end)
 
-            it("reads the deposit of all stacks on select and puts the item back", function()
-                assert.are.equal(66, A().ReadDeposit(0, 1, 24, 20, 300, 500, 11, 3))
+            it("keeps the item of all stacks in the sale slot and reads the deposit with no new fill", function()
+                assert.is_true(A().HoldSlot(0, 1, 20, 11, 3))
+                assert.is_not_nil(sell)
+                assert.are.equal(66, A().Deposit(0, 1, 24, 20, false, 300, 500, 3))
                 assert.are.same({ 2, 300, 500, 20, 3, n = 5 }, depositCalls[1])
-                assert.is_nil(sell)
                 assert.are.equal(0, #posts)
+            end)
+
+            it("posts all stacks with the kept slot", function()
+                A().HoldSlot(0, 1, 20, 11, 3)
+                local held = sell
+                assert.is_false(A().PostItem(0, 1, 24, 20, nil, 500, 11, nil, 3))
+                assert.are.equal(held, sell)
+                assert.are.same({ 500, 500, 2, 20, 3, n = 5 }, posts[1])
             end)
             it("gives the guard the deposit of all stacks", function()
                 local seen
@@ -906,56 +915,138 @@ describe("LegacyBackend", function()
             end)
         end)
 
-        describe("deposit read at the select click", function()
-            it("fills the slot, reads with the planned arguments and puts the item back", function()
-                assert.are.equal(66, A().ReadDeposit(0, 1, 24, 5, 300, 500, 11))
-                assert.are.same({ 2, 300, 500, 5, 1, n = 5 }, depositCalls[1])
-                assert.is_nil(sell)
+        describe("kept sale slot (select click)", function()
+            it("fills the slot and keeps the item there", function()
+                assert.is_true(A().HoldSlot(0, 1, 5, 11))
+                assert.are.equal(11, sell.item.itemID)
                 assert.is_nil(cursor)
                 assert.are.equal(0, #posts)
+                assert.are.equal(0, #depositCalls)
             end)
 
-            it("leaves the cursor alone and reads nothing when the cursor holds an item", function()
+            it("reads the deposit again for each change, with no new fill", function()
+                local fills = 0
+                local click = _G.ClickAuctionSellItemButton
+                _G.ClickAuctionSellItemButton = function()
+                    fills = fills + 1
+                    click()
+                end
+                A().HoldSlot(0, 1, 5, 11)
+                assert.are.equal(1, fills)
+                assert.are.equal(66, A().Deposit(0, 1, 24, 5, false, 300, 500))
+                assert.are.equal(66, A().Deposit(0, 1, 12, 5, false, 400, 600))
+                assert.are.equal(66, A().Deposit(0, 1, 24, 3, false, 100, 300))
+                assert.are.same({ 2, 300, 500, 5, 1, n = 5 }, depositCalls[1])
+                assert.are.same({ 1, 400, 600, 5, 1, n = 5 }, depositCalls[2])
+                assert.are.same({ 2, 100, 300, 3, 1, n = 5 }, depositCalls[3])
+                assert.are.equal(1, fills)
+                assert.is_not_nil(sell)
+            end)
+
+            it("does not fill again when the slot holds the right item", function()
+                A().HoldSlot(0, 1, 5, 11)
+                local held = sell
+                assert.is_true(A().HoldSlot(0, 1, 5, 11))
+                assert.are.equal(held, sell)
+                assert.is_nil(cursor)
+            end)
+
+            it("replaces the item of another bag slot", function()
+                bag[key(0, 2)] = { itemID = 12, stackCount = 4, isBound = false }
+                A().HoldSlot(0, 1, 5, 11)
+                assert.is_true(A().HoldSlot(0, 2, 1, 12))
+                assert.are.equal(12, sell.item.itemID)
+                assert.is_nil(cursor)
+            end)
+
+            it("posts with the kept slot and does not fill twice", function()
+                local fills = 0
+                local click = _G.ClickAuctionSellItemButton
+                _G.ClickAuctionSellItemButton = function()
+                    fills = fills + 1
+                    click()
+                end
+                A().HoldSlot(0, 1, 5, 11)
+                assert.is_false(A().PostItem(0, 1, 24, 5, nil, 500, 11))
+                assert.are.equal(1, fills)
+                assert.are.equal(1, #posts)
+            end)
+
+            it("gives the guard the deposit from the kept slot", function()
+                A().HoldSlot(0, 1, 5, 11)
+                local seen
+                A().PostItem(0, 1, 24, 5, 300, 500, 11, function(deposit)
+                    seen = deposit
+                    return true
+                end)
+                assert.are.equal(66, seen)
+            end)
+
+            it("refuses the kept slot for a post of another item", function()
+                A().HoldSlot(0, 1, 5, 11)
+                local ok, err = pcall(A().PostItem, 0, 1, 24, 5, nil, 500, 99)
+                assert.is_false(ok)
+                assert.is_truthy(err:find("another item", 1, true))
+                assert.are.equal(0, #posts)
+                assert.is_nil(cursor)
+            end)
+
+            it("gives false and leaves the cursor alone when the cursor holds an item", function()
                 pickup(0, 1)
                 local held = cursor
-                assert.is_nil(A().ReadDeposit(0, 1, 24, 5, 300, 500, 11))
+                local ok, text = A().HoldSlot(0, 1, 5, 11)
+                assert.is_false(ok)
+                assert.is_truthy(text:find("cursor", 1, true))
                 assert.are.equal(held, cursor)
-                assert.are.equal(0, #depositCalls)
+                assert.is_nil(sell)
             end)
 
-            it("gives nil and empties the slot when the client does not fill it at once", function()
+            it("gives false and empties the cursor when the client does not fill the slot", function()
                 sellRejects = true
-                assert.is_nil(A().ReadDeposit(0, 1, 24, 5, 300, 500, 11))
-                assert.are.equal(0, #depositCalls)
+                local ok = A().HoldSlot(0, 1, 5, 11)
+                assert.is_false(ok)
                 assert.is_nil(sell)
                 assert.is_nil(cursor)
                 assert.are.equal(0, #posts)
             end)
 
-            it("gives nil for an empty bag slot, another item or a closed AH", function()
-                assert.is_nil(A().ReadDeposit(0, 2, 24, 5, 300, 500, 11))
-                assert.is_nil(A().ReadDeposit(0, 1, 24, 5, 300, 500, 99))
+            it("gives false for an empty bag slot, another item, a bad number or a closed AH", function()
+                assert.is_false((A().HoldSlot(0, 2, 5, 11)))
+                assert.is_false((A().HoldSlot(0, 1, 5, 99)))
+                assert.is_false((A().HoldSlot(0, 1, 0, 11)))
+                assert.is_false((A().HoldSlot(0, 1, 5, 11, 1.5)))
                 _G.AuctionFrame = { IsShown = function() return false end }
-                assert.is_nil(A().ReadDeposit(0, 1, 24, 5, 300, 500, 11))
+                assert.is_false((A().HoldSlot(0, 1, 5, 11)))
                 _G.AuctionFrame = nil
                 assert.is_nil(sell)
                 assert.is_nil(cursor)
             end)
 
-            it("gives nil and puts the item back when GetAuctionDeposit raises an error", function()
-                _G.GetAuctionDeposit = function() error("boom") end
-                assert.is_nil(A().ReadDeposit(0, 1, 24, 5, 300, 500, 11))
+            it("gives no deposit when the slot is empty after a release", function()
+                A().HoldSlot(0, 1, 5, 11)
+                assert.is_true(A().ReleaseSlot())
                 assert.is_nil(sell)
                 assert.is_nil(cursor)
+                assert.is_not_nil(bag[key(0, 1)])
+                assert.is_nil(A().Deposit(0, 1, 24, 5, false, 300, 500))
             end)
 
-            it("gives nil without prices or with a bad duration", function()
-                assert.is_nil(A().ReadDeposit(0, 1, 24, 5, nil, 500, 11))
-                assert.is_nil(A().ReadDeposit(0, 1, 0, 5, 300, 500, 11))
-                assert.are.equal(0, #depositCalls)
+            it("releases nothing and clears nothing when the slot is empty", function()
+                cursor = { key = "9:9", item = { itemID = 5, stackCount = 1 } }
+                local held = cursor
+                assert.is_true(A().ReleaseSlot())
+                assert.are.equal(held, cursor)
+            end)
+
+            it("leaves the slot as it is when the cursor holds an item", function()
+                A().HoldSlot(0, 1, 5, 11)
+                cursor = { key = "9:9", item = { itemID = 5, stackCount = 1 } }
+                local held = cursor
+                assert.is_false(A().ReleaseSlot())
+                assert.are.equal(held, cursor)
+                assert.is_not_nil(sell)
             end)
         end)
-
         describe("guard", function()
             it("reads the real deposit and posts when the guard agrees", function()
                 local seen
