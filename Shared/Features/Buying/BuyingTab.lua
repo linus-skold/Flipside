@@ -953,7 +953,6 @@ end
 
 -- Start the buy of one level. Call it only from a click. A commodity asks for a quote; an item goes to the confirm.
 function Tab:_StartBuy(entry, cover)
-    local client = self.deps.client
     local level = cover.last
     local first = level.rows[1]
     if first.isCommodity == false then
