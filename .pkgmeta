@@ -9,6 +9,7 @@ ignore:
   - ScanTest
   - ScanTest.lua*
   - LedgerTest
+  - MailTest
   - lua51
   - .claude
   - .github

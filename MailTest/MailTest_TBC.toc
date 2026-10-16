@@ -1,0 +1,6 @@
+## Interface: 20505
+## Title: MailTest (TBC)
+## Notes: Throwaway probe of chained SendMail calls for Flipside (TBC Anniversary). Do not ship.
+# The interface number 20505 is the same as ScanTest_TBC. Check it in game: /run print(select(4, GetBuildInfo()))
+
+MailTest.lua
