@@ -112,6 +112,38 @@ describe("Tooltip", function()
         assert.are.equal(0, #built)
     end)
 
+    describe("vendor sell price", function()
+        local function run(sellPrice, record)
+            ns.ItemString = { ToExactKey = function(link) return link end }
+            callbackDeps.itemInfo = function()
+                if sellPrice == nil then return nil end
+                return "n", "l", 1, 1, 1, "t", "s", 1, "", 1, sellPrice
+            end
+            callbackDeps.getRecord = function() return record end
+            ns.Tooltip.Attach(callbackDeps)
+            local tip = newTooltip()
+            registered[1].fn(tip, "item:5")
+            return #tip.lines
+        end
+
+        it("adds nothing for sell price 0 without scan data", function()
+            assert.are.equal(0, run(0, nil))
+        end)
+        it("adds lines for sell price 0 with scan data", function()
+            assert.are.equal(4, run(0, { latest = {} }))
+        end)
+        it("adds lines for a sell price above 0", function()
+            assert.are.equal(4, run(10, nil))
+        end)
+        it("adds lines for an unknown sell price", function()
+            assert.are.equal(4, run(nil, nil))
+        end)
+        it("still adds nothing to a quest item with scan data", function()
+            callbackDeps.itemInfoInstant = function() return 5, "Quest", "Quest", "", 1, 12, 0 end
+            assert.are.equal(0, run(10, { latest = {} }))
+        end)
+    end)
+
     it("adds lines to a normal item and to an item with unknown class", function()
         callbackDeps.itemInfoInstant = function() return 5, "Armor", "Cloth", "", 1, 4, 1 end
         ns.Tooltip.Attach(callbackDeps)

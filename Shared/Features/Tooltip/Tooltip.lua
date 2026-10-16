@@ -22,6 +22,20 @@ local function isQuestItem(deps, link)
     return classID == QUEST_ITEM_CLASS
 end
 
+-- Returns true if the vendor sell price is 0 and no scan record exists. An unknown price gives false.
+local function isUnsellable(deps, link)
+    local getInfo = deps.itemInfo or (C_Item and C_Item.GetItemInfo)
+    if not getInfo then
+        return false
+    end
+    local sellPrice = select(11, getInfo(link))
+    if sellPrice ~= 0 then
+        return false
+    end
+    local key = ns.ItemString and ns.ItemString.ToExactKey(link)
+    return not (key and deps.getRecord and type(deps.getRecord(key)) == "table")
+end
+
 -- Returns the stack count of the bag slot that owns the tooltip, or nil.
 local function stackCountOf(deps, tooltip)
     if not (deps.containerItemInfo and tooltip.GetOwner) then
@@ -120,7 +134,7 @@ function Tooltip.Rows(deps, input, stackMode, stackCount, config)
     })
 end
 
--- deps: itemInfoInstant (optional, default C_Item.GetItemInfoInstant),
+-- deps: itemInfoInstant (optional, default C_Item.GetItemInfoInstant), itemInfo (optional, default C_Item.GetItemInfo),
 -- tooltipConfig, formulaRun, rules, holdings, getRecord, now, isAltDown, containerItemInfo, clock, report.
 -- deps.hook (default ns.TooltipHook) has Install(onItem, opts); it calls onItem(tooltip, link) for each item tooltip.
 function Tooltip.Attach(deps)
@@ -140,7 +154,7 @@ function Tooltip.Attach(deps)
         if ns.TooltipTable then
             ns.TooltipTable.Release(tooltip)
         end
-        if not link or isQuestItem(deps, link) then
+        if not link or isQuestItem(deps, link) or isUnsellable(deps, link) then
             return
         end
         local stackMode = deps.isAltDown and deps.isAltDown() or false
