@@ -15,6 +15,7 @@ local CHANGED_RATIO = 0.30
 local FRAME_GAP_MS = 1
 
 local RESULT_NO_RESPONSE = "no response (cooldown or blocked)"
+local RESULT_CLOSED = "stopped (the Auction House closed before the data came)"
 
 -- Legacy (TBC) scan modes. The page mode reads the list page by page and needs no get all call.
 local MODE_PAGE = "page"
@@ -157,6 +158,7 @@ local function newSummary()
         pendingMissing = 0, pending = 0, noKey = 0, unknownItems = 0, itemsKeyed = 0, itemsPendingMissing = 0,
         itemsNoLink = 0, itemsLinkMismatch = 0, itemsUnknown = 0, itemsLinkFallback = 0,
         keyedWithoutLink = 0, failed = 0, refreshSeconds = 0, retried = 0, nilLink = 0, notAllInfo = 0,
+        pendingRows = 0, readSeconds = 0,
         timeToEventMs = nil, cpuMs = 0, wallMs = 0, frames = 1,
     }
 end
@@ -224,6 +226,8 @@ function Engine:_Conclude(summary)
     summary.mode = self.mode
     summary.label = self.label
     summary.refreshSeconds = run.refreshSeconds
+    summary.pendingRows = run.pendingRows
+    summary.readSeconds = run.readSeconds
     summary.pages = run.page
     summary.pagesTotal = run.pages
     summary.failed = count(run.failedSet)
@@ -315,12 +319,15 @@ local function readApi(api, run)
     }
 end
 
--- Returns true if the event came, false on timeout, nil if cancelled.
+-- Returns true if the event came, false on timeout, "closed" if the Auction House closed, nil if cancelled.
 function Engine:_WaitForEvent(jobView)
     local run = self.run
     local seconds = self.deps.seconds
     local startTime = seconds()
     while not run.eventSeen do
+        if run.closed then
+            return "closed"
+        end
         if seconds() - startTime >= ns.ScanClock.EVENT_TIMEOUT_SECONDS then
             return false
         end
@@ -335,7 +342,7 @@ function Engine:_WaitForEvent(jobView)
         if api.isComplete and api.isComplete() then
             break
         end
-        if seconds() - run.lastEventAt >= api.settleSeconds then
+        if run.closed or seconds() - run.lastEventAt >= api.settleSeconds then
             break
         end
         jobView:Yield()
@@ -464,9 +471,6 @@ end
 function Engine:_NeedLinks(jobView, rows, resolver)
     local canKeyWithoutLink = self.deps.api.canKeyWithoutLink
     local need = {}
-    if not canKeyWithoutLink then
-        return needItems(jobView, rows, resolver)
-    end
     for itemID, list in pairs(rows.byItem) do
         local missing = false
         for _, row in ipairs(list) do
@@ -483,7 +487,7 @@ function Engine:_NeedLinks(jobView, rows, resolver)
     return need
 end
 
--- Legacy backend: asks for item data and reads the missing links again, until all items are keyed or the time ends.
+-- Legacy backend (TBC): asks for item data and reads the missing links again, until all are keyed or time ends.
 -- Returns true, or nil if the job is cancelled.
 function Engine:_Refresh(jobView, rows, seconds, run)
     local deps, api = self.deps, self.deps.api
@@ -493,15 +497,11 @@ function Engine:_Refresh(jobView, rows, seconds, run)
     local poll = 0
     while true do
         local need = self:_NeedLinks(jobView, rows, resolver)
-        if #need == 0 or deps.seconds() - startAt >= seconds
-            or (run.closed and not api.canKeyWithoutLink) then
+        if #need == 0 or deps.seconds() - startAt >= seconds then
             for _, itemID in ipairs(need) do
                 if deps.cache:GetState(itemID) == "failed" then
                     run.failedSet[itemID] = true
                 end
-            end
-            if not api.canKeyWithoutLink then
-                countPending(rows, run)
             end
             run.refreshSeconds = run.refreshSeconds + (deps.seconds() - startAt)
             return true
@@ -522,14 +522,99 @@ function Engine:_Refresh(jobView, rows, seconds, run)
                 return nil
             end
         end
-        if api.canKeyWithoutLink then
-            ns.ScanRows.RereadLinks(jobView, api, rows, need, true)
-        else
-            ns.ScanRows.RereadRows(jobView, api, rows, need)
-        end
+        ns.ScanRows.RereadLinks(jobView, api, rows, need, true)
     end
 end
 
+-- Counts the rows of an item that have no link or no full item info.
+local function incompleteRows(rows, itemID)
+    local n = 0
+    for _, row in ipairs(rows.byItem[itemID] or {}) do
+        if row.link == nil or not row.allInfo then
+            n = n + 1
+        end
+    end
+    return n
+end
+
+-- Forever: asks for the data of all needed items at once. When the data of an item arrives, its rows are read again.
+-- The wait ends when no item is outstanding, when the Auction House closes, or when no row was accepted for
+-- noProgressSeconds. Returns true, or nil if the job is cancelled.
+function Engine:_LoadRows(jobView, rows, noProgressSeconds, run)
+    local deps, api = self.deps, self.deps.api
+    local resolver = ns.ScanKey.New({ clientIsCommodity = api.clientIsCommodity, maxStack = api.maxStack })
+    local interval = api.refreshInterval or REFRESH_INTERVAL_SECONDS
+    local startAt = deps.seconds()
+    local outstanding, ready, asked = {}, {}, {}
+    local function onData(itemID)
+        asked[itemID] = nil
+        ready[#ready + 1] = itemID
+    end
+    local function ask(itemID)
+        if not asked[itemID] then
+            asked[itemID] = true
+            deps.cache:Request(itemID, onData)
+        end
+    end
+    for _, itemID in ipairs(needItems(jobView, rows, resolver)) do
+        outstanding[itemID] = true
+    end
+    deps.cache:ResetFailed()
+    for itemID in pairs(outstanding) do
+        ask(itemID)
+        jobView:Checkpoint(1)
+    end
+    local lastProgress, nextPoll = startAt, startAt + interval
+    while next(outstanding) ~= nil do
+        if #ready > 0 then
+            local batch = ready
+            ready = {}
+            local before = {}
+            for _, itemID in ipairs(batch) do
+                before[itemID] = incompleteRows(rows, itemID)
+            end
+            ns.ScanRows.RereadRows(jobView, api, rows, batch)
+            for _, itemID in ipairs(batch) do
+                if rows.pending[itemID] and resolver:IsCommodity(itemID) == true then
+                    rows.pending[itemID] = nil
+                end
+                if not rows.pending[itemID] then
+                    outstanding[itemID] = nil
+                end
+                if not outstanding[itemID] or incompleteRows(rows, itemID) < before[itemID] then
+                    lastProgress = deps.seconds()
+                end
+            end
+        elseif run.closed or deps.seconds() - lastProgress >= noProgressSeconds then
+            break
+        else
+            if deps.seconds() >= nextPoll then
+                nextPoll = deps.seconds() + interval
+                deps.cache:ResetFailed()
+                for itemID in pairs(outstanding) do
+                    run.retriedSet[itemID] = true
+                    ask(itemID)
+                end
+            end
+            jobView:Yield()
+            if jobView:IsCancelled() then
+                return nil
+            end
+        end
+    end
+    for itemID in pairs(outstanding) do
+        if deps.cache:GetState(itemID) == "failed" then
+            run.failedSet[itemID] = true
+        end
+    end
+    rows.stats.pendingItems = count(rows.pending)
+    countPending(rows, run)
+    for itemID in pairs(rows.pending) do
+        run.pendingRows = run.pendingRows + incompleteRows(rows, itemID)
+    end
+    run.refreshSeconds = deps.seconds() - startAt
+    return true
+end
 
 -- Returns the items to load: pending items and items with an unknown commodity status.
 function Engine:_LoadSet(jobView, rows)
@@ -604,12 +689,20 @@ function Engine:_CollectAll(jobView, run, summary)
     if arrived == nil then
         return nil
     end
+    if arrived == "closed" then
+        summary.result = RESULT_CLOSED
+        self:_Conclude(summary)
+        return false
+    end
     if not arrived then
         summary.result = RESULT_NO_RESPONSE
         self:_Conclude(summary)
         return false
     end
-    return ns.ScanRows.Read(jobView, readApi(deps.api, run))
+    local readStart = deps.seconds()
+    local rows = ns.ScanRows.Read(jobView, readApi(deps.api, run))
+    run.readSeconds = deps.seconds() - readStart
+    return rows
 end
 
 -- Page mode: one query for each page. Each page is read, its missing links are read again for a short time,
@@ -685,6 +778,7 @@ function Engine:_Run(job)
         startMs = deps.ms(), suspendedMs = 0, frames = 1, closed = false, eventSeen = false,
         readCut = false, concluded = false, eventCount = 0, lastEventAt = 0,
         refreshSeconds = 0, failedSet = {}, retriedSet = {}, nilLinkItems = 0, notAllInfoItems = 0,
+        pendingRows = 0, readSeconds = 0,
     }
     self.run = run
     local jobView = clockedJob(job, run, deps.ms)
@@ -715,9 +809,13 @@ function Engine:_Run(job)
         return
     end
     -- Page rows were refreshed one page at a time; their row indexes are no longer valid, so no refresh here.
-    if not isPage and (deps.api.canKeyWithoutLink or deps.api.refreshSeconds) then
+    if not isPage and deps.api.canKeyWithoutLink then
         local seconds = deps.api.refreshSeconds and deps.api.refreshSeconds(self.mode) or 0
         if not self:_Refresh(jobView, rows, seconds, run) then
+            return
+        end
+    elseif not isPage and deps.api.refreshSeconds then
+        if not self:_LoadRows(jobView, rows, deps.api.refreshSeconds(self.mode), run) then
             return
         end
     elseif not isPage then

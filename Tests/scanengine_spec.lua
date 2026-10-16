@@ -817,6 +817,80 @@ describe("ScanEngine Forever retry", function()
         end
     end)
 
+    it("writes an item with one loaded row and one unloaded row after the load", function()
+        local second = gearRow(1, 7000)
+        second.late = true
+        local w = MakeWorld({ rows = { gearRow(1, 6000), second, gearRow(2) }, forever = true, refresh = 15 })
+        local s = Run(w)
+        assert.are.equal(0, s.pending)
+        assert.are.equal(0, s.pendingRows)
+        assert.are.equal(2, s.keys)
+        local record = w.store:Get("1001#b6001")
+        assert.are.equal(2, record.latest.qty)
+        assert.are.equal(1, #record.today.snaps)
+        assert.is_true(w.requestCount[1001] >= 1)
+    end)
+
+    it("writes an item whose data arrives after 40 s while other items keep arriving", function()
+        local rows = {}
+        for i = 1, 4 do
+            rows[i] = gearRow(i)
+            rows[i].late = true
+            -- Not through neverLoad of the world: this test releases each item itself.
+        end
+        local w = MakeWorld({ rows = rows, forever = true, refresh = 15 })
+        local releaseAt = { [1001] = 10, [1002] = 20, [1003] = 30, [1004] = 44 }
+        for id in pairs(releaseAt) do
+            w.neverLoad[id] = true
+        end
+        assert.is_true(w.engine:Start())
+        for _ = 1, 300 do
+            if not w.engine:IsRunning() then
+                break
+            end
+            for id, at in pairs(releaseAt) do
+                if w.tick >= at then
+                    w.neverLoad[id] = nil
+                end
+            end
+            Tick(w)
+        end
+        assert.are.same({}, w.errors)
+        local s = w.finished[#w.finished]
+        assert.are.equal("ok", s.result)
+        assert.are.equal(0, s.pending)
+        assert.are.equal(4, s.keys)
+        assert.is_true(s.refreshSeconds > 40)
+        assert.is_not_nil(w.store:Get("1004#b6004"))
+    end)
+
+    it("stops after no row was accepted for the no-progress time and reports the pending rows", function()
+        local rows = { gearRow(1), gearRow(2), gearRow(2, 9000) }
+        rows[2].late, rows[3].late = true, true
+        local w = MakeWorld({ rows = rows, forever = true, refresh = 15 })
+        w.neverLoad[1002] = true
+        local s = Run(w)
+        assert.are.equal("ok", s.result)
+        assert.are.equal(1, s.pending)
+        assert.are.equal(2, s.pendingRows)
+        assert.is_true(s.refreshSeconds >= 15 and s.refreshSeconds < 20)
+        assert.is_nil(w.store:Get("1002#b6002"))
+        assert.is_not_nil(w.store:Get("1001#b6001"))
+    end)
+
+    it("stops the scan when the Auction House closes during the event wait", function()
+        local w = MakeWorld({ rows = { gearRow(1), gearRow(2) }, forever = true, eventDelay = 5 })
+        assert.is_true(w.engine:Start())
+        Tick(w)
+        w.bus:Emit(CLOSED)
+        Pump(w)
+        assert.are.same({}, w.errors)
+        local s = w.finished[#w.finished]
+        assert.is_truthy(s.result:find("closed", 1, true))
+        assert.are.equal(0, #w.putTicks)
+        assert.is_nil(w.store:Get("1001#b6001"))
+    end)
+
     it("does not refresh when the api has no refresh time", function()
         local rows = { gearRow(1), gearRow(2) }
         rows[2].late = true

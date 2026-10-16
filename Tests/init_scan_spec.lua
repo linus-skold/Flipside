@@ -260,10 +260,11 @@ describe("Init scan", function()
         it("prints the Forever diagnostics line and keeps the last 5 runs in the scan DB", function()
             runScan()
             assert.is_true(hasMessage(
-                "Flipside: pending 0, failed 0 (load failed), nilLink 0, notAllInfo 0, retried 0, refresh 0.0 s"))
+                "Flipside: rows 9, written 5, pending 0 items (0 rows), failed 0, nilLink 0, notAllInfo 0, retried 0; "
+                    .. "wait 2.0 s, read 0.0 s, item load 0.0 s"))
             assert.are.equal(1, #_G.FlipsideScanDB.diag)
             assert.are.equal(5, _G.FlipsideScanDB.diag[1].keys)
-            assert.are.equal(30, ns.AuctionClient.ScanRefreshSeconds())
+            assert.are.equal(15, ns.AuctionClient.ScanRefreshSeconds())
             for _ = 1, 6 do
                 ns.AuctionClient.ScanDiagnostics({ result = "ok" })
             end

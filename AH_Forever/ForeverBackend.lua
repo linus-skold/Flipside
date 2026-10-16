@@ -35,8 +35,9 @@ function Backend.ScanDoneEvent()
     return "REPLICATE_ITEM_LIST_UPDATE"
 end
 
--- The engine asks again for item data and reads rows without a link or item info again, for up to this long.
-local REFRESH_SECONDS = 30
+-- The engine asks for the data of all unloaded items at once and reads their rows when the data arrives.
+-- It stops the wait when no row was accepted for this long (not a cap on the whole wait).
+local REFRESH_SECONDS = 15
 local DIAG_KEEP = 5
 
 function Backend.ScanRefreshSeconds()
@@ -52,6 +53,8 @@ function Backend.ScanDiagnostics(summary)
         rows = summary.rows, items = summary.items, keys = summary.keys,
         pending = summary.pending, failed = summary.failed, nilLink = summary.nilLink,
         notAllInfo = summary.notAllInfo, retried = summary.retried, refreshSeconds = summary.refreshSeconds,
+        pendingRows = summary.pendingRows, readSeconds = summary.readSeconds,
+        eventSeconds = summary.timeToEventMs and summary.timeToEventMs / 1000 or nil,
     }
     local flavour = ns.Flavour
     local db = flavour and flavour.savedVariables and _G[flavour.savedVariables.scan]
@@ -65,9 +68,11 @@ function Backend.ScanDiagnostics(summary)
         end
     end
     return string.format(
-        "pending %s, failed %s (load failed), nilLink %s, notAllInfo %s, retried %s, refresh %.1f s",
-        tostring(entry.pending), tostring(entry.failed), tostring(entry.nilLink), tostring(entry.notAllInfo),
-        tostring(entry.retried), entry.refreshSeconds or 0)
+        "rows %s, written %s, pending %s items (%s rows), failed %s, nilLink %s, notAllInfo %s, retried %s; "
+            .. "wait %.1f s, read %.1f s, item load %.1f s",
+        tostring(entry.rows), tostring(entry.keys), tostring(entry.pending), tostring(entry.pendingRows),
+        tostring(entry.failed), tostring(entry.nilLink), tostring(entry.notAllInfo), tostring(entry.retried),
+        entry.eventSeconds or 0, entry.readSeconds or 0, entry.refreshSeconds or 0)
 end
 
 function Backend.RowCount()
