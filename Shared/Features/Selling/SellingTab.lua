@@ -2007,6 +2007,20 @@ function Tab:Skip()
     return true
 end
 
+-- Leave all the auctions that are left of the current item (the Skip item button). No protected call.
+function Tab:SkipCurrentItem()
+    if self.multi then
+        return false, "posting"
+    end
+    local entry = self.awaiting and self.awaiting.entry or self:_Focus(false)
+    if not entry then
+        return false, "nothing to skip"
+    end
+    self.awaiting = nil
+    self:SkipItem(entry)
+    return true
+end
+
 -- Leave all the auctions that are left of one item (the Skip button of the warning box). No protected call.
 function Tab:SkipItem(entry, reason)
     if self.held and self.held.entry == entry then
@@ -2178,14 +2192,30 @@ function Tab:PostLabel()
     return "Post"
 end
 
--- The progress text: "Posting 3 of 60" while a post is left, else empty.
+-- The number of items of the selection that wait for their price (not searched yet, or searching now).
+function Tab:_WaitingCount()
+    local count = 0
+    for _, entry in ipairs(self.selection) do
+        if entry.status == "waiting" or entry.status == "searching" then
+            count = count + 1
+        end
+    end
+    return count
+end
+
+-- The progress text: "Posting 3 of 60" while a post is left, else empty. The total counts the items that have a price.
+-- With nothing ready and items waiting for a price, it says "2 waiting".
 function Tab:ProgressText()
     if self.multi then
         return string.format("Posting %d of %d stacks", self.multi.created, self.multi.total)
     end
     local total, done = self:_Progress()
+    local waiting = self:_WaitingCount()
     if total > 0 and (self.awaiting or self:_Current()) then
         return string.format("Posting %d of %d", math.min(done + 1, total), total)
+    end
+    if waiting > 0 then
+        return string.format("%d waiting", waiting)
     end
     return ""
 end
@@ -2302,7 +2332,10 @@ function Tab:_UpdateDetails()
     end
     if not entry then
         clearDetails(d)
-        d.name:SetText(#self.selection == 0 and "Pick a group or an item" or "Nothing to post")
+        local waiting = self:_WaitingCount()
+        d.name:SetText(#self.selection == 0 and "Pick a group or an item" or waiting > 0
+            and string.format("Waiting for the price of %d %s", waiting, waiting == 1 and "item" or "items")
+            or "Nothing to post")
         if self.priceEntry ~= nil then
             self.priceEntry = nil
             d.priceInput:SetCopper(nil)
@@ -2394,6 +2427,7 @@ function Tab:_Update()
     ui.postAll:SetEnabled(client.CanPost() and not busy and self.awaiting == nil and #self.selection > 0
         and current ~= nil and not self.locked)
     ui.skip:SetEnabled(not busy and (self.awaiting ~= nil or self:_Focus(false) ~= nil))
+    ui.skipItem:SetEnabled(not busy and (self.awaiting ~= nil or self:_Focus(false) ~= nil))
     ui.progress:SetText(self:ProgressText())
     self:_UpdateDetails()
 end
@@ -2588,6 +2622,11 @@ function Tab:_BuildContent()
     ui.postAll:SetScript("OnClick", function()
         self:PostAll()
     end)
+    -- Skip item leaves all the units that are left of the current item.
+    ui.skipItem = Kit.Button(pane, "Skip item", 100, function()
+        self:SkipCurrentItem()
+    end)
+    ui.skipItem:SetPoint("TOPLEFT", pane, "TOPRIGHT", -164, -74)
     local depositLabel = rline("small", 164, 6, 156)
     depositLabel:SetText("Deposit:")
     d.deposit = rline("highlight", 164, 22, 156)

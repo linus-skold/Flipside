@@ -512,7 +512,7 @@ describe("SellingTab", function()
             assert.matches("The rule skips this item: below minimum", ui.details.warn.text)
             assert.matches("^%d+c$", ui.details.deposit.text)
             pick("g2")
-            assert.are.equal("Nothing to post", ui.details.name.text)
+            assert.are.equal("Waiting for the price of 1 item", ui.details.name.text)
         end)
 
         it("gives the vendor price with the client call when the dependency is not set", function()

@@ -720,4 +720,128 @@ describe("SellingTab multisell on TBC", function()
             assert.are.equal(7, itemPosts()[2].quantity)
         end)
     end)
-end)
+
+    describe("the group queue", function()
+        local SPLIT = { { bag = 1, slot = 1, count = 20 }, { bag = 1, slot = 2, count = 20 },
+            { bag = 1, slot = 3, count = 7 } }
+
+        -- 47 linen at stack size 20 (group Cloth) and 5 bolts (subgroup Bolts, a commodity).
+        local function setupGroup()
+            bagItems[1].count, bagItems[1].stacks = 5, { { bag = 0, slot = 4, count = 5 } }
+            bagItems[3].count, bagItems[3].stacks = 47, SPLIT
+            tab:RefreshBags()
+            client.rows[10] = { row(120, 1) }
+            client.rows[11] = { row(150, 5) }
+        end
+
+        local function priceAll()
+            fire("ITEM_RESULTS", 10)
+            fire("COMMODITY_RESULTS", 11)
+        end
+
+        local function finishMulti(stacks)
+            fire("MULTI", "update", stacks, stacks)
+        end
+
+        it("makes one queue of 2x20, 1x7 and 1x5 in tree order", function()
+            setupGroup()
+            pick("g2")
+            priceAll()
+            local units = {}
+            for _, entry in ipairs(tab.selection) do
+                for _, unit in ipairs(entry.units) do
+                    units[#units + 1] = { key = entry.key, quantity = unit.quantity, stacks = unit.stacks or 1 }
+                end
+            end
+            assert.are.equal(3, #units)
+            assert.are.same({ key = "10", quantity = 20, stacks = 2 }, units[1])
+            assert.are.same({ key = "10", quantity = 7, stacks = 1 }, units[2])
+            assert.are.same({ key = "11", quantity = 5, stacks = 1 }, units[3])
+            assert.are.equal("Posting 1 of 4", tab:ProgressText())
+        end)
+
+        it("walks the queue one unit per click", function()
+            setupGroup()
+            pick("g2")
+            priceAll()
+            click(ui.postNext)
+            finishMulti(2)
+            assert.are.equal(1, #client.posts)
+            click(ui.postNext)
+            assert.are.equal(2, #client.posts)
+            assert.are.equal(7, client.posts[2].quantity)
+            assert.are.equal("Posting 4 of 4", tab:ProgressText())
+            click(ui.postNext)
+            assert.are.equal(3, #client.posts)
+            assert.are.equal("commodity", client.posts[3].kind)
+            assert.are.equal(5, client.posts[3].quantity)
+        end)
+
+        it("gives a subgroup the operation of its parent", function()
+            setupGroup()
+            pick("g3")
+            fire("COMMODITY_RESULTS", 11)
+            assert.are.equal(1, #tab.selection)
+            assert.are.equal("Sell", tab.selection[1].candidate.operationName)
+            assert.are.equal("ready", tab.selection[1].status)
+        end)
+
+        it("does not queue an item with no bag stock", function()
+            table.remove(bagItems, 1)
+            bagItems[2].count, bagItems[2].stacks = 47, SPLIT
+            tab:RefreshBags()
+            client.rows[10] = { row(120, 1) }
+            pick("g2")
+            fire("ITEM_RESULTS", 10)
+            assert.are.equal(1, #tab.selection)
+            assert.are.equal("10", tab.selection[1].key)
+        end)
+
+        it("does not stop the walk at a skipped item", function()
+            setupGroup()
+            client.rows[10] = { row(5, 1) }
+            pick("g2")
+            priceAll()
+            assert.are.equal("skip", entryOf("10").status)
+            assert.are.equal("ready", entryOf("11").status)
+            click(ui.postNext)
+            assert.are.equal(1, #client.posts)
+            assert.are.equal("commodity", client.posts[1].kind)
+        end)
+
+        it("drops the rest of the current item with Skip item", function()
+            setupGroup()
+            pick("g2")
+            priceAll()
+            assert.is_true(ui.skipItem.enabled)
+            click(ui.skipItem)
+            assert.are.equal("skipped", entryOf("10").status)
+            assert.are.equal(0, #client.posts)
+            click(ui.postNext)
+            assert.are.equal("commodity", client.posts[1].kind)
+        end)
+
+        it("passes over an item with no price and posts it later", function()
+            setupGroup()
+            pick("g2")
+            local bolts = entryOf("11")
+            tab:_Decide(bolts, client.rows[11])
+            assert.are.equal("ready", bolts.status)
+            assert.are.equal("searching", entryOf("10").status)
+            assert.are.equal("Posting 1 of 1", tab:ProgressText())
+            click(ui.postNext)
+            assert.are.equal("commodity", client.posts[1].kind)
+            fire("ITEM_RESULTS", 10)
+            click(ui.postNext)
+            assert.are.equal("item", client.posts[2].kind)
+            assert.are.equal(20, client.posts[2].quantity)
+        end)
+
+        it("says that it waits when no item has a price yet", function()
+            setupGroup()
+            pick("g2")
+            assert.is_false(ui.postNext.enabled)
+            assert.are.equal("2 waiting", tab:ProgressText())
+            assert.is_truthy(ui.details.name.text:find("Waiting for the price of 2 items", 1, true))
+        end)
+    end)end)
