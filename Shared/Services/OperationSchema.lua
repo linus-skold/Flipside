@@ -8,6 +8,7 @@ local DEFAULT_MIN = "check(first(crafting, scanmarket), "
 
 -- The post durations in hours: 2, 8 and 24 on WoW: Forever, 12, 24 and 48 on TBC (ns.Flavour.durations).
 local DURATIONS = ns.Flavour and ns.Flavour.durations or { 2, 8, 24 }
+local DEFAULT_DURATION = ns.Flavour and ns.Flavour.defaultDuration or 24
 
 -- TBC posts several stacks per click (ns.Flavour.multisell): the selling operation has a stack size and a stack count.
 local MULTISELL = ns.Flavour ~= nil and ns.Flavour.multisell == true
@@ -53,7 +54,7 @@ local FIELDS = {
             help = "The amount in copper to go below the lowest auction.",
         },
         {
-            key = "duration", label = "Post duration", kind = "choice", default = DURATIONS[#DURATIONS],
+            key = "duration", label = "Post duration", kind = "choice", default = DEFAULT_DURATION,
             choices = {
                 { value = DURATIONS[1], label = DURATIONS[1] .. " hours" },
                 { value = DURATIONS[2], label = DURATIONS[2] .. " hours" },

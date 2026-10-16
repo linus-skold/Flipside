@@ -22,6 +22,8 @@ ns.Flavour = {
     id = "tbc",
     -- Auction durations in hours for the index 1, 2 and 3 (Blizzard_AuctionUI Classic: 12, 24 and 48 hours).
     durations = { 12, 24, 48 },
+    -- The default post duration in hours (an operation, the manual post).
+    defaultDuration = 24,
     -- The hours that older versions saved for the same indexes. The settings migration maps them to durations.
     legacyDurations = { 2, 8, 24 },
     -- Placeholder: the real cooldown is not known until the TBC spike has run.

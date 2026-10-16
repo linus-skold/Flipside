@@ -13,6 +13,8 @@ ns.Flavour = {
     id = "forever",
     -- Auction durations in hours for the index 1, 2 and 3.
     durations = { 2, 8, 24 },
+    -- The default post duration in hours (an operation, the manual post).
+    defaultDuration = 24,
     scanCooldownSeconds = 900,
     ruleset = "standard",
     scopeIncludesRealm = false,

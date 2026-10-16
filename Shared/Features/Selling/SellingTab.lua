@@ -35,6 +35,8 @@ local HEADER_HEIGHT = 18
 local TOP_ROOM = 28 -- height that the lower part gains when the Stop button and the message line are empty
 local TREE_TOP = DETAILS_TOP - DETAILS_HEIGHT - 4 - HEADER_HEIGHT
 local RED = { 1, 0.3, 0.3 }
+local VALUE_GREEN = "|cff66ff66" -- green, as a client colour code
+local VENDOR_SKIP = "vendor pays more than the AH"
 local WHITE = { 1, 1, 1 }
 local GREY = { 0.5, 0.5, 0.5 }
 local ORANGE = { 1, 0.6, 0.2 }
@@ -1490,6 +1492,9 @@ function Tab:_NextPost(entry, price, all, raw)
         local ok, deposit = pcall(self.deps.client.Deposit, unit.bag, unit.slot, decision.duration, unit.quantity,
             decision.commodity == true, nil, nil, unit.stacks)
         unit.deposit = ok and type(deposit) == "number" and deposit or nil
+        if unit.deposit == nil then
+            self:_ReadHeld(entry, price, decision, unit)
+        end
     end
     return decision, unit
 end
@@ -1537,6 +1542,8 @@ function Tab:SetManualDuration(hours)
         return false
     end
     entry.manualHours = SellingTab.IsDuration(hours) and hours or nil
+    -- The stored deposits were read for the old duration.
+    self:_ForgetDeposits(entry)
     self:_UpdateDetails()
     return true
 end
@@ -1570,13 +1577,16 @@ end
 
 -- The warning lines for the next post of an entry at a price. An empty list means no warning.
 -- A line shows if the rule skips the item, if the price is under the minimum price or over the maximum price,
--- or if the vendor pays more than the net of the post (this covers a price under the vendor price).
+-- The vendor case has no line here: _PostStep checks it with the real deposit.
 function Tab:_Warnings(entry, price, all)
     local lines = {}
     local skipReason
     if entry.status ~= "ready" then
         skipReason = entry.decision and entry.decision.reason or "no decision"
-        lines[1] = "The rule skips this item: " .. (SKIP_TEXT[skipReason] or skipReason) .. "."
+        -- The vendor case is checked at the post with the real deposit (_VendorHold), so it has no line here.
+        if skipReason ~= VENDOR_SKIP then
+            lines[1] = "The rule skips this item: " .. (SKIP_TEXT[skipReason] or skipReason) .. "."
+        end
     end
     local unit = select(2, self:_NextPost(entry, price, all))
     local candidate = entry.candidate or {}
@@ -1585,14 +1595,6 @@ function Tab:_Warnings(entry, price, all)
     end
     if candidate.maxPrice and price > candidate.maxPrice then
         lines[#lines + 1] = "The price is above the maximum price: " .. money(candidate.maxPrice) .. "."
-    end
-    local vendor, net, profit = SellingTab.VendorBetter(price, unit, self:_Vendor(entry))
-    if vendor then
-        local known = profit.depositKnown
-        lines[#lines + 1] = "Sells for more at a vendor: " .. money(vendor) .. ".\n"
-            .. (known and "Net on the AH: " or "Net on the AH (before deposit): ")
-            .. money(known and net or profit.gross - profit.cut) .. " (price " .. money(profit.gross) .. ", "
-            .. SellingTab.DepositText(known and profit.deposit or nil) .. ", AH cut " .. money(profit.cut) .. ")."
     end
     return lines, unit
 end
@@ -1611,8 +1613,6 @@ function Tab:_AskWarning(entry, price, lines, unit, all)
             return
         end
         entry.warned = true
-        -- The user saw the vendor line, so the check at post time does not ask again.
-        entry.vendorWarned = SellingTab.VendorBetter(price, unit, self:_Vendor(entry)) ~= nil
         self:_PostStep(all)
     end, function()
         if stale() then
@@ -1625,30 +1625,60 @@ function Tab:_AskWarning(entry, price, lines, unit, all)
     end)
 end
 
+-- The two lines of the vendor box. The larger value is green: the vendor price N, or the AH net profit S.
+function SellingTab.VendorText(vendor, net)
+    local function show(value, green)
+        return green and (VALUE_GREEN .. money(value) .. "|r") or money(value)
+    end
+    return "Sell to vendor for: " .. show(vendor, vendor > net) .. "\nAH net profit: " .. show(net, net > vendor)
+end
+
+-- The vendor rule for one post: the held table { deposit, vendor, net, profit } if the vendor pays more than the
+-- net of the post, else nil. It needs the vendor price and a real deposit. One rule: SellingTab.VendorBetter.
+function Tab:_VendorHold(entry, price, unit)
+    local vendor = self:_Vendor(entry)
+    if not vendor or type(unit.deposit) ~= "number" then
+        return nil
+    end
+    local better, net, profit = SellingTab.VendorBetter(price, unit, vendor)
+    if better then
+        return { deposit = unit.deposit, vendor = better, net = net, profit = profit }
+    end
+    return nil
+end
+
 -- The backend held a post: with the real deposit the vendor pays more than the net. The item is back in the bag.
 -- Show the box. "Post anyway" posts once in its own click. "Cancel" posts nothing and skips the item.
 function Tab:_AskVendor(entry, all, held)
     local function stale()
         return self.awaiting ~= nil or self:_Focus(all) ~= entry
     end
-    local profit = held.profit or {}
-    local known = held.deposit ~= nil
-    local text = string.format("Posting this item nets less than selling it to a vendor.\n\n"
-        .. "Price: %s\n%s\nAH cut (5%%): %s\n%s: %s\nVendor: %s", money(profit.gross or 0),
-        SellingTab.DepositText(held.deposit), money(profit.cut or 0), known and "Net" or "Net (before deposit)",
-        money(known and held.net or (profit.gross or 0) - (profit.cut or 0)), money(held.vendor))
-    self.deps.warn("Check the deposit", text, function()
+    local text = SellingTab.VendorText(held.vendor, held.net)
+    -- The title names the item (item link in the quality colour), so the body is only the two lines.
+    local title = "Check the deposit: " .. (self:_ItemLink(entry) or self:_Name(entry))
+    self.deps.warn(title, text, function()
         if stale() then
             return
         end
         entry.vendorForce = true
         self:_PostStep(all)
-    end, nil, function()
+    end, function()
         if stale() then
             return
         end
-        self:SkipItem(entry, "vendor pays more than the AH")
-    end, { post = "Post anyway", skip = false, cancel = "Cancel" })
+        self:SkipItem(entry)
+    end, function()
+        if stale() then
+            return
+        end
+        if all then
+            -- In a Post all run, Cancel ends the run. The item stays in the queue.
+            self.allRun = nil
+            self:_Say("stopped")
+        else
+            self:SkipItem(entry, "vendor pays more than the AH")
+        end
+    end, { post = "Post anyway", skip = all and "Skip" or false, cancel = "Cancel" })
 end
 
 -- Lock the Post all button after a post. A timer unlocks it after POST_DELAY once the AH is ready.
@@ -1769,6 +1799,17 @@ function Tab:_PostStep(all)
     -- The planned item. A backend that posts from the sale slot refuses a bag slot that holds another item.
     local plannedID = entry.item and entry.item.itemID or entry.candidate and entry.candidate.itemID
     local call, confirm, held
+    -- The vendor rule at the post click. A deposit that the pane already shows is used at once. The user
+    -- decides in one box. "Post anyway" sets entry.vendorForce for the rest of the item, so the box does not
+    -- come again. An unknown deposit is read by the backend guard.
+    local forced = entry.vendorForce
+    if not forced and unit.deposit and quantity == unit.quantity then
+        held = self:_VendorHold(entry, price, { quantity = quantity, stacks = stacks, deposit = unit.deposit })
+        if held then
+            self:_AskVendor(entry, all, held)
+            return true
+        end
+    end
     if decision.commodity then
         call = function()
             return client.PostCommodity(unit.bag, unit.slot, decision.duration, quantity, price)
@@ -1778,23 +1819,17 @@ function Tab:_PostStep(all)
         end
     else
         local buyout = price * quantity
-        -- At post time the client may give the real deposit (TBC). If the vendor pays more than the net after that
-        -- deposit, the backend holds the post and the user decides. "Post anyway" sets entry.vendorForce.
-        local vendor = self:_Vendor(entry)
-        local forced = entry.vendorForce
-        entry.vendorForce = nil
+        -- With no known deposit the backend reads it from the sale slot (TBC). If the vendor pays more than the
+        -- net after that deposit, the backend holds the post and the user decides.
         local guard
-        local rule = (entry.candidate.settings or {}).vendorSkip ~= false
-        if rule and vendor and not forced and not entry.vendorWarned then
+        if self:_Vendor(entry) and not forced then
             guard = function(deposit)
                 if type(deposit) ~= "number" then
                     return true
                 end
                 unit.deposit = deposit
-                held = { deposit = deposit }
-                held.vendor, held.net, held.profit = SellingTab.VendorBetter(price,
-                    { quantity = quantity, stacks = stacks, deposit = deposit }, vendor)
-                return held.vendor == nil
+                held = self:_VendorHold(entry, price, { quantity = quantity, stacks = stacks, deposit = deposit })
+                return held == nil
             end
         end
         call = function()

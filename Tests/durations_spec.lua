@@ -22,7 +22,7 @@ describe("TBC post durations", function()
         mock.teardown()
     end)
 
-    it("offers 12, 24 and 48 hours, default 48", function()
+    it("offers 12, 24 and 48 hours, default 24", function()
         local ns = load("Flipside_TBC.toc", "tbc")
         assert.same({ 12, 24, 48 }, ns.SellingPlan.DURATIONS)
         local field
@@ -31,15 +31,16 @@ describe("TBC post durations", function()
                 field = f
             end
         end
-        assert.equal(48, field.default)
+        assert.equal(24, field.default)
         assert.same({ 12, 24, 48 }, { field.choices[1].value, field.choices[2].value, field.choices[3].value })
         assert.equal("12 hours", field.choices[1].label)
-        assert.equal(48, ns.SellingPlan.NormalizeDuration(nil))
+        assert.equal(24, ns.SellingPlan.NormalizeDuration(nil))
     end)
 
     it("keeps 2, 8 and 24 hours on Forever", function()
         local ns = load("Flipside.toc", "forever")
         assert.same({ 2, 8, 24 }, ns.SellingPlan.DURATIONS)
+        assert.equal(24, ns.SellingPlan.NormalizeDuration(nil))
     end)
 
     it("migrates a saved duration to the same index", function()
