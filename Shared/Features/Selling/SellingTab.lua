@@ -384,7 +384,7 @@ function SellingTab.VendorBetter(price, unit, vendorPrice)
     end
     local profit = ns.SellingPlan.Profit(price, { unit }, vendorPrice)
     if profit.vendor and profit.vendor > profit.net then
-        return profit.vendor, profit.net
+        return profit.vendor, profit.net, profit
     end
     return nil
 end
@@ -1611,8 +1611,12 @@ function Tab:_AskVendor(entry, all, held)
     local function stale()
         return self.awaiting ~= nil or self:_Focus(all) ~= entry
     end
+    local profit = held.profit or {}
+    local known = held.deposit ~= nil
     local text = string.format("Posting this item nets less than selling it to a vendor.\n\n"
-        .. "Net after deposit and AH cut: %s. Vendor: %s.", money(held.net), money(held.vendor))
+        .. "Price: %s\n%s\nAH cut (5%%): %s\n%s: %s\nVendor: %s", money(profit.gross or 0),
+        SellingTab.DepositText(held.deposit), money(profit.cut or 0), known and "Net" or "Net (before deposit)",
+        money(known and held.net or (profit.gross or 0) - (profit.cut or 0)), money(held.vendor))
     self.deps.warn("Check the deposit", text, function()
         if stale() then
             return
@@ -1768,7 +1772,7 @@ function Tab:_PostStep(all)
                 end
                 unit.deposit = deposit
                 held = { deposit = deposit }
-                held.vendor, held.net = SellingTab.VendorBetter(price,
+                held.vendor, held.net, held.profit = SellingTab.VendorBetter(price,
                     { quantity = quantity, stacks = stacks, deposit = deposit }, vendor)
                 return held.vendor == nil
             end
