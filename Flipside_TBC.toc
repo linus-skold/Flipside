@@ -77,6 +77,7 @@ Shared\Features\AuctionTab\AuctionTabs.lua
 Shared\Features\AuctionTab\ScanBar.lua
 Shared\Features\AuctionTab\AuctionTab.lua
 Shared\Features\Buying\BuyingTab.lua
+Shared\Features\Selling\SellingTab.lua
 AH_TBC\AuctionTabHost.lua
 Shared\Features\Inventory\InventoryCapture.lua
 Shared\Features\Tooltip\Tooltip.lua

@@ -1389,7 +1389,7 @@ function Tab:PostAll()
     end
     local total, done, deposit = self:_Progress()
     self.deps.confirm(DIALOG_ALL, string.format("Post %d auctions? Total deposit: %s.", total - done,
-        money(deposit or 0)), function()
+        deposit and money(deposit) or "unknown"), function()
         if self.awaiting or not self:_Focus(true) then
             return
         end
@@ -1442,6 +1442,8 @@ function Tab:_PostStep(all)
     if quantity < 1 then
         return self:_Fail(entry, "no item left to post")
     end
+    -- The planned item. A backend that posts from the sale slot refuses a bag slot that holds another item.
+    local plannedID = entry.item and entry.item.itemID or entry.candidate and entry.candidate.itemID
     local call, confirm
     if decision.commodity then
         call = function()
@@ -1453,10 +1455,10 @@ function Tab:_PostStep(all)
     else
         local buyout = price * quantity
         call = function()
-            return client.PostItem(unit.bag, unit.slot, decision.duration, quantity, nil, buyout)
+            return client.PostItem(unit.bag, unit.slot, decision.duration, quantity, nil, buyout, plannedID)
         end
         confirm = function()
-            return client.ConfirmPostItem(unit.bag, unit.slot, decision.duration, quantity, nil, buyout)
+            return client.ConfirmPostItem(unit.bag, unit.slot, decision.duration, quantity, nil, buyout, plannedID)
         end
     end
     local ok, needsConfirmation = pcall(call)

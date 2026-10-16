@@ -1415,10 +1415,11 @@ describe("SellingTab", function()
             assert.is_false(spec.available({ rules = rules, formulaRun = run }))
         end)
 
-        it("is in the Forever TOC after the Buying tab and not in the TBC TOC", function()
-            local forever = manifest.files("Flipside.toc")
-            assert.is_true(manifest.indexOf(forever, "BuyingTab") < manifest.indexOf(forever, "SellingTab"))
-            assert.is_nil(manifest.indexOf(manifest.files("Flipside_TBC.toc"), "SellingTab"))
+        it("is in the Forever TOC and in the TBC TOC, after the Buying tab", function()
+            for _, toc in ipairs({ "Flipside.toc", "Flipside_TBC.toc" }) do
+                local files = manifest.files(toc)
+                assert.is_true(manifest.indexOf(files, "BuyingTab") < manifest.indexOf(files, "SellingTab"))
+            end
         end)
     end)
 

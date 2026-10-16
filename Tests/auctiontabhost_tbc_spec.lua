@@ -421,6 +421,17 @@ describe("AuctionTabHost (TBC)", function()
             assert.are.equal(1, second.mounts)
         end)
 
+        it("adds Flipside, Buying and Selling in this order", function()
+            local first = ns.AuctionTabHost.Attach(core)
+            local buying = ns.AuctionTabHost.Attach(second, { id = "buying", label = "Buying" })
+            local selling = ns.AuctionTabHost.Attach(makeCore(), { id = "selling", label = "Selling" })
+            assert.are.same({ 4, 5, 6 }, { first.index, buying.index, selling.index })
+            assert.are.same({ "Flipside", "Buying", "Selling" },
+                { first.tab:GetText(), buying.tab:GetText(), selling.tab:GetText() })
+            assert.are.same({ "LEFT", buying.tab, "RIGHT", -8, 0 }, selling.tab.points[1])
+            assert.are.equal(6, ah.numTabs)
+        end)
+
         it("hooks the Blizzard click once", function()
             local hooks = 0
             local original = _G.hooksecurefunc

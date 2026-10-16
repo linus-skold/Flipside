@@ -530,5 +530,243 @@ function Backend.BuyItemAuction(auctionID, buyout)
     live.rows = {}
 end
 
+-- Posting (Selling tab). The legacy client posts the item in the sale slot: the code puts the bag item there, checks
+-- it, and calls PostAuction(start, buyout, duration, stackSize, numStacks). Each post is one stack (numStacks 1).
+-- PostItem and ConfirmPostItem are protected: call them only inside a click handler.
+-- This code starts no timer for them.
+local POST_OWNER = "Flipside.LegacyBackend.Post"
+local POSTED_EVENT = "Flipside.LegacyPosted"
+local POST_WINDOW_SECONDS = 20
+local CONFIRM_WINDOW_SECONDS = 120
+local post = { subscribed = false, pending = nil, at = nil, refused = nil }
+
+-- Duration in hours to the legacy index: 1 = 2 h, 2 = 8 h, 3 = 24 h. A value with no exact match gives the nearest
+-- longer index that exists, and 3 above 24 h.
+function Backend.DurationIndex(hours)
+    if type(hours) ~= "number" or hours <= 0 then
+        error("duration must be a number of hours", 0)
+    end
+    if hours <= 2 then
+        return 1
+    elseif hours <= 8 then
+        return 2
+    end
+    return 3
+end
+
+local function containerCall(name)
+    local fn = type(C_Container) == "table" and C_Container[name] or nil
+    return type(fn) == "function" and fn or nil
+end
+
+function Backend.CanPost()
+    return containerCall("PickupContainerItem") ~= nil and containerCall("GetContainerItemInfo") ~= nil
+        and has("PostAuction") and has("ClickAuctionSellItemButton") and has("GetAuctionSellItemInfo")
+        and has("GetAuctionDeposit") and has("ClearCursor") and has("CursorHasItem")
+end
+
+-- The table of a bag slot (itemID, stackCount, isBound), or nil.
+local function slotInfo(bag, slot)
+    local read = containerCall("GetContainerItemInfo")
+    local info = read and read(bag, slot)
+    return type(info) == "table" and info.itemID and info or nil
+end
+
+-- The item in the sale slot: { itemID, stack (maximum stack), total (items in the slot) }, or nil.
+local function sellInfo()
+    local name, _, _, _, _, _, _, stack, total, itemID = call("GetAuctionSellItemInfo")
+    if name == nil or name == "" then
+        return nil
+    end
+    return { itemID = itemID, stack = stack, total = total }
+end
+
+local function onPostError()
+    post.refused = "the Auction House refused the post"
+end
+
+local function onPostUiError(_, first, second)
+    if post.calling then
+        post.refused = tostring(second or first or "the Auction House refused the post")
+    end
+end
+
+local function onPostText(_, text)
+    if post.at and now() - post.at <= POST_WINDOW_SECONDS and type(text) == "string"
+        and text == _G.ERR_AUCTION_STARTED then
+        ns.bus:Emit(POSTED_EVENT)
+    end
+end
+
+local function subscribePost()
+    if not post.subscribed and ns.bus then
+        post.subscribed = true
+        ns.bus:Subscribe("CHAT_MSG_SYSTEM", POST_OWNER, onPostText)
+        ns.bus:Subscribe("AUCTION_HOUSE_POST_ERROR", POST_OWNER, onPostError)
+        ns.bus:Subscribe("UI_ERROR_MESSAGE", POST_OWNER, onPostUiError)
+    end
+end
+
+-- The legacy client sends no event with an ID for a post. This code reads the "Auction created." system text for 20
+-- seconds after the call and emits its own event.
+function Backend.PostedEvent()
+    subscribePost()
+    return POSTED_EVENT
+end
+
+-- Number of items in the bag slot (the most that one post can use), 0 for an empty slot.
+function Backend.AvailablePostCount(bag, slot)
+    local info = slotInfo(bag, slot)
+    return info and info.stackCount or 0
+end
+
+-- False for an empty slot and for a bound item. The client refuses other items when they go to the sale slot.
+function Backend.IsSellItemValid(bag, slot)
+    local info = slotInfo(bag, slot)
+    return info ~= nil and info.isBound ~= true
+end
+
+-- Ask for a fresh owned list. The call is not protected.
+function Backend.RefreshOwned()
+    if has("GetOwnerAuctionItems") then
+        _G.GetOwnerAuctionItems()
+    end
+end
+
+-- Put the sale slot item back in the bags. A failed step must not leave the item on the cursor.
+local function releaseSellSlot()
+    if sellInfo() then
+        call("ClickAuctionSellItemButton")
+    end
+    call("ClearCursor")
+end
+
+-- The bag slot must still hold the planned item (when itemID is given) and at least the quantity.
+local function checkSlot(bag, slot, quantity, itemID)
+    local info = slotInfo(bag, slot)
+    if not info then
+        error("the bag slot is empty now, read the bags again", 0)
+    end
+    if itemID ~= nil and info.itemID ~= itemID then
+        error("the bag slot holds another item now, read the bags again", 0)
+    end
+    if (info.stackCount or 0) < quantity then
+        error("the bag slot holds fewer items now, read the bags again", 0)
+    end
+    return info
+end
+
+-- Empty the sale slot, check the bag slot, then put the bag item in the sale slot and read it back.
+local function fillSellSlot(bag, slot, quantity, itemID)
+    if call("CursorHasItem") then
+        error("the cursor holds an item, put it down first", 0)
+    end
+    if sellInfo() then
+        releaseSellSlot()
+    end
+    local info = checkSlot(bag, slot, quantity, itemID)
+    containerCall("PickupContainerItem")(bag, slot)
+    call("ClickAuctionSellItemButton")
+    local sell = sellInfo()
+    if not sell or sell.itemID ~= info.itemID or (sell.total or 0) < quantity or (sell.stack or 0) < quantity then
+        releaseSellSlot()
+        error("the item did not go into the sale slot, check the item and the quantity", 0)
+    end
+    return info.itemID
+end
+
+local function hidePostDialogs()
+    local hide = _G.StaticPopup_Hide
+    if type(hide) == "function" then
+        pcall(hide, "AUCTION_HOUSE_POST_WARNING")
+        pcall(hide, "AUCTION_HOUSE_POST_ERROR")
+    end
+end
+
+local function checkPostNumbers(quantity, buyout)
+    if type(quantity) ~= "number" or quantity < 1 or quantity ~= math.floor(quantity) then
+        error("the quantity must be a whole number of 1 or more", 0)
+    end
+    if type(buyout) ~= "number" or buyout < 1 then
+        error("the buyout must be 1 copper or more", 0)
+    end
+end
+
+-- Post one stack of quantity items at the buyout (the price of the whole stack). bid is the start price; nil means
+-- the buyout. itemID is the planned item; if the bag slot holds another item, nothing is posted. Gives true if the
+-- client asks to confirm (ConfirmPostItem finishes the post), false if the post is done.
+-- Protected: call it from a click.
+function Backend.PostItem(bag, slot, duration, quantity, bid, buyout, itemID)
+    local index = Backend.DurationIndex(duration)
+    checkPostNumbers(quantity, buyout)
+    local start = (type(bid) == "number" and bid > 0) and bid or buyout
+    if start > buyout then
+        error("the start price is above the buyout", 0)
+    end
+    subscribePost()
+    post.pending, post.refused = nil, nil
+    local placed = fillSellSlot(bag, slot, quantity, itemID)
+    post.at, post.calling = now(), true
+    local ok, result = pcall(call, "PostAuction", start, buyout, index, quantity, 1)
+    post.calling = false
+    if not ok then
+        releaseSellSlot()
+        error(result, 0)
+    end
+    if result then
+        return false
+    end
+    hidePostDialogs()
+    if post.refused then
+        local text = post.refused
+        post.refused, post.at = nil, nil
+        releaseSellSlot()
+        error(text, 0)
+    end
+    post.pending = { bag = bag, slot = slot, quantity = quantity, buyout = buyout, start = start, index = index,
+        itemID = placed, at = now() }
+    return true
+end
+
+-- Finish a post that the client asked to confirm. The call must match the PostItem call, and the sale slot must still
+-- hold the item. A confirm works once. Protected: call it from a click.
+function Backend.ConfirmPostItem(bag, slot, duration, quantity, _bid, buyout)
+    local pending = post.pending
+    post.pending = nil
+    local index = Backend.DurationIndex(duration)
+    if not pending or now() - pending.at > CONFIRM_WINDOW_SECONDS or pending.bag ~= bag or pending.slot ~= slot
+        or pending.quantity ~= quantity or pending.buyout ~= buyout or pending.index ~= index then
+        error("no post waits for a confirm, post again", 0)
+    end
+    if post.refused then
+        local text = post.refused
+        post.refused = nil
+        releaseSellSlot()
+        error(text, 0)
+    end
+    local sell = sellInfo()
+    if not sell or sell.itemID ~= pending.itemID or (sell.total or 0) < pending.quantity then
+        error("the sale slot changed, post again", 0)
+    end
+    post.at, post.calling = now(), true
+    local ok, err = pcall(call, "PostAuction", pending.start, pending.buyout, pending.index, pending.quantity, 1, true)
+    post.calling = false
+    if not ok then
+        error(err, 0)
+    end
+    return false
+end
+
+-- The deposit in copper of one stack, or nil. The client computes it only for the item in the sale slot, and this code
+-- puts no item there outside a post click. So the value is nil unless the sale slot holds the item already.
+function Backend.Deposit(bag, slot, duration, quantity)
+    local index = Backend.DurationIndex(duration)
+    local sell, info = sellInfo(), slotInfo(bag, slot)
+    if not (sell and info and sell.itemID == info.itemID and (sell.total or 0) >= quantity) then
+        return nil
+    end
+    return call("GetAuctionDeposit", index, 1, 1, quantity, 1)
+end
+
 ns.AuctionClient.Use(Backend)
 
