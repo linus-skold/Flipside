@@ -8,6 +8,7 @@ ns.ScanBar = ScanBar
 
 local OWNER = "Flipside.StartPageBar"
 local EVENT_FINISHED = "Flipside.ScanFinished"
+local EVENT_PROGRESS = "Flipside.ScanProgress"
 local BAR_HEIGHT = 22
 local LABEL_GAP = 6
 
@@ -32,6 +33,44 @@ local function refusalText(reason, detail)
         return "scan on cooldown, " .. ns.ScanCooldown.FormatRemaining(detail) .. " left"
     end
     return REFUSALS[reason] or tostring(reason)
+end
+
+-- Return the fraction (0 to 1) of a progress table, or nil when the count is unknown.
+function ScanBar.ProgressFraction(progress)
+    if progress and progress.done and progress.total and progress.total > 0 then
+        return math.min(1, progress.done / progress.total)
+    end
+    return nil
+end
+
+local function countText(done, total)
+    return string.format("%d / %d (%d%%)", done, total, math.floor(done * 100 / total))
+end
+
+-- Return the status text of a progress table (event Flipside.ScanProgress). short drops the long prefixes.
+function ScanBar.ProgressText(progress, short)
+    local phase = progress.phase
+    local counted = ScanBar.ProgressFraction(progress) ~= nil
+    if phase == "waiting" then
+        return "Waiting for server"
+    elseif phase == "pages" then
+        local prefix = short and "" or "Page scan: "
+        if not (progress.done and progress.total) then
+            return prefix .. "starting"
+        end
+        local text = prefix .. "page " .. progress.done .. " of " .. progress.total
+        if progress.rows and not short then
+            text = text .. ", " .. progress.rows .. " rows"
+        end
+        return text
+    elseif phase == "reading" then
+        return counted and ((short and "" or "Scanning ") .. countText(progress.done, progress.total)) or "Scanning"
+    elseif phase == "loading" then
+        return counted and ("Loading items " .. countText(progress.done, progress.total)) or "Loading item info"
+    elseif phase == "saving" then
+        return "Saving"
+    end
+    return short and "scanning" or "Scan running"
 end
 
 -- Return the short text of a finished scan for the start page bar.
@@ -91,6 +130,9 @@ function Bar:_StatusText(running, left, clientRefuses)
     local short = self.opts.short
     if running then
         local engine = self.deps.scanEngine
+        if self.progress then
+            return ScanBar.ProgressText(self.progress, short)
+        end
         local mode, page, pages
         if engine.GetProgress then
             mode, page, pages = engine:GetProgress()
@@ -221,6 +263,15 @@ function ScanBar.New(parent, deps, opts)
     end
     if not opts.followLabel and not opts.statusParent then
         place(bar.status, x + (opts.labelDx or 0), y + (opts.labelDy or 0))
+    end
+    if deps.bus then
+        deps.bus:Subscribe(EVENT_PROGRESS, bar, function(_, progress)
+            bar.progress = progress
+            bar:_Changed()
+        end)
+        deps.bus:Subscribe(EVENT_FINISHED, bar, function()
+            bar.progress = nil
+        end)
     end
     return bar
 end

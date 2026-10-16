@@ -155,7 +155,7 @@ Full-scan facts that shape the design ([Warcraft Wiki](https://warcraft.wiki.gg/
 
 Rows can arrive without full item info, so the pipeline loads item data before it uses names, links or stack sizes (see Spike 0 result in §8).
 
-All steps run as coroutines that yield each frame, with a progress bar. A scan is partial only if the read is incomplete (for example the AH closes during the read); a partial scan updates only the "latest" values (see the scan engine design below).
+All steps run as coroutines that yield each frame, with a progress bar. The scan engine emits the event `Flipside.ScanProgress` with a table `{ mode, phase, done, total, rows }` (added 2026-10-16). The phases are `waiting` (for the server, no count), `reading` (rows read of `GetNumReplicateItems`), `loading` (item data), `saving`, and `pages` (page mode: `done` is the page, `total` the page count, `rows` the rows read). The engine emits at most every 0.2 s; a change of phase always emits. `Engine:GetScanProgress()` returns the same table while a scan runs. The ScanBar only listens: it shows the text ("Scanning 1234 / 5678 (22%)", "Waiting for server", "Loading items 5 / 10 (50%)", "Saving", "Page scan: page 3 of 40, 150 rows") and clears it on `Flipside.ScanFinished`, which the engine emits on a finish, a failure and a cancel. The Flipside tab fills a progress bar from `done / total`; the bar of the Forever layout shows only while a scan runs. The bar stays empty while the count is unknown.A scan is partial only if the read is incomplete (for example the AH closes during the read); a partial scan updates only the "latest" values (see the scan engine design below).
 
 **Scan engine design (decided 2026-10-14)**
 
