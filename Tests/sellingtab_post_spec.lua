@@ -461,6 +461,26 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
             assert.are.equal(2, #client.posts)
         end)
 
+        it("lists the net, the price, the deposit and the AH cut in the box", function()
+            vendor[10] = 200
+            selectCloth()
+            pick("i10")
+            click(ui.postNext)
+            assert.matches("Net on the AH: 2061c %(price 2380c, Deposit: 200c, AH cut 119c%)", warns[1].text)
+        end)
+
+        it("shows an unknown deposit in the box as unknown, not as 0", function()
+            vendor[10] = 200
+            client.Deposit = function() return nil end
+            tab = mount()
+            ui = tab.ui
+            selectCloth()
+            pick("i10")
+            click(ui.postNext)
+            assert.matches("Net on the AH %(before deposit%): 2261c %(price 2380c, Deposit: unknown, AH cut 119c%)",
+                warns[1].text)
+        end)
+
         it("posts nothing when the user cancels", function()
             vendor[10] = 200
             selectCloth()

@@ -1570,9 +1570,13 @@ function Tab:_Warnings(entry, price, all)
     if candidate.maxPrice and price > candidate.maxPrice then
         lines[#lines + 1] = "The price is above the maximum price: " .. money(candidate.maxPrice) .. "."
     end
-    local vendor, net = SellingTab.VendorBetter(price, unit, self:_Vendor(entry))
+    local vendor, net, profit = SellingTab.VendorBetter(price, unit, self:_Vendor(entry))
     if vendor then
-        lines[#lines + 1] = "Sells for more at a vendor: " .. money(vendor) .. " (net on the AH: " .. money(net) .. ")."
+        local known = profit.depositKnown
+        lines[#lines + 1] = "Sells for more at a vendor: " .. money(vendor) .. ".\n"
+            .. (known and "Net on the AH: " or "Net on the AH (before deposit): ")
+            .. money(known and net or profit.gross - profit.cut) .. " (price " .. money(profit.gross) .. ", "
+            .. SellingTab.DepositText(known and profit.deposit or nil) .. ", AH cut " .. money(profit.cut) .. ")."
     end
     return lines, unit
 end
