@@ -140,27 +140,24 @@ describe("SellingTab", function()
         bus:Emit(event, ...)
     end
 
-    local delays = {}
+    -- The client confirms a one-stack post with the created event. autoCreate false leaves the post open.
+    local autoCreate = true
+
+    local function settle()
+        if autoCreate and tab and tab.multi and tab.multi.stacks == 1 and tab.multi.armed then
+            fire("CREATED")
+        end
+    end
 
     local function click(button)
-        if button == ui.postAll then
-            local list = delays
-            delays = {}
-            for _, fn in ipairs(list) do
-                fn()
-            end
-        end
         button.scripts.OnClick(button)
+        settle()
     end
 
     local function mount(extra)
         local deps = {
             bus = bus, rules = rules, formulaRun = run, client = client,
             after = function(seconds, fn)
-                if seconds == ns.SellingTab.POST_DELAY then
-                    delays[#delays + 1] = fn
-                    return
-                end
                 timers[#timers + 1] = { seconds = seconds, fn = fn }
             end,
             itemInfo = function(id)
@@ -177,7 +174,10 @@ describe("SellingTab", function()
                 return id == 10 and 5 or nil
             end,
             confirm = function(name, text, onAccept)
-                confirms[#confirms + 1] = { name = name, text = text, onAccept = onAccept }
+                confirms[#confirms + 1] = { name = name, text = text, onAccept = function()
+                    onAccept()
+                    settle()
+                end }
             end,
             syncInterval = 0,
             time = function()
@@ -188,7 +188,8 @@ describe("SellingTab", function()
             deps[k] = v
         end
         local core = ns.SellingTab.New(deps)
-        core:Mount(CreateFrame("Frame", nil, UIParent), { Enter = function() end, Leave = function() end })
+        core:Mount(CreateFrame("Frame", nil, UIParent),
+            deps.api or { Enter = function() end, Leave = function() end })
         core:Select()
         return core
     end
@@ -233,7 +234,7 @@ describe("SellingTab", function()
         client = makeClient()
         client.commodity[10] = false
         client.commodity[11] = true
-        timers, confirms, bagReads, now = {}, {}, 0, 0
+        timers, confirms, bagReads, now, autoCreate = {}, {}, 0, 0, true
         groups = {
             [1] = { name = "Base", children = { 2, 6 } },
             [2] = { name = "Cloth", children = { 3, 5 } },
@@ -267,30 +268,40 @@ describe("SellingTab", function()
     end)
 
     describe("the top row", function()
-        it("takes no space while the message is empty and Stop is hidden", function()
-            tab:_Say("")
-            tab:_Update()
-            assert.is_false(ui.message:IsShown())
+        it("takes no space while Stop is hidden, and 28 px while a search runs", function()
             assert.is_false(ui.stop:IsShown())
             local y = ui.tree.frame.points[1][5]
-            tab:_Say("something")
-            local lower = ui.tree.frame.points[1][5]
-            assert.is_true(ui.message:IsShown())
-            assert.are.equal(28, y - lower)
+            client.rows[10] = { row(120, 1) }
+            pick("i10")
+            assert.is_true(ui.stop:IsShown())
+            assert.are.equal(28, y - ui.tree.frame.points[1][5])
+        end)
+
+        it("puts Stop and the progress text in the band of the host, and never moves the pane", function()
+            tab = mount({ api = { Enter = function() end, Leave = function() end, band = { left = 50, top = 26 } } })
+            ui = tab.ui
+            assert.are.same({ 50, 26 }, { ui.stop.points[1][4], ui.stop.points[1][5] })
+            assert.are.equal(tab.content, ui.progress.points[1][2])
+            assert.are.equal(26 - 5, ui.progress.points[1][5])
+            local y = ui.tree.frame.points[1][5]
+            client.rows[10] = { row(120, 1) }
+            pick("i10")
+            assert.is_true(ui.stop:IsShown())
+            assert.are.equal(y, ui.tree.frame.points[1][5])
+        end)
+
+        it("has no message line: no text for a post or a search shows in the top strip", function()
+            assert.is_nil(ui.message)
+            assert.is_nil(tab._Say)
+            selectCloth()
+            click(ui.postNext)
+            assert.is_nil(ui.message)
         end)
     end)
     describe("the look", function()
         it("shows no pick hint above the action row after the bags load", function()
-            assert.is_false(ui.message:IsShown())
-            assert.are.equal("", ui.message.text)
+            assert.is_nil(ui.message)
             assert.is_false(ui.stop:IsShown())
-        end)
-
-        it("still says when the bags hold no tradable item", function()
-            bagItems = {}
-            tab:RefreshBags()
-            assert.are.equal("no tradable item in the bags", ui.message.text)
-            assert.is_true(ui.message:IsShown())
         end)
 
         it("gives the tree and the details pane the client Auction House background", function()
@@ -713,7 +724,8 @@ describe("SellingTab", function()
             assert.are.equal("Posting 2 of 4", ui.progress.text)
             click(ui.postNext)
             click(ui.postNext)
-            assert.are.equal("Posting 4 of 4", ui.progress.text)
+            -- The bag sync after the created event picks the selection again from the nodes that are left.
+            assert.are.equal("Posting 1 of 1", ui.progress.text)
             assert.are.equal(3, #client.posts)
             click(ui.postNext)
             assert.are.equal(4, #client.posts)
@@ -729,13 +741,13 @@ describe("SellingTab", function()
                 { last.bag, last.slot, last.duration, last.quantity, last.unitPrice })
         end)
 
-        it("says all posted at the end and reads the bags again", function()
+        it("reads the bags again at the end", function()
             selectCloth()
             for _ = 1, 4 do
                 click(ui.postNext)
             end
-            assert.are.equal("all posted", ui.message.text)
-            assert.are.equal(2, bagReads)
+            -- The first read, one sync for each created event, and the read at the end.
+            assert.are.equal(6, bagReads)
             assert.are.equal("Post", ui.postNext.text)
             assert.is_false(ui.postNext.enabled)
             assert.are.equal(2, client.refreshed)
@@ -751,15 +763,15 @@ describe("SellingTab", function()
             assert.is_nil(ui.vs)
         end)
 
-        it("puts Post, Skip and Post all in the pane, at its right edge, above the list", function()
+        it("puts Post and Skip in the pane, at its right edge, above the list", function()
             local function y(frame)
                 return frame.points[1][5]
             end
             local pane = ui.details.frame
             assert.are.equal(pane, ui.postNext.points[1][2])
             assert.are.equal("TOPRIGHT", ui.postNext.points[1][3])
-            assert.are.equal(ui.postNext, ui.skip.points[1][2])
-            assert.are.equal(pane, ui.postAll.points[1][2])
+            assert.are.equal(pane, ui.skip.points[1][2])
+            assert.are.equal("TOPRIGHT", ui.skip.points[1][3])
             assert.is_true(y(pane) > y(ui.tree.frame))
             assert.is_true(pane.height <= 100)
             -- The list reaches the bottom of the panel: no bar below it.
@@ -784,7 +796,6 @@ describe("SellingTab", function()
             pick("g3")
             click(ui.postNext)
             assert.are.equal("commodity", client.posts[1].kind)
-            assert.are.equal("all posted", ui.message.text)
         end)
 
         it("caps the quantity by the available post count", function()
@@ -936,7 +947,6 @@ describe("SellingTab", function()
             for _ = 1, 4 do
                 click(ui.skip)
             end
-            assert.are.equal("nothing left to post", ui.message.text)
             assert.are.equal("skipped", linen.status)
             assert.are.equal(0, #client.posts)
             assert.are.equal(2, bagReads)
@@ -1016,13 +1026,17 @@ describe("SellingTab", function()
 
         it("waits for an open server confirm and reads the bags after it", function()
             selectCloth()
+            autoCreate = false
             client.needsConfirmation = true
             click(ui.postNext)
             local reads = bagReads
             fire("BAG_UPDATE_DELAYED")
             assert.are.equal(reads, bagReads)
             confirms[1].onAccept()
-            assert.are.equal(reads + 1, bagReads)
+            -- The post waits for the created event, so the sync still waits.
+            assert.are.equal(reads, bagReads)
+            fire("CREATED")
+            assert.is_true(bagReads > reads)
         end)
     end)
 
@@ -1164,119 +1178,6 @@ describe("SellingTab", function()
             confirms[1].onAccept()
             assert.is_true(bagReads > reads)
             assert.are.equal(6, entryOf("10").groupID)
-        end)
-    end)
-
-    describe("Post all", function()
-        local function searchAll()
-            client.rows[10] = { row(120, 1) }
-            client.rows[11] = { row(150, 5) }
-            pick("g2")
-            fire("ITEM_RESULTS", 10)
-            fire("COMMODITY_RESULTS", 11)
-        end
-
-        it("is off with nothing selected, and makes no confirm and no post", function()
-            assert.are.equal(0, #tab.selection)
-            assert.is_false(ui.postAll.enabled)
-            local ok, why = tab:PostAll()
-            assert.is_false(ok)
-            assert.are.equal("select a group first", why)
-            click(ui.postAll)
-            assert.are.equal(0, #confirms)
-            assert.are.equal(0, #client.posts)
-        end)
-
-        it("posts the selected group and its subgroups, each item by its own rules", function()
-            searchAll()
-            click(ui.postAll)
-            confirms[1].onAccept()
-            for _ = 1, 3 do
-                click(ui.postAll)
-            end
-            assert.are.equal(4, #client.posts)
-            assert.are.same({ "item", "item", "item", "commodity" },
-                { client.posts[1].kind, client.posts[2].kind, client.posts[3].kind, client.posts[4].kind })
-            assert.are.equal(119 * 20, client.posts[1].buyout)
-            assert.are.equal(149, client.posts[4].unitPrice)
-        end)
-
-        it("posts only the items of the selected subgroup", function()
-            searchAll()
-            pick("g3")
-            click(ui.postAll)
-            confirms[1].onAccept()
-            assert.are.equal(1, #client.posts)
-            assert.are.equal("commodity", client.posts[1].kind)
-            pick("g6")
-            assert.is_false(ui.postAll.enabled)
-        end)
-
-        it("posts the items of the no-group node", function()
-            rules.EffectiveOperation = function()
-                return 7
-            end
-            tab:RefreshBags()
-            ui = tab.ui
-            client.commodity[12] = true
-            client.rows[12] = { row(150, 5) }
-            pick("none")
-            fire("COMMODITY_RESULTS", 12)
-            assert.are.equal("ready", entryOf("12").status)
-            assert.is_true(ui.postAll.enabled)
-            click(ui.postAll)
-            confirms[1].onAccept()
-            assert.are.equal(1, #client.posts)
-            assert.are.same({ 2, 2 }, { client.posts[1].bag, client.posts[1].slot })
-        end)
-
-        it("is off again when the selection ends", function()
-            searchAll()
-            assert.is_true(ui.postAll.enabled)
-            tab:RefreshBags()
-            assert.is_false(ui.postAll.enabled)
-        end)
-
-        it("confirms with the total deposit before the first post and then asks no more", function()
-            searchAll()
-            click(ui.postAll)
-            assert.are.equal(1, #confirms)
-            assert.are.equal("FLIPSIDE_CONFIRM_POST_ALL", confirms[1].name)
-            -- 3 auctions of 20 at 10c each unit = 600c, and 12 units = 120c.
-            assert.matches("Post 4 auctions%? Total deposit: 720c", confirms[1].text)
-            assert.are.equal(0, #client.posts)
-            confirms[1].onAccept()
-            assert.are.equal(1, #client.posts)
-            click(ui.postAll)
-            assert.are.equal(1, #confirms)
-            assert.are.equal(2, #client.posts)
-        end)
-
-        it("makes no post when the user cancels the confirm, and asks again on the next click", function()
-            searchAll()
-            click(ui.postAll)
-            assert.are.equal(0, #client.posts)
-            click(ui.postAll)
-            assert.are.equal(2, #confirms)
-            assert.are.equal(0, #client.posts)
-        end)
-
-        it("asks again for a new selection", function()
-            searchAll()
-            click(ui.postAll)
-            confirms[1].onAccept()
-            pick("g3")
-            click(ui.postAll)
-            assert.are.equal(2, #confirms)
-            assert.matches("Post 1 auctions%? Total deposit: 120c", confirms[2].text)
-        end)
-
-        it("makes the post call only in the accept of the confirm", function()
-            searchAll()
-            tab:PostAll()
-            assert.are.equal(0, #client.posts)
-            confirms[1].onAccept()
-            assert.are.equal(1, #client.posts)
         end)
     end)
 

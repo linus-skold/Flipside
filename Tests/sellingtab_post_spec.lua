@@ -12,7 +12,7 @@ end
 
 -- These specs keep ScrollUtil: the game uses the ScrollBox path.
 describe("SellingTab price box, warnings, post all and bag sync", function()
-    local ns, bus, client, rules, tab, ui, bagItems, bagReads, warns, views, vendor, opExtra, confirms, autoAccept
+    local ns, bus, client, rules, tab, ui, bagItems, bagReads, warns, views, vendor, opExtra, confirms
     local delays = {}
 
     local function makeClient()
@@ -95,20 +95,18 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
         bus:Emit(event, ...)
     end
 
-    -- Run the Post all delay timers, as the game does after the delay. Other timers stay off.
-    local function flushDelays()
-        local list = delays
-        delays = {}
-        for _, fn in ipairs(list) do
-            fn()
+    -- The client confirms a one-stack post with the created event. autoCreate false leaves the post open.
+    local autoCreate = true
+
+    local function settle()
+        if autoCreate and tab and tab.multi and tab.multi.stacks == 1 and tab.multi.armed then
+            fire("CREATED")
         end
     end
 
     local function click(button)
-        if button == ui.postAll then
-            flushDelays()
-        end
         button.scripts.OnClick(button)
+        settle()
     end
 
     local function pick(id)
@@ -178,9 +176,7 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
             bus = bus, rules = rules, formulaRun = { Evaluate = function(_, text) return tonumber(text), nil end },
             client = client,
             after = function(seconds, fn)
-                if seconds == ns.SellingTab.POST_DELAY then
-                    delays[#delays + 1] = fn
-                end
+                delays[#delays + 1] = { seconds = seconds, fn = fn }
             end,
             itemInfo = function(id) return "Item" .. id, 1 end,
             readBags = function()
@@ -190,17 +186,18 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
             syncInterval = 0,
             maxStack = function(id) return id == 10 and 20 or 1 end,
             vendorPrice = function(id) return vendor[id] end,
-            -- The Post all confirm accepts at once; the server confirm of a post stays open.
             confirm = function(name, text, onAccept)
-                confirms[#confirms + 1] = { name = name, text = text, onAccept = onAccept }
-                if name == "FLIPSIDE_CONFIRM_POST_ALL" and autoAccept then
+                confirms[#confirms + 1] = { name = name, text = text, onAccept = function()
                     onAccept()
-                end
+                    settle()
+                end }
             end,
             itemLink = function(id) return "|Hitem:" .. id .. "|h[Item" .. id .. "]|h", 1 end,
             warn = function(title, text, onPost, onSkip, onCancel, options)
-                warns[#warns + 1] = { title = title, text = text, onYes = onPost, onSkip = onSkip, onCancel = onCancel,
-                    options = options }
+                warns[#warns + 1] = { title = title, text = text, onYes = function()
+                    onPost()
+                    settle()
+                end, onSkip = onSkip, onCancel = onCancel, options = options }
             end,
         }
         for k, v in pairs(extra or {}) do
@@ -231,7 +228,7 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
         client.commodity[10] = false
         client.commodity[11] = true
         warns, bagReads, vendor, opExtra = {}, 0, {}, { vendorSkip = false, maxPrice = "100000000" }
-        confirms, autoAccept = {}, true
+        confirms, autoCreate, delays = {}, true, {}
         rules = makeRules()
         bagItems = {
             { key = "11", itemID = 11, name = "Bolt of Linen", count = 12, stacks = {
@@ -320,7 +317,7 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
             assert.are_not.equal(before, ui.details.total.text)
         end)
 
-        it("refuses an invalid price with a message and posts nothing", function()
+        it("refuses an invalid price with a line in the pane and posts nothing", function()
             selectCloth()
             pick("i10")
             type_("")
@@ -329,9 +326,7 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
             local ok, why = tab:PostNext()
             assert.is_false(ok)
             assert.matches("^invalid price", why)
-            assert.matches("^invalid price", ui.message.text)
             click(ui.postNext)
-            click(ui.postAll)
             assert.are.equal(0, #client.posts)
             type_("")
             click(ui.postNext)
@@ -353,12 +348,12 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
             pick("g2")
             type_("1g")
             for _ = 1, 3 do
-                click(ui.postAll)
+                click(ui.postNext)
             end
             assert.are.equal(10000 * 20, client.posts[1].buyout)
             -- The next entry is the commodity: its own suggested price.
             assert.are.equal(149, ui.details.priceInput:GetCopper())
-            click(ui.postAll)
+            click(ui.postNext)
             assert.are.equal(149, client.posts[4].unitPrice)
         end)
     end)
@@ -516,15 +511,6 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
             click(ui.postNext)
             assert.are.equal(2, #warns)
             assert.are.equal(0, #client.posts)
-        end)
-
-        it("asks the same question in the Post all queue", function()
-            vendor[10] = 200
-            selectCloth()
-            click(ui.postAll)
-            assert.are.equal(1, #warns)
-            assert.are.equal(0, #client.posts)
-            assert.matches("^Sell to vendor for: ", warns[1].text)
         end)
 
         it("uses a square Kit window with the item link in the quality colour", function()
@@ -712,31 +698,6 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
             assert.are.equal(1, #client.posts)
         end)
 
-        it("keeps a skipped item out of Post all until the user selects it again", function()
-            selectCloth()
-            pick("i10")
-            type_("5c")
-            click(ui.postNext)
-            warns[1].onSkip()
-            pick("g2")
-            assert.are.equal("skipped", entryOf("10").status)
-            click(ui.postAll)
-            assert.are.equal(1, #client.posts)
-            assert.are.equal("commodity", client.posts[1].kind)
-        end)
-
-        it("posts a reselected item in Post all as a normal item", function()
-            selectCloth()
-            pick("i10")
-            type_("5c")
-            click(ui.postNext)
-            warns[1].onSkip()
-            pick("i10")
-            click(ui.postAll)
-            assert.are.equal(1, #client.posts)
-            assert.are.equal("item", client.posts[1].kind)
-        end)
-
         it("moves the selection to the next item after the last post of an item", function()
             selectCloth()
             pick("i10")
@@ -791,137 +752,6 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
         end)
     end)
 
-    describe("Post all with the warning box and the deposit confirm", function()
-        local function warnBoth()
-            vendor[10] = 200
-            vendor[11] = 1000
-            selectCloth()
-        end
-
-        it("shows the box for each warned item, then goes on", function()
-            warnBoth()
-            click(ui.postAll)
-            assert.are.equal(1, #confirms)
-            assert.are.equal(1, #warns)
-            assert.are.equal(0, #client.posts)
-            warns[1].onYes()
-            assert.are.equal(1, #client.posts)
-            click(ui.postAll)
-            click(ui.postAll)
-            assert.are.equal(1, #warns)
-            assert.are.equal(3, #client.posts)
-            click(ui.postAll)
-            assert.are.equal(2, #warns)
-            assert.are.equal(3, #client.posts)
-            assert.matches("Item11", warns[2].title)
-            warns[2].onYes()
-            assert.are.equal(4, #client.posts)
-            assert.are.equal("commodity", client.posts[4].kind)
-        end)
-
-        it("skips the warned item with Skip and goes on with the next one", function()
-            warnBoth()
-            click(ui.postAll)
-            warns[1].onSkip()
-            assert.are.equal("skipped", entryOf("10").status)
-            assert.are.equal(0, #client.posts)
-            click(ui.postAll)
-            assert.are.equal(2, #warns)
-            warns[2].onYes()
-            assert.are.equal(1, #client.posts)
-            assert.are.equal("commodity", client.posts[1].kind)
-        end)
-
-        it("stops the run with Cancel and asks for the deposit confirm again", function()
-            warnBoth()
-            click(ui.postAll)
-            warns[1].onCancel()
-            assert.are.equal(0, #client.posts)
-            assert.is_nil(tab.allRun)
-            assert.are.equal("stopped", ui.message.text)
-            click(ui.postAll)
-            assert.are.equal(2, #confirms)
-            assert.are.equal(2, #warns)
-        end)
-
-        it("confirms the total deposit before the first post", function()
-            selectCloth()
-            autoAccept = false
-            click(ui.postAll)
-            assert.are.equal("FLIPSIDE_CONFIRM_POST_ALL", confirms[1].name)
-            assert.matches("Post 4 auctions%? Total deposit: 720c", confirms[1].text)
-            assert.are.equal(0, #client.posts)
-            confirms[1].onAccept()
-            assert.are.equal(1, #client.posts)
-        end)
-
-        it("makes the post inside the accept of the confirm, and no post if the user cancels it", function()
-            selectCloth()
-            autoAccept = false
-            tab:PostAll()
-            assert.are.equal(0, #client.posts)
-            assert.are.equal(1, #confirms)
-        end)
-
-    end)
-
-    describe("Post all delay", function()
-        it("turns the button off after a post and on after the delay", function()
-            selectCloth()
-            click(ui.postAll)
-            assert.are.equal(1, #client.posts)
-            assert.is_false(ui.postAll.enabled)
-            assert.are.equal("Post all (1/4)", ui.postAll.text)
-            assert.are.equal(1, #delays)
-            flushDelays()
-            assert.is_true(ui.postAll.enabled)
-        end)
-
-        it("makes no post from the timer and refuses a click while locked", function()
-            selectCloth()
-            click(ui.postAll)
-            local ok = tab:PostAll()
-            assert.is_false(ok)
-            assert.are.equal(1, #client.posts)
-            flushDelays()
-            assert.are.equal(1, #client.posts)
-        end)
-
-        it("keeps the button off while the throttle is not ready", function()
-            selectCloth()
-            click(ui.postAll)
-            client.ready = false
-            flushDelays()
-            assert.is_false(ui.postAll.enabled)
-            assert.are.equal(1, #delays)
-            local ok = tab:PostAll()
-            assert.is_false(ok)
-            assert.are.equal(1, #client.posts)
-            client.ready = true
-            flushDelays()
-            assert.is_true(ui.postAll.enabled)
-            assert.are.equal(1, #client.posts)
-        end)
-
-        it("makes no first post while the throttle is not ready", function()
-            selectCloth()
-            client.ready = false
-            click(ui.postAll)
-            assert.are.equal(0, #client.posts)
-        end)
-
-        it("cancels the pending timer on Stop", function()
-            selectCloth()
-            click(ui.postAll)
-            assert.is_true(ui.stop.shown)
-            tab:Stop()
-            assert.is_false(ui.stop.shown)
-            flushDelays()
-            assert.are.equal(0, #delays)
-            assert.are.equal(1, #client.posts)
-            assert.is_false(tab.locked)
-        end)
-    end)
     describe("the list columns", function()
         it("lines up the cells with the header at every depth of the tree", function()
             selectCloth()
@@ -980,14 +810,14 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
             type_("")
             click(ui.postNext)
             assert.are.equal(0, #warns)
-            assert.matches("^invalid price", ui.message.text)
+            assert.are.equal(0, #client.posts)
         end)
 
         it("is not part of a group post", function()
             skipLinen()
             pick("g2")
-            assert.is_false(ui.postAll.enabled)
-            local ok, why = tab:PostAll()
+            assert.is_false(ui.postNext.enabled)
+            local ok, why = tab:PostNext()
             assert.is_false(ok)
             assert.are.equal("nothing to post", why)
             assert.are.equal(0, #client.posts)
@@ -1187,37 +1017,27 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
             assert.are.equal(0, #warns)
             assert.are.equal(1, #client.posts)
         end)
-
-        it("makes the same check on a click of Post all", function()
-            mountTbc(100, true)
-            click(ui.postAll)
-            assert.are.equal(0, #client.posts)
-            assert.are.equal(1, #warns)
-            assert.matches("^Sell to vendor for: |cff66ff662000c|r", warns[1].text)
-        end)
     end)
 
-    describe("Post all", function()
+    describe("Post", function()
         it("posts the queue in tree order, one auction for each click", function()
             selectCloth()
-            assert.are.equal("Post all (0/4)", ui.postAll.text)
-            click(ui.postAll)
-            assert.are.equal("Post all (1/4)", ui.postAll.text)
-            click(ui.postAll)
-            click(ui.postAll)
-            assert.are.equal("Post all (3/4)", ui.postAll.text)
-            click(ui.postAll)
+            assert.are.equal("Posting 1 of 4", ui.progress.text)
+            click(ui.postNext)
+            assert.are.equal("Posting 2 of 4", ui.progress.text)
+            click(ui.postNext)
+            click(ui.postNext)
+            click(ui.postNext)
             assert.are.equal(4, #client.posts)
             assert.are.same({ "item", "item", "item", "commodity" },
                 { client.posts[1].kind, client.posts[2].kind, client.posts[3].kind, client.posts[4].kind })
             assert.are.same({ 1, 2, 3 }, { client.posts[1].slot, client.posts[2].slot, client.posts[3].slot })
-            assert.are.equal("Post all", ui.postAll.text)
-            assert.is_false(ui.postAll.enabled)
+            assert.is_false(ui.postNext.enabled)
         end)
 
         it("makes one protected post for each click", function()
             selectCloth()
-            tab:PostAll()
+            tab:PostNext()
             assert.are.equal(1, #client.posts)
         end)
 
@@ -1228,24 +1048,28 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
             fire("ITEM_RESULTS", 10)
             fire("COMMODITY_RESULTS", 11)
             assert.are.equal("skip", entryOf("10").status)
-            assert.are.equal("Post all (0/1)", ui.postAll.text)
-            click(ui.postAll)
+            click(ui.postNext)
             assert.are.equal(1, #client.posts)
             assert.are.equal("commodity", client.posts[1].kind)
             assert.are.equal(0, #warns)
         end)
 
         it("is off with no post left, and with the post capability off", function()
-            assert.is_false(ui.postAll.enabled)
+            assert.is_false(ui.postNext.enabled)
             selectCloth()
-            assert.is_true(ui.postAll.enabled)
+            assert.is_true(ui.postNext.enabled)
             client.CanPost = function() return false end
             tab:_Update()
-            assert.is_false(ui.postAll.enabled)
             assert.is_false(ui.postNext.enabled)
         end)
-    end)
 
+        it("has no Post all and no Skip item button", function()
+            assert.is_nil(ui.postAll)
+            assert.is_nil(ui.skipItem)
+            assert.is_nil(tab.PostAll)
+            assert.is_nil(tab.SkipCurrentItem)
+        end)
+    end)
     describe("the rule limits", function()
         local function remount(extra)
             opExtra = extra
@@ -1255,11 +1079,9 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
 
         local function postAllClicks()
             local n = 0
-            flushDelays()
-            while ui.postAll.enabled and n < 50 do
-                click(ui.postAll)
+            while ui.postNext.enabled and n < 50 do
+                click(ui.postNext)
                 n = n + 1
-                flushDelays()
             end
             return n
         end
@@ -1273,7 +1095,7 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
             assert.are.equal(8, entry.units[1].quantity)
         end)
 
-        it("posts nothing of the kept quantity with Post all", function()
+        it("posts nothing of the kept quantity", function()
             remount({ keepInBags = 30 })
             selectCloth()
             assert.are.equal("keep in bags reached", entryOf("11").decision.reason)
@@ -1286,7 +1108,7 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
             assert.are.equal(20, units)
         end)
 
-        it("stops Post all at the post quantity", function()
+        it("stops at the post quantity", function()
             remount({ postCap = 2 })
             selectCloth()
             assert.are.equal(2, #entryOf("10").units)
@@ -1677,17 +1499,6 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
             assert.is_nil(entryOf("10").manualHours)
         end)
 
-        it("keeps Post all on the operation settings", function()
-            selectCloth()
-            pick("i10")
-            tab:SetManualQuantity(5)
-            tab:SetManualDuration(2)
-            pick("g2")
-            click(ui.postAll)
-            assert.are.equal(24, client.posts[1].duration)
-            assert.are_not.equal(5, client.posts[1].quantity)
-        end)
-
         it("uses the chosen quantity and duration for a skipped item", function()
             client.rows[10] = { row(5, 1) }
             pick("i10")
@@ -1751,12 +1562,12 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
             assert.are.equal("ready", entryOf("10").status)
         end)
 
-        it("leaves the skipped item out of Post all", function()
+        it("leaves the skipped item out of the group post", function()
             remount({})
             vendor[10] = 200
             selectCloth()
-            assert.are.equal("Post all (0/1)", ui.postAll.text)
-            click(ui.postAll)
+            assert.are.equal("Posting 1 of 1", ui.progress.text)
+            click(ui.postNext)
             assert.are.equal("commodity", client.posts[1].kind)
             assert.are.equal(0, #warns)
         end)
@@ -1811,6 +1622,93 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
             assert.are.equal("undercut", entryOf("10").decision.reason)
         end)
     end)
+    describe("a post leaves the list only when the client confirms it", function()
+        local function listed(key)
+            return has(visibleIds(), "i" .. key)
+        end
+
+        it("keeps the row after the click and drops it at the created event", function()
+            selectCloth()
+            autoCreate = false
+            pick("i11")
+            fire("COMMODITY_RESULTS", 11)
+            click(ui.postNext)
+            assert.are.equal(1, #client.posts)
+            assert.are.equal("ready", entryOf("11").status)
+            assert.is_true(listed("11"))
+            assert.are.equal("posting", ns.SellingTab.InfoText(entryOf("11")))
+            assert.is_false(ui.postNext.enabled)
+            local entry = entryOf("11")
+            -- The bags no longer hold the bolts when the client confirms the post.
+            table.remove(bagItems, 1)
+            fire("CREATED")
+            assert.are.equal("done", entry.status)
+            assert.is_false(listed("11"))
+            assert.is_nil(entry.postText)
+        end)
+
+        it("counts a one-stack post once, with no created event of an earlier post", function()
+            selectCloth()
+            fire("CREATED")
+            assert.are.equal("ready", entryOf("11").status)
+            assert.is_nil(tab.multi)
+        end)
+
+        it("keeps the row with the reason when the post call fails", function()
+            selectCloth()
+            pick("i11")
+            fire("COMMODITY_RESULTS", 11)
+            client.PostCommodity = function()
+                error("no auction house", 0)
+            end
+            click(ui.postNext)
+            assert.are.equal("failed", entryOf("11").status)
+            assert.is_true(listed("11"))
+            assert.are.equal("failed: no auction house", ns.SellingTab.InfoText(entryOf("11")))
+            assert.are.equal("Bolt of Linen: no auction house", ui.details.warn.text)
+        end)
+
+        it("selects a failed row again, clears the reason and makes it ready", function()
+            selectCloth()
+            pick("i11")
+            fire("COMMODITY_RESULTS", 11)
+            client.PostCommodity = function()
+                error("no auction house", 0)
+            end
+            click(ui.postNext)
+            assert.are.equal("failed", entryOf("11").status)
+            pick("i11")
+            assert.are.equal("ready", entryOf("11").status)
+            assert.is_nil(entryOf("11").note)
+            assert.is_true(ui.postNext.enabled)
+        end)
+
+        it("keeps the row with the reason when the client gives no answer", function()
+            selectCloth()
+            autoCreate = false
+            pick("i11")
+            fire("COMMODITY_RESULTS", 11)
+            click(ui.postNext)
+            local timer
+            for _, each in ipairs(delays) do
+                timer = each
+            end
+            assert.is_not_nil(timer)
+            timer.fn()
+            assert.are.equal("failed", entryOf("11").status)
+            assert.is_true(listed("11"))
+            assert.matches("^failed: no answer", ns.SellingTab.InfoText(entryOf("11")))
+            assert.is_nil(tab.multi)
+        end)
+
+        it("shows no text in the top strip for a post", function()
+            selectCloth()
+            pick("i11")
+            fire("COMMODITY_RESULTS", 11)
+            click(ui.postNext)
+            assert.is_nil(ui.message)
+        end)
+    end)
     describe("the bag sync after a post", function()
         it("drops an item from the list after its last post", function()
             selectCloth()
@@ -1821,8 +1719,8 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
             local ids = visibleIds()
             assert.is_false(has(ids, "i10"))
             assert.is_true(has(ids, "i11"))
-            -- The queue keeps its count.
-            assert.are.equal("Posting 4 of 4", ui.progress.text)
+            -- The sync after the created event picks the selection again from the nodes that are left.
+            assert.are.equal("Posting 1 of 1", ui.progress.text)
         end)
 
         it("shows the rest of a stack that is only partly posted", function()

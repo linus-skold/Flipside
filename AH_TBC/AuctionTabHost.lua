@@ -24,7 +24,19 @@ local INSETS = { left = 22, right = 34, top = 52, bottom = 14 }
 -- The Buying and Selling panels fill the whole content area, so they stay clear of the gold display. It is
 -- AuctionFrameMoneyFrame: BOTTOMRIGHT at BOTTOMLEFT of the frame, offset x 181 y 18 (Blizzard_AuctionUI.xml:87-95).
 -- The small money template is 13 px high, so the top edge is at 31 px. The inset adds a gap of 4 px: 35.
-local MONEY_INSETS = { left = 22, right = 34, top = 52, bottom = 35 }
+-- The right inset is small: the panel fills the width up to the border art of the frame, so no strip of mismatched
+-- Bids tiles shows right of the list.
+local MONEY_INSETS = { left = 22, right = 12, top = 52, bottom = 35 }
+-- The row of the Stop button and the progress text in the header band over the list tabs: the band is x 72 to the
+-- close button and y 26 to 52. The portrait (to y 67) and the close button stay free. Offsets are from the panel
+-- top left corner (x 22, y 52): 50 to the right and 26 up.
+local BAND = { left = 50, top = 26 }
+-- Cover over the art parts that the list tabs do not use (offsets from the frame): the header band right of the
+-- portrait, and the two empty button slots of the Bids art at the bottom right.
+local COVERS = {
+    { "TOPLEFT", 70, -22, "TOPRIGHT", -40, -22, 30 },
+    { "BOTTOMLEFT", 666, 7, "BOTTOMRIGHT", -6, 7, 32 },
+}
 -- The Bids art: a full-width list panel, with no filter column and no boxes. Blizzard sets these textures for the
 -- Bids tab in AuctionFrameTab_OnClick. It sets all six again on the next tab click, so the art is restored.
 local ART = {
@@ -40,6 +52,43 @@ local ART = {
 -- The title is at the top centre (Blizzard_AuctionUI.xml:115-123). The close button is 3 px outside the
 -- right edge (:96-104). The Browse labels start 38 px below the top (:126-134), the Search button 39 px (:1190-1200).
 local START_BAR = { right = 36, top = 9, width = 350, buttonWidth = 62, stopWidth = 52 }
+
+local cover = {}
+
+-- Build the cover once: a frame over the art of the Auction House frame, with one texture for each part.
+local function buildCover(frame)
+    if cover.frame then
+        return
+    end
+    local holder = CreateFrame("Frame", nil, frame)
+    holder:SetAllPoints(frame)
+    local skin = ns.AuctionTabs and ns.AuctionTabs.Skin
+    for _, part in ipairs(COVERS) do
+        local texture = holder:CreateTexture(nil, "BACKGROUND")
+        texture:SetPoint(part[1], holder, part[1], part[2], part[3])
+        texture:SetPoint(part[4], holder, part[4], part[5], part[6])
+        texture:SetHeight(part[7])
+        if skin and skin.backgroundAtlas then
+            texture:SetAtlas(skin.backgroundAtlas)
+        else
+            texture:SetColorTexture(0.04, 0.04, 0.04, 1)
+        end
+    end
+    holder:Hide()
+    cover.frame = holder
+end
+
+-- Show the cover with a list tab. Blizzard's own tab click shows the art again: the hook hides the cover.
+local function setCover(shown)
+    if cover.frame then
+        cover.frame:SetShown(shown)
+    end
+end
+
+-- True while the cover of the unused art parts shows (a list tab is open).
+function Host.CoverShown()
+    return cover.frame ~= nil and cover.frame:IsShown() == true
+end
 
 local function blizzardTab(index)
     return _G["AuctionFrameTab" .. index]
@@ -116,6 +165,7 @@ local function hookClick()
                 entry.core:Deselect()
             end
         end
+        setCover(false)
         if clicked and clicked.state.frame then
             clicked.core:Select()
         end
@@ -129,11 +179,13 @@ local function buildFrame(entry)
     buildTab(entry)
     local api = {
         insets = entry.id and MONEY_INSETS or INSETS,
+        band = entry.id and BAND or nil,
         layout = "compact",
         startPage = Host.StartPage(frame),
         -- Core shows the panel. Blizzard's click code already hid the panes and marked the tab.
         Enter = function()
             setArt()
+            setCover(entry.id ~= nil)
             if SetAuctionsTabShowing then
                 SetAuctionsTabShowing(false)
             end
@@ -147,6 +199,9 @@ local function buildFrame(entry)
             end
         end,
     }
+    if entry.id then
+        buildCover(frame)
+    end
     core:Mount(frame, api)
     hookClick()
 end

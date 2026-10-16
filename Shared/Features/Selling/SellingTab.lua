@@ -10,13 +10,10 @@ local OWNER = "Flipside.SellingTab"
 local DIALOG = "FLIPSIDE_CONFIRM_POST"
 local SEARCH_TIMEOUT = 10
 local RETRY_SECONDS = 5
-local POST_DELAY = 1.0
 local MULTI_TIMEOUT = 15
 local MULTI_TIMEOUT_PER_STACK = 3
-SellingTab.POST_DELAY = POST_DELAY
 local SECONDS_PER_HOUR = 3600
 
-local DIALOG_ALL = "FLIPSIDE_CONFIRM_POST_ALL"
 local NONE_ID = "none"
 local BASE_GROUP = 1
 local ROW_HEIGHT = 22
@@ -32,7 +29,7 @@ local STACKS_X = 320
 local QTY_X = 414
 local SINGLE_QTY_X = 392
 local HEADER_HEIGHT = 18
-local TOP_ROOM = 28 -- height that the lower part gains when the Stop button and the message line are empty
+local TOP_ROOM = 28 -- height that the lower part gains when the Stop button is hidden
 local TREE_TOP = DETAILS_TOP - DETAILS_HEIGHT - 4 - HEADER_HEIGHT
 local RED = { 1, 0.3, 0.3 }
 local VALUE_GREEN = "|cff66ff66" -- green, as a client colour code
@@ -274,7 +271,9 @@ local SKIP_TEXT = {
 -- The short reason of one entry, for the Info column.
 function SellingTab.InfoText(entry)
     local status, decision, candidate = entry.status, entry.decision, entry.candidate
-    if status == "noop" then
+    if entry.postText then
+        return entry.postText
+    elseif status == "noop" then
         return "no operation"
     elseif status == "waiting" then
         return candidate and candidate.reason or "not searched yet"
@@ -516,22 +515,14 @@ end
 local Tab = {}
 Tab.__index = Tab
 
-function Tab:_Say(text)
-    if self.ui then
-        text = text or ""
-        self.ui.message:SetText(text)
-        self.ui.message:SetShown(text ~= "")
-        self:_Layout()
-    end
-end
-
--- Move the details pane and the list up when the top row is empty. The list bottom stays.
+-- Move the details pane and the list up when the Stop button is hidden. The list bottom stays.
+-- A host with a band (api.band) holds the Stop button outside the content, so the pane never moves.
 function Tab:_Layout()
     local ui = self.ui
     if not (ui and ui.postNext) then
         return
     end
-    local up = (ui.message:IsShown() or ui.stop:IsShown()) and 0 or TOP_ROOM
+    local up = (not self.api.band and ui.stop:IsShown()) and 0 or TOP_ROOM
     local content = self.content
     local headerTop = DETAILS_TOP - DETAILS_HEIGHT - 4 + up
     ui.details.frame:ClearAllPoints()
@@ -668,7 +659,6 @@ function Tab:_Start(entry)
     local token = self.token
     entry.status = "searching"
     self.pending = { entry = entry, itemID = candidate.itemID, token = token }
-    self:_Say("searching " .. self:_Name(entry))
     self.deps.after(SEARCH_TIMEOUT, function()
         local pending = self.pending
         if pending and pending.token == token then
@@ -676,7 +666,6 @@ function Tab:_Start(entry)
             entry.status = "skip"
             entry.decision = { action = "skip", reason = "no response", key = candidate.key }
             self.deps.log:Add(candidate, entry.decision)
-            self:_Say("no response for " .. self:_Name(entry))
             self:_Update()
             self:_Next()
         end
@@ -705,13 +694,11 @@ function Tab:_Next()
         local entry = queue.list[queue.pos + 1]
         if not entry then
             self.queue = nil
-            self:_Say("")
             self:_Update()
             return
         end
-        local status, text = self:_Start(entry)
+        local status = self:_Start(entry)
         if status == "wait" then
-            self:_Say(text)
             self:_ScheduleRetry()
             return
         end
@@ -736,8 +723,7 @@ function Tab:RefreshBags()
     local bagItems = deps.readBags()
     local byKey = self:_CandidatesByKey(bagItems)
     self.entries, self.selection, self.selectedId, self.postedCount = {}, {}, nil, 0
-    self.priceEntry, self.allRun = nil, nil
-    self:_Unlock()
+    self.priceEntry = nil
     for _, item in ipairs(bagItems) do
         self.entries[#self.entries + 1] = self:_NewEntry(item, byKey[item.key])
     end
@@ -746,7 +732,6 @@ function Tab:RefreshBags()
         self.ui.tree.selected = nil
         self.ui.tree:SetNodes(self.nodes)
     end
-    self:_Say(#self.entries == 0 and "no tradable item in the bags" or "")
     self:_Update()
     return true
 end
@@ -937,7 +922,7 @@ end
 -- The entry whose item the slot should hold: the entry that the pane shows or Post posts next, else the first entry of
 -- the selection that waits for its decision (its bag stack goes in the slot now, the decision comes later).
 function Tab:_HoldTarget()
-    local focus = self:_Focus(false)
+    local focus = self:_Focus()
     if focus then
         return focus
     end
@@ -1064,9 +1049,10 @@ end
 -- price answers of the old run are forgotten, so the checks of the Post click run again. An item that the rule
 -- skipped (or that was forced) goes back to the rule skip: Post still asks first.
 function Tab:_Revive(entry)
-    if entry.status ~= "skipped" then
+    if entry.status ~= "skipped" and entry.status ~= "failed" then
         return
     end
+    entry.note = nil
     entry.vendorForce, entry.warned, entry.manual = nil, nil, nil
     entry.manualQty, entry.manualHours, entry.manualStacks = nil, nil, nil
     entry.next = 1
@@ -1088,7 +1074,6 @@ end
 -- protected call.
 function Tab:SelectNode(node, fromClick)
     if self.awaiting or self.multi then
-        self:_Say(self.multi and "wait for the post to end first" or "confirm or skip the open post first")
         if self.ui then
             self.ui.tree.selected = self.selectedId
             self.ui.tree:Refresh()
@@ -1099,8 +1084,6 @@ function Tab:SelectNode(node, fromClick)
     self.selection = SellingTab.CollectEntries(node, {})
     self.postedCount = 0
     self.priceEntry = nil
-    self.allRun = nil
-    self:_Unlock()
     if fromClick and #self.selection == 1 and node.id:sub(1, 1) == "i" then
         self:_Revive(self.selection[1])
     end
@@ -1128,9 +1111,6 @@ end
 -- Stop the queue. A search in flight still ends with its result.
 function Tab:Stop()
     self.queue = nil
-    local waiting = self.locked
-    self:_Unlock()
-    self:_Say(waiting and "stopped" or "search stopped")
     self:_Update()
 end
 
@@ -1145,7 +1125,6 @@ function Tab:_OnResult(arg)
     end
     self.pending = nil
     self:_Decide(pending.entry, self.deps.client.LiveRows(pending.itemID))
-    self:_Say("")
     self:_Next()
 end
 
@@ -1155,8 +1134,16 @@ function Tab:_OnReady()
     end
 end
 
+-- The client made an auction. It ends a one-stack post that waits for it (_EndMulti). A multi-stack post
+-- counts its stacks from the multisell events.
 function Tab:_OnPosted()
-    self:_Say("auction created")
+    local m = self.multi
+    if m and m.stacks == 1 and m.created < 1 then
+        m.created = 1
+        if m.armed then
+            self:_CheckMulti()
+        end
+    end
     self:_QueueSync()
 end
 
@@ -1237,7 +1224,6 @@ function Tab:_Fail(entry, text)
     self.awaiting = nil
     local price = entry.decision and entry.decision.price
     self.deps.log:Add(entry.candidate, { action = "failed", reason = text, price = price })
-    self:_Say(self:_Name(entry) .. ": " .. text)
     self:_AfterStep()
     return false, text
 end
@@ -1254,14 +1240,16 @@ function Tab:_AfterStep()
         end
     end
     self:_Update()
-    if self:_Focus(false) or self.pending or self.queue then
+    if self:_Focus() or self.pending or self.queue then
         return
     end
-    self.allRun = nil
-    self:_Say(self.postedCount > 0 and "all posted" or "nothing left to post")
-    local say = self.ui and self.ui.message:GetText()
+    -- A failed post stays in the list with its reason until the user selects the item again.
+    for _, entry in ipairs(self.selection) do
+        if entry.status == "failed" then
+            return
+        end
+    end
     self:RefreshBags()
-    self:_Say(say)
 end
 
 -- Count one finished unit (a post or a skip). After the last unit of an entry, ask for a fresh owned list.
@@ -1341,25 +1329,15 @@ function Tab:_Confirmed()
         return
     end
     local stacks = awaiting.stacks or 1
-    if stacks > 1 then
-        self:_StartMulti(awaiting.entry, awaiting.quantity, stacks, awaiting.price, awaiting.duration, awaiting.all)
-    end
+    self:_StartMulti(awaiting.entry, awaiting.quantity, stacks, awaiting.price, awaiting.duration)
     local ok, err = pcall(awaiting.confirm)
     self.awaiting = nil
     if not ok then
-        self.multi = nil
+        self:_DropMulti()
         return self:_Fail(awaiting.entry, tostring(err))
     end
     awaiting.entry.real = true
-    if stacks > 1 then
-        self:_ArmMulti()
-        return
-    end
-    self:_Record(awaiting.entry, awaiting.quantity, "post", awaiting.price, awaiting.duration)
-    if self.allRun then
-        self:_Lock()
-    end
-    self:_Advance(awaiting.entry, true)
+    self:_ArmMulti()
 end
 
 -- The item as a link in the quality colour; nil while the client has no link yet.
@@ -1379,11 +1357,11 @@ function Tab:_ItemLink(entry)
     return "|c" .. hex .. link .. "|r"
 end
 
--- The entry that a click on Post works on. Post all works only on the ready entries of the selection.
+-- The entry that a click on Post works on: the first ready entry of the selection.
 -- Post can also work on one selected item that the rule skips, after a warning.
-function Tab:_Focus(all)
+function Tab:_Focus()
     local current = self:_Current()
-    if current or all then
+    if current then
         return current
     end
     local only = #self.selection == 1 and self.selectedId and self.selectedId:sub(1, 1) == "i" and self.selection[1]
@@ -1492,11 +1470,11 @@ function Tab._ManualPlan(_, entry, price, raw)
     return decision, SellingTab.BuildUnits(candidate, decision)
 end
 
--- The decision and the unit of the next post of an entry. For Post (not all) the quantity and the duration
--- that the user chose apply, with a new deposit quote. Post all (all) and raw use the plan as it is.
-function Tab:_NextPost(entry, price, all, raw)
+-- The decision and the unit of the next post of an entry. The quantity and the duration that the user chose
+-- apply, with a new deposit quote. With raw the plan is used as it is.
+function Tab:_NextPost(entry, price, raw)
     local ready = entry.status == "ready"
-    if ready and (all or raw or not (entry.manualQty or entry.manualHours or entry.manualStacks)) then
+    if ready and (raw or not (entry.manualQty or entry.manualHours or entry.manualStacks)) then
         return entry.decision, entry.units[entry.next]
     end
     local decision, unit
@@ -1526,7 +1504,7 @@ end
 
 -- Set the quantity of the next manual post. The value is limited to 1 to the available count. nil clears it.
 function Tab:SetManualQuantity(value)
-    local entry = not self.awaiting and not self.multi and self:_Focus(false)
+    local entry = not self.awaiting and not self.multi and self:_Focus()
     if not entry then
         return false
     end
@@ -1549,11 +1527,11 @@ end
 -- Set the number of stacks of the next manual post (TBC). The value is limited to the stacks that the bags hold
 -- at the stack size of the post. nil clears it.
 function Tab:SetManualStacks(value)
-    local entry = not self.awaiting and not self.multi and self:_Focus(false)
+    local entry = not self.awaiting and not self.multi and self:_Focus()
     if not entry or not ns.SellingPlan.Multisell() then
         return false
     end
-    local _, unit = self:_NextPost(entry, 1, false, true)
+    local _, unit = self:_NextPost(entry, 1, true)
     entry.manualStacks = unit and SellingTab.ClampStacks(value, entry.manualQty or unit.quantity,
         SellingTab.MaxQuantity(entry.candidate)) or nil
     self:_UpdateDetails()
@@ -1562,7 +1540,7 @@ end
 
 -- Set the duration in hours of the next manual post (SellingPlan.DURATIONS). Another value or nil clears it.
 function Tab:SetManualDuration(hours)
-    local entry = not self.awaiting and not self.multi and self:_Focus(false)
+    local entry = not self.awaiting and not self.multi and self:_Focus()
     if not entry then
         return false
     end
@@ -1603,7 +1581,7 @@ end
 -- The warning lines for the next post of an entry at a price. An empty list means no warning.
 -- A line shows if the rule skips the item, if the price is under the minimum price or over the maximum price,
 -- The vendor case has no line here: _PostStep checks it with the real deposit.
-function Tab:_Warnings(entry, price, all)
+function Tab:_Warnings(entry, price)
     local lines = {}
     local skipReason
     if entry.status ~= "ready" then
@@ -1613,7 +1591,7 @@ function Tab:_Warnings(entry, price, all)
             lines[1] = "The rule skips this item: " .. (SKIP_TEXT[skipReason] or skipReason) .. "."
         end
     end
-    local unit = select(2, self:_NextPost(entry, price, all))
+    local unit = select(2, self:_NextPost(entry, price))
     local candidate = entry.candidate or {}
     if candidate.minPrice and price < candidate.minPrice and skipReason ~= "below minimum" then
         lines[#lines + 1] = "The price is below the minimum price: " .. money(candidate.minPrice) .. "."
@@ -1625,29 +1603,26 @@ function Tab:_Warnings(entry, price, all)
 end
 
 -- Show the warning box with Post, Skip and Cancel. The post runs in the click of the Post button, so it keeps
--- its hardware event. Skip leaves the whole item. Cancel makes no post and ends a Post all run.
-function Tab:_AskWarning(entry, price, lines, unit, all)
+-- its hardware event. Skip leaves the whole item. Cancel makes no post.
+function Tab:_AskWarning(entry, price, lines, unit)
     local text = string.format("Post %d x %s at %s each?", unit and unit.quantity or 0,
         self:_ItemLink(entry) or self:_Name(entry), money(price))
     text = text .. "\n\n" .. table.concat(lines, "\n")
     local function stale()
-        return self.awaiting ~= nil or self:_Focus(all) ~= entry
+        return self.awaiting ~= nil or self:_Focus() ~= entry
     end
     self.deps.warn("Check the price", text, function()
         if stale() then
             return
         end
         entry.warned = true
-        self:_PostStep(all)
+        self:_PostStep()
     end, function()
         if stale() then
             return
         end
         self:SkipItem(entry)
-    end, function()
-        self.allRun = nil
-        self:_Say("stopped")
-    end)
+    end, function() end)
 end
 
 -- The two lines of the vendor box. The larger value is green: the vendor price N, or the AH net profit S.
@@ -1674,9 +1649,9 @@ end
 
 -- The backend held a post: with the real deposit the vendor pays more than the net. The item is back in the bag.
 -- Show the box. "Post anyway" posts once in its own click. "Cancel" posts nothing and skips the item.
-function Tab:_AskVendor(entry, all, held)
+function Tab:_AskVendor(entry, held)
     local function stale()
-        return self.awaiting ~= nil or self:_Focus(all) ~= entry
+        return self.awaiting ~= nil or self:_Focus() ~= entry
     end
     local text = SellingTab.VendorText(held.vendor, held.net)
     -- The title names the item (item link in the quality colour), so the body is only the two lines.
@@ -1686,7 +1661,7 @@ function Tab:_AskVendor(entry, all, held)
             return
         end
         entry.vendorForce = true
-        self:_PostStep(all)
+        self:_PostStep()
     end, function()
         if stale() then
             return
@@ -1696,116 +1671,51 @@ function Tab:_AskVendor(entry, all, held)
         if stale() then
             return
         end
-        if all then
-            -- In a Post all run, Cancel ends the run. The item stays in the queue.
-            self.allRun = nil
-            self:_Say("stopped")
-        else
-            self:SkipItem(entry, "vendor pays more than the AH")
-        end
-    end, { post = "Post anyway", skip = all and "Skip" or false, cancel = "Cancel" })
-end
-
--- Lock the Post all button after a post. A timer unlocks it after POST_DELAY once the AH is ready.
--- The timer makes no post. Stop or a new selection cancels it.
-function Tab:_Lock()
-    self.lockToken = (self.lockToken or 0) + 1
-    local token = self.lockToken
-    self.locked = true
-    local function check()
-        if self.lockToken ~= token then
-            return
-        end
-        if self.deps.client.IsReady() then
-            self.locked = false
-            self:_Update()
-        else
-            self.deps.after(POST_DELAY, check)
-        end
-    end
-    self.deps.after(POST_DELAY, check)
-end
-
-function Tab:_Unlock()
-    self.lockToken = (self.lockToken or 0) + 1
-    self.locked = false
+        self:SkipItem(entry, "vendor pays more than the AH")
+    end, { post = "Post anyway", skip = false, cancel = "Cancel" })
 end
 
 -- Post the next unit of the first ready entry. Call it only from the click of the post button.
 -- One call makes one protected post. Returns true, or false and a text.
 function Tab:PostNext()
-    return self:_PostStep(false)
+    return self:_PostStep()
 end
 
--- The same for the button "Post all": the queue of the selection, with no entry that the rule skips.
--- The first click of a run asks for a confirm with the total deposit. The accept click makes the first post.
--- The later clicks of the run post at once. It needs a selected group, "[No group]" or item.
-function Tab:PostAll()
-    if self.multi then
-        self:_Say(self:_MultiText())
-        return false, "posting"
+function Tab:_DropMulti()
+    local m = self.multi
+    if m then
+        m.entry.postText = nil
     end
-    if self.awaiting or self.allRun then
-        if not self.awaiting and self.locked then
-            return false, "wait"
-        end
-        return self:_PostStep(true)
-    end
-    if #self.selection == 0 then
-        self:_Say("select a group first")
-        return false, "select a group first"
-    end
-    if not self:_Focus(true) then
-        self:_Say("nothing to post")
-        return false, "nothing to post"
-    end
-    local total, done, deposit = self:_Progress()
-    self.deps.confirm(DIALOG_ALL, string.format("Post %d auctions? Total deposit: %s.", total - done,
-        deposit and money(deposit) or "unknown"), function()
-        if self.awaiting or not self:_Focus(true) then
-            return
-        end
-        self.allRun = true
-        self:_PostStep(true)
-    end)
-    return true
+    self.multi = nil
 end
-
-function Tab:_PostStep(all)
+function Tab:_PostStep()
     if self.multi then
-        self:_Say(self:_MultiText())
         return false, "posting"
     end
     if self.awaiting then
         self:_ShowConfirm()
         return true
     end
-    if all and not self.deps.client.IsReady() then
-        self:_Say("waiting for the Auction House to be ready")
-        return false, "not ready"
-    end
-    local entry = self:_Focus(all)
+    local entry = self:_Focus()
     if not entry then
-        self:_Say("nothing to post")
         return false, "nothing to post"
     end
     local price, why = self:_PostPrice(entry)
     if not price then
-        self:_Say(why)
         return false, why
     end
     -- After "Post anyway" the user knows the real deposit, so the price warnings do not come back.
     if not entry.warned and not entry.vendorForce then
-        local lines, unit = self:_Warnings(entry, price, all)
+        local lines, unit = self:_Warnings(entry, price)
         if #lines > 0 then
-            self:_AskWarning(entry, price, lines, unit, all)
+            self:_AskWarning(entry, price, lines, unit)
             return true
         end
     end
     if entry.status ~= "ready" then
         self:_ForcePlan(entry, price)
     end
-    local decision, unit = self:_NextPost(entry, price, all)
+    local decision, unit = self:_NextPost(entry, price)
     local client = self.deps.client
     local okValid, valid = pcall(client.IsSellItemValid, unit.bag, unit.slot)
     if okValid and valid == false then
@@ -1831,7 +1741,7 @@ function Tab:_PostStep(all)
     if not forced and unit.deposit and quantity == unit.quantity then
         held = self:_VendorHold(entry, price, { quantity = quantity, stacks = stacks, deposit = unit.deposit })
         if held then
-            self:_AskVendor(entry, all, held)
+            self:_AskVendor(entry, held)
             return true
         end
     end
@@ -1869,55 +1779,52 @@ function Tab:_PostStep(all)
     -- The post call reuses the kept slot when it holds the right item, else it fills the slot. After the call the
     -- post owns the slot: the tab does not release it, and the slot is empty after the post.
     self.held = nil
-    -- The multisell events can come while the call runs. The state exists before the call.
-    if stacks > 1 then
-        self:_StartMulti(entry, quantity, stacks, price, decision.duration, all)
-    end
+    -- The events of the client can come while the call runs. The state exists before the call. The row stays in the
+    -- list until the client confirms the post (_EndMulti).
+    self:_StartMulti(entry, quantity, stacks, price, decision.duration)
     local ok, needsConfirmation = pcall(call)
     if not ok then
-        self.multi = nil
+        self:_DropMulti()
         return self:_Fail(entry, tostring(needsConfirmation))
     end
     if needsConfirmation == "held" or needsConfirmation then
-        self.multi = nil
+        self:_DropMulti()
     end
     if needsConfirmation == "held" then
         if not held then
             return self:_Fail(entry, "the post was held")
         end
-        self:_AskVendor(entry, all, held)
+        self:_AskVendor(entry, held)
         return true
     end
     if needsConfirmation then
         self.awaiting = { entry = entry, unit = unit, quantity = quantity, confirm = confirm, price = price,
-            duration = decision.duration, stacks = stacks, all = all }
+            duration = decision.duration, stacks = stacks }
         self:_ShowConfirm()
         self:_Update()
         return true
     end
     entry.real = true
-    if stacks > 1 then
-        self:_ArmMulti()
-        return true
-    end
-    self:_Record(entry, quantity, "post", price, decision.duration)
-    if all then
-        self:_Lock()
-    end
-    self:_Advance(entry, true)
+    self:_ArmMulti()
     return true
 end
 
--- The state of a multi-stack post (TBC). It blocks Post, Post all and Skip until the post ends.
-function Tab:_StartMulti(entry, quantity, stacks, price, duration, all)
+-- The state of a post that waits for the client (one stack or several, TBC). It blocks Post and Skip until the
+-- client confirms the post or fails it.
+function Tab:_StartMulti(entry, quantity, stacks, price, duration)
     self.multiToken = (self.multiToken or 0) + 1
     self.multi = { entry = entry, quantity = quantity, stacks = stacks, price = price, duration = duration,
-        all = all, created = 0, total = stacks, token = self.multiToken }
+        created = 0, total = stacks, token = self.multiToken }
+    entry.postText = self:_MultiText()
 end
 
+-- The text of the Info column of the entry that posts.
 function Tab:_MultiText()
     local m = self.multi
-    return string.format("posting %s: %d of %d stacks", self:_Name(m.entry), m.created, m.total)
+    if m.stacks == 1 then
+        return "posting"
+    end
+    return string.format("posting %d of %d stacks", m.created, m.total)
 end
 
 -- The call returned: wait for the events. A timer ends a post that gets no answer.
@@ -1963,7 +1870,7 @@ function Tab:_CheckMulti()
     elseif m.created >= m.total then
         self:_EndMulti()
     else
-        self:_Say(self:_MultiText())
+        m.entry.postText = self:_MultiText()
         self:_Update()
     end
 end
@@ -1973,6 +1880,7 @@ function Tab:_EndMulti(failure)
     local m = self.multi
     self.multi = nil
     local entry = m.entry
+    entry.postText = nil
     local created = math.min(m.created, m.stacks)
     for _ = 1, created do
         self:_Record(entry, m.quantity, "post", m.price, m.duration)
@@ -1982,10 +1890,6 @@ function Tab:_EndMulti(failure)
         self.postedCount = self.postedCount + created
         return self:_Fail(entry, string.format("%s (%d of %d stacks made)", failure, created, m.stacks))
     end
-    if m.all then
-        self:_Lock()
-    end
-    self:_Say("")
     self:_Advance(entry, true, created)
 end
 
@@ -1994,7 +1898,7 @@ function Tab:Skip()
     if self.multi then
         return false, "posting"
     end
-    local entry = self.awaiting and self.awaiting.entry or self:_Focus(false)
+    local entry = self.awaiting and self.awaiting.entry or self:_Focus()
     if not entry then
         return false, "nothing to skip"
     end
@@ -2007,19 +1911,6 @@ function Tab:Skip()
     return true
 end
 
--- Leave all the auctions that are left of the current item (the Skip item button). No protected call.
-function Tab:SkipCurrentItem()
-    if self.multi then
-        return false, "posting"
-    end
-    local entry = self.awaiting and self.awaiting.entry or self:_Focus(false)
-    if not entry then
-        return false, "nothing to skip"
-    end
-    self.awaiting = nil
-    self:SkipItem(entry)
-    return true
-end
 
 -- Leave all the auctions that are left of one item (the Skip button of the warning box). No protected call.
 function Tab:SkipItem(entry, reason)
@@ -2220,14 +2111,6 @@ function Tab:ProgressText()
     return ""
 end
 
--- The label of the post all button from the state: "Post all (3/12)" is the done count and the total of the queue.
-function Tab:PostAllLabel()
-    local total, done = self:_Progress()
-    if total > 0 and self:_Current() and not self.awaiting then
-        return string.format("Post all (%d/%d)", done, total)
-    end
-    return "Post all"
-end
 
 -- Put a suggested price in the price box. The box belongs to the entry until another entry shows.
 function Tab:_FillPrice(entry, copper)
@@ -2256,7 +2139,7 @@ end
 -- Put the calculated quantity and duration in the controls when the shown post changes.
 function Tab:_SyncManual(entry, price)
     local d = self.ui.details
-    local decision, unit = self:_NextPost(entry, price, false, true)
+    local decision, unit = self:_NextPost(entry, price, true)
     local shown = self.manualShown
     local stacks = unit.stacks or 1
     local size = SellingTab.ClampQuantity(entry.manualQty, SellingTab.StackLimit(entry)) or unit.quantity
@@ -2306,11 +2189,11 @@ end
 -- The user typed a stack price: the unit price is the stack price divided by the stack size, rounded down.
 -- The stack price box keeps the typed text.
 function Tab:_OnStackPrice(copper)
-    local entry = self.awaiting and self.awaiting.entry or self:_Focus(false)
+    local entry = self.awaiting and self.awaiting.entry or self:_Focus()
     if not entry then
         return
     end
-    local _, unit = self:_NextPost(entry, 1, false, true)
+    local _, unit = self:_NextPost(entry, 1, true)
     local size = SellingTab.ClampQuantity(entry.manualQty, SellingTab.StackLimit(entry)) or unit.quantity
     self.ui.details.priceInput:SetCopper(SellingTab.UnitFromStack(copper, size))
     self.stackEdit = true
@@ -2321,7 +2204,7 @@ end
 -- Fill the details pane from the next post of the queue (or the one item that the rule skips).
 function Tab:_UpdateDetails()
     local d = self.ui.details
-    local entry = self.awaiting and self.awaiting.entry or self:_Focus(false)
+    local entry = self.awaiting and self.awaiting.entry or self:_Focus()
     -- An edit of the stack size, the stack count or the duration holds until another item shows.
     local old = self.shownEntry
     if old ~= entry then
@@ -2336,6 +2219,14 @@ function Tab:_UpdateDetails()
         d.name:SetText(#self.selection == 0 and "Pick a group or an item" or waiting > 0
             and string.format("Waiting for the price of %d %s", waiting, waiting == 1 and "item" or "items")
             or "Nothing to post")
+        -- A failed post stays in the list with its reason: the pane shows the same text.
+        for _, failed in ipairs(self.selection) do
+            if failed.status == "failed" then
+                d.warn:SetText(self:_Name(failed) .. ": " .. tostring(failed.note))
+                paint(d.warn, RED)
+                break
+            end
+        end
         if self.priceEntry ~= nil then
             self.priceEntry = nil
             d.priceInput:SetCopper(nil)
@@ -2375,7 +2266,7 @@ function Tab:_UpdateDetails()
     if not self.stackEdit then
         d.stackInput:SetCopper(typed and SellingTab.StackFromUnit(typed, size) or nil)
     end
-    local nextDecision, nextUnit = self:_NextPost(entry, shown, false)
+    local nextDecision, nextUnit = self:_NextPost(entry, shown)
     self:_ReadHeld(entry, typed, nextDecision, nextUnit)
     local values = nextUnit and SellingTab.Details(shadowEntry(entry, nextDecision, nextUnit),
         self:_Vendor(entry), typed)
@@ -2416,18 +2307,14 @@ function Tab:_Update()
     end
     local client = self.deps.client
     self:_CheckHeld()
-    ui.stop:SetShown(self.queue ~= nil or self.locked == true)
+    ui.stop:SetShown(self.queue ~= nil)
     self:_Layout()
     ui.tree:Refresh()
-    local current = self:_Current()
     ui.postNext:SetText(self:PostLabel())
     local busy = self.multi ~= nil
-    ui.postNext:SetEnabled(client.CanPost() and not busy and (self.awaiting ~= nil or self:_Focus(false) ~= nil))
-    ui.postAll:SetText(self:PostAllLabel())
-    ui.postAll:SetEnabled(client.CanPost() and not busy and self.awaiting == nil and #self.selection > 0
-        and current ~= nil and not self.locked)
-    ui.skip:SetEnabled(not busy and (self.awaiting ~= nil or self:_Focus(false) ~= nil))
-    ui.skipItem:SetEnabled(not busy and (self.awaiting ~= nil or self:_Focus(false) ~= nil))
+    ui.postNext:SetEnabled(client.CanPost() and not busy and (self.awaiting ~= nil or self:_Focus() ~= nil))
+
+    ui.skip:SetEnabled(not busy and (self.awaiting ~= nil or self:_Focus() ~= nil))
     ui.progress:SetText(self:ProgressText())
     self:_UpdateDetails()
 end
@@ -2490,14 +2377,9 @@ function Tab:_BuildContent()
     ui.stop = Kit.Button(content, "Stop", 60, function()
         self:Stop()
     end)
-    ui.stop:SetPoint("TOPLEFT", content, "TOPLEFT", 0, 0)
-    ui.message = Kit.Label(content, "", "small")
-    ui.message:SetPoint("TOPLEFT", content, "TOPLEFT", 68, -6)
-    ui.message:SetJustifyH("LEFT")
-    ui.message:SetWidth(640)
-    if ui.message.SetWordWrap then
-        ui.message:SetWordWrap(false)
-    end
+    -- A host with a free band over the content (TBC) gives its place; else the row sits at the top of the content.
+    local band = api.band
+    ui.stop:SetPoint("TOPLEFT", content, "TOPLEFT", band and band.left or 0, band and band.top or 0)
 
     -- The details pane: the next post of the queue.
     local skin = ns.AuctionTabs and ns.AuctionTabs.Skin
@@ -2593,8 +2475,15 @@ function Tab:_BuildContent()
         "The most is your count minus the keep quantity, and the stack size of the item." })
     d.stacksMax = line("small", STACKS_X, 61, 70)
     d.qtyMax = line("small", QTY_X, 61, 70)
-    -- The progress text of a run, under the operation name.
-    ui.progress = line("small", 350, 22, 110)
+    -- The progress text of a run: in the band when the host has one, else under the operation name.
+    if band then
+        ui.progress = Kit.Label(content, "", "small")
+        ui.progress:SetPoint("TOPLEFT", content, "TOPLEFT", band.left + 68, band.top - 5)
+        ui.progress:SetJustifyH("LEFT")
+        ui.progress:SetWidth(300)
+    else
+        ui.progress = line("small", 350, 22, 110)
+    end
     -- The duration, the buttons, and the deposit and total price block, along the right edge of the pane.
     local durationLabel = rline("small", 312, 6, 100)
     durationLabel:SetText("Duration (hours)")
@@ -2607,26 +2496,15 @@ function Tab:_BuildContent()
     end })
     d.duration:SetPoint("TOPLEFT", pane, "TOPRIGHT", -312, -20)
     -- The post button posts in its own click handler: the protected call needs the click.
-    ui.postNext = Kit.Button(pane, "Post", 80, nil)
+    ui.postNext = Kit.Button(pane, "Post", 140, nil)
     ui.postNext:SetPoint("TOPLEFT", pane, "TOPRIGHT", -312, -46)
     ui.postNext:SetScript("OnClick", function()
         self:PostNext()
     end)
-    ui.skip = Kit.Button(pane, "Skip", 54, function()
+    ui.skip = Kit.Button(pane, "Skip", 140, function()
         self:Skip()
     end)
-    ui.skip:SetPoint("LEFT", ui.postNext, "RIGHT", 6, 0)
-    -- Post all is a queue: each click posts one auction, the next one of the selection. The post needs the click.
-    ui.postAll = Kit.Button(pane, "Post all", 140, nil)
-    ui.postAll:SetPoint("TOPLEFT", pane, "TOPRIGHT", -312, -72)
-    ui.postAll:SetScript("OnClick", function()
-        self:PostAll()
-    end)
-    -- Skip item leaves all the units that are left of the current item.
-    ui.skipItem = Kit.Button(pane, "Skip item", 100, function()
-        self:SkipCurrentItem()
-    end)
-    ui.skipItem:SetPoint("TOPLEFT", pane, "TOPRIGHT", -164, -74)
+    ui.skip:SetPoint("TOPLEFT", pane, "TOPRIGHT", -312, -72)
     local depositLabel = rline("small", 164, 6, 156)
     depositLabel:SetText("Deposit:")
     d.deposit = rline("highlight", 164, 22, 156)
@@ -2654,7 +2532,6 @@ function Tab:_BuildContent()
     headers.frame:SetHeight(HEADER_HEIGHT)
     ui.headers = headers
 
-    ui.message:Hide()
     ui.stop:Hide()
     self:_Layout()
 end
