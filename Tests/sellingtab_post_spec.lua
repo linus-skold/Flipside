@@ -1220,6 +1220,100 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
         end)
     end)
 
+    describe("the deposit read at the select click (TBC)", function()
+        local reads
+
+        before_each(function()
+            -- The legacy client gives no deposit until the item is in the sale slot.
+            reads = {}
+            client.Deposit = function() return nil end
+            client.ReadDeposit = function(...)
+                reads[#reads + 1] = { ... }
+                return 50
+            end
+        end)
+
+        it("shows unknown, not 0, when the client gives no deposit", function()
+            client.ReadDeposit = nil
+            selectCloth()
+            pick("i10")
+            assert.are.equal("Deposit: unknown", ui.details.deposit.text)
+            assert.matches("^Net %(before deposit%): ", ui.details.net.text)
+        end)
+
+        it("reads the deposit with the planned arguments and never posts", function()
+            selectCloth()
+            pick("i10")
+            assert.are.equal(1, #reads)
+            assert.are.same({ 1, 1, 24, 20, 119 * 20, 119 * 20, 10 }, reads[1])
+            assert.are.equal(0, #client.posts)
+            -- 3 auctions of 20 items: the deposit of each auction adds up.
+            assert.are.equal("Deposit: 150c", ui.details.deposit.text)
+            assert.are.equal("Net: " .. ns.SellingTab.ARROW_UP .. " 6633c", ui.details.net.text)
+            assert.are.equal(150, entryOf("10").deposit)
+        end)
+
+        it("keeps the deposit unknown when the read gives nil", function()
+            client.ReadDeposit = function(...)
+                reads[#reads + 1] = { ... }
+                return nil
+            end
+            selectCloth()
+            pick("i10")
+            assert.are.equal(1, #reads)
+            assert.are.equal("Deposit: unknown", ui.details.deposit.text)
+            assert.matches("^Net %(before deposit%): ", ui.details.net.text)
+        end)
+
+        it("keeps the deposit unknown when the read raises an error", function()
+            client.ReadDeposit = function()
+                error("boom", 0)
+            end
+            selectCloth()
+            pick("i10")
+            assert.are.equal("Deposit: unknown", ui.details.deposit.text)
+        end)
+
+        it("reads nothing for an entry that has no decision yet", function()
+            pick("g2")
+            assert.are.equal(0, #reads)
+        end)
+
+        it("makes the deposit unknown again when the price changes", function()
+            selectCloth()
+            pick("i10")
+            assert.are.equal("Deposit: 150c", ui.details.deposit.text)
+            type_("1g 20s")
+            assert.are.equal("Deposit: unknown", ui.details.deposit.text)
+            assert.matches("^Net %(before deposit%): ", ui.details.net.text)
+        end)
+
+        it("makes the deposit unknown again when the quantity or the duration changes", function()
+            selectCloth()
+            pick("i10")
+            tab:SetManualQuantity(5)
+            assert.are.equal("Deposit: unknown", ui.details.deposit.text)
+            tab:SetManualQuantity(nil)
+            tab:SetManualDuration(2)
+            assert.are.equal("Deposit: unknown", ui.details.deposit.text)
+        end)
+
+        it("leaves the Forever deposit as it is", function()
+            client.ReadDeposit = nil
+            client.Deposit = function(_, _, _, quantity) return quantity * 10 end
+            selectCloth()
+            pick("i10")
+            assert.are.equal("Deposit: 600c", ui.details.deposit.text)
+            assert.are.equal("Net: " .. ns.SellingTab.ARROW_UP .. " 6183c", ui.details.net.text)
+        end)
+
+        it("formats the deposit and the net label", function()
+            assert.are.equal("Deposit: unknown", ns.SellingTab.DepositText(nil))
+            assert.are.equal("Deposit: 0c", ns.SellingTab.DepositText(0))
+            assert.are.equal("Net (before deposit): 0c", (ns.SellingTab.NetStyle(0, true)))
+        end)
+    end)
+
     describe("the quantity and the duration of a manual post", function()
         before_each(function()
             -- The deposit grows with the hours and the quantity.
