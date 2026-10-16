@@ -1,0 +1,6 @@
+## Interface: 16001
+## Title: MailTest
+## Notes: Throwaway probe of chained SendMail calls for Flipside. Do not ship.
+# The interface number 16001 is the same as ScanTest (WoW: Forever).
+
+MailTest.lua
