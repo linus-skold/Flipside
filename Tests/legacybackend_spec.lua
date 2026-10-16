@@ -819,7 +819,7 @@ describe("LegacyBackend", function()
                 local held = sell
                 assert.is_false(A().PostItem(0, 1, 24, 20, nil, 500, 11, nil, 3))
                 assert.are.equal(held, sell)
-                assert.are.same({ 500, 500, 2, 20, 3, n = 5 }, posts[1])
+                assert.are.same({ 500, 500, 2, 20, 3, false, n = 6 }, posts[1])
             end)
             it("gives the guard the deposit of all stacks", function()
                 local seen
