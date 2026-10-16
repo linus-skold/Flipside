@@ -910,7 +910,8 @@ function Backend.Deposit(bag, slot, duration, quantity, _, start, buyout, numSta
 end
 
 -- The real deposit in copper of numStacks stacks (default 1), read when the user selects an item.
--- The item goes in the sale slot, the code reads GetAuctionDeposit, and the item goes back to its bag slot in the same call. It calls no PostAuction.
+-- The item goes in the sale slot, the code reads GetAuctionDeposit, and the item goes back to its bag slot in the
+-- same call. It calls no PostAuction.
 -- It gives nil if the cursor holds an item, the AH is closed, the bag slot does not match, or the client does not
 -- fill the sale slot at once (the client may fill it later; this code does not wait and does not retry).
 -- Protected: call it only inside a click handler.
