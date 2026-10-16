@@ -551,7 +551,8 @@ end
 
 -- Posting (Selling tab). The legacy client posts the item in the sale slot: the code puts the bag item there, checks
 -- it, and calls PostAuction(start, buyout, duration, stackSize, numStacks). The prices are for one stack. A call with
--- numStacks above 1 makes the client post the stacks one after the other (multisell). The client needs all six\n-- arguments: the last one is the warning flag (false for the first call, true for the confirm call).
+-- numStacks above 1 makes the client post the stacks one after the other (multisell). The client needs all six
+-- arguments: the last one is the warning flag (false for the first call, true for the confirm call).
 -- PostItem and ConfirmPostItem are protected: call them only inside a click handler.
 -- This code starts no timer for them.
 local POST_OWNER = "Flipside.LegacyBackend.Post"
