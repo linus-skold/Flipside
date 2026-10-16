@@ -363,6 +363,14 @@ describe("AuctionTabHost (TBC)", function()
             assert.are.equal("compact", core.api.layout)
         end)
 
+        it("keeps the money display clear for a list tab but not for the Flipside tab", function()
+            makeBlizzard(3)
+            ns.AuctionTabHost.Attach(core, { id = "buying", label = "Buying" })
+            assert.are.same({ left = 22, right = 34, top = 52, bottom = 35 }, core.api.insets)
+            -- AuctionFrameMoneyFrame top: y 18 plus 13 px of height. The panel bottom is above it.
+            assert.is_true(core.api.insets.bottom > 18 + 13)
+        end)
+
         it("does not break a tab that another addon adds after ours", function()
             makeBlizzard(3)
             local state = ns.AuctionTabHost.Attach(core)

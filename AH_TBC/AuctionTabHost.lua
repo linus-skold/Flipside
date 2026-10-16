@@ -21,6 +21,10 @@ local TAB_GAP = -8
 -- The legacy frame is 832 x 447. The panel covers the header strip, the list panel and the bottom bar of the Bids art
 -- (sort buttons at y 52, list panel y 74 to 409 and x 23 to 798, Blizzard buttons at 14 above the bottom edge).
 local INSETS = { left = 22, right = 34, top = 52, bottom = 14 }
+-- The Buying and Selling panels fill the whole content area, so they stay clear of the gold display. It is
+-- AuctionFrameMoneyFrame: BOTTOMRIGHT at BOTTOMLEFT of the frame, offset x 181 y 18 (Blizzard_AuctionUI.xml:87-95).
+-- The small money template is 13 px high, so the top edge is at 31 px. The inset adds a gap of 4 px: 35.
+local MONEY_INSETS = { left = 22, right = 34, top = 52, bottom = 35 }
 -- The Bids art: a full-width list panel, with no filter column and no boxes. Blizzard sets these textures for the
 -- Bids tab in AuctionFrameTab_OnClick. It sets all six again on the next tab click, so the art is restored.
 local ART = {
@@ -124,7 +128,7 @@ local function buildFrame(entry)
     state.frame = frame
     buildTab(entry)
     local api = {
-        insets = INSETS,
+        insets = entry.id and MONEY_INSETS or INSETS,
         layout = "compact",
         startPage = Host.StartPage(frame),
         -- Core shows the panel. Blizzard's click code already hid the panes and marked the tab.
@@ -176,10 +180,11 @@ end
 
 -- Attach a core panel to the legacy Auction House frame, now or when its addon loads. Tabs follow in call order.
 -- core needs Mount(parent, api), Unmount(), Select(), Leave(tabIndex), Deselect(), IsActive() and core.deps.bus.
--- opts.label is the tab text (default "Flipside"). Call Attach again for more tabs.
+-- opts.label is the tab text (default "Flipside"). opts.id marks a list tab (Buying, Selling).
+-- A list tab gets the insets above the gold display. Call Attach again for more tabs.
 -- Returns a state table with frame, tab and index.
 function Host.Attach(core, opts)
-    local entry = { core = core, label = opts and opts.label or "Flipside", state = {} }
+    local entry = { core = core, label = opts and opts.label or "Flipside", id = opts and opts.id, state = {} }
     entries[#entries + 1] = entry
     if AuctionFrame then
         build(entry)
