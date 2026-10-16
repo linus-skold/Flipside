@@ -190,7 +190,7 @@ describe("BuyingTab", function()
             local done = tab.results["10"]
             assert.are.equal(5, done.result.quantity)
             assert.are.equal(3 * 50 + 2 * 90, done.result.cost)
-            assert.are.equal("330c", ui.totalCells.unitPrice.text)
+            assert.are.equal("Total  330c", ui.totalCells.unitPrice.text)
             assert.are.equal("x5", ui.totalCells.quantity.text)
             assert.are.equal("", ui.summary.text)
         end)
