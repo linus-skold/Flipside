@@ -711,11 +711,21 @@ local function checkPostNumbers(quantity, buyout)
     end
 end
 
+-- The real deposit of one stack with the item in the sale slot: GetAuctionDeposit(duration index, start price,
+-- buyout, stack size, number of stacks). Gives copper, or nil.
+local function readDeposit(index, start, buyout, quantity)
+    local ok, deposit = pcall(call, "GetAuctionDeposit", index, start, buyout, quantity, 1)
+    return ok and type(deposit) == "number" and deposit or nil
+end
+
 -- Post one stack of quantity items at the buyout (the price of the whole stack). bid is the start price; nil means
 -- the buyout. itemID is the planned item; if the bag slot holds another item, nothing is posted. Gives true if the
 -- client asks to confirm (ConfirmPostItem finishes the post), false if the post is done.
+-- guard is optional. After the item is in the sale slot, guard(deposit) runs with the real deposit. If it gives
+-- false, the code puts the item back in the bag, calls no PostAuction, and gives "held" and the deposit. A new
+-- PostItem call without guard then posts it.
 -- Protected: call it from a click.
-function Backend.PostItem(bag, slot, duration, quantity, bid, buyout, itemID)
+function Backend.PostItem(bag, slot, duration, quantity, bid, buyout, itemID, guard)
     local index = Backend.DurationIndex(duration)
     checkPostNumbers(quantity, buyout)
     local start = (type(bid) == "number" and bid > 0) and bid or buyout
@@ -725,6 +735,18 @@ function Backend.PostItem(bag, slot, duration, quantity, bid, buyout, itemID)
     subscribePost()
     post.pending, post.refused = nil, nil
     local placed = fillSellSlot(bag, slot, quantity, itemID)
+    if guard then
+        local deposit = readDeposit(index, start, buyout, quantity)
+        local okGuard, proceed = pcall(guard, deposit)
+        if not okGuard then
+            releaseSellSlot()
+            error(proceed, 0)
+        end
+        if proceed == false then
+            releaseSellSlot()
+            return "held", deposit
+        end
+    end
     post.at, post.calling = now(), true
     local ok, result = pcall(call, "PostAuction", start, buyout, index, quantity, 1)
     post.calling = false
@@ -778,13 +800,23 @@ end
 
 -- The deposit in copper of one stack, or nil. The client computes it only for the item in the sale slot, and this code
 -- puts no item there outside a post click. So the value is nil unless the sale slot holds the item already.
-function Backend.Deposit(bag, slot, duration, quantity)
+-- start and buyout are the prices of the post. If they are nil, the values of the post that waits for a confirm
+-- are used (when it matches); if there are none, the value is nil.
+function Backend.Deposit(bag, slot, duration, quantity, _, start, buyout)
     local index = Backend.DurationIndex(duration)
     local sell, info = sellInfo(), slotInfo(bag, slot)
     if not (sell and info and sell.itemID == info.itemID and (sell.total or 0) >= quantity) then
         return nil
     end
-    return call("GetAuctionDeposit", index, 1, 1, quantity, 1)
+    local pending = post.pending
+    if (type(start) ~= "number" or type(buyout) ~= "number") and pending and pending.bag == bag
+        and pending.slot == slot and pending.index == index and pending.quantity == quantity then
+        start, buyout = pending.start, pending.buyout
+    end
+    if type(start) ~= "number" or type(buyout) ~= "number" then
+        return nil
+    end
+    return readDeposit(index, start, buyout, quantity)
 end
 
 ns.AuctionClient.Use(Backend)

@@ -432,7 +432,7 @@ describe("LegacyBackend", function()
         local NAMES = { "C_Container", "C_Timer", "ClickAuctionSellItemButton", "GetAuctionSellItemInfo", "PostAuction",
             "GetAuctionDeposit", "ClearCursor", "CursorHasItem", "StaticPopup_Hide", "ERR_AUCTION_STARTED",
             "GetOwnerAuctionItems" }
-        local keep, bag, cursor, sell, posts, postResult, hidden, timers, emitted, sellRejects, onPost
+        local keep, bag, cursor, sell, posts, postResult, hidden, timers, emitted, sellRejects, onPost, depositCalls
 
         local function key(b, s) return b .. ":" .. s end
 
@@ -477,7 +477,11 @@ describe("LegacyBackend", function()
                 end
                 return postResult
             end
-            _G.GetAuctionDeposit = function(...) return 66, ... end
+            depositCalls = {}
+            _G.GetAuctionDeposit = function(...)
+                depositCalls[#depositCalls + 1] = { n = select("#", ...), ... }
+                return 66
+            end
             _G.ClearCursor = function()
                 cursor = nil
             end
@@ -736,13 +740,73 @@ describe("LegacyBackend", function()
                 assert.is_nil(A().Deposit(0, 1, 24, 5, false))
             end)
 
-            it("asks the client when the sale slot holds the item", function()
+            it("asks the client with the real prices when the sale slot holds the item", function()
                 pickup(0, 1)
                 _G.ClickAuctionSellItemButton()
                 assert.is_not_nil(sell)
-                local deposit, duration, start, buyout, size, stacks = A().Deposit(0, 1, 8, 5, false)
+                assert.are.equal(66, A().Deposit(0, 1, 8, 5, false, 300, 500))
+                assert.are.same({ 2, 300, 500, 5, 1, n = 5 }, depositCalls[1])
+            end)
+
+            it("is nil with no prices and no waiting post", function()
+                pickup(0, 1)
+                _G.ClickAuctionSellItemButton()
+                assert.is_nil(A().Deposit(0, 1, 8, 5, false))
+                assert.are.equal(0, #depositCalls)
+            end)
+
+            it("takes the prices of the post that waits for a confirm", function()
+                assert.is_true(A().PostItem(0, 1, 24, 5, 300, 500, 11))
+                assert.are.equal(66, A().Deposit(0, 1, 24, 5, false))
+                assert.are.same({ 3, 300, 500, 5, 1, n = 5 }, depositCalls[#depositCalls])
+            end)
+        end)
+
+        describe("guard", function()
+            it("reads the real deposit and posts when the guard agrees", function()
+                local seen
+                assert.is_false(A().PostItem(0, 1, 24, 5, 300, 500, 11, function(deposit)
+                    seen = deposit
+                    return true
+                end))
+                assert.are.equal(66, seen)
+                assert.are.same({ 3, 300, 500, 5, 1, n = 5 }, depositCalls[1])
+                assert.are.equal(1, #posts)
+            end)
+
+            it("holds the post, calls no PostAuction and clears the sale slot when the guard refuses", function()
+                local result, deposit = A().PostItem(0, 1, 24, 5, nil, 500, 11, function() return false end)
+                assert.are.equal("held", result)
                 assert.are.equal(66, deposit)
-                assert.are.same({ 2, 1, 1, 5, 1 }, { duration, start, buyout, size, stacks })
+                assert.are.equal(0, #posts)
+                assert.is_nil(sell)
+                assert.is_nil(cursor)
+            end)
+
+            it("posts when the next call has no guard", function()
+                A().PostItem(0, 1, 24, 5, nil, 500, 11, function() return false end)
+                assert.is_false(A().PostItem(0, 1, 24, 5, nil, 500, 11))
+                assert.are.equal(1, #posts)
+                assert.are.same({ 500, 500, 3, 5, 1, n = 5 }, posts[1])
+            end)
+
+            it("clears the sale slot and raises when the guard fails", function()
+                local ok = pcall(A().PostItem, 0, 1, 24, 5, nil, 500, 11, function() error("boom") end)
+                assert.is_false(ok)
+                assert.are.equal(0, #posts)
+                assert.is_nil(sell)
+                assert.is_nil(cursor)
+            end)
+
+            it("gives the guard nil when the client has no deposit", function()
+                _G.GetAuctionDeposit = function() return nil end
+                local seen = "unset"
+                A().PostItem(0, 1, 24, 5, nil, 500, 11, function(deposit)
+                    seen = deposit
+                    return true
+                end)
+                assert.is_nil(seen)
+                assert.are.equal(1, #posts)
             end)
         end)
 

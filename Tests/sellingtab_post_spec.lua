@@ -198,8 +198,9 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
                 end
             end,
             itemLink = function(id) return "|Hitem:" .. id .. "|h[Item" .. id .. "]|h", 1 end,
-            warn = function(title, text, onPost, onSkip, onCancel)
-                warns[#warns + 1] = { title = title, text = text, onYes = onPost, onSkip = onSkip, onCancel = onCancel }
+            warn = function(title, text, onPost, onSkip, onCancel, options)
+                warns[#warns + 1] = { title = title, text = text, onYes = onPost, onSkip = onSkip, onCancel = onCancel,
+                    options = options }
             end,
         }
         for k, v in pairs(extra or {}) do
@@ -958,6 +959,104 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
             press(box.yesButton)
             assert.are.same({ { name = "PostItem", inClick = true, shown = true } }, seen)
             assert.is_false(box:IsShown())
+        end)
+    end)
+
+    describe("the deposit check at post time", function()
+        local realDeposit, held
+
+        -- A TBC-like client: no deposit while planning, the real deposit when the item is in the sale slot.
+        local function mountTbc(vendorPrice, vendorSkip)
+            opExtra.vendorSkip = vendorSkip
+            vendor[10] = vendorPrice
+            realDeposit, held = 400, 0
+            client.Deposit = function() return nil end
+            client.PostItem = function(bag, slot, duration, quantity, bid, buyout, itemID, guard)
+                if guard and guard(realDeposit) == false then
+                    held = held + 1
+                    return "held", realDeposit
+                end
+                client.posts[#client.posts + 1] = { kind = "item", bag = bag, slot = slot, duration = duration,
+                    quantity = quantity, bid = bid, buyout = buyout, itemID = itemID, guarded = guard ~= nil }
+                return false
+            end
+            tab = mount()
+            ui = tab.ui
+            selectCloth()
+            pick("i10")
+        end
+
+        it("holds the post and asks when the vendor pays more than the net with the real deposit", function()
+            mountTbc(100, true)
+            click(ui.postNext)
+            assert.are.equal(1, held)
+            assert.are.equal(0, #client.posts)
+            assert.are.equal(1, #warns)
+            assert.matches("Net after deposit and AH cut: 1861c%. Vendor: 2000c%.", warns[1].text)
+            assert.matches("nets less than selling it to a vendor", warns[1].text)
+            assert.are.equal("Post anyway", warns[1].options.post)
+            assert.are.equal("Cancel", warns[1].options.cancel)
+            assert.is_false(warns[1].options.skip)
+        end)
+
+        it("posts once with the same arguments after Post anyway", function()
+            mountTbc(100, true)
+            click(ui.postNext)
+            warns[1].onYes()
+            assert.are.equal(1, #client.posts)
+            assert.are.equal(1, held)
+            local post = client.posts[1]
+            assert.are.same({ 1, 1, 24, 20, 2380 }, { post.bag, post.slot, post.duration, post.quantity, post.buyout })
+            assert.is_false(post.guarded)
+            assert.are.equal(1, #warns)
+        end)
+
+        it("posts nothing and skips the item after Cancel", function()
+            mountTbc(100, true)
+            click(ui.postNext)
+            warns[1].onCancel()
+            assert.are.equal(0, #client.posts)
+            assert.are.equal("skipped", entryOf("10").status)
+        end)
+
+        it("posts at once when the vendor does not pay more", function()
+            mountTbc(50, true)
+            click(ui.postNext)
+            assert.are.equal(0, #warns)
+            assert.are.equal(1, #client.posts)
+            assert.is_true(client.posts[1].guarded)
+        end)
+
+        it("makes no check when the operation has the vendor rule off", function()
+            mountTbc(100, false)
+            click(ui.postNext)
+            assert.are.equal(0, #warns)
+            assert.are.equal(1, #client.posts)
+            assert.is_false(client.posts[1].guarded)
+        end)
+
+        it("makes no check when the vendor price is unknown", function()
+            mountTbc(nil, true)
+            click(ui.postNext)
+            assert.are.equal(0, #warns)
+            assert.are.equal(1, #client.posts)
+            assert.is_false(client.posts[1].guarded)
+        end)
+
+        it("posts when the client gives no deposit", function()
+            mountTbc(100, true)
+            realDeposit = nil
+            click(ui.postNext)
+            assert.are.equal(0, #warns)
+            assert.are.equal(1, #client.posts)
+        end)
+
+        it("makes the same check on a click of Post all", function()
+            mountTbc(100, true)
+            click(ui.postAll)
+            assert.are.equal(0, #client.posts)
+            assert.are.equal(1, #warns)
+            assert.matches("Vendor: 2000c", warns[1].text)
         end)
     end)
 
