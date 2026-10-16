@@ -383,7 +383,9 @@ local warnDialog
 
 -- The warning box: a square Kit window with a text and the buttons Post, Skip and Cancel.
 -- onPost runs in the click of the Post button, so the post keeps its hardware event.
-local function openWarning(title, text, onPost, onSkip, onCancel)
+-- options is optional: { post = text, skip = text or false, cancel = text } sets the button texts. skip = false
+-- hides the Skip button.
+local function openWarning(title, text, onPost, onSkip, onCancel, options)
     local Kit = ns.Kit
     if not warnDialog then
         local pad = Kit.Theme.padding
@@ -436,6 +438,11 @@ local function openWarning(title, text, onPost, onSkip, onCancel)
     end
     local dialog = warnDialog
     dialog.onPost, dialog.onSkip, dialog.onCancel = onPost, onSkip, onCancel
+    options = options or {}
+    dialog.yesButton:SetText(options.post or "Post")
+    dialog.skipButton:SetText(options.skip or "Skip")
+    dialog.skipButton:SetShown(options.skip ~= false)
+    dialog.noButton:SetText(options.cancel or "Cancel")
     if dialog.SetTitle then
         dialog:SetTitle(title or "")
     end
@@ -1326,6 +1333,8 @@ function Tab:_AskWarning(entry, price, lines, unit, all)
             return
         end
         entry.warned = true
+        -- The user saw the vendor line, so the check at post time does not ask again.
+        entry.vendorWarned = SellingTab.VendorBetter(price, unit, self:_Vendor(entry)) ~= nil
         self:_PostStep(all)
     end, function()
         if stale() then
@@ -1336,6 +1345,28 @@ function Tab:_AskWarning(entry, price, lines, unit, all)
         self.allRun = nil
         self:_Say("stopped")
     end)
+end
+
+-- The backend held a post: with the real deposit the vendor pays more than the net. The item is back in the bag.
+-- Show the box. "Post anyway" posts once in its own click. "Cancel" posts nothing and skips the item.
+function Tab:_AskVendor(entry, all, held)
+    local function stale()
+        return self.awaiting ~= nil or self:_Focus(all) ~= entry
+    end
+    local text = string.format("Posting this item nets less than selling it to a vendor.\n\n"
+        .. "Net after deposit and AH cut: %s. Vendor: %s.", money(held.net), money(held.vendor))
+    self.deps.warn("Check the deposit", text, function()
+        if stale() then
+            return
+        end
+        entry.vendorForce = true
+        self:_PostStep(all)
+    end, nil, function()
+        if stale() then
+            return
+        end
+        self:SkipItem(entry, "vendor pays more than the AH")
+    end, { post = "Post anyway", skip = false, cancel = "Cancel" })
 end
 
 -- Lock the Post all button after a post. A timer unlocks it after POST_DELAY once the AH is ready.
@@ -1418,7 +1449,8 @@ function Tab:_PostStep(all)
         self:_Say(why)
         return false, why
     end
-    if not entry.warned then
+    -- After "Post anyway" the user knows the real deposit, so the price warnings do not come back.
+    if not entry.warned and not entry.vendorForce then
         local lines, unit = self:_Warnings(entry, price, all)
         if #lines > 0 then
             self:_AskWarning(entry, price, lines, unit, all)
@@ -1444,7 +1476,7 @@ function Tab:_PostStep(all)
     end
     -- The planned item. A backend that posts from the sale slot refuses a bag slot that holds another item.
     local plannedID = entry.item and entry.item.itemID or entry.candidate and entry.candidate.itemID
-    local call, confirm
+    local call, confirm, held
     if decision.commodity then
         call = function()
             return client.PostCommodity(unit.bag, unit.slot, decision.duration, quantity, price)
@@ -1454,8 +1486,27 @@ function Tab:_PostStep(all)
         end
     else
         local buyout = price * quantity
+        -- At post time the client may give the real deposit (TBC). If the vendor pays more than the net after that
+        -- deposit, the backend holds the post and the user decides. "Post anyway" sets entry.vendorForce.
+        local vendor = self:_Vendor(entry)
+        local forced = entry.vendorForce
+        entry.vendorForce = nil
+        local guard
+        local rule = (entry.candidate.settings or {}).vendorSkip ~= false
+        if rule and vendor and not forced and not entry.vendorWarned then
+            guard = function(deposit)
+                if type(deposit) ~= "number" then
+                    return true
+                end
+                unit.deposit = deposit
+                held = { deposit = deposit }
+                held.vendor, held.net = SellingTab.VendorBetter(price, { quantity = quantity, deposit = deposit },
+                    vendor)
+                return held.vendor == nil
+            end
+        end
         call = function()
-            return client.PostItem(unit.bag, unit.slot, decision.duration, quantity, nil, buyout, plannedID)
+            return client.PostItem(unit.bag, unit.slot, decision.duration, quantity, nil, buyout, plannedID, guard)
         end
         confirm = function()
             return client.ConfirmPostItem(unit.bag, unit.slot, decision.duration, quantity, nil, buyout, plannedID)
@@ -1464,6 +1515,13 @@ function Tab:_PostStep(all)
     local ok, needsConfirmation = pcall(call)
     if not ok then
         return self:_Fail(entry, tostring(needsConfirmation))
+    end
+    if needsConfirmation == "held" then
+        if not held then
+            return self:_Fail(entry, "the post was held")
+        end
+        self:_AskVendor(entry, all, held)
+        return true
     end
     if needsConfirmation then
         self.awaiting = { entry = entry, unit = unit, quantity = quantity, confirm = confirm, price = price,
@@ -1494,8 +1552,8 @@ function Tab:Skip()
 end
 
 -- Leave all the auctions that are left of one item (the Skip button of the warning box). No protected call.
-function Tab:SkipItem(entry)
-    self.deps.log:Add(entry.candidate, { action = "skip", reason = "skipped by user" })
+function Tab:SkipItem(entry, reason)
+    self.deps.log:Add(entry.candidate, { action = "skip", reason = reason or "skipped by user" })
     entry.next = #entry.units
     self:_Advance(entry, false)
 end
