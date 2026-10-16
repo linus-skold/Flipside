@@ -388,6 +388,12 @@ describe("SellingPlan", function()
         it("counts a missing deposit as 0", function()
             local p = SP.Profit(100, { { quantity = 2 } }, nil)
             assert.equal(190, p.net)
+            assert.is_false(p.depositKnown)
+        end)
+
+        it("marks the deposit known only when every unit has one", function()
+            assert.is_true(SP.Profit(100, { { quantity = 2, deposit = 0 } }, nil).depositKnown)
+            assert.is_false(SP.Profit(100, { { quantity = 2, deposit = 5 }, { quantity = 2 } }, nil).depositKnown)
         end)
     end)
 

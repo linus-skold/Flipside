@@ -287,20 +287,24 @@ end
 
 -- Potential profit of some auctions. Each unit is { quantity, deposit } (deposit can be nil).
 -- price is the copper for one item. vendorPrice is the vendor sell price of one item, or nil if not known.
--- Returns { gross, cut, deposit, net, vendor, vs, quantity }. net = gross - cut - deposit.
+-- Returns { gross, cut, deposit, depositKnown, net, vendor, vs, quantity }. net = gross - cut - deposit.
+-- depositKnown is false if a unit has no deposit; the net then counts that deposit as 0 (net before deposit).
 -- vs = net - vendor (the vendor value of the same items); nil if the vendor price is not known.
 function SellingPlan.Profit(price, units, vendorPrice)
-    local quantity, deposit = 0, 0
+    local quantity, deposit, known = 0, 0, #units > 0
     for _, unit in ipairs(units) do
         quantity = quantity + (unit.quantity or 0) * (unit.stacks or 1)
         deposit = deposit + (unit.deposit or 0)
+        if type(unit.deposit) ~= "number" then
+            known = false
+        end
     end
     local gross = price * quantity
     local cut = SellingPlan.Cut(gross)
     local net = gross - cut - deposit
     local vendor = vendorPrice and vendorPrice * quantity or nil
     return {
-        gross = gross, cut = cut, deposit = deposit, net = net, quantity = quantity,
+        gross = gross, cut = cut, deposit = deposit, depositKnown = known, net = net, quantity = quantity,
         vendor = vendor, vs = vendor and (net - vendor) or nil,
     }
 end

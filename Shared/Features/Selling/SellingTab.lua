@@ -352,7 +352,7 @@ function SellingTab.Details(entry, vendorPrice, price)
         nextStacks = unit.stacks or 1,
         stackSize = unit.quantity,
         duration = decision.duration,
-        deposit = profit.deposit,
+        deposit = profit.depositKnown and profit.deposit or nil,
         lowest = decision.competitor,
         net = profit.net,
         vs = profit.vs,
@@ -360,13 +360,20 @@ function SellingTab.Details(entry, vendorPrice, price)
 end
 
 -- The text of the net line and its colour: green with an up arrow above 0, red with a down arrow below 0.
-function SellingTab.NetStyle(net)
+-- beforeDeposit is true if the deposit is not known: the label says that the net does not count the deposit.
+function SellingTab.NetStyle(net, beforeDeposit)
+    local label = beforeDeposit and "Net (before deposit): " or "Net: "
     if net > 0 then
-        return "Net: " .. ARROW_UP .. " " .. money(net), GREEN
+        return label .. ARROW_UP .. " " .. money(net), GREEN
     elseif net < 0 then
-        return "Net: " .. ARROW_DOWN .. " " .. money(net), RED
+        return label .. ARROW_DOWN .. " " .. money(net), RED
     end
-    return "Net: " .. money(net), WHITE
+    return label .. money(net), WHITE
+end
+
+-- The text of the deposit line: "unknown" if the deposit is nil.
+function SellingTab.DepositText(deposit)
+    return "Deposit: " .. (deposit and money(deposit) or "unknown")
 end
 
 -- Tell if the vendor pays more than the AH for the next post. Returns the vendor total and the net, or nil.
@@ -914,9 +921,58 @@ function Tab:_Reselect(search)
     self:_Update()
 end
 
+-- Read the real deposit of the units left of a ready entry, if the client can (TBC). The client puts the item in the
+-- sale slot and back in the same call, so call this only inside the click that selects the entry. One read for each
+-- stack size. An entry without a decision stays unknown. A failed read leaves the deposit as it was.
+function Tab:_ReadDeposits(entry)
+    local read = self.deps.client.ReadDeposit
+    local decision = entry.decision
+    if type(read) ~= "function" or entry.status ~= "ready" or not decision or decision.action ~= "post"
+        or decision.commodity or type(decision.price) ~= "number" then
+        return
+    end
+    local plannedID = entry.item and entry.item.itemID or entry.candidate and entry.candidate.itemID
+    local bySize, total = {}, nil
+    for index = entry.next, #entry.units do
+        local unit = entry.units[index]
+        local size = unit.quantity
+        local stacks = unit.stacks or 1
+        local id = size .. "x" .. stacks
+        if bySize[id] == nil then
+            local buyout = decision.price * size
+            local ok, deposit = pcall(read, unit.bag, unit.slot, decision.duration, size, buyout, buyout, plannedID,
+                unit.stacks)
+            bySize[id] = ok and type(deposit) == "number" and deposit or false
+        end
+        if bySize[id] then
+            unit.deposit, unit.depositRead = bySize[id], true
+            entry.depositPrice = decision.price
+        end
+        if unit.deposit then
+            total = (total or 0) + unit.deposit
+        end
+    end
+    entry.deposit = total
+end
+
+-- The price changed after the deposit read: the stored real deposits are stale, so they become unknown.
+function Tab._ForgetDeposits(_, entry)
+    local total
+    for _, unit in ipairs(entry.units) do
+        if unit.depositRead then
+            unit.deposit, unit.depositRead = nil, nil
+        end
+        if unit.deposit then
+            total = (total or 0) + unit.deposit
+        end
+    end
+    entry.deposit, entry.depositPrice = total, nil
+end
+
 -- Select a tree node: the group and its subgroups, or one item. Start the live searches of the entries that
--- have no result yet. It makes no protected call.
-function Tab:SelectNode(node)
+-- have no result yet. fromClick is true when a mouse click selects the node: then the real deposit of the ready
+-- entries is read (a protected sale slot step). Other calls make no protected call.
+function Tab:SelectNode(node, fromClick)
     if self.awaiting or self.multi then
         self:_Say(self.multi and "wait for the post to end first" or "confirm or skip the open post first")
         if self.ui then
@@ -933,6 +989,9 @@ function Tab:SelectNode(node)
     self:_Unlock()
     local list = {}
     for _, entry in ipairs(self.selection) do
+        if fromClick then
+            self:_ReadDeposits(entry)
+        end
         if entry.status == "waiting" then
             list[#list + 1] = entry
         end
@@ -2045,6 +2104,9 @@ function Tab:_UpdateDetails()
     d.icon:SetTexture(icon)
     d.name:SetText(self:_Name(entry))
     d.operation:SetText("Operation: " .. tostring(entry.candidate and entry.candidate.operationName or "-"))
+    if entry.depositPrice and typed ~= entry.depositPrice then
+        self:_ForgetDeposits(entry)
+    end
     local shown = typed or decision.price or decision.suggested or 0
     self:_SyncManual(entry, shown)
     local nextDecision, nextUnit = self:_NextPost(entry, shown, false)
@@ -2058,8 +2120,8 @@ function Tab:_UpdateDetails()
         d.warn:SetText("The rule skips this item: " .. (SKIP_TEXT[reason] or reason) .. ". Post asks you first.")
         paint(d.warn, ORANGE)
         if values then
-            d.deposit:SetText("Deposit: " .. money(values.deposit))
-            local text, color = SellingTab.NetStyle(values.net)
+            d.deposit:SetText(SellingTab.DepositText(values.deposit))
+            local text, color = SellingTab.NetStyle(values.net, values.deposit == nil)
             d.net:SetText(text)
             paint(d.net, color)
         end
@@ -2068,8 +2130,8 @@ function Tab:_UpdateDetails()
     d.price:SetText("Buyout " .. money(values.buyout) .. " per auction")
     d.stack:SetText(string.format("%d x %d", ns.SellingPlan.Multisell() and values.nextStacks or values.auctions,
         values.stackSize))
-    d.deposit:SetText("Deposit: " .. money(values.deposit))
-    local netText, netColor = SellingTab.NetStyle(values.net)
+    d.deposit:SetText(SellingTab.DepositText(values.deposit))
+    local netText, netColor = SellingTab.NetStyle(values.net, values.deposit == nil)
     d.net:SetText(netText)
     paint(d.net, netColor)
     -- One line for a problem: a bad price first, then the vendor warning for the next post.
@@ -2269,7 +2331,7 @@ function Tab:_BuildContent()
             self:_InitTreeRow(row, node, depth, isCollapsed, hasChildren)
         end,
         onSelect = function(node)
-            self:SelectNode(node)
+            self:SelectNode(node, true)
         end })
     ui.tree.frame:SetPoint("TOPLEFT", content, "TOPLEFT", 0, TREE_TOP)
     ui.tree.frame:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", 0, 0)

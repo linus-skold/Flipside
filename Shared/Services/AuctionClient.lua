@@ -125,6 +125,9 @@ action("BuyItemAuction")
 -- that follows a post.
 query("CanPost", false)
 query("Deposit")
+-- ReadDeposit(bag, slot, duration, quantity, start, buyout, itemID) is optional (legacy client). It puts the item in
+-- the sale slot, reads the real deposit of one stack, and puts the item back. Protected: call it from a click.
+query("ReadDeposit")
 query("AvailablePostCount")
 query("IsSellItemValid")
 query("PostedEvent")
