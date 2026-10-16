@@ -326,6 +326,22 @@ describe("LegacyBackend", function()
                 assert.are.same({ "list", 1, 500, n = 3 }, bid[1])
             end)
 
+            it("gives the item of a row to the ledger before the buy call", function()
+                local seen
+                A().OnCall(function(name, id)
+                    if name == "BuyItemAuction" then
+                        seen = A().AuctionInfo(id)
+                    end
+                end)
+                A().BuyItemAuction(1, 500)
+                assert.are.equal("|Hitem:11|h[Copper Bar]|h", seen.itemLink)
+                assert.are.equal(5, seen.quantity)
+                assert.are.equal(500, seen.buyoutAmount)
+            end)
+
+            it("gives no info for a row with no item", function()
+                assert.is_nil(A().AuctionInfo(99))
+            end)
             it("refuses a row from no search", function()
                 local ok, err = pcall(A().BuyItemAuction, 7, 500)
                 assert.is_false(ok)
