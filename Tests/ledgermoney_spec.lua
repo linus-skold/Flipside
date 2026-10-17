@@ -362,6 +362,96 @@ describe("LedgerMoney", function()
             assert.are.equal(500, last().money)
         end)
 
+        it("takes the item and the quantity of a buy in Blizzard's own tab from the bid hook", function()
+            tracker:OnBid(9)
+            change(-500)
+            bus:Emit("AUCTION_HOUSE_PURCHASE_COMPLETED", 9)
+            assert.are.equal(1, #records)
+            assert.are.equal("ahPurchase", last().source)
+            assert.are.equal("e:link9", last().item)
+            assert.are.equal(3, last().qty)
+            assert.are.equal(500, last().money)
+        end)
+
+        it("writes one record for a buy of the Buying tab when the call and the bid hook both come", function()
+            calls("BuyItemAuction", 9, 500)
+            tracker:OnBid(9)
+            change(-500)
+            bus:Emit("AUCTION_HOUSE_PURCHASE_COMPLETED", 9)
+            tracker:OnBid(9)
+            advance(M.HINT_SECONDS + 1)
+            assert.are.equal(1, #records)
+            assert.are.equal("e:link9", last().item)
+        end)
+
+        it("writes the record of the hook buy when the money change comes first", function()
+            change(-500)
+            assert.are.equal(0, #records)
+            tracker:OnBid(9)
+            assert.are.equal(1, #records)
+            assert.are.equal("e:link9", last().item)
+        end)
+
+        it("gives two bids in a row two records", function()
+            tracker:OnBid(9)
+            change(-500)
+            tracker:OnBid(9)
+            change(-700)
+            assert.are.equal(2, #records)
+            assert.are.equal(700, records[2].money)
+            assert.are.equal("e:link9", records[2].item)
+        end)
+
+        it("does not fail when the bid hook finds no auction data or a secret ID", function()
+            secrets[77] = true
+            tracker:OnBid(77)
+            tracker:OnBid(nil)
+            tracker:OnBid("x")
+            assert.are.equal(3, tracker:Stats().skipped)
+            change(-500)
+            advance(M.QUEST_WINDOW_SECONDS)
+            assert.are.equal(1, #records)
+            assert.are.equal("unknown", last().source)
+        end)
+
+        describe("with Forever auction data (no quantity, a nilable link)", function()
+            local info
+
+            before_each(function()
+                info = { itemKey = { itemID = 4306 }, itemLink = nil, buyoutAmount = 500 }
+                bus = ns.EventBus.New({})
+                timers = {}
+                tracker = attach({
+                    auctionInfo = function()
+                        return info
+                    end,
+                })
+                bus:Emit("AUCTION_HOUSE_SHOW")
+            end)
+
+            it("takes the item from the item key and one item as the quantity", function()
+                tracker:OnBid(5)
+                change(-500)
+                assert.are.equal("e:4306", last().item)
+                assert.are.equal(1, last().qty)
+            end)
+
+            it("takes the item from the link when the link exists", function()
+                info.itemLink = "linkX"
+                tracker:OnBid(5)
+                change(-500)
+                assert.are.equal("e:linkX", last().item)
+            end)
+
+            it("writes a purchase with no item when the auction is gone", function()
+                info = nil
+                tracker:OnBid(5)
+                change(-500)
+                assert.are.equal("ahPurchase", last().source)
+                assert.is_nil(last().item)
+            end)
+        end)
+
         it("uses the real money change and not a quote", function()
             calls("ConfirmCommodityPurchase", 1234, 20)
             change(-950)

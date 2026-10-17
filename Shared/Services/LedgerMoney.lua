@@ -532,6 +532,55 @@ function Tracker:_OnQuest(questID, _, moneyReward)
     self._quests[#self._quests + 1] = { amount = moneyReward, time = self._now(), ctx = ctx }
 end
 
+-- Add a hint for the buy of one item auction. Flipside's own buy call and the bid post-hook (OnBid) both come here,
+-- so a buy of the Buying tab gives one hint: a fresh unpaid hint with the same auction ID only gets what it lacks.
+function Tracker:AddBuyHint(auctionID, item, qty)
+    local now = self._now()
+    local hint
+    if auctionID ~= nil then
+        for _, other in ipairs(self._hints) do
+            if other.kind == "buy" and not other.paid and other.auctionID == auctionID
+                and now - other.time <= LedgerMoney.HINT_SECONDS then
+                hint = other
+                break
+            end
+        end
+    end
+    if hint then
+        hint.item = hint.item or item
+        hint.qty = hint.qty or qty
+        return hint
+    end
+    hint = { kind = "buy", auctionID = auctionID, item = item, qty = qty, time = now, seen = {} }
+    hint.ctx = self:Context("ah")
+    self._hints[#self._hints + 1] = hint
+    self:_ResolveHeld()
+    return hint
+end
+
+-- The bid post-hook (PlaceBid on Forever, PlaceAuctionBid on TBC) runs right after the call, while the auction is
+-- still in the client data. It reads the item and the quantity of the auction. It covers a buy in Blizzard's own tab.
+-- A Forever item auction has one item when the info has no quantity.
+function Tracker:OnBid(auctionID)
+    if self:_Secret(auctionID) or type(auctionID) ~= "number" then
+        self:_Skip()
+        return
+    end
+    local deps = self._deps
+    local info = deps.auctionInfo and deps.auctionInfo(auctionID)
+    local item, qty
+    if type(info) == "table" then
+        local source = info.itemLink
+        if source == nil and type(info.itemKey) == "table" then
+            source = info.itemKey.itemID
+        end
+        item = source ~= nil and deps.itemKey(source, false) or nil
+        qty = type(info.quantity) == "number" and info.quantity or (item and 1 or nil)
+    end
+    self:_Ring("bid", auctionID)
+    self:AddBuyHint(auctionID, item, qty)
+end
+
 -- A call to buy or post that Flipside made. The arguments are the ones of the AuctionClient call.
 function Tracker:_OnCall(name, ...)
     local deps = self._deps
@@ -542,11 +591,14 @@ function Tracker:_OnCall(name, ...)
     elseif name == "BuyItemAuction" then
         local auctionID = ...
         local info = deps.auctionInfo and deps.auctionInfo(auctionID)
-        hint = { kind = "buy", auctionID = auctionID }
+        local item, qty
         if type(info) == "table" then
-            hint.item = deps.itemKey(info.itemLink, false)
-            hint.qty = type(info.quantity) == "number" and info.quantity or nil
+            item = deps.itemKey(info.itemLink, false)
+            qty = type(info.quantity) == "number" and info.quantity or nil
         end
+        self:AddBuyHint(auctionID, item, qty)
+        self:_Ring("call", name)
+        return
     elseif name == "PostItem" or name == "ConfirmPostItem" or name == "PostCommodity"
         or name == "ConfirmPostCommodity" then
         local bag, slot, duration, quantity, bid, buyout = ...
