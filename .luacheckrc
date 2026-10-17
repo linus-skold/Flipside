@@ -82,6 +82,7 @@ read_globals = {
     "WOW_PROJECT_ID",
     "date",
     "debugprofilestop",
+    "debugstack",
     "time",
 }
 

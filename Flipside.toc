@@ -4,10 +4,11 @@
 ## Author: linus-skold
 ## Version: @project-version@
 ## IconTexture: Interface\Icons\INV_Misc_Coin_02
-## SavedVariables: FlipsideDB, FlipsideScanDB
+## SavedVariables: FlipsideDB, FlipsideScanDB, FlipsideLogDB
 # The interface number 16001 is confirmed by GetBuildInfo in the client (build 70338, 2026-10-14).
 # The Forever source has no interface number.
 
+Shared\Core\Log.lua
 Shared\Core\EventBus.lua
 Shared\Core\Scheduler.lua
 Shared\Core\ItemString.lua
@@ -84,6 +85,7 @@ Shared\UI\Pages\OperationsPage.lua
 Shared\UI\TooltipTable.lua
 Shared\UI\Pages\TooltipPage.lua
 Shared\UI\Pages\LedgerPage.lua
+Shared\UI\LogWindow.lua
 Shared\UI\MainWindow.lua
 Shared\Features\AuctionTab\AuctionTabs.lua
 Shared\Features\AuctionTab\ScanBar.lua

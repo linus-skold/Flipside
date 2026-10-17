@@ -9,6 +9,13 @@ local AHNameSearch = {}
 ns.AHNameSearch = AHNameSearch
 
 local EVENT = "AUCTION_HOUSE_BROWSE_RESULTS_UPDATED"
+
+-- Write one line to the diagnostics log; the Log module can be missing in a spec.
+local function log(level, fmt, ...)
+    if ns.Log then
+        ns.Log.Writef("auction", level, fmt, ...)
+    end
+end
 local TIMEOUT = 10
 
 local Search = {}
@@ -38,6 +45,8 @@ function Search:_Finish(pending, results, err)
         return
     end
     self.pending = nil
+    local outcome = err or (type(results) == "table" and (#results .. " items")) or "no result"
+    log(err and "warn" or "info", "name search '%s' done: %s", pending.name, outcome)
     self.bus:Unsubscribe(self.event, self)
     if self.addedEvent then
         self.bus:Unsubscribe(self.addedEvent, self)
@@ -147,6 +156,7 @@ function Search:Find(name, callback, options)
         startedAt = self.clock(),
     }
     self.pending = pending
+    log("info", "name search '%s' started", pending.name)
     local function onEvent()
         self:_OnResults()
     end

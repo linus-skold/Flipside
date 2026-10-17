@@ -7,6 +7,13 @@ ns.ScanEngine = ScanEngine
 local Engine = {}
 Engine.__index = Engine
 
+-- Write one line to the diagnostics log; the Log module can be missing in a spec.
+local function log(level, fmt, ...)
+    if ns.Log then
+        ns.Log.Writef("scan", level, fmt, ...)
+    end
+end
+
 -- The scan done event comes from deps.api.doneEvent; this default is the Forever event name.
 local EVENT_REPLICATE = "REPLICATE_ITEM_LIST_UPDATE"
 local EVENT_CLOSED = "AUCTION_HOUSE_CLOSED" -- default; deps.api.closeEvent overrides it
@@ -122,6 +129,7 @@ function Engine:Start(mode)
         elseif reason == "client" then
             text = detail
         end
+        log("warn", "%s not started: %s", self.label, text)
         self.deps.report(self.label .. " not started: " .. text)
         return false
     end
@@ -135,6 +143,7 @@ function Engine:Start(mode)
             self:_Abort(status, ...)
         end
     end)
+    log("info", "%s started", self.label)
     self.deps.report(self.label .. " started")
     return true
 end
@@ -277,6 +286,10 @@ function Engine:_Conclude(summary)
     if run.firstEventMs then
         summary.firstEventMs = run.firstEventMs - run.callMs
     end
+    log(summary.result == "error" and "error" or summary.result == "cancelled" and "warn" or "info",
+        "%s %s: %s rows, %s items, %s keys, %s new, %s pending, %s failed, wall %.1f s%s", summary.label,
+        summary.result, summary.rows, summary.items, summary.keys, summary.newItems, summary.pending,
+        summary.failed, summary.wallMs / 1000, summary.error and (", error: " .. tostring(summary.error)) or "")
     self:_ReportSummary(summary, run)
     if self.deps.onFinished then
         pcall(self.deps.onFinished, summary)

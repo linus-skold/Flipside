@@ -4,6 +4,13 @@ local _, ns = ...
 -- Each call reads C_AuctionHouse at call time, as the client can change it.
 local Backend = {}
 
+-- Write one line to the diagnostics log; the Log module can be missing in a spec.
+local function log(level, fmt, ...)
+    if ns.Log then
+        ns.Log.Writef("scan", level, fmt, ...)
+    end
+end
+
 local function ah()
     return C_AuctionHouse
 end
@@ -28,6 +35,7 @@ function Backend.CanScan()
 end
 
 function Backend.StartScan()
+    log("debug", "ReplicateItems called")
     return call("ReplicateItems")
 end
 
@@ -67,12 +75,14 @@ function Backend.ScanDiagnostics(summary)
             table.remove(db.diag, 1)
         end
     end
-    return string.format(
+    local line = string.format(
         "rows %s, written %s, pending %s items (%s rows), failed %s, nilLink %s, notAllInfo %s, retried %s; "
             .. "wait %.1f s, read %.1f s, item load %.1f s",
         tostring(entry.rows), tostring(entry.keys), tostring(entry.pending), tostring(entry.pendingRows),
         tostring(entry.failed), tostring(entry.nilLink), tostring(entry.notAllInfo), tostring(entry.retried),
         entry.eventSeconds or 0, entry.readSeconds or 0, entry.refreshSeconds or 0)
+    log("info", "scan details: %s", line)
+    return line
 end
 
 function Backend.RowCount()

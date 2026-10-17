@@ -51,7 +51,7 @@ Per D23 the layout moves to `Shared/`, `Core_<Flavour>/` and `AH_<Flavour>/` in 
 - Kit modules in Shared/UI/Kit/: Theme, Window, Widgets, Prompt, MoneyInput, Tabs, List, Tree, Combat, Graph, MinimapButton. They take all input as arguments and use no Flipside name, 
 s service or chat output (D19).
 - No third-party library is used (D18).
-- Core modules: `EventBus`, `Scheduler`, `ItemString`, `SettingsDB`, `ItemInfoCache`, `Init`. Core files start with `local _, ns = ...` and write no globals (`Init` also reads the addon name and sets the slash globals).
+- Core modules: `Log` (diagnostics log, `FlipsideLogDB`, spec 7.5; `Shared/UI/LogWindow.lua` is its window), `EventBus`, `Scheduler`, `ItemString`, `SettingsDB`, `ItemInfoCache`, `Init`. Core files start with `local _, ns = ...` and write no globals (`Init` also reads the addon name and sets the slash globals). Other modules write log lines through a local `log` helper that skips the call when `ns.Log` is nil.
 - Scan modules in `Shared/Services/`: `ScanClock`, `ScanRecord`, `ScanMarket`, `ScanKey`, `ScanCooldown`, `ScanBucket`, `ScanStore`, `ScanRows`, `ScanItemLoad`, `ScanSources`, `ScanEngine`, `ScanCapture`.
 - Formula modules in `Shared/Services/`: `FormulaParse`, `FormulaFunctions`, `FormulaSources`, `FormulaLookup`, 
 `FormulaEval`, `FormulaRun`.

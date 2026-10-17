@@ -123,6 +123,24 @@ describe("MainWindow", function()
         assert.are.equal(deps, built[3].deps)
     end)
 
+    it("has an Open log button on the About page", function()
+        local opened = 0
+        deps.openLog = function()
+            opened = opened + 1
+        end
+        local win = ns.MainWindow.Create(deps)
+        win:SelectPage("about")
+        local button
+        for _, object in ipairs(mock.objects) do
+            if object.kind == "Button" and object:GetText() == "Open log" then
+                button = object
+            end
+        end
+        assert.is_not_nil(button)
+        button.scripts.OnClick(button)
+        assert.are.equal(1, opened)
+    end)
+
     describe("resize", function()
         local function screen(width, height)
             local parent = _G.UIParent

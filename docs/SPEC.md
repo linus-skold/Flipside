@@ -1028,6 +1028,8 @@ The reference model (§7–9) is kept: one account-wide SavedVariable, flat scop
 | Scan DB | Daily price history per region and ruleset (§3.3) | Large; can be reset or shared without touching settings |
 | Ledger DB (`FlipsideLedgerDB`, addon `Flipside_Ledger`, changed 2026-10-15) | Ledger records and daily sums (§5.8) | Large; loads only on demand; can be reset without touching settings |
 
+| Log DB (`FlipsideLogDB`, added 2026-10-17) | The diagnostics log (§7.5) | Small ring buffer; can be cleared in the log window |
+
 A corrupted or oversized scan DB or ledger DB can be wiped from settings without losing configuration. All three carry a schema version with migrations on load. The Main DB holds only the ledger buffer (at most the cap in §5.8), not the ledger.
 
 **Main DB design (decided 2026-10-14)**
@@ -1058,7 +1060,30 @@ As in the reference §8.2 (pairing, single-writer rows, timestamp versioning, th
 - Ledger CSV export (§5.8).
 - Optional external price file in the import slot (D2).
 
-## MVP scope and phases
+### 7.5 Diagnostics log (added 2026-10-17)
+
+Flipside keeps a log of what it does, so that the user can see what happened and share it.
+
+- Storage: its own SavedVariable `FlipsideLogDB` in both TOC files. The data is in `WTF/Account/<account>/SavedVariables/Flipside.lua` (Forever) or `Flipside_TBC.lua` (TBC Anniversary). The log survives `/reload` and logout.
+- Entry: time (whole seconds and milliseconds), level, category and one line of text. The level is `debug`, `info`, `warn` or `error`. A category is a short word: `core`, `scan`, `mail`, `ledger`, `buying`, `selling`, `auction` or `event`.
+- Ring buffer: the default cap is 3000 entries (100 to 20000). The oldest entries go first. Debug entries are off by default. The `info`, `warn` and `error` entries are always stored.
+- Session marker: each login writes one `info` entry with the addon version, the flavour, the client version, build and interface number, the realm and the character.
+- Event trace: off by default. If it is on, the log also holds the events that Flipside listens to, with the first arguments, as `debug` entries of category `event`. The event bus makes these entries. It registers no extra event.
+- Errors: if an event handler or a job fails, the log gets an `error` entry with a short stack. Flipside does not replace the global error handler.
+- Code: `ns.Log.Write(category, level, text)` and `ns.Log.Writef(category, level, fmt, ...)` never raise an error. If the format fails, the entry holds the raw format text.
+- Window: the button "Open log" on the About page and the slash command `/flip log` open it. The list shows time, level (in colour), category and text. The user can set the order (newest or oldest first), the lowest level, one category and a search text. "Copy" opens a box with the shown entries as plain text, selected for Ctrl+C. "Clear" asks for a confirm. Two check boxes set the debug entries and the event trace.
+
+In-game checklist (diagnostics log):
+1. Log in. Open the log with `/flip log`. The first entry is the session marker with the correct version, client, realm and character.
+2. Click "Open log" on the About page. The same window opens.
+3. Do a scan. The log shows "started" and a finished line with the counts.
+4. Set the level to "Errors only". Only error entries stay. Type a word in the search box. The list narrows at once.
+5. Click "Copy". Press Ctrl+C. Paste the text in a text editor. It has one line for each shown entry.
+6. Click "Clear" and accept. The list is empty.
+7. Switch "Debug entries" on and do a mailing run. The log shows each mail and each ledger record.
+8. Switch "Event trace" on and open the Auction House. The log shows events of category `event`.
+9. Use `/reload`. The entries are still there. Check that `FlipsideLogDB` is in the SavedVariables file.
+
 
 The MVP is done when a player on WoW: Forever can scan, see prices in tooltips, buy and sell by group rules, vendor junk safely and see profit in the ledger. Phases follow the Phase column in the feature list; changing a dropdown there moves a feature.
 
@@ -1141,6 +1166,7 @@ TSM behaviours this spec doesn't cover yet. Change the status as each one gets s
 | Performance budgets | Memory, SavedVariables size, login time, tooltip speed (tooltip: 1 ms, decided 2026-10-14), scan processing | §10.3 | Needs scoping |
 | Combat lockdown | What is deferred or disabled in combat | §3 | Needs scoping |
 | Localisation | String tables, number and money formats, client languages (decimal separator in formulas decided: dot only) | §10.3 | Needs scoping |
+| Diagnostics log | In-game log with a window, filters and copy; instrumentation of scan, mailing, ledger, buying and the event bus (§7.5) | - | Scoped (2026-10-17; in-game checklist open; open: log lines for Selling, a title-bar button, the global error handler) |
 | Error handling and recovery | Failed posts and buys, disconnects mid-scan, corrupted data | §7.6 | Partly scoped (2026-10-14: a buy is confirmed with the final server price, D26; failures open) |
 | Later flavours | Retail differences: AH API, professions, banks, commodities. TBC Anniversary is in scope (D11, D23–D25); its open points are the TBC spike results | §3 | Partly scoped |
 
