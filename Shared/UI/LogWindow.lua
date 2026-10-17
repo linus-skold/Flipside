@@ -228,7 +228,7 @@ function LogWindow.Create(deps)
         self:Refresh()
     end
 
-    function view:Toggle()
+    function view.Toggle()
         frame:Toggle()
     end
 
