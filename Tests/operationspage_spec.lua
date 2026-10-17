@@ -27,7 +27,7 @@ local function stubMethods()
 end
 
 describe("OperationsPage", function()
-    local ns, rules, page, run, index, missing, later, saved, subscribed
+    local ns, rules, page, run, missing, later, saved, subscribed
 
     local function newRules(data)
         local db = ns.SettingsDB.New(data, { character = "Me", schemaVersion = 1 })
@@ -42,7 +42,6 @@ describe("OperationsPage", function()
         page = ns.OperationsPage.Build(CreateFrame("Frame", nil, UIParent), {
             rules = rules,
             formulaRun = run,
-            itemNameIndex = index,
             subscribe = function(fn)
                 subscribed = fn
             end,
@@ -119,16 +118,6 @@ describe("OperationsPage", function()
                     return 500, { kind = "ok", missing = {}, later = later }
                 end
                 return nil, { kind = "invalid", missing = missing, later = later }
-            end,
-        }
-        index = {
-            Resolve = function(_, text)
-                if text == "linen" then
-                    return { kind = "name", matches = { { itemID = 1, name = "Linen", key = "1" } }, pendingCount = 0 }
-                elseif text == "none" then
-                    return { kind = "name", matches = {}, pendingCount = 2 }
-                end
-                return { kind = "error", message = "type at least 2 characters of the name" }
             end,
         }
         rules = newRules(saved)
