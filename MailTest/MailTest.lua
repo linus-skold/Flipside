@@ -1,9 +1,11 @@
 -- MailTest: throwaway probe. Can an addon send several mails in a row from one click, or from a timer?
 -- It does not depend on Flipside. See README.md for the test steps.
--- Slash: /mailtest target <Name> | item <itemID> | click N | timer N | direct | status
+-- Slash: /mailtest target <Name> | item <itemID> | click N | timer N | fill N | delay S | direct | status
 
 local ADDON_NAME = "MailTest"
 local STEP_TIMEOUT = 10
+local BAG_WAIT_MAX = 5
+local extraDelay = 0.5
 
 local frame = CreateFrame("Frame")
 local target, itemID
@@ -22,17 +24,16 @@ local function tabState()
     return string.format("sendTabShown=%s inboxTabShown=%s", tostring(send), tostring(inbox))
 end
 
-local function findSlot()
+local function findSlot(used)
     for bag = 0, 4 do
         for slot = 1, C_Container.GetContainerNumSlots(bag) do
             local info = C_Container.GetContainerItemInfo(bag, slot)
-            if info and info.itemID == itemID and not info.isLocked then
+            if info and info.itemID == itemID and not info.isLocked and not used[bag .. ":" .. slot] then
                 return bag, slot
             end
         end
     end
 end
-
 local function finish(reason)
     if not run then
         return
@@ -51,6 +52,26 @@ local function finish(reason)
     out("  seconds between sends: " .. (#gaps > 0 and table.concat(gaps, ", ") or "n/a"))
 end
 
+-- Attach one stack in attachment slot attIdx. Returns true when GetSendMailItem shows an item.
+local function attachStack(mailNo, attIdx)
+    local bag, slot = findSlot(run.used)
+    if not bag then
+        out(string.format("#%d no free unlocked slot with item %s", mailNo, tostring(itemID)))
+        return false
+    end
+    run.used[bag .. ":" .. slot] = true
+    C_Container.PickupContainerItem(bag, slot)
+    local okClick, errClick = pcall(ClickSendMailItemButton, attIdx)
+    local name, _, _, count = GetSendMailItem(attIdx)
+    out(string.format("#%d attach %d: bag %d slot %d, click pcall=%s%s, attached=%s x%s", mailNo, attIdx, bag, slot,
+        tostring(okClick), okClick and "" or (" err=" .. tostring(errClick)), tostring(name), tostring(count)))
+    if not name then
+        ClearCursor()
+        return false
+    end
+    return true
+end
+
 local function sendOne()
     if not run then
         return
@@ -63,25 +84,21 @@ local function sendOne()
         finish("mailbox closed")
         return
     end
-    local bag, slot = findSlot()
-    if not bag then
-        finish("no more slots with item " .. tostring(itemID))
-        return
-    end
     run.tried = run.tried + 1
     local idx = run.tried
-    C_Container.PickupContainerItem(bag, slot)
-    local okClick, errClick = pcall(ClickSendMailItemButton, 1)
-    local attached = GetSendMailItem and GetSendMailItem(1)
-    out(string.format("#%d attach: bag %d slot %d, click pcall=%s%s, attachedName=%s", idx, bag, slot,
-        tostring(okClick), okClick and "" or (" err=" .. tostring(errClick)), tostring(attached)))
-    if not attached then
-        ClearCursor()
+    local attached = 0
+    for a = 1, run.per do
+        if not attachStack(idx, a) then
+            break
+        end
+        attached = attached + 1
+    end
+    if attached == 0 then
         run.errors = run.errors + 1
-        finish("attach failed")
+        finish("nothing attached, no mail sent")
         return
     end
-    out(string.format("#%d postage copper=%s", idx, tostring(GetSendMailPrice())))
+    out(string.format("#%d attached %d stack(s); postage copper=%s", idx, attached, tostring(GetSendMailPrice())))
     run.sendTimes[#run.sendTimes + 1] = GetTime()
     run.waiting = idx
     local ok, err = pcall(SendMail, target, "MailTest " .. idx, "MailTest probe " .. idx)
@@ -100,7 +117,38 @@ local function sendOne()
     end)
 end
 
-local function startRun(mode, n)
+-- After a mail result: wait for BAG_UPDATE_DELAYED, then the extra delay, then the next mail.
+local function waitThenNext()
+    if not run or run.tried >= run.n then
+        sendOne()
+        return
+    end
+    local r = run
+    r.bagWait = true
+    out("waiting for BAG_UPDATE_DELAYED")
+    C_Timer.After(BAG_WAIT_MAX, function()
+        if run == r and r.bagWait then
+            out(string.format("no BAG_UPDATE_DELAYED after %ds, going on", BAG_WAIT_MAX))
+            r.bagWait = false
+            sendOne()
+        end
+    end)
+end
+
+local function onBagDelayed()
+    if run and run.bagWait then
+        local r = run
+        r.bagWait = false
+        out(string.format("BAG_UPDATE_DELAYED received, waiting extra delay %.2fs", extraDelay))
+        C_Timer.After(extraDelay, function()
+            if run == r then
+                out("delay done, rescan bags")
+                sendOne()
+            end
+        end)
+    end
+end
+local function startRun(mode, n, per)
     if not target or not itemID then
         out("set /mailtest target <Name> and /mailtest item <itemID> first")
         return
@@ -110,13 +158,16 @@ local function startRun(mode, n)
         return
     end
     n = tonumber(n) or 1
-    run = { mode = mode, n = n, tried = 0, success = 0, failed = 0, errors = 0, sendTimes = {} }
+    run = { mode = mode, n = n, per = per or 1, used = {},
+        tried = 0, success = 0, failed = 0, errors = 0, sendTimes = {} }
     out(string.format("run %s n=%d to %s item %d; %s", mode, n, target, itemID, tabState()))
     sendOne()
 end
 
 local function onEvent(_, event, ...)
-    if event == "MAIL_SHOW" then
+    if event == "BAG_UPDATE_DELAYED" then
+        onBagDelayed()
+    elseif event == "MAIL_SHOW" then
         mailOpen = true
         out("MAIL_SHOW")
     elseif event == "MAIL_CLOSED" then
@@ -131,8 +182,8 @@ local function onEvent(_, event, ...)
             else
                 run.failed = run.failed + 1
             end
-            -- The next mail starts here, from the event handler, not from a new click.
-            sendOne()
+            -- The next mail starts from events and timers, not from a new click.
+            waitThenNext()
         end
     elseif event == "UI_ERROR_MESSAGE" then
         local errType, msg = ...
@@ -146,7 +197,8 @@ local function onEvent(_, event, ...)
 end
 
 for _, e in ipairs({ "MAIL_SHOW", "MAIL_CLOSED", "MAIL_SEND_SUCCESS", "MAIL_FAILED", "MAIL_SEND_INFO_UPDATE",
-    "MAIL_LOCK_SEND_ITEMS", "UI_ERROR_MESSAGE", "ADDON_ACTION_BLOCKED", "ADDON_ACTION_FORBIDDEN" }) do
+    "MAIL_LOCK_SEND_ITEMS", "BAG_UPDATE_DELAYED",
+    "UI_ERROR_MESSAGE", "ADDON_ACTION_BLOCKED", "ADDON_ACTION_FORBIDDEN" }) do
     frame:RegisterEvent(e)
 end
 frame:SetScript("OnEvent", onEvent)
@@ -192,18 +244,26 @@ SlashCmdList["MAILTEST"] = function(msg)
         C_Timer.After(1, function()
             startRun("timer", arg)
         end)
+    elseif cmd == "delay" and tonumber(arg) then
+        extraDelay = tonumber(arg)
+        out("extra delay = " .. extraDelay)
+    elseif cmd == "fill" and tonumber(arg) then
+        local n = math.max(1, math.min(12, math.floor(tonumber(arg))))
+        startRun("fill", 1, n)
     elseif cmd == "direct" then
         -- One SendMail from the slash command itself.
         if not target or not itemID then
             out("set target and item first")
             return
         end
-        run = { mode = "direct", n = 1, tried = 0, success = 0, failed = 0, errors = 0, sendTimes = {} }
+        run = { mode = "direct", n = 1, per = 1, used = {},
+        tried = 0, success = 0, failed = 0, errors = 0, sendTimes = {} }
         sendOne()
     elseif cmd == "status" then
-        out(string.format("target=%s item=%s mailOpen=%s blocked=%d %s", tostring(target), tostring(itemID),
+        out(string.format("delay=%.2f target=%s item=%s mailOpen=%s blocked=%d %s",
+            extraDelay, tostring(target), tostring(itemID),
             tostring(mailOpen), blocked, tabState()))
     else
-        out("usage: /mailtest target <Name> | item <itemID> | click N | timer N | direct | status")
+        out("usage: /mailtest target <Name> | item <itemID> | click N | timer N | fill N | delay S | direct | status")
     end
 end

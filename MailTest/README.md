@@ -23,7 +23,9 @@ Between tests, wait until the item stacks are back in your bags, or put more sta
 
 | Test | Tab shown | Command | Action |
 | --- | --- | --- | --- |
-| 1 | Send Mail tab (`MailFrameTab2`) | `/mailtest direct` | Read the output. |
+| 1 | Send Mail tab (`MailFrameTab2`) | `/mailtest fill N` | Send one mail with up to N stacks attached (1 to 12). |
+| `/mailtest delay S` | Set the extra wait in seconds after `BAG_UPDATE_DELAYED` (default 0.5). |
+| `/mailtest direct` | Read the output. |
 | 2 | Send Mail tab | `/mailtest click 5` | Click the "Send 5" button once. |
 | 3 | Inbox tab (`MailFrameTab1`) | `/mailtest click 5` | Click the "Send 5" button once. |
 | 4 | Send Mail tab | `/mailtest timer 5` | Do not click. Do not press a key. Wait. |
@@ -32,6 +34,16 @@ Between tests, wait until the item stacks are back in your bags, or put more sta
 Each output line starts with `MailTest` and `GetTime()`. Each run ends with a SUMMARY block.
 The SUMMARY shows the tab state (`sendTabShown`, `inboxTabShown`), sends tried, success events, failed events, blocked events, pcall errors and seconds between sends.
 After the tests, copy the chat lines (or take a screenshot) and send them. Include the client name for each test.
+
+## Second round (after the first result)
+The first result: `SendMail` works from a timer and with the Inbox tab shown. Mail 2 used a stale bag slot and got no event.
+The probe now waits for `BAG_UPDATE_DELAYED` and an extra delay after each mail, skips locked and used slots, and stops if nothing is attached.
+Run these steps on both clients, with at least 12 stacks of the item in your bags:
+1. `/mailtest click 5` and click the button once.
+2. `/mailtest timer 5` and do not click.
+3. `/mailtest fill 12`. This sends one mail with 12 attachments.
+4. If mail 2 still gets no event, run `/mailtest delay 1.5` and repeat step 1.
+Send the chat output. Look for the lines "waiting for BAG_UPDATE_DELAYED", "delay done" and each "attach" line.
 
 ## What the output means
 | Result | Meaning |
@@ -56,6 +68,8 @@ Postage shows as `postage copper=` for each mail.
 | `/mailtest item <itemID>` | Set the item. Each mail has one bag slot of this item. |
 | `/mailtest click N` | Show a small "Send N" button. One click starts N mails in a row. |
 | `/mailtest timer N` | Start N mails from `C_Timer.After(1, ...)`, with no click. |
+| `/mailtest fill N` | Send one mail with up to N stacks attached (1 to 12). |
+| `/mailtest delay S` | Set the extra wait in seconds after `BAG_UPDATE_DELAYED` (default 0.5). |
 | `/mailtest direct` | Send one mail from the slash command. |
 | `/mailtest status` | Show the settings and the visible tab. |
 
