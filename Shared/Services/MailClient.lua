@@ -14,16 +14,28 @@ MailClient.MAX_ATTACHMENTS = 12
 
 local QUEST_ITEM_CLASS = Enum and Enum.ItemClass and Enum.ItemClass.Questitem or 12
 
--- Returns the item classes of the client as a list of { value = classID, text = name }, sorted by name.
--- enum is Enum.ItemClass (name -> class id). getName is C_Item.GetItemClassInfo. Both clients have both.
--- A class with no name, and an obsolete class, is left out.
+-- Enum.ItemClass names that the list leaves out (by name of the enum, so the language does not matter).
+local HIDDEN_CLASSES = { Questitem = true, Key = true, WoWToken = true }
+
+-- Returns the item classes of the client as a list of { value = classID, text = name [, ids = { classID, ... }] },
+-- sorted by name. enum is Enum.ItemClass (name -> class id). getName is C_Item.GetItemClassInfo.
+-- A class with no name, an obsolete class, and the classes in HIDDEN_CLASSES are left out.
+-- Quiver is merged into Container: that entry has ids = { Container id, Quiver id }.
 function MailClient.ItemClasses(enum, getName)
     local list = {}
-    for key, id in pairs(enum or {}) do
-        if type(id) == "number" and not tostring(key):find("Obsolete", 1, true) then
+    enum = enum or {}
+    local merged = type(enum.Container) == "number" and type(enum.Quiver) == "number"
+    for key, id in pairs(enum) do
+        if type(id) == "number" and not tostring(key):find("Obsolete", 1, true) and not HIDDEN_CLASSES[key]
+            and not (merged and key == "Quiver") then
             local ok, name = pcall(getName, id)
-            if ok and type(name) == "string" and name ~= "" then
-                list[#list + 1] = { value = id, text = name }
+            if ok and type(name) == "string" and name ~= "" and not name:lower():find("obsolete", 1, true) then
+                local entry = { value = id, text = name }
+                if merged and key == "Container" then
+                    entry.ids = { enum.Container, enum.Quiver }
+                    table.sort(entry.ids)
+                end
+                list[#list + 1] = entry
             end
         end
     end

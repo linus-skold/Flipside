@@ -101,6 +101,27 @@ describe("MailClient", function()
         assert.are.same({}, ns.MailClient.ItemClasses(nil, function() end))
     end)
 
+    it("leaves out Quest, Key, WoW Token and Generic and merges Quiver into Container", function()
+        local names = { [0] = "Consumable", [1] = "Container", [8] = "Generic(OBSOLETE)", [11] = "Quiver",
+            [12] = "Quest", [13] = "Key", [18] = "WoW Token", [19] = "Profession" }
+        local enum = { Consumable = 0, Container = 1, ItemEnhancement = 8, Quiver = 11, Questitem = 12, Key = 13,
+            WoWToken = 18, Profession = 19 }
+        local list = ns.MailClient.ItemClasses(enum, function(id)
+            return names[id]
+        end)
+        assert.are.same({
+            { value = 0, text = "Consumable" }, { value = 1, text = "Container", ids = { 1, 11 } },
+            { value = 19, text = "Profession" },
+        }, list)
+    end)
+
+    it("keeps Quiver as its own entry when the client has no Container", function()
+        local list = ns.MailClient.ItemClasses({ Quiver = 11 }, function()
+            return "Quiver"
+        end)
+        assert.are.same({ { value = 11, text = "Quiver" } }, list)
+    end)
+
     it("attaches with a pickup and a click, and reads the attachment back", function()
         local c = client(3)
         assert.is_true(c.Attach(0, 1, 2))

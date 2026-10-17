@@ -255,6 +255,10 @@ function frameMethods:SetJustifyH(justify)
     self.justifyH = justify
 end
 
+function frameMethods:SetJustifyV(justify)
+    self.justifyV = justify
+end
+
 function frameMethods:SetFontObject(font)
     self.fontObject = font
 end
@@ -623,6 +627,9 @@ function M.reset(options)
         local view = {}
         function view:SetElementExtent(extent)
             self.extent = extent
+        end
+        function view:SetElementExtentCalculator(calculator)
+            self.calculator = calculator
         end
         function view:SetElementInitializer(template, fn)
             self.template, self.initializer = template, fn

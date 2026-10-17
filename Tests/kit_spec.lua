@@ -363,6 +363,31 @@ describe("Kit", function()
             assert.are.same({ rows[1] }, inited)
         end)
 
+        it("gives each row its own height with heightOf", function()
+            local list = Kit.CreateList(CreateFrame("Frame"), {
+                rowHeight = 20,
+                heightOf = function(data)
+                    return data.tall and 44 or 28
+                end,
+            })
+            assert.are.equal(44, mock.scrollInit.view.calculator(1, { tall = true }))
+            assert.are.equal(28, mock.scrollInit.view.calculator(2, {}))
+            assert.is_not_nil(list.box)
+        end)
+
+        it("places plain rows one below the other by their own heights", function()
+            _G.ScrollUtil = nil
+            local list = Kit.CreateList(CreateFrame("Frame"), {
+                heightOf = function(data)
+                    return data.tall and 44 or 28
+                end,
+            })
+            list:SetData({ { tall = true }, {} })
+            assert.are.equal(44, list.rows[1].height)
+            assert.are.equal(28, list.rows[2].height)
+            assert.are.equal(-44, list.rows[2].points[1][5])
+        end)
+
         it("falls back to plain rows when ScrollUtil is missing", function()
             _G.ScrollUtil = nil
             local seen = {}
@@ -1763,4 +1788,47 @@ describe("Kit", function()
             g:SetEnabled(false)
             assert.is_false(g.checks[1].enabled)
         end)
-    end)end)
+
+        it("left-aligns each name next to its box", function()
+            local g = grid()
+            assert.are.equal("LEFT", g.checks[1].Text.justifyH)
+        end)
+
+        describe("with an item that stands for many ids", function()
+            local function merged(onChange)
+                return Kit.CheckGrid(CreateFrame("Frame"), {
+                    items = { { value = 1, text = "Container", ids = { 1, 11 } }, { value = 2, text = "Weapon" } },
+                    onChange = onChange,
+                })
+            end
+
+            it("checks the box if any id is in the set", function()
+                local g = merged()
+                g:SetValues({ [11] = true })
+                assert.is_true(g.checks[1]:GetChecked())
+                g:SetValues({ [1] = true })
+                assert.is_true(g.checks[1]:GetChecked())
+                g:SetValues({ [2] = true })
+                assert.is_false(g.checks[1]:GetChecked())
+            end)
+
+            it("sets and clears all ids on a click", function()
+                local seen
+                local g = merged(function(set)
+                    seen = set
+                end)
+                g:SetValues({ [11] = true })
+                toggle(g.checks[1], true)
+                assert.are.same({ [1] = true, [11] = true }, seen)
+                toggle(g.checks[1], false)
+                assert.are.same({}, seen)
+            end)
+
+            it("drops ids that no item has", function()
+                local g = merged()
+                g:SetValues({ [12] = true, [2] = true })
+                assert.are.same({ [2] = true }, g:GetValues())
+            end)
+        end)
+    end)
+end)

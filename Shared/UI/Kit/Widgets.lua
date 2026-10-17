@@ -281,8 +281,9 @@ local GRID_COLUMN_WIDTH = 140
 local GRID_ROW = 24
 
 -- Create a grid of check boxes, placed row by row. It sits in the parent like any frame: place it with SetPoint.
--- options: items = { { value, text } }, columns (default 3), columnWidth (default 140), rowHeight (default 24),
--- onChange(set). set is a table value -> true.
+-- options: items = { { value, text [, ids] } }, columns (default 3), columnWidth (default 140), rowHeight (default 24),
+-- onChange(set). set is a table value -> true. An item with ids = { a, b } stands for all these values: its box
+-- is checked if any id is in the set, and a click sets or clears all ids.
 -- The grid has the size of all its check boxes. grid.checks lists the check buttons in item order.
 -- Methods: SetValues(set) (does not call onChange), GetValues(),
 -- SetEnabled(enabled).
@@ -297,17 +298,26 @@ function Kit.CheckGrid(parent, options)
     grid.checks = state.checks
     grid:SetSize(columns * columnWidth, math.max(1, math.ceil(#items / columns)) * rowHeight)
 
+    local function idsOf(item)
+        return item.ids or { item.value }
+    end
+
     for index, item in ipairs(items) do
         local column, row = (index - 1) % columns, math.floor((index - 1) / columns)
         local check = Kit.Check(grid, item.text, function(checked)
-            state.values[item.value] = checked or nil
+            for _, id in ipairs(idsOf(item)) do
+                state.values[id] = checked or nil
+            end
             if options.onChange then
                 options.onChange(state.values)
             end
         end)
-        -- A long name must not run into the next column.
+        -- A long name must not run into the next column. The name stays next to its box.
         if check.Text and check.Text.SetWidth then
             check.Text:SetWidth(columnWidth - 32)
+            if check.Text.SetJustifyH then
+                check.Text:SetJustifyH("LEFT")
+            end
             if check.Text.SetWordWrap then
                 check.Text:SetWordWrap(false)
             end
@@ -316,16 +326,24 @@ function Kit.CheckGrid(parent, options)
         state.checks[index] = check
     end
 
+    -- A box is checked if any of its ids is in the set.
     local function refresh()
         for index, item in ipairs(items) do
-            state.checks[index]:SetChecked(state.values[item.value] == true)
+            local on = false
+            for _, id in ipairs(idsOf(item)) do
+                on = on or state.values[id] == true
+            end
+            state.checks[index]:SetChecked(on)
         end
     end
 
+    -- Only the ids of the items are kept.
     function grid.SetValues(_, set)
         state.values = {}
-        for value, on in pairs(set or {}) do
-            state.values[value] = on or nil
+        for _, item in ipairs(items) do
+            for _, id in ipairs(idsOf(item)) do
+                state.values[id] = (set or {})[id] and true or nil
+            end
         end
         refresh()
     end
