@@ -6,7 +6,7 @@ local _, ns = ...
 -- CanReadOwned, OwnedEvent, OpenEvent, CloseEvent, CanScan, CanLiveSearch, LiveSearch, LiveResultEvents, LiveRows,
 -- IsReady, ReadyEvent, RefreshOwned, CanBuy, StartCommodityPurchase, ConfirmCommodityPurchase, CancelCommodityPurchase,
 -- QuoteSecondsLeft, BuyItemAuction, BuyEvents, CanPost, PostItem, PostCommodity, ConfirmPostItem, ConfirmPostCommodity,
--- Deposit, AvailablePostCount, IsSellItemValid, PostedEvent, AuctionInfo. A backend leaves out what its client
+-- Deposit, AvailablePostCount, IsSellItemValid, PostedEvent, AuctionInfo, HookBid. A backend leaves out what its client
 -- cannot do.
 local AuctionClient = {}
 ns.AuctionClient = AuctionClient
@@ -106,6 +106,8 @@ query("RefreshOwned")
 query("CanBuy", false)
 query("QuoteSecondsLeft")
 query("BuyEvents")
+-- HookBid(hook, handler) installs the read-only bid post-hook of the ledger and gives the hooked name, or nil.
+query("HookBid")
 action("StartCommodityPurchase")
 action("ConfirmCommodityPurchase")
 action("CancelCommodityPurchase")

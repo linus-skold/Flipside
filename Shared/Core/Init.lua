@@ -930,6 +930,7 @@ local function openLedgerHooks()
                 mail.OnSendMail(recipient)
             end,
             onBuyMerchantItem = vendor and vendor.OnBuy or nil,
+            hookBid = ns.AuctionClient and ns.AuctionClient.HookBid or nil,
             onBid = function(auctionID)
                 ns.ledgerMoney:OnBid(auctionID)
             end,

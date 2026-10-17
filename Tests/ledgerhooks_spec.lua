@@ -30,6 +30,13 @@ describe("LedgerHooks", function()
             onBid = function(...)
                 seen[#seen + 1] = { "bid", ... }
             end,
+            -- The backend names the bid function; this fake hooks PlaceBid on the table that it owns.
+            hookBid = function(hookFn, handler)
+                hookFn(globals.C_Bid, "PlaceBid", function(auctionID)
+                    handler(auctionID)
+                end)
+                return "bid"
+            end,
         }
         for name, value in pairs(overrides or {}) do
             deps[name] = value
@@ -44,39 +51,44 @@ describe("LedgerHooks", function()
         globals = {
             SendMail = function() end,
             BuyMerchantItem = function() end,
-            PlaceAuctionBid = function() end,
-            C_AuctionHouse = { PlaceBid = function() end },
+            C_Bid = { PlaceBid = function() end },
         }
     end)
 
-    it("installs exactly the four hooks of the list", function()
+    it("installs exactly the three global hooks and the bid hook of the backend", function()
         local installed = install()
-        assert.are.same(ns.LedgerHooks.HOOKED, installed)
-        assert.are.equal(4, #hooked)
+        assert.are.same({ "SendMail", "BuyMerchantItem", "bid" }, installed)
+        assert.are.equal(3, #hooked)
     end)
 
     it("installs only the hooks whose function exists", function()
-        globals.PlaceAuctionBid = nil
-        globals.C_AuctionHouse = nil
-        assert.are.same({ "SendMail", "BuyMerchantItem" }, install())
+        globals.BuyMerchantItem = nil
+        assert.are.same({ "SendMail", "bid" }, install())
     end)
 
     it("calls the handler after the client call with the same arguments", function()
         install()
         globals.SendMail("Bank", "Subject", "Body")
         globals.BuyMerchantItem(3, 20)
-        globals.C_AuctionHouse.PlaceBid(77, 500)
+        globals.C_Bid.PlaceBid(77, 500)
         assert.are.same({ "mail", "Bank", "Subject", "Body" }, seen[1])
         assert.are.same({ "buy", 3, 20 }, seen[2])
-        assert.are.same({ "bid", 77, 500, false }, seen[3])
+        assert.are.same({ "bid", 77 }, seen[3])
     end)
 
-    it("takes the list index of a TBC bid and ignores the other lists", function()
-        install()
-        globals.PlaceAuctionBid("list", 4, 900)
-        globals.PlaceAuctionBid("owner", 4, 900)
-        assert.are.equal(1, #seen)
-        assert.are.same({ "bid", 4, 900, true }, seen[1])
+    it("keeps an error of the bid handler inside the hook", function()
+        install({
+            onBid = function()
+                error("boom")
+            end,
+        })
+        assert.has_no.errors(function()
+            globals.C_Bid.PlaceBid(77, 500)
+        end)
+    end)
+
+    it("installs no bid hook without a backend hook function", function()
+        assert.are.same({ "SendMail", "BuyMerchantItem" }, install({ hookBid = false }))
     end)
 
     it("keeps an error of a handler inside the hook", function()
@@ -105,7 +117,7 @@ describe("LedgerHooks", function()
             end,
         })
         assert.are.same({}, installed)
-        assert.are.equal(4, #reports)
+        assert.are.equal(3, #reports)
     end)
 
     it("installs nothing without a hook function or without a handler", function()
