@@ -43,7 +43,7 @@ describe("manifest", function()
         local list = manifest.upTo("ItemString")
         assert.are.equal("Shared/Core/ItemString.lua", list[#list])
         assert.are.equal(manifest.files()[1], list[1])
-        assert.are.equal(3, #list)
+        assert.are.equal(manifest.indexOf(manifest.files(), "ItemString"), #list)
     end)
 
     it("lists only files that exist on disk", function()
