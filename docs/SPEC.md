@@ -675,6 +675,17 @@ The `source` field is one of these values. The `type` field sets the view.
 | `quest` | `income` | Quest context (PR6) |
 | `unknown` | `income` or `expense` | Money tracker (PR2) |
 
+**In-game checklist (ledger item detail, 2026-10-17).** Run each step on WoW: Forever and on TBC Anniversary. Open the Ledger page after each step. Each step must give one row for each money change.
+1. Blizzard Send tab: send one item with 1 gold to another character. Expect `Mail postage`, `Mail money sent` and one `Mail sent` row with the item, the quantity and the recipient. On Forever, send to a stranger and confirm the dialog.
+2. Flipside mailing panel: send a group with 2 mails. Expect the same rows for each mail, once only.
+3. Send a mail and cancel it (a mail to an unknown name gives `MAIL_FAILED`). Expect no row, and no `Unknown` row for the postage.
+4. Sell one stack and one single item to a vendor. Expect `Vendor sale` rows with the item and the quantity. Sell the same item twice. Expect two rows.
+5. Buy 1 item and 5 items of a stack to a vendor. Expect `Vendor purchase` rows with the item and the quantity.
+6. Repair all. Expect one `Repair` row with the cost.
+7. Buy an item auction at the buyout in Blizzard's Auction House tab. Expect one `AH purchase` row with the item. On Forever, buy a commodity too.
+8. Buy an item in the Flipside Buying tab. Expect one row, not two.
+9. Turn on `ledger.debug` and run `/flip ledgerdebug`. Expect no `unpaired` count for these steps.
+
 **Record fields**
 
 | Field | Meaning |
