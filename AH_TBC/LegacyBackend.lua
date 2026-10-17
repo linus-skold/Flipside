@@ -584,7 +584,7 @@ local POST_OWNER = "Flipside.LegacyBackend.Post"
 local POSTED_EVENT = "Flipside.LegacyPosted"
 local POST_WINDOW_SECONDS = 20
 local CONFIRM_WINDOW_SECONDS = 120
-local post = { subscribed = false, pending = nil, at = nil, refused = nil }
+local post = { subscribed = false, pending = nil, at = nil, refused = nil, single = nil }
 
 -- Duration in hours to the legacy index: 1 = 12 h, 2 = 24 h, 3 = 48 h. A value with no exact match gives the nearest
 -- longer index that exists, and 3 above 48 h.
@@ -647,9 +647,24 @@ local function multisellOpen()
     return multi ~= nil and now() - multi.at <= MULTISELL_WINDOW_SECONDS
 end
 
+-- True if a one-stack post was sent and neither the created text nor an error came yet.
+local function singleOpen()
+    return post.single ~= nil and now() - post.single <= POST_WINDOW_SECONDS
+end
+
+-- A one-stack post failed after the call returned: tell the Selling tab as a multisell failure of 1 stack.
+local function endSingle(text)
+    post.single = nil
+    emitMultisell("failure", 0, 1, text)
+end
+
 local function onPostError()
     if multisellOpen() and not post.calling then
         endMultisell("the Auction House refused the post")
+        return
+    end
+    if singleOpen() and not post.calling then
+        endSingle("the Auction House refused the post")
         return
     end
     post.refused = "the Auction House refused the post"
@@ -674,6 +689,8 @@ local function onPostUiError(_, first, second)
         post.refused = tostring(text or "the Auction House refused the post")
     elseif multisellOpen() and isAuctionError(text) then
         endMultisell(text)
+    elseif singleOpen() and isAuctionError(text) then
+        endSingle(text)
     end
 end
 
@@ -699,6 +716,7 @@ end
 local function onPostText(_, text)
     if post.at and now() - post.at <= POST_WINDOW_SECONDS and type(text) == "string"
         and text == _G.ERR_AUCTION_STARTED then
+        post.single = nil
         ns.bus:Emit(POSTED_EVENT)
     end
 end
@@ -874,6 +892,7 @@ function Backend.PostItem(bag, slot, duration, quantity, bid, buyout, itemID, gu
         error(result, 0)
     end
     if result then
+        post.single = stacks == 1 and now() or nil
         return false
     end
     post.multi = nil
@@ -920,6 +939,7 @@ function Backend.ConfirmPostItem(bag, slot, duration, quantity, _bid, buyout, _i
         post.multi = nil
         error(err, 0)
     end
+    post.single = stacks == 1 and now() or nil
     return false
 end
 

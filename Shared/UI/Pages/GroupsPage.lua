@@ -87,6 +87,8 @@ function GroupsPage.Build(content, deps)
         label:SetTextColor(r, g, b)
     end
 
+    local asked = {} -- item IDs that already have a load callback
+
     -- Return the display text of a key and the item quality (nil while the item loads).
     local function itemName(key)
         local parsed = ns.ItemString.ParseKey(key)
@@ -100,7 +102,19 @@ function GroupsPage.Build(content, deps)
                 return info.name .. " (" .. key .. ")", info.quality
             end
             if cache.Request then
-                cache:Request(parsed.itemID)
+                -- Ask once. When the data arrives, draw both item lists again.
+                local callback
+                if not asked[parsed.itemID] then
+                    asked[parsed.itemID] = true
+                    callback = function(_, loaded)
+                        for _, list in ipairs({ page.itemList, page.bagList }) do
+                            if loaded and list and list.data then
+                                list:SetData(list.data)
+                            end
+                        end
+                    end
+                end
+                cache:Request(parsed.itemID, callback)
             end
         end
         return key
@@ -385,7 +399,8 @@ function GroupsPage.Build(content, deps)
                 row.text:SetPoint("RIGHT", row, "RIGHT", -6, 0)
                 row.text:SetJustifyH("LEFT")
             end
-            local text = string.format("%s x%d", entry.name ~= "" and entry.name or entry.key, entry.count or 1)
+            local text = string.format("%s x%d", entry.name ~= "" and entry.name or (itemName(entry.key)),
+                entry.count or 1)
             local groupID = rules:GroupOf(entry.key)
             if groupID ~= BASE_ID then
                 text = text .. " (in " .. tostring(rules:Name(groupID)) .. ")"

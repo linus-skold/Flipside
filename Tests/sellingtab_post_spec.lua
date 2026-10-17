@@ -1810,4 +1810,155 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
             assert.are.equal(reads, bagReads)
         end)
     end)
+    describe("item names of the rows", function()
+        local requested
+
+        local function remount(link, loaded)
+            bagItems[2].name, bagItems[2].link = "", link
+            requested = {}
+            tab = mount({
+                itemInfo = function(id) return "item " .. id, 1 end,
+                itemLink = function(id)
+                    if loaded.value then
+                        return "|cff1eff00|Hitem:" .. id .. "|h[Widget]|h|r", 1
+                    end
+                end,
+                requestItem = function(id) requested[#requested + 1] = id end,
+            })
+            ui = tab.ui
+        end
+
+        it("takes the name from the bracket of the bag link when the client has no link", function()
+            remount("|Hitem:13|h[Widget Link]|h", { value = false })
+            assert.are.equal("|cffffffff|Hitem:13|h[Widget Link]|h|r x2", draw("i13").label.text)
+            assert.are.equal(0, #requested)
+        end)
+
+        it("never shows empty brackets, asks the client once and draws the row again after the load event", function()
+            local loaded = { value = false }
+            remount("|Hitem:13|h[]|h", loaded)
+            assert.are.equal("item 13 x2", draw("i13").label.text)
+            draw("i13")
+            assert.are.same({ 13 }, requested)
+            local redraws, refresh = 0, ui.tree.Refresh
+            ui.tree.Refresh = function(...)
+                redraws = redraws + 1
+                return refresh(...)
+            end
+            loaded.value = true
+            local before = #delays
+            fire("ITEM_DATA_LOAD_RESULT", 99, true)
+            assert.are.equal(before, #delays)
+            fire("ITEM_DATA_LOAD_RESULT", 13, true)
+            fire("ITEM_DATA_LOAD_RESULT", 13, true)
+            assert.are.equal(before + 1, #delays)
+            delays[#delays].fn()
+            assert.are.equal(1, redraws)
+            assert.are.equal("|cff1eff00|Hitem:13|h[Widget]|h|r x2", draw("i13").label.text)
+        end)
+
+        it("does not ask again when the item fails to load", function()
+            remount("|Hitem:13|h[]|h", { value = false })
+            draw("i13")
+            fire("ITEM_DATA_LOAD_RESULT", 13, false)
+            delays[#delays].fn()
+            draw("i13")
+            assert.are.same({ 13 }, requested)
+        end)
+    end)
+
+    describe("the post delay", function()
+        local function runDelays(seconds)
+            for _, wait in ipairs(delays) do
+                if wait.seconds == seconds and not wait.done then
+                    wait.done = true
+                    wait.fn()
+                end
+            end
+        end
+
+        local function remount()
+            client.MultisellEvent = function() return "MULTI" end
+            tab = mount({ postDelay = 1, postTimeout = 5 })
+            ui = tab.ui
+            selectCloth()
+            pick("i10")
+        end
+
+        it("keeps Post off after the result until the delay passed", function()
+            remount()
+            click(ui.postNext)
+            assert.are.equal(1, #client.posts)
+            assert.is_false(ui.postNext.enabled)
+            assert.are.equal("Wait...", ui.postNext.text)
+            runDelays(1)
+            assert.is_true(ui.postNext.enabled)
+            assert.are.equal("Post", ui.postNext.text)
+        end)
+
+        it("makes one protected call for each click and none while Post is off", function()
+            remount()
+            click(ui.postNext)
+            local ok = tab:PostNext()
+            assert.is_false(ok)
+            click(ui.postNext)
+            assert.are.equal(1, #client.posts)
+            runDelays(1)
+            click(ui.postNext)
+            assert.are.equal(2, #client.posts)
+        end)
+
+        it("keeps Post off after the delay until the result came", function()
+            autoCreate = false
+            remount()
+            click(ui.postNext)
+            runDelays(1)
+            assert.is_false(ui.postNext.enabled)
+            fire("CREATED")
+            assert.is_true(ui.postNext.enabled)
+        end)
+
+        it("turns Post on after an error and the delay, and keeps the row", function()
+            autoCreate = false
+            remount()
+            click(ui.postNext)
+            fire("MULTI", "failure", 0, 1, "Auction House database error.")
+            assert.are.equal("failed", entryOf("10").status)
+            assert.is_true(has(visibleIds(), "i10"))
+            assert.is_not_nil(tab.lock)
+            pick("i10")
+            assert.is_false(ui.postNext.enabled)
+            runDelays(1)
+            assert.is_nil(tab.lock)
+            assert.is_true(ui.postNext.enabled)
+        end)
+
+        it("ends the lock at the timeout when no result comes", function()
+            autoCreate = false
+            remount()
+            click(ui.postNext)
+            runDelays(1)
+            assert.is_not_nil(tab.lock)
+            runDelays(5)
+            assert.is_nil(tab.lock)
+            -- The wait for the created event ends at its own timeout (15 s plus 3 s for the stack).
+            runDelays(18)
+            assert.are.equal("failed", entryOf("10").status)
+            pick("i10")
+            assert.is_true(ui.postNext.enabled)
+        end)
+
+        it("starts no timer when the delay is 0", function()
+            tab = mount({ postDelay = 0 })
+            ui = tab.ui
+            selectCloth()
+            pick("i10")
+            local before = #delays
+            click(ui.postNext)
+            assert.is_true(ui.postNext.enabled)
+            for index = before + 1, #delays do
+                assert.are_not.equal(5, delays[index].seconds)
+            end
+        end)
+    end)
 end)

@@ -1219,6 +1219,9 @@ describe("SellingTab", function()
             local reads = bagReads
             loaded = true
             fire("ITEM_DATA_LOAD_RESULT", 10, true)
+            -- The redraw waits 0.2 s, so that a burst of load events gives one redraw.
+            assert.are.equal(0.2, timers[#timers].seconds)
+            timers[#timers].fn()
             assert.are.equal(LINK .. " x60", ui.tree.list.rows[2].label.text)
             assert.are.equal(reads, bagReads)
         end)
