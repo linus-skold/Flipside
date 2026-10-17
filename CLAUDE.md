@@ -48,7 +48,7 @@ Decision of 2026-10-15: use GitHub stacked PRs (`gh-stack`) for all new work, so
 Per D23 the layout moves to `Shared/`, `Core_<Flavour>/` and `AH_<Flavour>/` in a later pull request. The lists below show the current layout.
 `Shared/Core/` framework, `Shared/Services/`, `Shared/Features/<Name>/`, `Shared/UI/`, `Shared/UI/Kit/`, `Shared/UI/Pages/`, `Shared/Libs/` (empty, no third-party library), `Shared/Locales/`, `Tests/` (busted specs and `wow_mock.lua`), `ScanTest/` (throwaway Spike 0 addon), `Flipside_Ledger/` (load-on-demand ledger addon, `FlipsideLedgerDB`, D25 and spec §5.8; comes with step 7).
 - `Shared/UI/Kit/`: reusable style kit, no Flipside logic (D19).
-- Kit modules in Shared/UI/Kit/: Theme, Window, Widgets, MoneyInput, Tabs, List, Tree, Combat, Graph, MinimapButton. They take all input as arguments and use no Flipside name, 
+- Kit modules in Shared/UI/Kit/: Theme, Window, Widgets, Prompt, MoneyInput, Tabs, List, Tree, Combat, Graph, MinimapButton. They take all input as arguments and use no Flipside name, 
 s service or chat output (D19).
 - No third-party library is used (D18).
 - Core modules: `EventBus`, `Scheduler`, `ItemString`, `SettingsDB`, `ItemInfoCache`, `Init`. Core files start with `local _, ns = ...` and write no globals (`Init` also reads the addon name and sets the slash globals).
@@ -59,7 +59,7 @@ s service or chat output (D19).
 - Ledger modules in `Shared/Services/`: `LedgerRecord`, `LedgerBuffer`, `LedgerStore`, `LedgerLoader`. The load-on-demand addon `Flipside_Ledger/` (repo root) has only TOC files (`Flipside_Ledger.toc`, `Flipside_Ledger_TBC.toc`) and no Lua code (SPEC 5.8).
 - Rules modules in `Shared/Services/`: `ItemNameIndex`, `OperationSchema`, `GroupTree`, `BagItems`, `RulesStore`, `CustomSources`, `AHNameSearch`, `RulesExport`.
 - Mailing modules in `Shared/Services/`: `MailingPlan`, `MailClient`, `MailingRun`, `MailingLedger`. `Shared/Features/Mailing/` has `MailingView` (a self-contained view: parent frame in, no place) and `MailHost` (one host for both flavours; its `LAYOUTS` table places the view, today `wide`: `MailFrame` gets wider and holds the view, SPEC 5.5).
-- `Shared/UI/MainWindow.lua`, `Shared/UI/Pages/` (`GroupsPage`, `OperationsPage`, `FormulaPage`, `LedgerPage`), `Shared/Features/AuctionTab/` (panel); `AH_Forever/AuctionTabHost.lua` owns AuctionHouseFrame. Flavour folders `Core_<Flavour>/` and `AH_<Flavour>/` come later (D23).
+- `Shared/UI/MainWindow.lua`, `Shared/UI/Pages/` (`GroupsPage`, `OperationsPage`, `FormulaPage`, `LedgerPage`, `RulesImport`), `Shared/Features/AuctionTab/` (panel); `AH_Forever/AuctionTabHost.lua` owns AuctionHouseFrame. Flavour folders `Core_<Flavour>/` and `AH_<Flavour>/` come later (D23).
 - UI: Flipside tabs inside Blizzard's AuctionHouseFrame, plus the Flipside window (800 x 540 minimum, resizable); only client assets.
 - Item keys follow D20; no battle pets in the MVP (D21); scan data is keyed by region and ruleset (D22).
 

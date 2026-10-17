@@ -67,6 +67,7 @@ Shared\Services\LedgerBalance.lua
 Shared\UI\Kit\Theme.lua
 Shared\UI\Kit\Window.lua
 Shared\UI\Kit\Widgets.lua
+Shared\UI\Kit\Prompt.lua
 Shared\UI\Kit\MoneyInput.lua
 Shared\UI\Kit\Tabs.lua
 Shared\UI\Kit\List.lua
@@ -77,6 +78,7 @@ Shared\UI\Kit\Graph.lua
 Shared\UI\Kit\MinimapButton.lua
 Shared\UI\Pages\FormulaPage.lua
 Shared\UI\Pages\AutoRulesPanel.lua
+Shared\UI\Pages\RulesImport.lua
 Shared\UI\Pages\GroupsPage.lua
 Shared\UI\Pages\OperationsPage.lua
 Shared\UI\TooltipTable.lua

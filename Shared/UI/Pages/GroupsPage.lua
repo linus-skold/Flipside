@@ -15,9 +15,9 @@ local LIST_Y = 46
 local ARROW_COLUMN = 44
 local STATUS_HEIGHT = 40 -- space at the bottom for the status lines
 local DELETE_DIALOG = "FLIPSIDE_DELETE_GROUP"
-local IMPORT_CONFIRM = "FLIPSIDE_IMPORT_CONFIRM"
+local NEW_PROMPT = "FlipsideNewGroupPrompt"
+local RENAME_PROMPT = "FlipsideRenameGroupPrompt"
 local EXPORT_DIALOG = "FLIPSIDE_EXPORT_DIALOG"
-local IMPORT_DIALOG = "FLIPSIDE_IMPORT_DIALOG"
 local RESULTS_WINDOW = "FlipsideAddItemsWindow"
 local TYPE_LABELS = { selling = "Selling", buying = "Buying", vendoring = "Vendoring", mailing = "Mailing" }
 local SOURCE_LABELS = { scan = "scan data", client = "game cache", ah = "Auction House" }
@@ -33,25 +33,6 @@ local function byName(a, b)
         return left < right
     end
     return a.key < b.key
-end
-
--- Return the text of an import preview in plain words.
-local function describePreview(parentName, summary)
-    local lines = {
-        string.format('Import below "%s":', parentName),
-        "Groups: " .. summary.groups,
-        string.format("Items: %d (%d move from other groups)", summary.items, summary.itemsMoved),
-        string.format("Operations: %d new, %d reused", summary.operationsNew, summary.operationsReused),
-        string.format("Custom sources: %d new, %d reused", summary.customNew, summary.customReused),
-    }
-    if #summary.renames > 0 then
-        local parts = {}
-        for _, rename in ipairs(summary.renames) do
-            parts[#parts + 1] = string.format('%s "%s" becomes "%s"', rename.kind, rename.from, rename.to)
-        end
-        lines[#lines + 1] = "Renames: " .. table.concat(parts, "; ")
-    end
-    return table.concat(lines, "\n")
 end
 
 -- Build the page in the content frame.
@@ -192,36 +173,45 @@ function GroupsPage.Build(content, deps)
     page.tree.frame:SetSize(250, 330)
     place(page.tree.frame, 0, 0)
 
-    page.nameInput = Kit.Input(content, 236, nil, nil, { placeholder = "<group name>" })
-    place(page.nameInput, 6, 338)
-
-    -- A new group goes below the selected group. With parentID = BASE_ID it is a root group (a top-level group).
-    local function create(parentID)
-        local id, message = rules:CreateGroup(parentID, page.nameInput:GetText())
-        if report(id, message) then
-            page.nameInput:SetText("")
-        end
-        refresh()
-    end
-
+    -- A new group goes below the selected group. With the no-group node selected it is a top-level group.
+    -- The prompt shows the store message for a bad name and stays open.
     local function onNew()
-        create(page.selected)
-    end
-
-    local function onNewRoot()
-        create(BASE_ID)
+        local parentID = page.selected
+        local where = "a top-level group"
+        if parentID ~= BASE_ID then
+            where = 'below "' .. tostring(rules:Name(parentID)) .. '"'
+        end
+        page.newPrompt = Kit.Prompt(NEW_PROMPT)
+        page.newPrompt:Open({
+            title = "New group",
+            label = "Group name (" .. where .. ")",
+            onOK = function(name)
+                local id, message = rules:CreateGroup(parentID, name)
+                if id == nil then
+                    return tostring(message)
+                end
+                say("")
+                refresh()
+            end,
+        })
     end
 
     local function onRename()
-        if trim(page.nameInput:GetText()) == "" then
-            say("type the new name in the box under the tree, then choose Rename")
-            return
-        end
-        local ok, message = rules:RenameGroup(page.selected, page.nameInput:GetText())
-        if report(ok, message) then
-            page.nameInput:SetText("")
-        end
-        refresh()
+        local id = page.selected
+        page.renamePrompt = Kit.Prompt(RENAME_PROMPT)
+        page.renamePrompt:Open({
+            title = "Rename group",
+            label = "New name",
+            text = tostring(rules:Name(id) or ""),
+            onOK = function(name)
+                local ok, message = rules:RenameGroup(id, name)
+                if ok == nil then
+                    return tostring(message)
+                end
+                say("")
+                refresh()
+            end,
+        })
     end
 
     local function onDelete()
@@ -261,57 +251,25 @@ function GroupsPage.Build(content, deps)
         page.exportDialog:Open("Export group " .. tostring(rules:Name(page.selected)), text)
     end
 
-    local function applyImport(data, parentID)
-        local ok, result = ns.RulesExport.Apply(rules, deps.customSources, data, parentID, deps.compile)
-        if not ok then
-            say(tostring(result))
-            refresh()
-            return
-        end
-        page.selected = result.groupID or page.selected
-        refresh()
-        say(string.format("Imported %d groups and %d items", result.groups, result.items))
-    end
-
-    local function onImportText(text)
-        local data, message = ns.RulesExport.Parse(text)
-        if not data then
-            say(tostring(message))
-            return
-        end
-        local parentID = page.selected
-        local summary, previewMessage = ns.RulesExport.Preview(rules, deps.customSources, data, parentID)
-        if not summary then
-            say(tostring(previewMessage))
-            return
-        end
-        say("")
-        Kit.Confirm(IMPORT_CONFIRM, describePreview(tostring(rules:Name(parentID)), summary), function()
-            applyImport(data, parentID)
-        end)
-    end
-
     local function onImport()
-        if not deps.customSources then
-            say("import is not available")
-            return
-        end
-        say("")
-        page.importDialog = Kit.EditorDialog(IMPORT_DIALOG, {
-            help = "Paste an export text. It is imported below the selected group.",
+        page.importDialog = ns.RulesImport.Open(deps, {
+            parentID = page.selected,
+            say = say,
+            refresh = function()
+                refresh()
+            end,
+            onApplied = function(result)
+                page.selected = result.groupID or page.selected
+            end,
         })
-        page.importDialog:Open("Import below " .. tostring(rules:Name(page.selected)), "", onImportText)
     end
 
     page.newButton = Kit.Button(content, "New group", 78, onNew)
-    place(page.newButton, 0, 364)
-    page.newRootButton = Kit.Button(content, "New root", 78, onNewRoot)
-    page.newRootButton:SetPoint("LEFT", page.newButton, "RIGHT", gap, 0)
-    Kit.Tooltip(page.newRootButton, "New root group", { "Makes a top-level group, whatever group is selected." })
+    place(page.newButton, 0, 338)
     page.importButton = Kit.Button(content, "Import", 78, onImport)
-    page.importButton:SetPoint("LEFT", page.newRootButton, "RIGHT", gap, 0)
+    page.importButton:SetPoint("LEFT", page.newButton, "RIGHT", gap, 0)
 
-    -- Right-click menu of a tree row. Rename uses the text of the name box.
+    -- Right-click menu of a tree row.
     function onRightClick(id, row)
         page.tree:Select(id)
         local locked = id == BASE_ID or not editable()
@@ -792,9 +750,7 @@ function GroupsPage.Build(content, deps)
         page.nameList:SetData(page.results)
         page.itemsLabel:SetText(isBase and "Items (select a group to add items)" or "Items")
 
-        setEnabled(page.nameInput, canEdit)
         setEnabled(page.newButton, canEdit)
-        setEnabled(page.newRootButton, canEdit)
         setEnabled(page.importButton, canShare and canEdit)
         setEnabled(page.addInput, canAdd)
         setEnabled(page.addButton, canAdd)
