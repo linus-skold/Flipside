@@ -137,13 +137,15 @@ describe("Init rules", function()
             slash("")
         end)
 
-        it("has the four tabs in sequence", function()
+        it("has the six tabs in sequence", function()
             local tabs = windowFrame().Tabs
-            assert.are.equal(4, #tabs)
+            assert.are.equal(6, #tabs)
             assert.are.equal("Ledger", tabs[1]:GetText())
             assert.are.equal("Groups", tabs[2]:GetText())
             assert.are.equal("Operations", tabs[3]:GetText())
             assert.are.equal("Tooltip", tabs[4]:GetText())
+            assert.are.equal("Formulas", tabs[5]:GetText())
+            assert.are.equal("About", tabs[6]:GetText())
             assert.are.same({}, mock.messages)
         end)
 
@@ -215,11 +217,9 @@ describe("Init rules", function()
             assert.is_truthy(mock.messages[1]:find("boom", 1, true))
         end)
 
-        it("fills the Operations example box from a shift-click link", function()
+        it("has no Operations example box", function()
             local operations = ns.OperationsPage.Build(CreateFrame("Frame", nil, UIParent), deps)
-            operations.exampleInput.focused = true
-            _G.ChatEdit_InsertLink(LINEN)
-            assert.are.equal(LINEN, operations.exampleInput:GetText())
+            assert.is_nil(operations.exampleInput)
         end)
     end)
 

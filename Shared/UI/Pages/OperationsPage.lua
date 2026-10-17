@@ -116,6 +116,10 @@ function OperationsPage.Build(content, deps)
                 text = trim(text)
                 if text ~= stored(field.key) then
                     commit(part, text)
+                else
+                    -- The old value again: clear an earlier refusal message.
+                    part.message:SetText("")
+                    updatePart(part)
                 end
             end
             part.input = tipOn(add(Kit.Input(row, 270, save, save)))
@@ -159,6 +163,10 @@ function OperationsPage.Build(content, deps)
                 text = trim(text)
                 if text ~= stored(field.key) then
                     commit(part, text)
+                else
+                    -- The old value again: clear an earlier refusal message.
+                    part.message:SetText("")
+                    updatePart(part)
                 end
             end
             part.input = tipOn(add(Kit.Input(row, 220, save, save)))
