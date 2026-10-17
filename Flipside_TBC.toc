@@ -34,6 +34,7 @@ Shared\Services\FormulaLookup.lua
 Shared\Services\FormulaEval.lua
 Shared\Services\FormulaRun.lua
 Shared\Services\ItemNameIndex.lua
+Shared\Services\NameRegex.lua
 Shared\Services\OperationSchema.lua
 Shared\Services\GroupTree.lua
 Shared\Services\BagItems.lua
