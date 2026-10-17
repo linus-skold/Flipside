@@ -295,6 +295,12 @@ function OperationsPage.Build(content, deps)
     page.status:SetWidth(LEFT_WIDTH)
     page.status:SetJustifyH("LEFT")
 
+    -- Shows a message in the bad style, or in the good style for a success.
+    local function showStatus(text, good)
+        page.status:SetFontObject(Kit.Font(good and "good" or "bad"))
+        page.status:SetText(text)
+    end
+
     -- Selects the operation of a store call that gave an id, and shows it. Returns the store message on a refusal.
     local function finish(id, message)
         if id == nil then
@@ -330,9 +336,7 @@ function OperationsPage.Build(content, deps)
     page.importButton = Kit.Button(content, "Import", 120, function()
         page.importDialog = ns.RulesImport.Open(deps, {
             parentID = 1,
-            say = function(text)
-                page.status:SetText(text)
-            end,
+            say = showStatus,
             refresh = function()
                 refresh(true)
             end,
@@ -378,7 +382,7 @@ function OperationsPage.Build(content, deps)
         Kit.Confirm(DELETE_DIALOG, text, function()
             local ok, message = rules:DeleteOperation(id)
             if ok == nil then
-                page.status:SetText(tostring(message))
+                showStatus(tostring(message))
                 return
             end
             if selected == id then
