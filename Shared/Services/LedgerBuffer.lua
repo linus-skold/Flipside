@@ -7,6 +7,13 @@ ns.LedgerBuffer = LedgerBuffer
 
 local KEY = "ledger.buffer"
 
+-- Write one line to the diagnostics log; the Log module can be missing in a spec.
+local function log(level, fmt, ...)
+    if ns.Log then
+        ns.Log.Writef("ledger", level, fmt, ...)
+    end
+end
+
 local Buffer = {}
 Buffer.__index = Buffer
 
@@ -77,10 +84,12 @@ function Buffer:Add(record)
         self._dropped = self._dropped + 1
         if not self._warned and self._warn then
             self._warned = true
+            log("warn", "the ledger buffer is full; the oldest records are dropped")
             self._warn("the ledger buffer is full; the oldest records are dropped")
         end
     end
     list[#list + 1] = copy
+    log("debug", "record %s %s item %s qty %s money %s", copy.type, copy.source, copy.item, copy.qty, copy.money)
     if #list >= self:Cap() and self._onCap then
         self._onCap()
     end

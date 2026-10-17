@@ -12,6 +12,7 @@ function EventBus.New(options)
     local self = setmetatable({}, Bus)
     self.entries = {}
     self.onError = options.onError
+    self.onEmit = options.onEmit
     self.onFirstSubscriber = options.onFirstSubscriber
     self.onLastUnsubscribed = options.onLastUnsubscribed
     return self
@@ -107,12 +108,25 @@ function Bus:Emit(event, ...)
     end
     local count = select("#", ...)
     local args = { ... }
+    if self.onEmit then
+        pcall(self.onEmit, event, ...)
+    end
+    local stack
+    local function keepStack(err)
+        stack = type(debugstack) == "function" and debugstack(3, 6, 0) or nil
+        return err
+    end
+    local entry
+    local function run()
+        return entry.handler(event, unpack(args, 1, count))
+    end
     for i = 1, #snapshot do
-        local entry = snapshot[i]
+        entry = snapshot[i]
         if entry.active then
-            local ok, err = pcall(entry.handler, event, unpack(args, 1, count))
+            stack = nil
+            local ok, err = xpcall(run, keepStack)
             if not ok and self.onError then
-                pcall(self.onError, event, entry.owner, err)
+                pcall(self.onError, event, entry.owner, err, stack)
             end
         end
     end

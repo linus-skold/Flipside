@@ -7,6 +7,13 @@ local BuyingTab = {}
 ns.BuyingTab = BuyingTab
 
 local OWNER = "Flipside.BuyingTab"
+
+-- Write one line to the diagnostics log; the Log module can be missing in a spec.
+local function log(level, fmt, ...)
+    if ns.Log then
+        ns.Log.Writef("buying", level, fmt, ...)
+    end
+end
 local SEARCH_TIMEOUT = 10
 local RETRY_SECONDS = 5
 local LIST_WIDTH = 380
@@ -707,8 +714,10 @@ function Tab:_Start(entry, silent)
     end
     local ok, text = client.LiveSearch(entry.itemID)
     if not ok then
+        log("debug", "search for item %s refused: %s", entry.itemID, text)
         return "wait", text or "the search was refused"
     end
+    log("info", "search for item %s started", entry.itemID)
     self.token = self.token + 1
     local token = self.token
     self.pending = { entry = entry, itemID = entry.itemID, token = token, silent = silent }
@@ -716,6 +725,7 @@ function Tab:_Start(entry, silent)
         local pending = self.pending
         if pending and pending.token == token then
             self.pending = nil
+            log("warn", "search for item %s: no response", entry.itemID)
             if self.continueKey == entry.key then
                 self:_CloseConfirm()
             end
@@ -1279,6 +1289,8 @@ function Tab:_Confirm()
     end
     local client = self.deps.client
     buy.phase = "confirming"
+    log("info", "buy click: item %s, quantity %s, total %s, %s", buy.itemID, buy.quantity, buy.total,
+        buy.isItem and "item auction" or "commodity")
     -- The box stays open after the buy and shows the next row (see _ContinueBuy).
     self.continueKey = buy.entry.key
     local ok, err
@@ -1308,6 +1320,7 @@ function Tab:_Succeed(buy)
         run.lastPrice = buy.level.unitPrice
     end
     run.bought = run.bought + buy.quantity
+    log("info", "bought %s of item %s, total %s", buy.quantity, buy.itemID, buy.total)
     self.deps.log:Add(buy.entry, string.format("bought %d at %s", buy.quantity, money(buy.level.unitPrice)),
         "total " .. money(buy.total))
     self:_Say("bought " .. buy.quantity .. " x " .. self:_ItemName(buy.entry))
@@ -1355,6 +1368,7 @@ end
 function Tab:_Fail(buy, reason)
     self:_CloseConfirm()
     self.buy = nil
+    log("warn", "buy of item %s failed: %s", buy.itemID, reason)
     self.deps.log:Add(buy.entry, "buy failed", reason)
     self:_Say("buy failed: " .. reason)
     self:_Refresh(buy.entry)

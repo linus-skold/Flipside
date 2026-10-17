@@ -13,6 +13,13 @@ local function printLine(text)
     DEFAULT_CHAT_FRAME:AddMessage(PREFIX .. text)
 end
 
+-- Write one log line. The Log module can be missing in a spec.
+local function log(category, level, fmt, ...)
+    if ns.Log then
+        ns.Log.Writef(category, level, fmt, ...)
+    end
+end
+
 -- Show an error as one chat line.
 function ns.ReportError(message)
     printLine((tostring(message):gsub("%s*\n%s*", " ")))
@@ -26,8 +33,14 @@ local function isGameEvent(event)
 end
 
 ns.bus = ns.EventBus.New({
-    onError = function(event, _, err)
+    onError = function(event, _, err, stack)
         ns.ReportError("handler for " .. tostring(event) .. " failed: " .. tostring(err))
+        log("core", "error", "handler for %s failed: %s%s", event, err, stack and (" | " .. stack) or "")
+    end,
+    onEmit = function(...)
+        if ns.Log then
+            ns.Log.Trace(...)
+        end
     end,
     onFirstSubscriber = function(event)
         if isGameEvent(event) then
@@ -48,6 +61,7 @@ ns.scheduler = ns.Scheduler.New({
     clock = debugprofilestop,
     onError = function(job, message)
         ns.ReportError("job " .. tostring(job.name) .. " failed: " .. tostring(message))
+        log("core", "error", "job %s failed: %s", job.name, message)
     end,
 })
 
@@ -1084,13 +1098,35 @@ local function openMailing()
     end
 end
 
+-- Write the session marker: addon version, flavour, client build, realm and character.
+local function writeSessionMarker()
+    if not ns.Log then
+        return
+    end
+    local client, build, _, interface = GetBuildInfo()
+    local okVersion, version = pcall(function() return C_AddOns.GetAddOnMetadata(addonName, "Version") end)
+    ns.Log.SessionMarker({
+        version = okVersion and version or nil,
+        flavour = ns.Flavour.savedVariables.main,
+        client = client,
+        build = build,
+        interface = interface,
+        realm = GetNormalizedRealmName(),
+        character = UnitName("player"),
+    })
+end
+
 -- Set later in this file: attach the Auction House tab.
 local openUI, openMinimapButton
 
 eventFrame:SetScript("OnEvent", function(_, event, ...)
     if event == "ADDON_LOADED" and (...) == addonName then
+        if ns.Log then
+            _G.FlipsideLogDB = ns.Log.Attach(_G.FlipsideLogDB)
+        end
         ns.bus:Emit("Flipside.Loaded")
     elseif event == "PLAYER_LOGIN" then
+        pcall(writeSessionMarker)
         trackAuctionHouse()
         openSettingsDB()
         if ns.db then
@@ -1115,6 +1151,8 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
         if ns.RecipeSearch then
             ns.RecipeSearch.Attach()
         end
+        log("core", "info", "login done: settings %s, scan %s, ledger %s", ns.db and "on" or "off",
+            ns.scanEngine and "on" or "off", ns.ledgerBuffer and "on" or "off")
         ns.bus:Emit("Flipside.Login")
     end
     ns.bus:Emit(event, ...)
@@ -1268,6 +1306,7 @@ local function withMainWindow(action)
             now = GetServerTime,
             after = C_Timer.After,
             getVersionLine = ns.VersionLine,
+            openLog = ns.OpenLogWindow,
         })
         action(window)
     end)
@@ -1280,6 +1319,20 @@ function ns.OpenMainWindow()
     withMainWindow(function(window)
         window:Toggle()
     end)
+end
+
+-- Show or hide the log window.
+function ns.OpenLogWindow()
+    if not (ns.LogWindow and ns.Log) then
+        printLine("the log window is not available this session")
+        return
+    end
+    local ok, err = pcall(function()
+        ns.LogWindow.Create({ log = ns.Log, after = C_Timer.After }):Toggle()
+    end)
+    if not ok then
+        ns.ReportError("the log window is not available this session: " .. tostring(err))
+    end
 end
 
 -- The minimap button: hide the window if it shows the Ledger page; otherwise show the Ledger page.
@@ -1741,6 +1794,7 @@ end
 -- Handle the text after /flipside or /flip.
 function ns.HandleSlash(msg)
     local text = tostring(msg or "")
+    log("core", "info", "slash command: /flip %s", text)
     local command, rest = text:match("^%s*(%S*)%s*(.-)%s*$")
     command = command:lower()
     if command == "version" then
@@ -1763,6 +1817,9 @@ function ns.HandleSlash(msg)
         return
     elseif command == "ledgerdebug" then
         ledgerDebugCommand()
+        return
+    elseif command == "log" then
+        ns.OpenLogWindow()
         return
     elseif command == "minimap" then
         minimapCommand()

@@ -8,6 +8,13 @@ ns.MailingRun = MailingRun
 
 local OWNER = "Flipside.MailingRun"
 
+-- Write one line to the diagnostics log; the Log module can be missing in a spec.
+local function log(level, fmt, ...)
+    if ns.Log then
+        ns.Log.Writef("mail", level, fmt, ...)
+    end
+end
+
 -- Seconds to wait after the attach calls, so that a MAIL_LOCK_SEND_ITEMS event can arrive before the send.
 MailingRun.SETTLE_SECONDS = 0.2
 -- Seconds to wait for MAIL_SEND_SUCCESS or MAIL_FAILED.
@@ -79,6 +86,7 @@ end
 function Run:_Skip(entry)
     local skipped = self._result.skipped
     skipped[#skipped + 1] = entry
+    log("warn", "skipped %s x%s for %s: %s", entry.name or entry.key, entry.count, entry.recipient, entry.reason)
 end
 
 function Run:_Finish(reason)
@@ -90,6 +98,7 @@ function Run:_Finish(reason)
     self._state = "idle"
     self._result.stopped = reason
     local result = self._result
+    log("info", "run finished: %d mails sent, %d skipped, stopped: %s", result.sent, #result.skipped, reason)
     self:_Progress()
     if self._onDone then
         self._onDone(result)
@@ -104,6 +113,7 @@ function Run:Start(plan)
     if type(plan) ~= "table" or #(plan.mails or {}) == 0 then
         return false, "no mail to send"
     end
+    log("info", "run started: %d mails, %d skipped by the plan", #plan.mails, #(plan.skipped or {}))
     self._queue = {}
     for _, mail in ipairs(plan.mails) do
         self._queue[#self._queue + 1] = mail
@@ -272,8 +282,10 @@ function Run:_Send(mail)
     if self._onSending then
         self._onSending({ recipient = mail.recipient, postage = postage })
     end
-    local ok = pcall(client.Send, mail.recipient, items[1].name)
+    log("info", "sending to %s: %d attachments, postage %s", mail.recipient, #items, postage)
+    local ok, sendError = pcall(client.Send, mail.recipient, items[1].name)
     if not ok then
+        log("error", "send call to %s failed: %s", mail.recipient, sendError)
         client.ClearAll()
         self:_Finish("the send call failed")
         return
@@ -295,6 +307,7 @@ function Run:_OnResult(success)
     if not success then
         self._client.ClearAll()
         local reason = "mail failed" .. (self._lastError and (": " .. self._lastError) or "")
+        log("warn", "mail to %s: %s", mail.recipient, reason)
         self:_SkipItems(mail, sending.items, reason)
         self:_SkipRecipient(mail.recipient, reason)
         self:_AfterBags()
@@ -310,6 +323,7 @@ function Run:_OnResult(success)
         result.recipients[#result.recipients + 1] = entry
     end
     entry.mails = entry.mails + 1
+    log("info", "sent to %s, postage %s", mail.recipient, sending.postage)
     for _, item in ipairs(sending.items) do
         entry.units = entry.units + item.count
     end

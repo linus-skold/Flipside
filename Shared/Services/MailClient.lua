@@ -9,6 +9,13 @@ local _, ns = ...
 local MailClient = {}
 ns.MailClient = MailClient
 
+-- Write one line to the diagnostics log; the Log module can be missing in a spec.
+local function log(level, fmt, ...)
+    if ns.Log then
+        ns.Log.Writef("mail", level, fmt, ...)
+    end
+end
+
 -- The most attachments of one mail.
 MailClient.MAX_ATTACHMENTS = 12
 
@@ -107,6 +114,7 @@ function MailClient.New(api)
         api.click(index)
         local attached = api.getItem(index) ~= nil
         if not attached then
+            log("debug", "attach failed: bag %s slot %s to mail slot %s", bag, slot, index)
             api.clearCursor()
         end
         return attached
@@ -152,6 +160,7 @@ function MailClient.New(api)
 
     -- Sends the mail. Forever passes four arguments (the last one is the reply mail id, nil here), TBC passes three.
     function client.Send(recipient, subject)
+        log("debug", "SendMail call: %s, subject %s", recipient, subject)
         if api.sendArgs == 4 then
             api.sendMail(recipient, subject, "", nil)
         else

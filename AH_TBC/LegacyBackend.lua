@@ -5,6 +5,13 @@ local _, ns = ...
 -- Each call reads the legacy globals at call time, as the client can change them.
 local Backend = {}
 
+-- Write one line to the diagnostics log; the Log module can be missing in a spec.
+local function log(level, fmt, ...)
+    if ns.Log then
+        ns.Log.Writef("scan", level, fmt, ...)
+    end
+end
+
 -- Legacy GetAuctionItemInfo return positions.
 local INFO_NAME, INFO_COUNT, INFO_SALE_STATUS, INFO_ITEM_ID = 1, 3, 16, 17
 
@@ -110,6 +117,7 @@ end
 function Backend.StartScan()
     scan = newScan()
     scan.startedAt = now()
+    log("debug", "get all query sent")
     return ownQuery("scan", "", nil, nil, 0, false, 0, true, false, nil)
 end
 
@@ -125,6 +133,7 @@ function Backend.ScanPageQuery(page)
         scan.startedAt = now()
     end
     scan.page = page
+    log("debug", "page query sent: page %s", page)
     return ownQuery("scan", "", nil, nil, page, false, 0, false, false, nil)
 end
 
@@ -213,7 +222,7 @@ function Backend.ScanDiagnostics(summary)
             table.remove(db.diag, 1)
         end
     end
-    return string.format(
+    local line = string.format(
         "legacy scan: mode %s, rows %s, batch %s of %s, first event %s ms, events %s, read %.1f s, nil link %d, "
             .. "nil name %d, zero buyout %d, items %s, keys %s, pending %s, failed %s, keyed without link %s, "
             .. "refresh %.1f s, pages %s",
@@ -222,6 +231,8 @@ function Backend.ScanDiagnostics(summary)
         readSeconds, entry.nilLink or 0, entry.nilName or 0, entry.zeroBuyout or 0, tostring(entry.items),
         tostring(entry.keys), tostring(entry.pending), tostring(entry.failed), tostring(entry.keyedWithoutLink),
         entry.refreshSeconds or 0, tostring(entry.pages))
+    log("info", "scan details: %s", line)
+    return line
 end
 
 function Backend.OpenEvent()

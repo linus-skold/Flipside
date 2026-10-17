@@ -30,7 +30,13 @@ local function buildAbout(content, deps)
     version:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -Kit.Theme.gap)
     local note = Kit.Label(content, ABOUT_TEXT, "highlight")
     note:SetPoint("TOPLEFT", version, "BOTTOMLEFT", 0, -Kit.Theme.gap * 2)
-    return { title = title, version = version, note = note }
+    local logButton = Kit.Button(content, "Open log", 120, function()
+        if deps.openLog then
+            deps.openLog()
+        end
+    end)
+    logButton:SetPoint("TOPLEFT", note, "BOTTOMLEFT", 0, -Kit.Theme.gap * 2)
+    return { title = title, version = version, note = note, logButton = logButton }
 end
 
 -- Create the window once. deps: rules, customSources, readBags, keyFor, subscribe, formulaRun, formulaSources,

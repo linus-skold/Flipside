@@ -16,7 +16,7 @@ local GLOBAL_NAMES = {
     "CreateScrollBoxListLinearView", "CreateTreeDataProvider", "CreateScrollBoxListTreeListView", "MenuUtil",
     "Enum", "TooltipDataProcessor", "IsAltKeyDown", "GetInboxNumItems", "GetInboxItemLink", "GetInboxItem",
     "FlipsideDB_TBC", "FlipsideScanDB_TBC", "FlipsideLedgerDB", "FlipsideLedgerDB_TBC", "C_AddOns", "LoadAddOn",
-    "NUM_BAG_SLOTS", "NUM_BANKBAGSLOTS", "BANK_CONTAINER",
+    "FlipsideLogDB", "NUM_BAG_SLOTS", "NUM_BANKBAGSLOTS", "BANK_CONTAINER",
     "GetInboxHeaderInfo", "GetInboxInvoiceInfo", "GetInboxText", "hooksecurefunc",
     "AUCTION_SOLD_MAIL_SUBJECT", "AUCTION_EXPIRED_MAIL_SUBJECT", "AUCTION_REMOVED_MAIL_SUBJECT",
     "AUCTION_OUTBID_MAIL_SUBJECT", "AUCTION_WON_MAIL_SUBJECT",
@@ -498,6 +498,7 @@ function M.reset(options)
     _G.FlipsideDB_TBC = nil
     _G.FlipsideScanDB_TBC = nil
     _G.FlipsideScanDB = nil
+    _G.FlipsideLogDB = nil
     _G.SLASH_FLIPSIDE1 = nil
     _G.SLASH_FLIPSIDE2 = nil
     _G.SLASH_SCANTEST1 = nil
