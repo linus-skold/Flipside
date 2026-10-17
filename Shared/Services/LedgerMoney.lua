@@ -218,8 +218,41 @@ function Tracker:_Write(fields)
     return true
 end
 
+-- LedgerVendor sets a function that gets each money change in the merchant context. It returns { item, qty } for a
+-- sale or a purchase, { source = "repair" } for a repair, or nil. It only adds detail to the record.
+function Tracker:SetMerchantMatcher(matcher)
+    self._merchantMatcher = matcher
+end
+
+function Tracker:_MatchMerchant(delta)
+    if not self._merchantMatcher then
+        return nil
+    end
+    local ok, extra = pcall(self._merchantMatcher, delta)
+    return ok and type(extra) == "table" and extra or nil
+end
+
+-- Write the record of a merchant money change, with the detail of the matcher (item, quantity or repair).
+function Tracker:_WriteMerchant(delta, ctx, extra)
+    local pair = (delta > 0 and INCOME or EXPENSE).merchant
+    local fields = { source = pair[1], type = pair[2], money = math.abs(delta), ctx = ctx }
+    if extra then
+        if extra.source == "repair" and delta < 0 then
+            fields.source = "repair"
+        end
+        if extra.item then
+            fields.item, fields.qty = extra.item, extra.qty
+        end
+    end
+    self:_Write(fields)
+end
+
 -- Write a record for a money change that has a context kind (not ah, not quest).
 function Tracker:_WriteKind(kind, delta, ctx)
+    if kind == "merchant" then
+        self:_WriteMerchant(delta, ctx, self:_MatchMerchant(delta))
+        return
+    end
     local table_ = delta > 0 and INCOME or EXPENSE
     local pair = table_[kind]
     local source, recordType
@@ -296,6 +329,11 @@ function Tracker:_FlushHeld(held)
     if held.kind == "mail" then
         -- No mail invoice claimed the money, so it is mail money.
         self:_WriteKind("mail", held.delta, held.ctx)
+        return
+    end
+    if held.kind == "merchant" then
+        -- The buyback list had no matching entry at the money change. Read it once more, then write.
+        self:_WriteMerchant(held.delta, held.ctx, self:_MatchMerchant(held.delta))
         return
     end
     self._stats.unpaired = self._stats.unpaired + 1
@@ -425,6 +463,14 @@ function Tracker:_Process(delta)
             self._stats.claimed = self._stats.claimed + 1
         else
             self:_Hold("mail", delta, ctx)
+        end
+    elseif kind == "merchant" and delta > 0 and self._merchantMatcher then
+        -- The buyback entry of a sale can come after the money change. Wait for it once.
+        local extra = self:_MatchMerchant(delta)
+        if extra then
+            self:_WriteMerchant(delta, ctx, extra)
+        else
+            self:_Hold("merchant", delta, ctx)
         end
     elseif kind then
         self:_WriteKind(kind, delta, ctx)

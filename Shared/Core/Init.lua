@@ -888,6 +888,40 @@ local function openLedgerHooks()
                 end,
             },
         })
+        local vendor = ns.LedgerVendor and ns.LedgerVendor.New({
+            bus = ns.bus,
+            tracker = ns.ledgerMoney,
+            now = GetTime,
+            itemKey = function(link)
+                return ns.ItemString.ToKey(link, false)
+            end,
+            api = {
+                buybackCount = function()
+                    return GetNumBuybackItems()
+                end,
+                buyback = function(index)
+                    return GetBuybackItemInfo(index)
+                end,
+                buybackLink = function(index)
+                    return GetBuybackItemLink(index)
+                end,
+                merchantLink = function(index)
+                    return GetMerchantItemLink(index)
+                end,
+                -- Forever has C_MerchantFrame.GetItemInfo (a table); TBC has the global GetMerchantItemInfo.
+                merchantInfo = function(index)
+                    if C_MerchantFrame and C_MerchantFrame.GetItemInfo then
+                        local info = C_MerchantFrame.GetItemInfo(index)
+                        return info and info.price, info and info.stackCount
+                    end
+                    local _, _, price, stackCount = GetMerchantItemInfo(index)
+                    return price, stackCount
+                end,
+                repairCost = function()
+                    return GetRepairAllCost()
+                end,
+            },
+        })
         ns.LedgerHooks.Install({
             hook = hooksecurefunc,
             globals = _G,
@@ -895,6 +929,7 @@ local function openLedgerHooks()
             onSendMail = function(recipient)
                 mail.OnSendMail(recipient)
             end,
+            onBuyMerchantItem = vendor and vendor.OnBuy or nil,
         })
     end)
     if not ok then
