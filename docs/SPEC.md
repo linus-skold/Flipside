@@ -275,7 +275,7 @@ On TBC Anniversary the Flipside tab uses the Bids art of the Blizzard frame (ful
 - Same tree model, exclusive membership and item-string granularity.
 - **Starter groups** on first run (later; not in build step 4): common materials per profession, and "Junk" and "Vendor trash" groups pre-wired to Vendoring.
 - **Auto profession groups** (later; not in build step 4): one click creates *Profession → Crafts* and *Profession → Materials* from the open profession.
-- **Smart filters (new)** (later; not in build step 4): a group can be defined by a rule (e.g. "quality = rare and ilvl ≥ 600 and BoE") instead of a fixed item list. Fixed items always win over rule matches.
+- **Smart filters (new)** (later; not in build step 4): a group can be defined by a rule (e.g. "quality = rare and ilvl ≥ 600 and BoE") instead of a fixed item list. Fixed items always win over rule matches. The auto rules of §5.2a are different: they add items to groups; they do not define a group.
 
 **Groups and operations design (decided 2026-10-14)**
 
@@ -314,6 +314,28 @@ On TBC Anniversary the Flipside tab uses the Bids art of the Blizzard frame (ful
    - Custom sources that imported operations use are included. They follow the same rename rule.
 8. **Operations page.** Each formula field has an expand button that opens a larger editor. Each preview line has more space below it.
 
+#### 5.2a Auto rules (user request, 2026-10-17)
+
+Auto rules put new bag items into groups. The player sets the rules once.
+
+1. **Rule.** A rule has a target group and these filters: a name pattern (regex), a lowest and a highest rarity (quality 0 to 5), and item types (many classes). Every filter is optional, but a rule must set at least one. A rule with no filter cannot be saved and never matches. All filters that a rule sets must match (AND). Empty item types mean any type. The highest rarity 5 (Legendary) has no upper limit, as in the mailing filters (§5.5).
+2. **One global list.** The rules are one ordered list for the profile. The first rule that matches an item wins. Example: rule 1 `^Linen` with Uncommon to Legendary goes to "Uncommon Linen". Rule 2 `^Linen` goes to "Linen". The player changes the order with the Up and Down buttons. The list holds at most 50 rules.
+3. **Name pattern.** Flipside has its own small regex engine (`ns.NameRegex.Compile(source)` gives a matcher or an error text; `matcher:Match(name)` gives true or false). The match ignores case and is not anchored unless the pattern has `^` or `$`. The editor shows the compile error as the player types. If the engine is not loaded, a rule with a name pattern never matches.
+4. **When it runs.** The runner waits for the bag event `BAG_UPDATE_DELAYED` (0.5 s throttle) and once at login. It checks each bag item that is in no group (the lookup gives Base). The first matching rule adds the item to its group, for good, as a normal item add (D20 keys). An item that is already in a group never moves. An item whose name, rarity or type is not known yet is skipped and tried again on the next bag change. Bound items are not read, as for the other bag lists. The built-in All bag items group, and Base, cannot be targets.
+5. **Messages.** One chat line for each batch: "Flipside: N items added to groups by the auto rules".
+6. **Switch.** A check box turns the automatic mode off. The default is on. The Apply now button works when the switch is off.
+7. **Apply now.** The button shows a confirm dialog with a preview list (item > group, 15 lines and a count of the rest). On confirm, Flipside plans again from the current bags and adds the items.
+8. **Deleted group.** A rule whose group was deleted stays in the list, is shown in red with "(no group)", and never matches. The player edits or deletes it.
+9. **Storage.** The list (`autoRules`) and the switch (`autoRulesOff`) are saved in the profile group data. A profile from an older version has neither: the list is empty and the switch is on. The group export (§7.4) does not include auto rules.
+10. **UI.** The Groups page has a third inner tab, "Auto rules". It has the switch, the buttons Add rule and Apply now, and the rule list. Each row has the order number, the filters, the target group and the buttons Up, Down, Edit and Delete. The Add and Edit buttons open an editor window: pattern box with error line, two rarity drop-downs, the item types multi-select (Kit.MultiSelect), the group drop-down, Save and Cancel.
+
+In-game checklist (open, both clients):
+- Make groups "Linen" and "Uncommon Linen". Add the two rules of point 2. Put a Linen Cloth and an uncommon Linen item in the bags. After a bag change both go to their groups, and one chat line shows.
+- An invalid pattern such as `(` shows an error in the editor and Save stays off.
+- Clear all filters of a rule: Save stays off.
+- Turn the switch off. New items stay in no group. Apply now shows the preview. Confirm adds them. Cancel adds nothing.
+- Up and Down change which rule wins. A rule with a deleted group shows in red.
+- An item that is in a group does not move when a rule would match it.
 ### 5.3 Buying (reference §5.2 Shopping)
 
 - Search by text, filters, group, or "everything in my shopping lists".
@@ -1100,6 +1122,7 @@ TSM behaviours this spec doesn't cover yet. Change the status as each one gets s
 | UI and flow | Windows, AH tabs, settings layout, contextual frames | §6 | Partly scoped (2026-10-14: AH tabs, Flipside window, size, entry points; page layouts open; Groups and Operations pages: build step 4) |
 | TBC AH tabs | Buying tab and Selling tab in the TBC `AuctionFrame`: done (Buying 2026-10-16; Selling 2026-10-16; TBC multisell posting of several stacks in one click, with the Stack size and Max stacks fields, 2026-10-16, in this pull request; in-game checklists open, see §3 items 7 and 14a) | §3, §6 | Scoped (in-game checks open) |
 | Mailing | The mailing operation, the planner and the mail view (§5.5) | §5.4 | Partly scoped (2026-10-17: operation, planner, rules, view and send run built; the view sits in a wider `MailFrame` (wide layout, group tree, multi-select; a tab layout needs only a new `MailHost.LAYOUTS` entry); item filters (rarity range, many item types) and the built-in All bag items group built 2026-10-17; send mode decided: one confirm, then all mails in sequence, confirmed in game on TBC only; open: the Forever probe (`MailTest` second round) and the in-game checklist on both clients) |
+| Auto rules for groups | Rules that add new bag items to groups by name pattern, rarity and item type (§5.2a) | - | Partly scoped (2026-10-17: rules, runner, tab and Apply now built; the regex engine NameRegex comes in a parallel pull request; in-game checklist open; open: export of rules, a bank or mail trigger) |
 | Onboarding | First-run steps: starter groups, presets, guild-sharing choice (D7), first scan (starter groups moved here, 2026-10-14) | §6.3 | Needs scoping |
 | One-click macro and keybinds | Bindable button for post, cancel, buy, craft next | §3, §6.2 | Partly scoped (2026-10-14: no keybinds in v1; every buy is one click, D26) |
 | My Auctions view | Own auctions list replacing Blizzard's Auctions tab (Blizzard's Auctions tab stays; decision B) | §3 | Needs scoping |

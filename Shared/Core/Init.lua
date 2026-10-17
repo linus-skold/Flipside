@@ -1000,6 +1000,24 @@ local function openTooltip()
     end
 end
 
+-- Attach the auto rules runner: it puts new bag items of no group into groups by the rules.
+local function openAutoRules()
+    if not (ns.rules and ns.AutoRules and ns.readBags) then
+        return
+    end
+    local ok, err = pcall(ns.AutoRules.Attach, {
+        bus = ns.bus,
+        rules = ns.rules,
+        readBags = ns.readBags,
+        itemCache = ns.itemCache,
+        after = C_Timer.After,
+        print = printLine,
+    })
+    if not ok then
+        ns.ReportError("auto rules are not available this session: " .. tostring(err))
+    end
+end
+
 -- Attach the mailing view to the MailFrame; it needs the groups and operations.
 local function openMailing()
     if not (ns.rules and ns.MailClient and ns.MailingRun and ns.MailingView and ns.MailHost and ns.Kit
@@ -1091,6 +1109,7 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
         openBalance()
         openTooltip()
         openMailing()
+        openAutoRules()
         openUI()
         openMinimapButton()
         if ns.RecipeSearch then

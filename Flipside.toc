@@ -43,6 +43,7 @@ Shared\Services\CustomSources.lua
 Shared\Services\AHNameSearch.lua
 Shared\Services\RulesExport.lua
 Shared\Services\MailingPlan.lua
+Shared\Services\AutoRules.lua
 Shared\Services\MailClient.lua
 Shared\Services\MailingRun.lua
 Shared\Services\MailingLedger.lua
@@ -74,6 +75,7 @@ Shared\UI\Kit\Combat.lua
 Shared\UI\Kit\Graph.lua
 Shared\UI\Kit\MinimapButton.lua
 Shared\UI\Pages\FormulaPage.lua
+Shared\UI\Pages\AutoRulesPanel.lua
 Shared\UI\Pages\GroupsPage.lua
 Shared\UI\Pages\OperationsPage.lua
 Shared\UI\TooltipTable.lua
