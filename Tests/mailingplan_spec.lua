@@ -210,6 +210,136 @@ describe("MailingPlan", function()
         assert.same({ suffix }, keys)
     end)
 
+    describe("item filters", function()
+        local function fop(fields)
+            local o = op("Alt")
+            for k, v in pairs(fields) do
+                o[k] = v
+            end
+            return o
+        end
+
+        -- An item slot with a rarity and an item class.
+        local function item(key, quality, class, flags)
+            local f = { quality = quality, class = class }
+            for k, v in pairs(flags or {}) do
+                f[k] = v
+            end
+            return slot(key, 0, tonumber(key), 1, f)
+        end
+
+        local function sentKeys(plan)
+            local keys = {}
+            for _, mail in ipairs(plan.mails) do
+                for _, a in ipairs(mail.attachments) do
+                    keys[#keys + 1] = a.key
+                end
+            end
+            table.sort(keys)
+            return keys
+        end
+
+        local ALL = { "1", "2", "3", "4" }
+        local function bags()
+            return { item("1", 1, 4), item("2", 2, 4), item("3", 3, 2), item("4", 5, 7) }
+        end
+
+        it("sends items inside the rarity range and leaves the others", function()
+            local plan = build({ { items = ALL, operation = fop({ minQuality = 2, maxQuality = 3 }) } }, bags())
+            assert.same({ "2", "3" }, sentKeys(plan))
+            assert.same({}, plan.skipped)
+        end)
+
+        it("has no upper limit with the highest rarity Legendary", function()
+            local slots = bags()
+            slots[#slots + 1] = item("5", 7, 4)
+            local plan = build({ { items = { "1", "2", "3", "4", "5" }, operation = fop({ minQuality = 4 }) } }, slots)
+            assert.same({ "4", "5" }, sentKeys(plan))
+        end)
+
+        it("sends items of many chosen types", function()
+            local plan = build({ { items = ALL, operation = fop({ itemClasses = "2,7" }) } }, bags())
+            assert.same({ "3", "4" }, sentKeys(plan))
+        end)
+
+        it("sends any type when no type is chosen", function()
+            local plan = build({ { items = ALL, operation = fop({ itemClasses = "" }) } }, bags())
+            assert.same({ "1", "2", "3", "4" }, sentKeys(plan))
+        end)
+
+        it("needs the rarity and the type together", function()
+            local plan = build({ { items = ALL, operation = fop({ minQuality = 2, itemClasses = "4" }) } }, bags())
+            assert.same({ "2" }, sentKeys(plan))
+        end)
+
+        it("does not send an item of unknown rarity or type when a filter is on", function()
+            local slots = { slot("1", 0, 1, 1), slot("2", 0, 2, 1) }
+            assert.same({}, sentKeys(build({ { items = { "1" }, operation = fop({ minQuality = 1 }) } }, slots)))
+            assert.same({}, sentKeys(build({ { items = { "2" }, operation = fop({ itemClasses = "4" }) } }, slots)))
+            assert.same({ "1" }, sentKeys(build({ { items = { "1" }, operation = op("Alt") } }, slots)))
+        end)
+
+        it("skips a soulbound item and keeps a BoE item that is not bound", function()
+            local slots = { item("1", 3, 4, { soulbound = true }), item("2", 3, 4, { soulbound = false }) }
+            local plan = build({ { items = { "1", "2" }, operation = fop({ minQuality = 2 }) } }, slots)
+            assert.same({ "2" }, sentKeys(plan))
+            assert.same({ "soulbound" }, reasons(plan))
+        end)
+
+        it("lets a later group take an item that the first group filters out", function()
+            local plan = build({
+                { items = { "1" }, operation = fop({ minQuality = 3 }) },
+                { items = { "1" }, operation = { recipient = "Bank", keep = 0, maxSend = 0 } },
+            }, { item("1", 1, 4) })
+            assert.equal("Bank", plan.mails[1].recipient)
+        end)
+
+        it("acts as before for an operation with none of the new fields", function()
+            local plain = { recipient = "Alt", keep = 0, maxSend = 0 }
+            local plan = build({ { items = ALL, operation = plain } }, bags())
+            assert.same({ "1", "2", "3", "4" }, sentKeys(plan))
+        end)
+
+        describe("All bag items", function()
+            local function allGroup(operation, grouped)
+                return { allBags = true, items = {}, operation = operation, isGrouped = function(key)
+                    return grouped[key] == true
+                end }
+            end
+
+            it("covers items that are in no group and respects the filter", function()
+                local plan = build({ allGroup(fop({ minQuality = 2 }), { ["3"] = true }) }, bags())
+                assert.same({ "2", "4" }, sentKeys(plan))
+            end)
+
+            it("leaves soulbound items out of the report", function()
+                local slots = { item("1", 3, 4, { soulbound = true }), item("2", 3, 4) }
+                local plan = build({ allGroup(fop({}), {}) }, slots)
+                assert.same({ "2" }, sentKeys(plan))
+                assert.same({}, plan.skipped)
+            end)
+
+            it("sends nothing without a recipient", function()
+                local plan = build({ allGroup(nil, {}) }, bags())
+                assert.same({}, plan.mails)
+                assert.same({}, plan.skipped)
+            end)
+
+            it("still reports a quest item that passes the filter", function()
+                local plan = build({ allGroup(fop({}), {}) }, { item("1", 1, 12, { quest = true }) })
+                assert.same({ "quest item" }, reasons(plan))
+            end)
+        end)
+
+        it("parses and formats the item type text", function()
+            assert.same({ [2] = true, [7] = true }, P.ParseClasses("2,7"))
+            assert.same({}, P.ParseClasses(""))
+            assert.same({}, P.ParseClasses(nil))
+            assert.equal("2,7", P.FormatClasses({ [7] = true, [2] = true }))
+            assert.equal("", P.FormatClasses({}))
+        end)
+    end)
+
     describe("GroupsFor", function()
         local rules
 
@@ -244,6 +374,45 @@ describe("MailingPlan", function()
             assert.equal("Bank", plan.mails[1].recipient)
             assert.equal(2, #plan.mails[1].attachments)
             assert.same({ "no recipient" }, reasons(plan))
+        end)
+
+        it("makes the All bag items group once and covers the items that are in no group", function()
+            local all = rules:EnsureAllBagsGroup()
+            assert.is_number(all)
+            assert.equal(all, rules:EnsureAllBagsGroup())
+            assert.equal(all, rules:AllBagsGroup())
+            assert.equal("All bag items", rules:Name(all))
+            local herbs = rules:CreateGroup(1, "Herbs")
+            rules:AddItem("100", herbs)
+            local mailOp = rules:CreateOperation("mailing", "Rare to alt")
+            assert(rules:SetSetting(mailOp, "recipient", "Alt"))
+            assert(rules:SetSetting(mailOp, "minQuality", 2))
+            assert(rules:AttachOperation(all, "mailing", mailOp))
+
+            local groups = P.GroupsFor(rules, { all })
+            assert.is_true(groups[1].allBags)
+            local plan = build(groups, {
+                { key = "100", bag = 0, slot = 1, count = 1, quality = 3, class = 2 },
+                { key = "200", bag = 0, slot = 2, count = 1, quality = 3, class = 2 },
+                { key = "300", bag = 0, slot = 3, count = 1, quality = 1, class = 2 },
+            })
+            assert.equal(1, #plan.mails)
+            assert.equal("200", plan.mails[1].attachments[1].key)
+            assert.equal(1, #plan.mails[1].attachments)
+        end)
+
+        it("does not take an item in the All bag items group", function()
+            local all = rules:EnsureAllBagsGroup()
+            assert.is_nil(rules:AddItem("100", all))
+            assert.is_nil(rules:AddItems({ "100" }, all))
+            assert.same({}, rules:ItemsIn(all))
+        end)
+
+        it("makes the All bag items group again after the user deletes it", function()
+            local all = rules:EnsureAllBagsGroup()
+            assert(rules:DeleteGroup(all))
+            assert.is_nil(rules:AllBagsGroup())
+            assert.is_not.equal(all, rules:EnsureAllBagsGroup())
         end)
 
         it("lists a group once when the user selects it and its parent", function()

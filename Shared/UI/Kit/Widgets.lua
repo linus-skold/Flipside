@@ -276,6 +276,82 @@ function Kit.Dropdown(parent, width, options)
     refresh(dropdown)
     return dropdown
 end
+
+local MULTI_COLUMNS = 2
+local MULTI_COLUMN_WIDTH = 150
+local MULTI_ROW = 24
+
+-- Create a multi-select: a button that opens a panel of check boxes.
+-- options: items = { { value, text } }, emptyText (button text when nothing is chosen), onChange(set).
+-- set is a table value -> true. Methods: SetValues(set) (does not call onChange), GetValues(), SetEnabled(enabled).
+function Kit.MultiSelect(parent, width, options)
+    options = options or {}
+    local items = options.items or {}
+    local state = { values = {}, checks = {} }
+    local button
+
+    local function refresh()
+        local names = {}
+        for index, item in ipairs(items) do
+            state.checks[index]:SetChecked(state.values[item.value] == true)
+            if state.values[item.value] then
+                names[#names + 1] = item.text
+            end
+        end
+        button:SetText(#names == 0 and (options.emptyText or "None") or table.concat(names, ", "))
+    end
+
+    button = Kit.Button(parent, "", width or 220, function()
+        button.panel:SetShown(not button.panel:IsShown())
+    end)
+    local rows = math.ceil(#items / MULTI_COLUMNS)
+    local panel = Kit.Inset(UIParent)
+    panel:SetFrameStrata("DIALOG")
+    panel:SetSize(MULTI_COLUMNS * MULTI_COLUMN_WIDTH + 16, rows * MULTI_ROW + 16)
+    panel:SetPoint("TOPLEFT", button, "BOTTOMLEFT", 0, -2)
+    local background = panel:CreateTexture(nil, "BACKGROUND", nil, -5)
+    background:SetAllPoints(panel)
+    background:SetColorTexture(0, 0, 0, 0.92)
+    panel:Hide()
+    button.panel = panel
+    button:HookScript("OnHide", function()
+        panel:Hide()
+    end)
+
+    for index, item in ipairs(items) do
+        local column, row = math.floor((index - 1) / rows), (index - 1) % rows
+        local check = Kit.Check(panel, item.text, function(checked)
+            state.values[item.value] = checked or nil
+            refresh()
+            if options.onChange then
+                options.onChange(state.values)
+            end
+        end)
+        check:SetPoint("TOPLEFT", panel, "TOPLEFT", 8 + column * MULTI_COLUMN_WIDTH, -8 - row * MULTI_ROW)
+        state.checks[index] = check
+    end
+
+    function button.SetValues(_, set)
+        state.values = {}
+        for value, on in pairs(set or {}) do
+            state.values[value] = on or nil
+        end
+        refresh()
+    end
+    function button.GetValues()
+        return state.values
+    end
+    local setEnabled = button.SetEnabled
+    function button.SetEnabled(self, enabled)
+        setEnabled(self, enabled)
+        for _, check in ipairs(state.checks) do
+            check:SetEnabled(enabled)
+        end
+    end
+    refresh()
+    return button
+end
+
 -- Create a number box. options: min, max, allowNegative, hint, onChange(number or nil).
 -- onChange runs on Enter and on focus loss when the number changed.
 -- Methods: SetNumber(n), GetNumber(). GetNumber gives nil for empty, bad or out-of-range text.

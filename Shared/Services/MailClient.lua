@@ -14,6 +14,28 @@ MailClient.MAX_ATTACHMENTS = 12
 
 local QUEST_ITEM_CLASS = Enum and Enum.ItemClass and Enum.ItemClass.Questitem or 12
 
+-- Returns the item classes of the client as a list of { value = classID, text = name }, sorted by name.
+-- enum is Enum.ItemClass (name -> class id). getName is C_Item.GetItemClassInfo. Both clients have both.
+-- A class with no name, and an obsolete class, is left out.
+function MailClient.ItemClasses(enum, getName)
+    local list = {}
+    for key, id in pairs(enum or {}) do
+        if type(id) == "number" and not tostring(key):find("Obsolete", 1, true) then
+            local ok, name = pcall(getName, id)
+            if ok and type(name) == "string" and name ~= "" then
+                list[#list + 1] = { value = id, text = name }
+            end
+        end
+    end
+    table.sort(list, function(a, b)
+        if a.text ~= b.text then
+            return a.text < b.text
+        end
+        return a.value < b.value
+    end)
+    return list
+end
+
 -- Returns the api table from the client globals. sendArgs is the count of arguments of SendMail (3 or 4).
 function MailClient.Default()
     return {
@@ -53,10 +75,11 @@ function MailClient.New(api)
                 if type(info) == "table" and info.hyperlink then
                     local key = api.keyFor(info.hyperlink)
                     if key then
+                        local class = api.itemClass(info.hyperlink)
                         slots[#slots + 1] = {
                             key = key, bag = bag, slot = slot, count = tonumber(info.stackCount) or 1,
                             locked = info.isLocked == true, soulbound = info.isBound == true,
-                            quest = api.itemClass(info.hyperlink) == QUEST_ITEM_CLASS,
+                            quest = class == QUEST_ITEM_CLASS, quality = tonumber(info.quality), class = class,
                         }
                     end
                 end

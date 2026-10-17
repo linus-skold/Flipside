@@ -1008,6 +1008,7 @@ local function openMailing()
     end
     local ok, err = pcall(function()
         local client = ns.MailClient.New(ns.MailClient.Default())
+        ns.rules:EnsureAllBagsGroup()
         local function itemName(key)
             local parsed = ns.ItemString.ParseKey(key)
             local info = parsed and ns.itemCache:Get(parsed.itemID)

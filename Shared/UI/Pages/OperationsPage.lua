@@ -95,6 +95,11 @@ function OperationsPage.Build(content, deps)
         elseif kind == "bool" then
             part.check:SetChecked(value)
             setEnabled(part.check, not ro)
+        elseif kind == "classes" then
+            if part.classes then
+                part.classes:SetValues(ns.MailingPlan.ParseClasses(value))
+                setEnabled(part.classes, not ro)
+            end
         end
     end
 
@@ -181,6 +186,22 @@ function OperationsPage.Build(content, deps)
                 commit(part, checked)
             end)))
             part.check:SetPoint("TOPLEFT", row, "TOPLEFT", 170, -3)
+        elseif kind == "classes" then
+            -- The client gives the item types, so each flavour shows its own.
+            local classes = {}
+            if ns.MailClient and ns.MailingPlan and _G.C_Item and _G.C_Item.GetItemClassInfo then
+                classes = ns.MailClient.ItemClasses(_G.Enum and _G.Enum.ItemClass, _G.C_Item.GetItemClassInfo)
+            end
+            if #classes > 0 then
+                part.classes = tipOn(add(Kit.MultiSelect(row, 300, {
+                    items = classes,
+                    emptyText = "Any type",
+                    onChange = function(set)
+                        commit(part, ns.MailingPlan.FormatClasses(set))
+                    end,
+                })))
+                part.classes:SetPoint("TOPLEFT", row, "TOPLEFT", 176, -4)
+            end
         end
         return part
     end

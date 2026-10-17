@@ -17,7 +17,7 @@ describe("MailClient", function()
         load("MailClient")
         calls, held, bags = {}, {}, {
             [0] = {
-                { hyperlink = "link:A", stackCount = 5, isLocked = false, isBound = false },
+                { hyperlink = "link:A", stackCount = 5, isLocked = false, isBound = false, quality = 3 },
                 { hyperlink = "link:B", stackCount = 1, isLocked = true, isBound = true },
                 false,
                 { hyperlink = "link:Q", stackCount = 2 },
@@ -75,11 +75,30 @@ describe("MailClient", function()
         local slots = client(3).ReadSlots()
         assert.are.equal(3, #slots)
         assert.are.same({ key = "key:link:A", bag = 0, slot = 1, count = 5, locked = false, soulbound = false,
-            quest = false }, slots[1])
+            quest = false, quality = 3, class = 0 }, slots[1])
         assert.is_true(slots[2].locked)
         assert.is_true(slots[2].soulbound)
         assert.is_true(slots[3].quest)
         assert.are.equal(4, slots[3].slot)
+    end)
+
+    it("reads no rarity for a slot that has none", function()
+        local slots = client(3).ReadSlots()
+        assert.is_nil(slots[2].quality)
+        assert.are.equal(0, slots[2].class)
+    end)
+
+    it("lists the item classes of the client by name and leaves out obsolete and unnamed ones", function()
+        local names = { [0] = "Consumable", [2] = "Weapon", [4] = "Armor", [10] = "", [14] = "Old" }
+        local enum = { Consumable = 0, Weapon = 2, Armor = 4, CurrencyTokenObsolete = 10, PermanentObsolete = 14,
+            Housing = 20 }
+        local list = ns.MailClient.ItemClasses(enum, function(id)
+            return names[id]
+        end)
+        assert.are.same({
+            { value = 4, text = "Armor" }, { value = 0, text = "Consumable" }, { value = 2, text = "Weapon" },
+        }, list)
+        assert.are.same({}, ns.MailClient.ItemClasses(nil, function() end))
     end)
 
     it("attaches with a pickup and a click, and reads the attachment back", function()
