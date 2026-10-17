@@ -283,7 +283,8 @@ local GRID_ROW = 24
 -- Create a grid of check boxes, placed row by row. It sits in the parent like any frame: place it with SetPoint.
 -- options: items = { { value, text } }, columns (default 3), columnWidth (default 140), rowHeight (default 24),
 -- onChange(set). set is a table value -> true.
--- The grid has the size of all its check boxes. grid.checks lists the check buttons in item order. Methods: SetValues(set) (does not call onChange), GetValues(),
+-- The grid has the size of all its check boxes. grid.checks lists the check buttons in item order.
+-- Methods: SetValues(set) (does not call onChange), GetValues(),
 -- SetEnabled(enabled).
 function Kit.CheckGrid(parent, options)
     options = options or {}

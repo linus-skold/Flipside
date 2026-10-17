@@ -1309,8 +1309,8 @@ describe("GroupsPage", function()
                 GetItemClassInfo = function(id)
                     return id == 2 and "Weapon" or "Trade Goods"
                 end,
-                GetItemQualityColor = function(quality)
-                    return 1, 1, 1, colors[quality]
+                GetItemQualityColor = function(level)
+                    return 1, 1, 1, colors[level]
                 end,
             }
             linen = store:CreateGroup(1, "Linen")
