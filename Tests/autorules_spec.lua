@@ -455,6 +455,39 @@ describe("AutoRules", function()
         end)
     end)
 
+    describe("with the real NameRegex", function()
+        before_each(function()
+            assert(loadfile(manifest.path("NameRegex")))("Flipside", ns)
+        end)
+
+        it("sends the Linen example to the right groups", function()
+            local rules = {
+                { group = uncommonLinen, pattern = "^Linen", minQuality = UNCOMMON },
+                { group = linen, pattern = "^Linen" },
+            }
+            local plan = ns.AutoRules.Plan(rules, {
+                item("10", "Linen Cloth", 1, CLOTH),
+                item("11", "Linen Bandage", 3, 1),
+                item("12", "Bolt of Linen Cloth", 3, CLOTH),
+            }, ungrouped)
+            assert.are.same({
+                { key = "10", groupID = linen, ruleIndex = 2, name = "Linen Cloth" },
+                { key = "11", groupID = uncommonLinen, ruleIndex = 1, name = "Linen Bandage" },
+            }, plan)
+        end)
+
+        it("matches an alternation with an end anchor", function()
+            local rules = { { group = linen, pattern = "(Linen|Wool) Cloth$" } }
+            local function matches(name)
+                return ns.AutoRules.Match(rules, item("1", name, 1, CLOTH)) ~= nil
+            end
+            assert.is_true(matches("Linen Cloth"))
+            assert.is_true(matches("Bolt of Wool Cloth"))
+            assert.is_false(matches("Silk Cloth"))
+            assert.is_false(matches("Linen Cloth Bag"))
+        end)
+    end)
+
     describe("Apply", function()
         it("adds the planned items to their groups and counts them", function()
             local plan = {
