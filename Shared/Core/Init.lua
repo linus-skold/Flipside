@@ -917,6 +917,68 @@ local function openTooltip()
     end
 end
 
+-- Attach the mailing panel to the MailFrame; it needs the groups and operations.
+local function openMailing()
+    if not (ns.rules and ns.MailClient and ns.MailingRun and ns.MailingPanel and ns.MailHost and ns.Kit
+        and type(SendMail) == "function") then
+        return
+    end
+    local ok, err = pcall(function()
+        local client = ns.MailClient.New(ns.MailClient.Default())
+        local ledger = ns.ledgerBuffer and ns.MailingLedger.New({
+            buffer = ns.ledgerBuffer,
+            tracker = ns.ledgerMoney,
+            character = characterKey,
+            serverTime = GetServerTime,
+        }) or nil
+        local function itemName(key)
+            local parsed = ns.ItemString.ParseKey(key)
+            local info = parsed and ns.itemCache:Get(parsed.itemID)
+            return info and info.name or key
+        end
+        ns.MailHost.Attach({
+            bus = ns.bus,
+            after = C_Timer.After,
+            frame = function()
+                return _G.MailFrame
+            end,
+            create = function(parent)
+                return ns.MailingPanel.Create(parent, {
+                    rules = ns.rules,
+                    client = client,
+                    characters = function()
+                        return ns.holdings and ns.holdings:Characters() or {}
+                    end,
+                    selfName = function()
+                        return characterKey() or UnitName("player")
+                    end,
+                    itemName = itemName,
+                    formatMoney = ns.TooltipLines.FormatMoney,
+                    confirm = function(text, onAccept)
+                        ns.Kit.Confirm("FLIPSIDE_MAILING_SEND", text, onAccept)
+                    end,
+                    newRun = function(callbacks)
+                        return ns.MailingRun.New({
+                            client = client,
+                            bus = ns.bus,
+                            after = C_Timer.After,
+                            delay = ns.Flavour.mailDelay,
+                            bagWait = ns.Flavour.mailBagWait,
+                            onProgress = callbacks.onProgress,
+                            onDone = callbacks.onDone,
+                            onSending = ledger and ledger.Sending or nil,
+                            onSent = ledger and ledger.Sent or nil,
+                        })
+                    end,
+                })
+            end,
+        })
+    end)
+    if not ok then
+        ns.ReportError("the mailing panel is not available this session: " .. tostring(err))
+    end
+end
+
 -- Set later in this file: attach the Auction House tab.
 local openUI, openMinimapButton
 
@@ -940,6 +1002,7 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
         openLedgerMail()
         openBalance()
         openTooltip()
+        openMailing()
         openUI()
         openMinimapButton()
         if ns.RecipeSearch then

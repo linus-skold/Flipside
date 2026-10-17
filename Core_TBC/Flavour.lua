@@ -39,6 +39,12 @@ ns.Flavour = {
     topTabTemplate = "PanelTopTabButtonTemplate",
     -- TabButtonTemplate does not size to text on its own. The Kit sizes it: text + padding + 32 for the sides.
     topTabMinWidth = 40,
+    -- Mailing send run (SPEC 5.5). SendMail takes three arguments in the TBC UI.
+    sendMailArgs = 3,
+    -- Seconds to wait after BAG_UPDATE_DELAYED before the next mail (confirmed in game: 0.5 works).
+    mailDelay = 0.5,
+    -- Seconds to wait for BAG_UPDATE_DELAYED after a mail before the run goes on.
+    mailBagWait = 5,
     savedVariables = { main = "FlipsideDB_TBC", scan = "FlipsideScanDB_TBC", ledger = "FlipsideLedgerDB_TBC" },
     -- Backpack and bag slots 0..NUM_BAG_SLOTS.
     bagIDs = function()

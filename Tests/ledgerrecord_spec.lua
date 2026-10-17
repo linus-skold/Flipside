@@ -22,7 +22,8 @@ describe("LedgerRecord", function()
         assert.are.same({ "ahCancelled", "ahDeposit", "ahDepositRefund",
             "ahExpired", "ahOutbidRefund", "ahPost",
             "ahPurchase", "ahSale",
-            "loot", "mailMoney", "quest", "repair", "trade", "unknown", "vendorPurchase", "vendorSale" }, R.SOURCES)
+            "loot", "mailMoney", "mailPostage", "quest", "repair", "trade", "unknown", "vendorPurchase",
+            "vendorSale" }, R.SOURCES)
     end)
 
     it("lists the types", function()
