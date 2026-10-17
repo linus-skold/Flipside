@@ -456,6 +456,20 @@ function Backend.CanBuy()
     return has("PlaceAuctionBid") and has("GetAuctionItemInfo")
 end
 
+-- The bid post-hook of the ledger (SPEC 5.8, user decision 2026-10-17). hook is hooksecurefunc; handler(index) runs
+-- after each PlaceAuctionBid call on the browse list and only reads. Gives the hooked name, or nil.
+function Backend.HookBid(hook, handler)
+    if not has("PlaceAuctionBid") then
+        return nil
+    end
+    hook(_G, "PlaceAuctionBid", function(listType, index)
+        if listType == "list" then
+            handler(index)
+        end
+    end)
+    return "PlaceAuctionBid"
+end
+
 -- Pattern of the system text that follows a won buyout (ERR_AUCTION_WON_S, "You won an auction for %s").
 local function wonPattern()
     local text = _G.ERR_AUCTION_WON_S

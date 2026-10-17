@@ -86,6 +86,8 @@ describe("Init ledger", function()
         mock.fire("MERCHANT_SHOW")
         mock.money = 150
         mock.fire("PLAYER_MONEY")
+        -- A vendor sale waits one second for its buyback entry.
+        mock.advance(1)
         mock.messages = {}
         ns.HandleSlash("ledgerdebug")
         local text = table.concat(mock.messages, "\n")

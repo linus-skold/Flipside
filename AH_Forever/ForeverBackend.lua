@@ -301,6 +301,19 @@ function Backend.AuctionInfo(auctionID)
     local ok, info = pcall(call, "GetAuctionInfoByID", auctionID)
     return ok and info or nil
 end
+
+-- The bid post-hook of the ledger (SPEC 5.8, user decision 2026-10-17). hook is hooksecurefunc; handler(auctionID)
+-- runs after each PlaceBid call and only reads. Gives the hooked name, or nil if the client has no PlaceBid.
+function Backend.HookBid(hook, handler)
+    if not has("PlaceBid") then
+        return nil
+    end
+    hook(ah(), "PlaceBid", function(auctionID)
+        handler(auctionID)
+    end)
+    return "C_AuctionHouse.PlaceBid"
+end
+
 function Backend.BuyEvents()
     return {
         priceUpdated = "COMMODITY_PRICE_UPDATED",

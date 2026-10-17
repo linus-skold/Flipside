@@ -23,6 +23,8 @@ local SOURCE_TYPES = {
     repair = { expense = true },
     mailMoney = { income = true },
     mailPostage = { expense = true },
+    mailMoneySent = { expense = true },
+    mailSent = { expense = true },
     trade = { income = true, expense = true },
     quest = { income = true },
     unknown = { income = true, expense = true },

@@ -141,14 +141,58 @@ end
 
 -- Another module wrote a record for a change of this amount. The tracker then writes none for it.
 -- direction is "in" or "out".
-function Tracker:Claim(amount, direction)
+-- seconds is optional: how long the claim lasts (default CLAIM_SECONDS).
+function Tracker:Claim(amount, direction, seconds)
     if type(amount) ~= "number" or amount <= 0 or (direction ~= "in" and direction ~= "out") then
         return false
     end
     self._claims[#self._claims + 1] = {
-        amount = amount, direction = direction, untilTime = self._now() + LedgerMoney.CLAIM_SECONDS,
+        amount = amount, direction = direction, untilTime = self._now() + (seconds or LedgerMoney.CLAIM_SECONDS),
     }
     return true
+end
+
+-- Claim one action that can show as one change (the total) or as separate changes (the parts), for example the
+-- postage and the gold of a mail. parts is a list of amounts. When a part arrives, the total claim ends. When the
+-- total arrives, all part claims end. Returns a handle for ReleaseClaims, or nil if there is nothing to claim.
+function Tracker:ClaimGroup(parts, direction, seconds)
+    if type(parts) ~= "table" or (direction ~= "in" and direction ~= "out") then
+        return nil
+    end
+    local group = { claims = {} }
+    local total = 0
+    local untilTime = self._now() + (seconds or LedgerMoney.CLAIM_SECONDS)
+    local function add(amount, isTotal)
+        local claim = {
+            amount = amount, direction = direction, untilTime = untilTime, group = group, isTotal = isTotal,
+        }
+        group.claims[#group.claims + 1] = claim
+        self._claims[#self._claims + 1] = claim
+    end
+    for _, amount in ipairs(parts) do
+        if type(amount) == "number" and amount > 0 then
+            total = total + amount
+            add(amount, false)
+        end
+    end
+    if #group.claims == 0 then
+        return nil
+    end
+    if #group.claims > 1 then
+        add(total, true)
+    end
+    return group
+end
+
+-- Remove the claims of a group that the money change did not use (for example a mail that failed).
+function Tracker:ReleaseClaims(group)
+    local keep = {}
+    for _, claim in ipairs(self._claims) do
+        if claim.group ~= group then
+            keep[#keep + 1] = claim
+        end
+    end
+    self._claims = keep
 end
 
 -- Write a record. Returns true if the buffer took it.
@@ -174,8 +218,41 @@ function Tracker:_Write(fields)
     return true
 end
 
+-- LedgerVendor sets a function that gets each money change in the merchant context. It returns { item, qty } for a
+-- sale or a purchase, { source = "repair" } for a repair, or nil. It only adds detail to the record.
+function Tracker:SetMerchantMatcher(matcher)
+    self._merchantMatcher = matcher
+end
+
+function Tracker:_MatchMerchant(delta)
+    if not self._merchantMatcher then
+        return nil
+    end
+    local ok, extra = pcall(self._merchantMatcher, delta)
+    return ok and type(extra) == "table" and extra or nil
+end
+
+-- Write the record of a merchant money change, with the detail of the matcher (item, quantity or repair).
+function Tracker:_WriteMerchant(delta, ctx, extra)
+    local pair = (delta > 0 and INCOME or EXPENSE).merchant
+    local fields = { source = pair[1], type = pair[2], money = math.abs(delta), ctx = ctx }
+    if extra then
+        if extra.source == "repair" and delta < 0 then
+            fields.source = "repair"
+        end
+        if extra.item then
+            fields.item, fields.qty = extra.item, extra.qty
+        end
+    end
+    self:_Write(fields)
+end
+
 -- Write a record for a money change that has a context kind (not ah, not quest).
 function Tracker:_WriteKind(kind, delta, ctx)
+    if kind == "merchant" then
+        self:_WriteMerchant(delta, ctx, self:_MatchMerchant(delta))
+        return
+    end
     local table_ = delta > 0 and INCOME or EXPENSE
     local pair = table_[kind]
     local source, recordType
@@ -254,6 +331,11 @@ function Tracker:_FlushHeld(held)
         self:_WriteKind("mail", held.delta, held.ctx)
         return
     end
+    if held.kind == "merchant" then
+        -- The buyback list had no matching entry at the money change. Read it once more, then write.
+        self:_WriteMerchant(held.delta, held.ctx, self:_MatchMerchant(held.delta))
+        return
+    end
     self._stats.unpaired = self._stats.unpaired + 1
     self:_WriteUnknown(held.delta, held.ctx)
 end
@@ -316,6 +398,16 @@ function Tracker:_Claimed(delta)
             return self:_Claimed(delta)
         elseif claim.amount == math.abs(delta) and claim.direction == direction then
             table.remove(self._claims, i)
+            if claim.group then
+                -- A total ends the parts. A part ends the total, because the total cannot arrive now.
+                local keep = {}
+                for _, other in ipairs(self._claims) do
+                    if other.group ~= claim.group or (not claim.isTotal and not other.isTotal) then
+                        keep[#keep + 1] = other
+                    end
+                end
+                self._claims = keep
+            end
             return true
         end
     end
@@ -371,6 +463,14 @@ function Tracker:_Process(delta)
             self._stats.claimed = self._stats.claimed + 1
         else
             self:_Hold("mail", delta, ctx)
+        end
+    elseif kind == "merchant" and delta > 0 and self._merchantMatcher then
+        -- The buyback entry of a sale can come after the money change. Wait for it once.
+        local extra = self:_MatchMerchant(delta)
+        if extra then
+            self:_WriteMerchant(delta, ctx, extra)
+        else
+            self:_Hold("merchant", delta, ctx)
         end
     elseif kind then
         self:_WriteKind(kind, delta, ctx)
@@ -432,6 +532,55 @@ function Tracker:_OnQuest(questID, _, moneyReward)
     self._quests[#self._quests + 1] = { amount = moneyReward, time = self._now(), ctx = ctx }
 end
 
+-- Add a hint for the buy of one item auction. Flipside's own buy call and the bid post-hook (OnBid) both come here,
+-- so a buy of the Buying tab gives one hint: a fresh unpaid hint with the same auction ID only gets what it lacks.
+function Tracker:AddBuyHint(auctionID, item, qty)
+    local now = self._now()
+    local hint
+    if auctionID ~= nil then
+        for _, other in ipairs(self._hints) do
+            if other.kind == "buy" and not other.paid and other.auctionID == auctionID
+                and now - other.time <= LedgerMoney.HINT_SECONDS then
+                hint = other
+                break
+            end
+        end
+    end
+    if hint then
+        hint.item = hint.item or item
+        hint.qty = hint.qty or qty
+        return hint
+    end
+    hint = { kind = "buy", auctionID = auctionID, item = item, qty = qty, time = now, seen = {} }
+    hint.ctx = self:Context("ah")
+    self._hints[#self._hints + 1] = hint
+    self:_ResolveHeld()
+    return hint
+end
+
+-- The bid post-hook (PlaceBid on Forever, PlaceAuctionBid on TBC) runs right after the call, while the auction is
+-- still in the client data. It reads the item and the quantity of the auction. It covers a buy in Blizzard's own tab.
+-- A Forever item auction has one item when the info has no quantity.
+function Tracker:OnBid(auctionID)
+    if self:_Secret(auctionID) or type(auctionID) ~= "number" then
+        self:_Skip()
+        return
+    end
+    local deps = self._deps
+    local info = deps.auctionInfo and deps.auctionInfo(auctionID)
+    local item, qty
+    if type(info) == "table" then
+        local source = info.itemLink
+        if source == nil and type(info.itemKey) == "table" then
+            source = info.itemKey.itemID
+        end
+        item = source ~= nil and deps.itemKey(source, false) or nil
+        qty = type(info.quantity) == "number" and info.quantity or (item and 1 or nil)
+    end
+    self:_Ring("bid", auctionID)
+    self:AddBuyHint(auctionID, item, qty)
+end
+
 -- A call to buy or post that Flipside made. The arguments are the ones of the AuctionClient call.
 function Tracker:_OnCall(name, ...)
     local deps = self._deps
@@ -442,11 +591,14 @@ function Tracker:_OnCall(name, ...)
     elseif name == "BuyItemAuction" then
         local auctionID = ...
         local info = deps.auctionInfo and deps.auctionInfo(auctionID)
-        hint = { kind = "buy", auctionID = auctionID }
+        local item, qty
         if type(info) == "table" then
-            hint.item = deps.itemKey(info.itemLink, false)
-            hint.qty = type(info.quantity) == "number" and info.quantity or nil
+            item = deps.itemKey(info.itemLink, false)
+            qty = type(info.quantity) == "number" and info.quantity or nil
         end
+        self:AddBuyHint(auctionID, item, qty)
+        self:_Ring("call", name)
+        return
     elseif name == "PostItem" or name == "ConfirmPostItem" or name == "PostCommodity"
         or name == "ConfirmPostCommodity" then
         local bag, slot, duration, quantity, bid, buyout = ...
