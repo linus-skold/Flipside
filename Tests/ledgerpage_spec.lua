@@ -974,6 +974,13 @@ describe("LedgerPage", function()
             end
         end)
 
+        it("has labels for the mail send sources", function()
+            assert.are.equal("Mail sent", ns.LedgerPage.SourceLabel("mailSent"))
+            assert.are.equal("Mail money sent", ns.LedgerPage.SourceLabel("mailMoneySent"))
+            assert.are.equal("Mail sent", ns.LedgerPage.TypeLabel("mailSent"))
+            assert.are.equal("Mail money sent", ns.LedgerPage.TypeLabel("mailMoneySent"))
+        end)
+
         it("shows records without money with an empty Money cell", function()
             build_overview()
             local init = initializers[page.views.overview.list.box].initializer
