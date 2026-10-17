@@ -261,7 +261,8 @@ function MailingPlan.GroupsFor(rules, groupIDs)
         if rules.AllBagsGroup and rules:AllBagsGroup() == id then
             entry.allBags = true
             entry.isGrouped = function(key)
-                return rules:GroupOf(key) ~= nil
+                -- An item in no group belongs to Base (group 1).
+                return rules:GroupOf(key) ~= 1
             end
         end
         out[#out + 1] = entry
