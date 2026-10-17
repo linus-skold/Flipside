@@ -2,7 +2,7 @@ local manifest = require("Tests.manifest")
 local mock = require("Tests.wow_mock")
 
 describe("MailHost", function()
-    local ns, bus, mailFrame, created, timers, refreshes, running, inbox, send
+    local ns, bus, mailFrame, created, timers, refreshes, running, inbox, send, openMail
 
     local function makeView(parent, size)
         local view = { frame = CreateFrame("Frame", nil, parent), size = size, run = { IsRunning = function()
@@ -39,10 +39,15 @@ describe("MailHost", function()
         mailFrame = CreateFrame("Frame", "MailFrame", UIParent)
         mailFrame:SetSize(384, 512)
         inbox, send = stretched("InboxFrame"), stretched("SendMailFrame")
+        openMail = CreateFrame("Frame", "OpenMailFrame", UIParent)
+        openMail:SetPoint("TOPLEFT", inbox, "TOPRIGHT")
         ns.MailHost.Attach({
             bus = bus,
             frame = function()
                 return mailFrame
+            end,
+            openMail = function()
+                return openMail
             end,
             children = function()
                 return { inbox, send }
@@ -87,6 +92,17 @@ describe("MailHost", function()
             assert.are.equal("TOPLEFT", frame:GetPoint(1))
             assert.are.equal("BOTTOMRIGHT", frame:GetPoint(2))
         end
+    end)
+
+    it("moves the open-mail frame to the right edge on show and restores its anchor on close", function()
+        bus:Emit("MAIL_SHOW")
+        assert.are.equal(1, openMail:GetNumPoints())
+        local point, relative, relativePoint, x = openMail:GetPoint(1)
+        assert.are.same({ "TOPLEFT", mailFrame, "TOPRIGHT", 46 }, { point, relative, relativePoint, x })
+        bus:Emit("MAIL_SHOW")
+        bus:Emit("MAIL_CLOSED")
+        local p, r, rp = openMail:GetPoint(1)
+        assert.are.same({ "TOPLEFT", inbox, "TOPRIGHT" }, { p, r, rp })
     end)
 
     it("makes the view once and widens again when the mailbox opens again", function()

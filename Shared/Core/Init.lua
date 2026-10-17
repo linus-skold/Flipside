@@ -1018,6 +1018,9 @@ local function openMailing()
             frame = function()
                 return _G.MailFrame
             end,
+            openMail = function()
+                return _G.OpenMailFrame
+            end,
             children = function()
                 local list = {}
                 for _, name in ipairs({ "InboxFrame", "SendMailFrame" }) do

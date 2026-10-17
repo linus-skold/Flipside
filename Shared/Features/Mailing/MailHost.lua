@@ -12,6 +12,7 @@ local OWNER = "Flipside.MailHost"
 local EXTRA_WIDTH = 330
 local VIEW_GAP = { top = 64, right = 8, bottom = 8 }
 local VIEW_LEVEL = 5
+local OPEN_MAIL_X = 46
 
 -- Keep a child frame at its old width: a frame anchored at two corners of MailFrame would stretch with it.
 -- Returns the old points, or nil if the frame does not stretch.
@@ -36,7 +37,21 @@ local function unpinChild(pin)
     for _, point in ipairs(pin.points) do
         pin.child:SetPoint(unpack(point, 1, 5))
     end
-    pin.child:SetWidth(0)
+    if pin.width then
+        pin.child:SetWidth(0)
+    end
+end
+
+-- Move the open-mail frame to the right edge of MailFrame, where Forever puts it (x 46). TBC anchors it to the
+-- Inbox frame, which would put it over the view. Returns the old points.
+local function moveOpenMail(openMail, mailFrame)
+    local saved = {}
+    for index = 1, openMail:GetNumPoints() do
+        saved[index] = { openMail:GetPoint(index) }
+    end
+    openMail:ClearAllPoints()
+    openMail:SetPoint("TOPLEFT", mailFrame, "TOPRIGHT", OPEN_MAIL_X, 0)
+    return saved
 end
 
 -- Layouts. Each one is function(deps, host) returning { Open(mailFrame), Close() }. Open makes the view if it does
@@ -55,10 +70,14 @@ MailHost.LAYOUTS = {
                 for _, child in ipairs(deps.children()) do
                     local points = pinChild(child, mailFrame, width)
                     if points then
-                        state.pins[#state.pins + 1] = { child = child, points = points }
+                        state.pins[#state.pins + 1] = { child = child, points = points, width = true }
                     end
                 end
                 mailFrame:SetWidth(width + EXTRA_WIDTH)
+                local openMail = deps.openMail and deps.openMail()
+                if openMail then
+                    state.pins[#state.pins + 1] = { child = openMail, points = moveOpenMail(openMail, mailFrame) }
+                end
             end
             if not host.view then
                 host.view = deps.create(mailFrame, {
@@ -92,8 +111,8 @@ MailHost.LAYOUTS = {
 }
 
 -- deps: bus, create(parent, size) (returns a MailingView), after(seconds, fn), frame() (returns the MailFrame or
--- nil), children() (the frames inside MailFrame that must keep their width: InboxFrame, SendMailFrame), mode
--- (a key of MailHost.LAYOUTS, default "wide").
+-- nil), openMail() (the open-mail frame or nil), children() (the frames inside MailFrame that must keep their
+-- width: InboxFrame, SendMailFrame), mode (a key of MailHost.LAYOUTS, default "wide").
 -- Returns an object with View(), the view or nil.
 function MailHost.Attach(deps)
     local host = { view = nil }
