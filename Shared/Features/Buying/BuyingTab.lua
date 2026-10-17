@@ -14,6 +14,7 @@ local QUOTE_WAIT = 10
 local CONFIRM_WAIT = 15
 local DEFAULT_JUMP = 25
 local MESSAGE_ROOM = 12 -- height that the left column gains when the message line is empty
+local SEARCH_SHIFT = 28 -- height of the name search row above the source tabs
 local JUMP_KEY = "buying.jumpPercent"
 local RED = { 1, 0.2, 0.2 }
 -- The text for the amount box when the input is not a positive whole number.
@@ -358,7 +359,9 @@ end
 function Tab:RefreshList()
     local deps = self.deps
     local lists = deps.searchLists
-    if self.source == "lists" then
+    if self.searchResults then
+        self.list = self.searchResults
+    elseif self.source == "lists" then
         local saved = lists and self.listID and lists:Get(self.listID) or nil
         if not saved then
             self.listID = nil
@@ -381,6 +384,7 @@ function Tab:SetSource(source)
     if source ~= "groups" and not (source == "lists" and self.deps.searchLists) then
         return false
     end
+    self:_DropSearch()
     self.source = source
     self.selectedKey = nil
     self.levelSel = nil
@@ -399,6 +403,7 @@ function Tab:SelectList(id)
     if not lists or not lists:Get(id) then
         return false
     end
+    self:_DropSearch()
     self.listID = id
     self.source = "lists"
     self.selectedKey = nil
@@ -470,6 +475,81 @@ end
 
 local QUICK_LIST = "Quick search"
 
+-- Forget the name search results and the saved selection. The caller sets the new selection.
+function Tab:_DropSearch()
+    self.searchResults, self.searchText, self.preSearchKey = nil, nil, nil
+    if self.ui then
+        self.ui.searchInput:SetText("")
+    end
+end
+
+-- Search the Auction House for items by name. Every match shows in the list, also items in no group.
+-- A searched item has no operation, so it has no max price. Empty text clears the search.
+-- Returns true, or false and a text.
+function Tab:SearchName(text)
+    local deps = self.deps
+    text = tostring(text or ""):match("^%s*(.-)%s*$")
+    if text == "" then
+        return self:ClearSearch()
+    end
+    local finder = deps.ahNameSearch
+    if not finder then
+        self:_Say("name search is not available")
+        return false, "name search is not available"
+    end
+    if self.pending or self.queue or self.buy or self.nameSearching then
+        self:_Say("a search is running")
+        return false, "a search is running"
+    end
+    if not deps.client.IsReady() then
+        self:_Say("waiting for the Auction House")
+        return false, "waiting for the Auction House"
+    end
+    local query = ns.ItemNameIndex and ns.ItemNameIndex.ParseQuery(text) or { raw = text }
+    self.nameSearching = true
+    finder:Find(query.raw, function(items, err)
+        self.nameSearching = false
+        if not items then
+            self:_Say(err or "the search failed")
+            return
+        end
+        self:_ShowSearch(text, items)
+    end, { exact = query.exact })
+    return true
+end
+
+-- Show the items of a finished name search in the list.
+function Tab:_ShowSearch(text, items)
+    if not self.searchResults then
+        self.preSearchKey = self.selectedKey
+    end
+    self.searchText = text
+    self.searchResults = self.deps.plan.ListEntries(items, { formulaRun = self.deps.formulaRun, label = "Search" })
+    self.selectedKey, self.levelSel, self.run = nil, nil, nil
+    self:_CancelQuote("the list changed")
+    self:RefreshList()
+    self:_Say(#self.searchResults == 0 and "no items found" or "")
+end
+
+-- Leave the name search and show the groups or the search list again. The earlier selection comes back.
+function Tab:ClearSearch()
+    if not self.searchResults then
+        if self.ui then
+            self.ui.searchInput:SetText("")
+        end
+        return true
+    end
+    local key = self.preSearchKey
+    self:_CancelQuote("the list changed")
+    self:_DropSearch()
+    self.levelSel, self.run = nil, nil
+    self:RefreshList()
+    self.selectedKey = key and self:_Entry(key) and key or nil
+    self:_Update()
+    self:_Say("")
+    return true
+end
+
 -- Add a resolved item to the selected search list. With no list, it uses the list "Quick search".
 function Tab:_AddResolved(item)
     local lists = self.deps.searchLists
@@ -495,6 +575,7 @@ function Tab:_AddResolved(item)
         self:_Say(err)
         return false, err
     end
+    self:_DropSearch()
     self.source = "lists"
     if self.ui then
         self.ui.itemInput:SetText("")
@@ -1533,7 +1614,7 @@ end
 -- Update the source buttons, the search list controls and the place of the list.
 function Tab:_UpdateLeft()
     local ui, lists = self.ui, self.deps.searchLists
-    local isLists = self.source == "lists" and lists ~= nil
+    local isLists = self.source == "lists" and lists ~= nil and not self.searchResults
     ui.sourceTabs.buttons[2]:SetShown(lists ~= nil)
     self.syncingTabs = true
     ui.sourceTabs:Select(isLists and "lists" or "groups")
@@ -1554,7 +1635,8 @@ function Tab:_UpdateLeft()
     if self.placedFor ~= isLists then
         self.placedFor = isLists
         ui.tree.frame:ClearAllPoints()
-        ui.tree.frame:SetPoint("TOPLEFT", ui.leftTop, "TOPLEFT", 0, isLists and -122 or -44)
+        local top = (isLists and 122 or 44) + SEARCH_SHIFT
+        ui.tree.frame:SetPoint("TOPLEFT", ui.leftTop, "TOPLEFT", 0, -top)
         ui.tree.frame:SetPoint("BOTTOMLEFT", ui.content, "BOTTOMLEFT", 0, 0)
     end
 end
@@ -1570,15 +1652,27 @@ function Tab:_Update()
     local canSearch = client.CanLiveSearch()
     local selected = self:_Selected()
     ui.stop:SetShown(self.queue ~= nil)
-    self.nodes = BuyingTab.BuildNodes(self.deps.rules, self.list, function(entry)
-        return self:_ItemName(entry)
-    end)
+    if self.searchResults then
+        -- The results are a flat list of items, with no group nodes.
+        self.nodes = {}
+        for index, entry in ipairs(self.list) do
+            self.nodes[index] = { id = "i" .. entry.key, kind = "item", entry = entry, text = self:_ItemName(entry) }
+        end
+    else
+        self.nodes = BuyingTab.BuildNodes(self.deps.rules, self.list, function(entry)
+            return self:_ItemName(entry)
+        end)
+    end
+    ui.searchClear:SetEnabled(self.searchResults ~= nil)
     ui.tree.selected = nodeID(self.selectedKey)
     ui.tree:SetNodes(self.nodes)
     if not selected then
         local text = canSearch and "" or "Live search is not available."
         if self.source == "lists" and not self.listID then
             text = "Make or pick a search list, then add items."
+        end
+        if self.searchResults then
+            text = #self.list == 0 and "no items found" or "Pick an item. A searched item has no max price."
         end
         ui.summary:SetText(text)
         ui.buyNext:SetText("Buy")
@@ -1610,7 +1704,11 @@ function Tab:_Update()
     ui.amount:SetEnabled(not isItem)
     self.covered = (reason == nil and cover) and cover.covered or {}
     -- The line shows only the reason why the button is off.
-    ui.summary:SetText(reason and (verb .. ": " .. reason) or "")
+    local text = reason and (verb .. ": " .. reason) or ""
+    if self.searchResults then
+        text = (text ~= "" and (text .. ". ") or "") .. "No max price for a searched item."
+    end
+    ui.summary:SetText(text)
     self:_FillAmount(cover)
     ui.totals:SetShown(done ~= nil)
     local totals = BuyingTab.DescribeTotals(described)
@@ -1700,7 +1798,7 @@ function Tab:_BuildLeft(content)
         widget:SetPoint("TOPLEFT", ui.leftTop, "TOPLEFT", x, y)
         return widget
     end
-    local host = place(CreateFrame("Frame", nil, content), 0, -14)
+    local host = place(CreateFrame("Frame", nil, content), 0, -14 - SEARCH_SHIFT)
     host:SetSize(LIST_WIDTH, 30)
     local flavour = ns.Flavour or {}
     ui.sourceTabs = Kit.CreateTopTabs(host, { { "groups", "Groups" }, { "lists", "Lists" } }, {
@@ -1720,13 +1818,13 @@ function Tab:_BuildLeft(content)
     end
     ui.picker = control(Kit.Dropdown(content, 160, { onChange = function(id)
         self:SelectList(id)
-    end }), 0, -44)
+    end }), 0, -44 - SEARCH_SHIFT)
     ui.newList = control(Kit.Button(content, "New", 50, function()
         self:NewList(ui.nameInput:GetText())
-    end), 164, -44)
+    end), 164, -44 - SEARCH_SHIFT)
     ui.rename = control(Kit.Button(content, "Rename", 64, function()
         self:RenameList(ui.nameInput:GetText())
-    end), 218, -44)
+    end), 218, -44 - SEARCH_SHIFT)
     ui.delete = control(Kit.Button(content, "Delete", 56, function()
         local saved = self.listID and self.deps.searchLists:Get(self.listID)
         if saved then
@@ -1734,14 +1832,25 @@ function Tab:_BuildLeft(content)
                 self:DeleteList()
             end)
         end
-    end), 286, -44)
-    ui.nameInput = control(Kit.Input(content, 250, nil, nil, { placeholder = "name of the list" }), 6, -72)
+    end), 286, -44 - SEARCH_SHIFT)
+    ui.nameInput = control(Kit.Input(content, 250, nil, nil, { placeholder = "name of the list" }), 6,
+        -72 - SEARCH_SHIFT)
     ui.itemInput = control(Kit.Input(content, 250, function(text)
         self:AddItem(text)
-    end, nil, { placeholder = "item name, ID, link or key" }), 6, -98)
+    end, nil, { placeholder = "item name, ID, link or key" }), 6, -98 - SEARCH_SHIFT)
     ui.addItem = control(Kit.Button(content, "Add", 50, function()
         self:AddItem(ui.itemInput:GetText())
-    end), 262, -96)
+    end), 262, -96 - SEARCH_SHIFT)
+    -- The name search row: find any item on the Auction House, also an item in no group.
+    ui.searchInput = place(Kit.Input(content, 206, function(text)
+        self:SearchName(text)
+    end, nil, { placeholder = "search the Auction House by name" }), 6, -16)
+    ui.searchButton = place(Kit.Button(content, "Search", 70, function()
+        self:SearchName(ui.searchInput:GetText())
+    end), 218, -14)
+    ui.searchClear = place(Kit.Button(content, "Clear", 60, function()
+        self:ClearSearch()
+    end), 292, -14)
 end
 
 function Tab:_BuildContent()
@@ -1785,7 +1894,7 @@ function Tab:_BuildContent()
             self:_OnTreeSelect(node)
         end })
     ui.content = content
-    ui.tree.frame:SetPoint("TOPLEFT", ui.leftTop, "TOPLEFT", 0, -44)
+    ui.tree.frame:SetPoint("TOPLEFT", ui.leftTop, "TOPLEFT", 0, -44 - SEARCH_SHIFT)
     ui.tree.frame:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", 0, 0)
     ui.tree.frame:SetWidth(LIST_WIDTH)
     self:_BuildLeft(content)
