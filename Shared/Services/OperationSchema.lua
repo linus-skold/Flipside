@@ -22,6 +22,16 @@ OperationSchema.DEFAULT_BUYING_NAME = "Default"
 
 local LABELS = { selling = "Selling", buying = "Buying", vendoring = "Vendoring", mailing = "Mailing" }
 
+-- The item rarities (quality 0 to 5) of both clients.
+local QUALITIES = {
+    { value = 0, label = "Poor" },
+    { value = 1, label = "Common" },
+    { value = 2, label = "Uncommon" },
+    { value = 3, label = "Rare" },
+    { value = 4, label = "Epic" },
+    { value = 5, label = "Legendary" },
+}
+
 local SAFETY = {
     {
         key = "maxDataAgeHours", label = "Max data age (hours)", kind = "number",
@@ -146,6 +156,18 @@ local FIELDS = {
             key = "maxSend", label = "Send up to", kind = "number", default = 0, min = 0, max = 100000,
             help = "The most units of each item to send in one run. 0 means no limit.",
         },
+        {
+            key = "minQuality", label = "Lowest rarity", kind = "choice", default = 0, choices = QUALITIES,
+            help = "Send only items of this rarity or better.",
+        },
+        {
+            key = "maxQuality", label = "Highest rarity", kind = "choice", default = 5, choices = QUALITIES,
+            help = "Send only items of this rarity or worse. Legendary means no upper limit.",
+        },
+        {
+            key = "itemClasses", label = "Item types", kind = "classes", default = "", maxLength = 200,
+            help = "Send only items of the chosen types. None chosen means any type.",
+        },
     },
 }
 
@@ -260,6 +282,11 @@ local function checkField(f, value, compile)
         end
         if #value > f.maxLength then
             return false, "Enter at most " .. f.maxLength .. " characters."
+        end
+        return true
+    elseif kind == "classes" then
+        if type(value) ~= "string" or #value > f.maxLength or (value ~= "" and not value:match("^%d+[%d,]*$")) then
+            return false, "Choose item types from the list."
         end
         return true
     elseif kind == "choice" then

@@ -192,7 +192,38 @@ function Store:DeleteGroup(id)
     end)
 end
 
+-- The built-in All bag items group (SPEC 5.5). It lists no item; the mailing planner takes every bag item that is
+-- in no group. Its id is saved in the group data.
+RulesStore.ALL_BAGS_NAME = "All bag items"
+
+-- Returns the id of the All bag items group, or nil if there is none.
+function Store:AllBagsGroup()
+    local id = self._groups.allBagsID
+    if id ~= nil and ns.GroupTree.Exists(self._groups, id) then
+        return id
+    end
+    return nil
+end
+
+-- Returns the id of the All bag items group. Makes the group under Base if it is missing.
+function Store:EnsureAllBagsGroup()
+    local id = self:AllBagsGroup()
+    if id then
+        return id
+    end
+    return self:_Change({ "groups" }, function()
+        local newID, message = ns.GroupTree.Create(self._groups, ns.GroupTree.BASE_ID, RulesStore.ALL_BAGS_NAME)
+        if newID then
+            self._groups.allBagsID = newID
+        end
+        return newID, message
+    end)
+end
+
 function Store:AddItem(key, groupID)
+    if groupID ~= nil and groupID == self._groups.allBagsID then
+        return nil, "this group takes every bag item that is in no group"
+    end
     return self:_Change({ "groups" }, function()
         return ns.GroupTree.AddItem(self._groups, key, groupID)
     end)
@@ -200,6 +231,9 @@ end
 
 -- Adds the valid keys in one save. Returns the number added.
 function Store:AddItems(keys, groupID)
+    if groupID ~= nil and groupID == self._groups.allBagsID then
+        return nil, "this group takes every bag item that is in no group"
+    end
     return self:_Change({ "groups" }, function()
         if not ns.GroupTree.Exists(self._groups, groupID) then
             return nil, "group does not exist"
