@@ -1,7 +1,7 @@
 local manifest = require("Tests.manifest")
 local mock = require("Tests.wow_mock")
 
-local KIT = { "Theme", "Window", "Widgets", "Tabs", "List", "Combat" }
+local KIT = { "Theme", "Window", "Widgets", "Prompt", "Tabs", "List", "Combat" }
 
 local function load()
     local ns = {}
@@ -16,6 +16,8 @@ local function load()
     assert(loadfile(manifest.path("RulesStore")))("Flipside", ns)
     assert(loadfile(manifest.path("ItemNameIndex")))("Flipside", ns)
     assert(loadfile(manifest.path("FormulaPage")))("Flipside", ns)
+    assert(loadfile(manifest.path("RulesExport")))("Flipside", ns)
+    assert(loadfile(manifest.path("RulesImport")))("Flipside", ns)
     assert(loadfile(manifest.path("OperationsPage")))("Flipside", ns)
     return ns
 end
@@ -27,7 +29,7 @@ local function stubMethods()
 end
 
 describe("OperationsPage", function()
-    local ns, rules, page, run, index, missing, later, saved, subscribed
+    local ns, rules, page, run, index, missing, later, saved, subscribed, customSources
 
     local function newRules(data)
         local db = ns.SettingsDB.New(data, { character = "Me", schemaVersion = 1 })
@@ -43,6 +45,7 @@ describe("OperationsPage", function()
             rules = rules,
             formulaRun = run,
             itemNameIndex = index,
+            customSources = customSources,
             subscribe = function(fn)
                 subscribed = fn
             end,
@@ -79,18 +82,55 @@ describe("OperationsPage", function()
         end
     end
 
-    local function pickType(value)
-        for _, item in ipairs(page.newType.menuItems) do
+    local function fill(window, text)
+        window.input:SetText(text)
+        window.input.scripts.OnTextChanged(window.input)
+    end
+
+    local function pickChoice(window, value)
+        for _, item in ipairs(window.choice.menuItems) do
             if item.value == value then
                 item.pick()
             end
         end
     end
 
-    local function typeName(text)
-        page.nameInput:SetText(text)
+    local function newWindow()
+        return ns.Kit.Prompt("FlipsideNewOperationPrompt")
     end
 
+    -- Click New, choose the type, type the name and press OK. Returns the window.
+    local function create(opType, name)
+        click(page.newButton)
+        local window = newWindow()
+        pickChoice(window, opType)
+        fill(window, name)
+        click(window.okButton)
+        return window
+    end
+
+    local function rightClick(position)
+        local row = page.list.rows[position]
+        row.scripts.OnClick(row, "RightButton")
+    end
+
+    local function menuClick(text)
+        for _, item in ipairs(mock.menu.items) do
+            if item.text == text then
+                item.onClick()
+                return
+            end
+        end
+        error("no menu entry " .. text)
+    end
+
+    local function menuItem(text)
+        for _, item in ipairs(mock.menu.items) do
+            if item.text == text then
+                return item
+            end
+        end
+    end
     local function enter(widget, text)
         widget:SetText(text)
         widget.scripts.OnEnterPressed(widget)
@@ -132,7 +172,7 @@ describe("OperationsPage", function()
             end,
         }
         rules = newRules(saved)
-        subscribed = nil
+        subscribed, customSources = nil, nil
         build()
     end)
 
@@ -147,7 +187,6 @@ describe("OperationsPage", function()
         end)
 
         it("sets the placeholders", function()
-            assert.are.equal("<operation name>", page.nameInput.placeholder:GetText())
             assert.are.equal("Item name, link or id", page.exampleInput.placeholder:GetText())
         end)
     end)
@@ -199,14 +238,12 @@ describe("OperationsPage", function()
     describe("new", function()
         it("creates an operation of each type with its defaults", function()
             for _, opType in ipairs(ns.OperationSchema.TYPES) do
-                pickType(opType)
-                typeName("Op " .. opType)
-                click(page.newButton)
+                local window = create(opType, "Op " .. opType)
                 local list = rules:ListOperations(opType)
                 assert.are.equal(1, #list)
                 assert.are.equal("Op " .. opType .. " (" .. ns.OperationSchema.TypeLabel(opType) .. ")",
                     page.header:GetText())
-                assert.are.equal("", page.nameInput:GetText())
+                assert.is_false(window:IsShown())
                 for _, field in ipairs(ns.OperationSchema.Fields(opType)) do
                     local part = page.FieldPart(field.key)
                     assert.is_table(part, field.key)
@@ -228,10 +265,41 @@ describe("OperationsPage", function()
             end
         end)
 
-        it("shows the fields in schema sequence", function()
-            pickType("selling")
-            typeName("Main")
+        it("opens a window that asks for the type first and then the name", function()
             click(page.newButton)
+            local window = newWindow()
+            assert.is_true(window:IsShown())
+            assert.are.equal("New operation", window.title)
+            assert.are.equal("Type", window.choiceLabel:GetText())
+            assert.are.equal("Name", window.label:GetText())
+            assert.is_true(window.choice:IsShown())
+            local types = {}
+            for _, item in ipairs(window.choice.menuItems) do
+                types[#types + 1] = item.value
+            end
+            assert.are.same(ns.OperationSchema.TYPES, types)
+            local choiceY, inputY = window.choice.points[1][5], window.input.points[1][5]
+            assert.is_true(choiceY > inputY)
+            assert.is_false(window.okButton.enabled)
+            assert.are.same({}, rules:ListOperations())
+        end)
+
+        it("starts with the type of the list filter", function()
+            pickFilter("buying")
+            click(page.newButton)
+            assert.are.equal("buying", newWindow().choice:GetValue())
+        end)
+
+        it("has no name box, no type drop-down and no Duplicate, Rename or Delete button", function()
+            assert.is_nil(page.nameInput)
+            assert.is_nil(page.newType)
+            assert.is_nil(page.duplicateButton)
+            assert.is_nil(page.renameButton)
+            assert.is_nil(page.deleteButton)
+        end)
+
+        it("shows the fields in schema sequence", function()
+            create("selling", "Main")
             local keys = {}
             for _, row in ipairs(page.fieldList.rows) do
                 if row:IsShown() then
@@ -247,38 +315,118 @@ describe("OperationsPage", function()
 
         it("widens the filter to the new type", function()
             pickFilter("buying")
-            pickType("selling")
-            typeName("Main")
-            click(page.newButton)
+            create("selling", "Main")
             assert.are.equal("selling", page.filter:GetValue())
             assert.are.same({ "Main (Selling)" }, listTexts())
         end)
 
-        it("shows the store message for a duplicate name or an empty name", function()
-            typeName("")
-            click(page.newButton)
-            assert.are.equal("Type a name first.", page.status:GetText())
-            typeName("Main")
-            click(page.newButton)
-            typeName("main")
-            click(page.newButton)
-            assert.are.equal("an operation of this type has this name", page.status:GetText())
+        it("refuses an empty name", function()
+            local window = create("selling", "  ")
+            assert.is_true(window:IsShown())
+            assert.is_false(window.okButton.enabled)
+            assert.are.same({}, rules:ListOperations())
+        end)
+
+        it("shows the store message in the window for a duplicate name and keeps it open", function()
+            create("selling", "Main")
+            local window = create("selling", "main")
+            assert.is_true(window:IsShown())
+            assert.are.equal("an operation of this type has this name", window.error:GetText())
             assert.are.equal(1, #rules:ListOperations())
+            fill(window, "Other")
+            assert.are.equal("", window.error:GetText())
+            click(window.okButton)
+            assert.are.equal(2, #rules:ListOperations())
+        end)
+
+        it("allows the same name for another type", function()
+            create("selling", "Main")
+            create("buying", "Main")
+            assert.are.equal(2, #rules:ListOperations())
         end)
     end)
 
-    describe("duplicate and rename", function()
+    describe("context menu", function()
         local id
 
         before_each(function()
-            typeName("Main")
-            click(page.newButton)
+            create("selling", "Main")
             id = rules:ListOperations()[1].id
         end)
 
-        it("duplicates into an independent operation", function()
-            typeName("Copy")
-            click(page.duplicateButton)
+        it("opens on a right click, selects the row and lists Rename, Duplicate and Delete", function()
+            page.Select(nil)
+            rightClick(1)
+            assert.are.equal(id, rules:ListOperations()[1].id)
+            assert.are.equal("Main (Selling)", page.header:GetText())
+            assert.are.equal(page.list.rows[1], mock.menu.owner)
+            assert.are.equal("Main", mock.menu.title)
+            assert.are.equal("Rename", mock.menu.items[1].text)
+            assert.are.equal("Duplicate", mock.menu.items[2].text)
+            assert.are.equal("Delete", mock.menu.items[3].text)
+            assert.is_true(menuItem("Rename").enabled)
+        end)
+
+        it("does not open on a left click", function()
+            mock.menu = nil
+            page.list.rows[1].scripts.OnClick(page.list.rows[1], "LeftButton")
+            assert.is_nil(mock.menu)
+        end)
+
+        it("disables the entries in a read-only store", function()
+            rules._loadFailed = true
+            rightClick(1)
+            assert.is_false(menuItem("Rename").enabled)
+            assert.is_false(menuItem("Duplicate").enabled)
+            assert.is_false(menuItem("Delete").enabled)
+        end)
+
+        it("renames in a window with the current name and keeps the selection", function()
+            rightClick(1)
+            menuClick("Rename")
+            local window = ns.Kit.Prompt("FlipsideRenameOperationPrompt")
+            assert.is_true(window:IsShown())
+            assert.are.equal("Main", window.input:GetText())
+            fill(window, "  Prime  ")
+            click(window.okButton)
+            assert.are.equal("Prime", rules:GetOperation(id).name)
+            assert.are.equal("Prime (Selling)", page.header:GetText())
+            assert.are.same({ "Prime (Selling)" }, listTexts())
+            assert.is_false(window:IsShown())
+        end)
+
+        it("refuses a rename to a name in use and shows the message in the window", function()
+            create("selling", "Other")
+            page.Select(id)
+            rightClick(1)
+            menuClick("Rename")
+            local window = ns.Kit.Prompt("FlipsideRenameOperationPrompt")
+            fill(window, "OTHER")
+            click(window.okButton)
+            assert.are.equal("an operation of this type has this name", window.error:GetText())
+            assert.is_true(window:IsShown())
+            assert.are.equal("Main", rules:GetOperation(id).name)
+        end)
+
+        it("refuses an empty name and a name of more than 40 characters", function()
+            rightClick(1)
+            menuClick("Rename")
+            local window = ns.Kit.Prompt("FlipsideRenameOperationPrompt")
+            fill(window, "")
+            assert.is_false(window.okButton.enabled)
+            fill(window, string.rep("x", 41))
+            click(window.okButton)
+            assert.are.equal("name must have 1 to 40 characters", window.error:GetText())
+            assert.are.equal("Main", rules:GetOperation(id).name)
+        end)
+
+        it("duplicates into an independent operation after it asks for the name", function()
+            rightClick(1)
+            menuClick("Duplicate")
+            local window = ns.Kit.Prompt("FlipsideCopyOperationPrompt")
+            assert.is_true(window:IsShown())
+            fill(window, "Copy")
+            click(window.okButton)
             local list = rules:ListOperations()
             assert.are.equal(2, #list)
             local copyID = list[1].name == "Copy" and list[1].id or list[2].id
@@ -289,69 +437,43 @@ describe("OperationsPage", function()
             assert.are.equal(0, rules:GetOperation(id).settings.postCap)
         end)
 
-        it("asks for a name before it duplicates", function()
-            click(page.duplicateButton)
-            assert.are.equal("Type a name first.", page.status:GetText())
+        it("refuses a duplicate name for the copy", function()
+            rightClick(1)
+            menuClick("Duplicate")
+            local window = ns.Kit.Prompt("FlipsideCopyOperationPrompt")
+            fill(window, "main")
+            click(window.okButton)
+            assert.are.equal("an operation of this type has this name", window.error:GetText())
             assert.are.equal(1, #rules:ListOperations())
-        end)
-
-        it("renames and keeps the selection", function()
-            typeName("  Prime  ")
-            click(page.renameButton)
-            assert.are.equal("Prime", rules:GetOperation(id).name)
-            assert.are.equal("Prime (Selling)", page.header:GetText())
-            assert.are.same({ "Prime (Selling)" }, listTexts())
-        end)
-
-        it("refuses a rename to a name in use and shows the message", function()
-            typeName("Other")
-            click(page.newButton)
-            page.Select(id)
-            typeName("OTHER")
-            click(page.renameButton)
-            assert.are.equal("an operation of this type has this name", page.status:GetText())
-            assert.are.equal("Main", rules:GetOperation(id).name)
-        end)
-
-        it("refuses a name of more than 40 characters", function()
-            typeName(string.rep("x", 41))
-            click(page.renameButton)
-            assert.are.equal("name must have 1 to 40 characters", page.status:GetText())
-        end)
-    end)
-
-    describe("delete", function()
-        local id
-
-        before_each(function()
-            typeName("Main")
-            click(page.newButton)
-            id = rules:ListOperations()[1].id
         end)
 
         it("asks first and names the group count", function()
             rules:CreateGroup(1, "Herbs")
             rules:AttachOperation(1, "selling", id)
             rules:AttachOperation(2, "selling", id)
-            click(page.deleteButton)
+            rightClick(1)
+            menuClick("Delete")
             assert.are.equal('Delete the operation "Main" (Selling)? It is used by 2 groups.', mock.popup.text)
             assert.is_table(rules:GetOperation(id))
         end)
 
         it("says that no group uses it", function()
-            click(page.deleteButton)
+            rightClick(1)
+            menuClick("Delete")
             assert.are.equal('Delete the operation "Main" (Selling)? No group uses it.', mock.popup.text)
         end)
 
         it("uses the singular for one group", function()
             rules:AttachOperation(1, "selling", id)
-            click(page.deleteButton)
+            rightClick(1)
+            menuClick("Delete")
             assert.is_truthy(mock.popup.text:find("1 group.", 1, true))
         end)
 
         it("deletes on accept and detaches it", function()
             rules:AttachOperation(1, "selling", id)
-            click(page.deleteButton)
+            rightClick(1)
+            menuClick("Delete")
             mock.acceptPopup()
             assert.is_nil(rules:GetOperation(id))
             assert.are.same({}, rules:GroupsUsing(id))
@@ -360,26 +482,44 @@ describe("OperationsPage", function()
         end)
 
         it("keeps the operation on cancel", function()
-            click(page.deleteButton)
+            rightClick(1)
+            menuClick("Delete")
             mock.cancelPopup()
             assert.is_table(rules:GetOperation(id))
             assert.are.equal("Main (Selling)", page.header:GetText())
         end)
-
-        it("does nothing without a selection", function()
-            page.Select(nil)
-            mock.popup = nil
-            click(page.deleteButton)
-            assert.is_nil(mock.popup)
-        end)
     end)
 
+    describe("import", function()
+        it("has an Import button in the toolbar next to New", function()
+            assert.is_table(page.importButton)
+            assert.are.equal("Import", page.importButton:GetText())
+            assert.are.equal("New", page.newButton:GetText())
+        end)
+
+        it("is off without custom sources", function()
+            assert.is_false(page.importButton.enabled)
+        end)
+
+        it("opens the import dialog below Base and shows a parse error", function()
+            customSources = {}
+            build()
+            assert.is_true(page.importButton.enabled)
+            click(page.importButton)
+            assert.is_true(page.importDialog:IsShown())
+            assert.are.equal("Import below Base", page.importDialog.title)
+            page.importDialog.input.EditBox:SetText("bogus")
+            click(page.importDialog.saveButton)
+            assert.is_truthy(page.status:GetText():find("not a Flipside rules export", 1, true))
+            assert.is_nil(mock.popup)
+            assert.are.equal("GameFontRed", page.status.fontObject)
+        end)
+    end)
     describe("fields", function()
         local id
 
         before_each(function()
-            typeName("Main")
-            click(page.newButton)
+            create("selling", "Main")
             id = rules:ListOperations()[1].id
         end)
 
@@ -495,9 +635,7 @@ describe("OperationsPage", function()
         end)
 
         it("shows the max price formula of a buying operation and lets it be empty", function()
-            pickType("buying")
-            typeName("B")
-            click(page.newButton)
+            create("buying", "B")
             local buyID
             for _, op in ipairs(rules:ListOperations()) do
                 if op.type == "buying" then
@@ -533,9 +671,7 @@ describe("OperationsPage", function()
         end)
 
         it("shows other fields for another type", function()
-            pickType("vendoring")
-            typeName("V")
-            click(page.newButton)
+            create("vendoring", "V")
             assert.is_table(page.FieldPart("sellToVendor"))
             assert.is_nil(page.FieldPart("minPrice"))
             assert.is_table(page.FieldPart("maxDataAgeHours"))
@@ -554,8 +690,7 @@ describe("OperationsPage", function()
         local part
 
         before_each(function()
-            typeName("Main")
-            click(page.newButton)
+            create("selling", "Main")
             part = page.FieldPart("normalPrice")
         end)
 
@@ -653,8 +788,7 @@ describe("OperationsPage", function()
         end
 
         before_each(function()
-            typeName("Main")
-            click(page.newButton)
+            create("selling", "Main")
         end)
 
         it("has an expand button on formula fields only", function()
@@ -716,8 +850,7 @@ describe("OperationsPage", function()
 
     describe("footer", function()
         it("lists the group paths that use the operation", function()
-            typeName("Main")
-            click(page.newButton)
+            create("selling", "Main")
             local id = rules:ListOperations()[1].id
             assert.are.equal("Used by: no groups", page.footer:GetText())
             local herbs = rules:CreateGroup(1, "Herbs")
@@ -737,13 +870,10 @@ describe("OperationsPage", function()
             build()
             assert.is_true(page.readOnly:IsShown())
             assert.are.equal("Settings are read-only", page.readOnly:GetText())
-            for _, button in ipairs({ page.newButton, page.duplicateButton, page.renameButton, page.deleteButton }) do
-                assert.is_false(button.enabled)
-            end
-            assert.is_false(page.nameInput.enabled)
-            typeName("Main")
-            click(page.newButton)
-            assert.are.equal("settings are read-only", page.status:GetText())
+            assert.is_false(page.newButton.enabled)
+            assert.is_false(page.importButton.enabled)
+            local window = create("selling", "Main")
+            assert.are.equal("settings are read-only", window.error:GetText())
         end)
 
         it("shows an enabled page for a writable store", function()
@@ -752,8 +882,7 @@ describe("OperationsPage", function()
         end)
 
         it("disables the field widgets of a read-only store", function()
-            typeName("Main")
-            click(page.newButton)
+            create("selling", "Main")
             local id = rules:ListOperations()[1].id
             rules._loadFailed = true
             page.Select(id)

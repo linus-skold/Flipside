@@ -10,7 +10,10 @@ local RIGHT_X = 260
 local RIGHT_WIDTH = 510
 local FIELD_ROW = 72
 local DELETE_DIALOG = "FLIPSIDE_DELETE_OPERATION"
-local EDITOR_DIALOG = "FlipsideFormulaEditor"
+local NEW_PROMPT = "FlipsideNewOperationPrompt"
+local RENAME_PROMPT = "FlipsideRenameOperationPrompt"
+local COPY_PROMPT = "FlipsideCopyOperationPrompt"
+local EDITOR_DIALOG ="FlipsideFormulaEditor"
 local EDITOR_HELP = "Missing prices are invalid, never 0. Functions: min max avg first check ifgt iflt ifeq round."
 
 local function trim(text)
@@ -38,7 +41,7 @@ function OperationsPage.Build(content, deps)
     local rules, run, index = deps.rules, deps.formulaRun, deps.itemNameIndex
     local gap = Kit.Theme.gap
     local page = {}
-    local selected, filter, newType, example
+    local selected, filter, example
 
     local function stored(key)
         local op = selected and rules:GetOperation(selected)
@@ -248,9 +251,8 @@ function OperationsPage.Build(content, deps)
         filterItems[#filterItems + 1] = { value = opType, text = Schema.TypeLabel(opType) }
         typeItems[#typeItems + 1] = { value = opType, text = Schema.TypeLabel(opType) }
     end
-    newType = Schema.TYPES[1]
 
-    local refresh
+    local refresh, openMenu
 
     page.filter = Kit.Dropdown(content, 150, {
         items = filterItems,
@@ -275,48 +277,36 @@ function OperationsPage.Build(content, deps)
             end
             row.nameText:SetText(data.name .. " (" .. Schema.TypeLabel(data.type) .. ")")
             row.nameText:SetFontObject(Kit.Font(data.id == selected and "highlight" or "normal"))
-            row:SetScript("OnClick", function()
+            row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+            row:SetScript("OnClick", function(self, button)
                 selected = data.id
                 refresh()
+                if button == "RightButton" then
+                    openMenu(data, self)
+                end
             end)
         end,
     })
     page.list.frame:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -(22 + gap))
-    page.list.frame:SetPoint("BOTTOMRIGHT", content, "BOTTOMLEFT", LEFT_WIDTH, 112)
+    page.list.frame:SetPoint("BOTTOMRIGHT", content, "BOTTOMLEFT", LEFT_WIDTH, 58)
 
     page.status = Kit.Label(content, "", "bad")
-    page.status:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", 0, 86)
+    page.status:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", 0, 32)
     page.status:SetWidth(LEFT_WIDTH)
     page.status:SetJustifyH("LEFT")
 
-    page.newType = Kit.Dropdown(content, 110, {
-        items = typeItems,
-        value = newType,
-        onChange = function(value)
-            newType = value
-        end,
-    })
-    page.newType:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", 0, 58)
-    page.nameInput = Kit.Input(content, 124, nil, nil, { placeholder = "<operation name>" })
-    page.nameInput:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", 122, 58)
-
-    local function typedName()
-        local name = trim(page.nameInput:GetText())
-        if name == "" then
-            page.status:SetText("Type a name first.")
-            return nil
-        end
-        return name
+    -- Shows a message in the bad style, or in the good style for a success.
+    local function showStatus(text, good)
+        page.status:SetFontObject(Kit.Font(good and "good" or "bad"))
+        page.status:SetText(text)
     end
 
-    -- Runs a store call that gives an id. Selects that id on success.
+    -- Selects the operation of a store call that gave an id, and shows it. Returns the store message on a refusal.
     local function finish(id, message)
         if id == nil then
-            page.status:SetText(tostring(message))
-            return
+            return tostring(message)
         end
         page.status:SetText("")
-        page.nameInput:SetText("")
         selected = id
         local op = rules:GetOperation(id)
         if op and filter and op.type ~= filter then
@@ -326,41 +316,73 @@ function OperationsPage.Build(content, deps)
         refresh()
     end
 
+    -- New: the prompt asks for the type first, then the name.
     page.newButton = Kit.Button(content, "New", 120, function()
-        local name = typedName()
-        if name then
-            finish(rules:CreateOperation(newType, name))
-        end
+        page.newPrompt = Kit.Prompt(NEW_PROMPT)
+        page.newPrompt:Open({
+            title = "New operation",
+            choiceLabel = "Type",
+            choices = typeItems,
+            choice = filter or Schema.TYPES[1],
+            label = "Name",
+            onOK = function(name, opType)
+                return finish(rules:CreateOperation(opType, name))
+            end,
+        })
     end)
-    page.newButton:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", 0, 30)
-    page.duplicateButton = Kit.Button(content, "Duplicate", 120, function()
-        local name = selected and typedName()
-        if name then
-            finish(rules:DuplicateOperation(selected, name))
-        end
+    page.newButton:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", 0, 4)
+
+    -- Import: the import flow of the Groups page, with Base as the parent.
+    page.importButton = Kit.Button(content, "Import", 120, function()
+        page.importDialog = ns.RulesImport.Open(deps, {
+            parentID = 1,
+            say = showStatus,
+            refresh = function()
+                refresh(true)
+            end,
+        })
     end)
-    page.duplicateButton:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", 126, 30)
-    page.renameButton = Kit.Button(content, "Rename", 120, function()
-        local name = selected and typedName()
-        if name then
-            local ok, message = rules:RenameOperation(selected, name)
-            finish(ok and selected or nil, message)
-        end
-    end)
-    page.renameButton:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", 0, 4)
-    page.deleteButton = Kit.Button(content, "Delete", 120, function()
-        local op = selected and rules:GetOperation(selected)
+    page.importButton:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", 126, 4)
+
+    local function onRename(id)
+        local op = rules:GetOperation(id)
+        page.renamePrompt = Kit.Prompt(RENAME_PROMPT)
+        page.renamePrompt:Open({
+            title = "Rename operation",
+            label = "New name",
+            text = op and op.name or "",
+            onOK = function(name)
+                local ok, message = rules:RenameOperation(id, name)
+                return finish(ok and id or nil, message)
+            end,
+        })
+    end
+
+    local function onDuplicate(id)
+        local op = rules:GetOperation(id)
+        page.copyPrompt = Kit.Prompt(COPY_PROMPT)
+        page.copyPrompt:Open({
+            title = "Duplicate operation",
+            label = "Name of the copy",
+            text = op and (op.name .. " copy") or "",
+            onOK = function(name)
+                return finish(rules:DuplicateOperation(id, name))
+            end,
+        })
+    end
+
+    local function onDelete(id)
+        local op = rules:GetOperation(id)
         if not op then
             return
         end
-        local id = selected
         local used = rules:GroupsUsing(id)
         local text = string.format('Delete the operation "%s" (%s)? %s.', op.name, Schema.TypeLabel(op.type),
             #used == 0 and "No group uses it" or ("It is used by " .. plural(#used, "group")))
         Kit.Confirm(DELETE_DIALOG, text, function()
             local ok, message = rules:DeleteOperation(id)
             if ok == nil then
-                page.status:SetText(tostring(message))
+                showStatus(tostring(message))
                 return
             end
             if selected == id then
@@ -369,8 +391,17 @@ function OperationsPage.Build(content, deps)
             page.status:SetText("")
             refresh()
         end)
-    end)
-    page.deleteButton:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", 126, 4)
+    end
+
+    -- Right-click menu of a list row.
+    openMenu = function(data, row)
+        local locked = rules:IsReadOnly()
+        page.menu = Kit.ContextMenu(row, {
+            { text = "Rename", onClick = function() onRename(data.id) end, disabled = locked },
+            { text = "Duplicate", onClick = function() onDuplicate(data.id) end, disabled = locked },
+            { text = "Delete", onClick = function() onDelete(data.id) end, disabled = locked },
+        }, { title = data.name })
+    end
 
     -- Right side.
 
@@ -475,11 +506,8 @@ function OperationsPage.Build(content, deps)
         page.fieldList:SetData(op and Schema.Fields(op.type) or {})
         page.footer:SetText(op and footerText(selected) or "")
         page.readOnly:SetShown(ro)
-        for _, button in ipairs({ page.newButton, page.duplicateButton, page.renameButton, page.deleteButton }) do
-            setEnabled(button, not ro)
-        end
-        setEnabled(page.nameInput, not ro)
-        setEnabled(page.newType, not ro)
+        setEnabled(page.newButton, not ro)
+        setEnabled(page.importButton, not ro and deps.customSources ~= nil)
     end
 
     -- Public refresh: reads the example item again, then redraws.
