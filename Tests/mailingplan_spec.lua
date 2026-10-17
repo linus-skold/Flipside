@@ -241,7 +241,7 @@ describe("MailingPlan", function()
 
         local ALL = { "1", "2", "3", "4" }
         local function bags()
-            return { item("1", 1, 4), item("2", 2, 4), item("3", 3, 2), item("4", 5, 7) }
+            return { item("1", 1, 4), item("2", 2, 4), item("3", 3, 2), item("4", 4, 7) }
         end
 
         it("sends items inside the rarity range and leaves the others", function()
@@ -250,11 +250,15 @@ describe("MailingPlan", function()
             assert.same({}, plan.skipped)
         end)
 
-        it("has no upper limit with the highest rarity Legendary", function()
+        it("never sends Legendary, Artifact or Heirloom, even with no rarity limit", function()
             local slots = bags()
-            slots[#slots + 1] = item("5", 7, 4)
-            local plan = build({ { items = { "1", "2", "3", "4", "5" }, operation = fop({ minQuality = 4 }) } }, slots)
-            assert.same({ "4", "5" }, sentKeys(plan))
+            slots[#slots + 1] = item("5", 5, 4)
+            slots[#slots + 1] = item("6", 6, 4)
+            slots[#slots + 1] = item("7", 7, 4)
+            local items = { "1", "2", "3", "4", "5", "6", "7" }
+            assert.same({ "1", "2", "3", "4" }, sentKeys(build({ { items = items, operation = fop({}) } }, slots)))
+            local plan = build({ { items = items, operation = fop({ minQuality = 4, maxQuality = 5 }) } }, slots)
+            assert.same({ "4" }, sentKeys(plan))
         end)
 
         it("sends items of many chosen types", function()

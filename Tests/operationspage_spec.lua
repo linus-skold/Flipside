@@ -148,7 +148,12 @@ describe("OperationsPage", function()
 
         it("sets the placeholders", function()
             assert.are.equal("<operation name>", page.nameInput.placeholder:GetText())
-            assert.are.equal("Item name, link or id", page.exampleInput.placeholder:GetText())
+        end)
+
+        it("has no example item box", function()
+            assert.is_nil(page.exampleInput)
+            assert.is_nil(page.exampleLabel)
+            assert.is_nil(page.exampleStatus)
         end)
     end)
 
@@ -209,8 +214,11 @@ describe("OperationsPage", function()
                 assert.are.equal("", page.nameInput:GetText())
                 for _, field in ipairs(ns.OperationSchema.Fields(opType)) do
                     local part = page.FieldPart(field.key)
-                    assert.is_table(part, field.key)
                     local value = field.default
+                    -- Without the item class API the item types field has no control.
+                    if field.kind ~= "classes" then
+                        assert.is_table(part, field.key)
+                    end
                     if field.kind == "formula" or field.kind == "text" then
                         assert.are.equal(value, part.input:GetText())
                     elseif field.kind == "money" or field.kind == "number" then
@@ -218,8 +226,7 @@ describe("OperationsPage", function()
                     elseif field.kind == "choice" then
                         assert.are.equal(value, part.choice:GetValue())
                     elseif field.kind == "classes" then
-                        -- The spec has no client item class API, so the field has a label and no control.
-                        assert.is_nil(part.classes, field.key)
+                        assert.is_nil(part, field.key)
                         assert.are.equal("", value)
                     else
                         assert.are.equal(value, part.check:GetChecked())
@@ -550,6 +557,91 @@ describe("OperationsPage", function()
         end)
     end)
 
+    describe("mailing fields", function()
+        local oldItem, oldEnum, mailID
+
+        local function texts(choice)
+            local out = {}
+            for _, item in ipairs(choice.menuItems) do
+                out[#out + 1] = item.text
+            end
+            return out
+        end
+
+        before_each(function()
+            oldItem, oldEnum = _G.C_Item, _G.Enum
+            local colors = { [0] = "ff9d9d9d", "ffffffff", "ff1eff00", "ff0070dd", "ffa335ee", "ffff8000" }
+            _G.Enum = { ItemClass = { Weapon = 2, Tradegoods = 7 } }
+            _G.C_Item = {
+                GetItemClassInfo = function(id)
+                    return id == 2 and "Weapon" or "Trade Goods"
+                end,
+                GetItemQualityColor = function(quality)
+                    return 1, 1, 1, colors[quality]
+                end,
+            }
+            assert(loadfile(manifest.path("MailingPlan")))("Flipside", ns)
+            assert(loadfile(manifest.path("MailClient")))("Flipside", ns)
+            build()
+            pickType("mailing")
+            typeName("Mail")
+            click(page.newButton)
+            mailID = rules:ListOperations()[1].id
+        end)
+
+        after_each(function()
+            _G.C_Item, _G.Enum = oldItem, oldEnum
+        end)
+
+        it("shows the rarities in their quality colour, Poor to Epic", function()
+            local expected = { "|cff9d9d9dPoor|r", "|cffffffffCommon|r", "|cff1eff00Uncommon|r", "|cff0070ddRare|r",
+                "|cffa335eeEpic|r" }
+            assert.are.same(expected, texts(page.FieldPart("minQuality").choice))
+            assert.are.same(expected, texts(page.FieldPart("maxQuality").choice))
+        end)
+
+        it("has Epic as the default highest rarity", function()
+            assert.are.equal(4, page.FieldPart("maxQuality").choice:GetValue())
+            assert.are.equal(4, rules:GetOperation(mailID).settings.maxQuality)
+        end)
+
+        it("shows the item types as check boxes outside the field list", function()
+            for _, row in ipairs(page.fieldList.rows) do
+                if row:IsShown() then
+                    assert.are_not.equal("itemClasses", row.active.field.key)
+                end
+            end
+            local part = page.FieldPart("itemClasses")
+            assert.are.equal("Item types", part.label:GetText())
+            assert.are.equal(2, #part.classes.checks)
+            assert.is_true(part.classes:IsShown())
+        end)
+
+        it("saves a toggled item type and keeps the boxes open", function()
+            local part = page.FieldPart("itemClasses")
+            local trade, weapon = part.classes.checks[1], part.classes.checks[2]
+            trade:SetChecked(true)
+            trade.scripts.OnClick(trade)
+            assert.are.equal("7", rules:GetOperation(mailID).settings.itemClasses)
+            weapon:SetChecked(true)
+            weapon.scripts.OnClick(weapon)
+            assert.are.equal("2,7", rules:GetOperation(mailID).settings.itemClasses)
+            assert.is_true(part.classes:IsShown())
+            trade:SetChecked(false)
+            trade.scripts.OnClick(trade)
+            assert.are.equal("2", rules:GetOperation(mailID).settings.itemClasses)
+        end)
+
+        it("hides the item types for another operation type", function()
+            pickType("buying")
+            typeName("Buy")
+            click(page.newButton)
+            assert.is_nil(page.FieldPart("itemClasses"))
+            page.Select(mailID)
+            assert.is_table(page.FieldPart("itemClasses"))
+        end)
+    end)
+
     describe("formula preview", function()
         local part
 
@@ -559,16 +651,11 @@ describe("OperationsPage", function()
             part = page.FieldPart("normalPrice")
         end)
 
-        local function setExample(text)
-            enter(page.exampleInput, text)
-            part = page.FieldPart("normalPrice")
-        end
-
-        it("says formula ok without an example item", function()
+        it("says formula ok", function()
             assert.are.equal("formula ok (sources: scanmarket)", part.preview:GetText())
         end)
 
-        it("shows a compile error with position without an example item", function()
+        it("shows a compile error with position", function()
             rules._compile = nil
             rules:SetSetting(rules:ListOperations()[1].id, "normalPrice", "bad(")
             page.Refresh()
@@ -576,60 +663,19 @@ describe("OperationsPage", function()
             assert.are.equal('error at 4: unexpected symbol - near "bad("', part.preview:GetText())
         end)
 
-        it("shows the money value with an example item", function()
-            setExample("1")
-            assert.are.equal("5s", part.preview:GetText())
-        end)
-
-        it("shows missing and not available names", function()
-            missing, later = { "scanmarket" }, { "crafting" }
-            setExample("2")
-            assert.are.equal("invalid: missing scanmarket - not available yet: crafting", part.preview:GetText())
-        end)
-
-        it("shows the later state change on refresh", function()
-            missing, later = { "scanmarket" }, { "crafting" }
-            setExample("2")
-            missing, later = {}, {}
-            subscribed()
-            part = page.FieldPart("normalPrice")
-            assert.are.equal("invalid", part.preview:GetText())
-            assert.are.equal("2", page.exampleInput:GetText())
-        end)
-
-        it("accepts an item link", function()
-            setExample("|cff0070dd|Hitem:2589::::::::|h[Linen]|h|r")
-            assert.are.equal("", page.exampleStatus:GetText())
-            assert.are.equal("invalid", part.preview:GetText())
-        end)
-
-        it("resolves an item name through the index", function()
-            setExample("linen")
-            assert.are.equal("5s", part.preview:GetText())
-        end)
-
-        it("reports an unknown name and a short name, then falls back to compile only", function()
-            setExample("none")
-            assert.are.equal('no item named "none" in the scan data - 2 item names are still loading',
-                page.exampleStatus:GetText())
-            assert.are.equal("formula ok (sources: scanmarket)", part.preview:GetText())
-            setExample("x")
-            assert.are.equal("type at least 2 characters of the name", page.exampleStatus:GetText())
-        end)
-
-        it("clears the example with an empty box", function()
-            setExample("1")
-            setExample("")
-            assert.are.equal("formula ok (sources: scanmarket)", part.preview:GetText())
-        end)
-
         it("updates the preview after a save", function()
-            setExample("1")
             enter(part.input, "scanmarket * 3")
-            assert.are.equal("5s", part.preview:GetText())
+            assert.are.equal("formula ok (sources: scanmarket)", part.preview:GetText())
             assert.are.equal("scanmarket * 3", part.input:GetText())
         end)
 
+        it("shows a refusal in place of the preview", function()
+            enter(part.input, "bad(")
+            assert.are.equal("", part.preview:GetText())
+            assert.are.equal("unexpected symbol (at position 4)", part.message:GetText())
+            enter(part.input, "scanmarket")
+            assert.are.equal("formula ok (sources: scanmarket)", part.preview:GetText())
+        end)
         it("says that formulas are not available without a formula runner", function()
             run = nil
             build()
@@ -701,9 +747,10 @@ describe("OperationsPage", function()
             assert.is_false(dialog:IsShown())
         end)
 
-        it("gives each row room for two preview lines", function()
+        it("uses compact field rows with room for the input and one preview line", function()
             local row = page.fieldList.rows[1]
-            assert.is_true(row.height >= 40 + 2 * 12 + 8)
+            assert.is_true(row.height >= 26 + 12)
+            assert.is_true(row.height <= 46)
         end)
 
         it("disables the expand button for a read-only store", function()

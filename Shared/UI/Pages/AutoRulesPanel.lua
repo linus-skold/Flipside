@@ -8,7 +8,8 @@ ns.AutoRulesPanel = AutoRulesPanel
 local EDITOR_WINDOW = "FlipsideAutoRuleWindow"
 local APPLY_DIALOG = "FLIPSIDE_AUTO_RULES_APPLY"
 local PREVIEW_LINES = 15
-local EDITOR_WIDTH, EDITOR_HEIGHT = 440, 330
+local EDITOR_WIDTH, EDITOR_BASE_HEIGHT = 480, 326
+local CLASS_COLUMNS, CLASS_COLUMN_WIDTH, CLASS_ROW = 3, 146, 22
 local QUALITIES = {
     { value = 0, text = "Poor" },
     { value = 1, text = "Common" },
@@ -95,7 +96,17 @@ function AutoRulesPanel.Build(panel, deps, page, hooks)
 
     -- Editor window.
 
-    local editor = Kit.CreateWindow(EDITOR_WINDOW, { width = EDITOR_WIDTH, height = EDITOR_HEIGHT })
+    -- The rarity names in the colour of each rarity.
+    local colored = {}
+    for index, quality in ipairs(QUALITIES) do
+        colored[index] = { value = quality.value, text = Kit.QualityText(quality.value, quality.text) }
+    end
+    -- The item type boxes need room: the window grows with the number of types.
+    local gridHeight = math.max(1, math.ceil(#classes / CLASS_COLUMNS)) * CLASS_ROW
+    local editor = Kit.CreateWindow(EDITOR_WINDOW, {
+        width = EDITOR_WIDTH,
+        height = EDITOR_BASE_HEIGHT + gridHeight,
+    })
     editor:SetFrameStrata("DIALOG")
     editor:SetToplevel(true)
     page.autoEditor = editor
@@ -121,31 +132,37 @@ function AutoRulesPanel.Build(panel, deps, page, hooks)
     local updateEditor
 
     row(140, "Lowest rarity")
-    editor.minQuality = Kit.Dropdown(editor, 160, { items = QUALITIES, value = 0, onChange = function()
+    editor.minQuality = Kit.Dropdown(editor, 160, { items = colored, value = 0, onChange = function()
         updateEditor()
     end })
     editor.minQuality:SetPoint("TOPLEFT", editor, "TOPLEFT", fieldX, -136)
     row(172, "Highest rarity")
-    editor.maxQuality = Kit.Dropdown(editor, 160, { items = QUALITIES, value = 5, onChange = function()
+    editor.maxQuality = Kit.Dropdown(editor, 160, { items = colored, value = 5, onChange = function()
         updateEditor()
     end })
     editor.maxQuality:SetPoint("TOPLEFT", editor, "TOPLEFT", fieldX, -168)
     row(206, "Item types")
-    editor.classes = Kit.MultiSelect(editor, 260, { items = classes, emptyText = "Any type", onChange = function()
-        updateEditor()
-    end })
-    editor.classes:SetPoint("TOPLEFT", editor, "TOPLEFT", fieldX, -202)
-    if editor.classes.panel then
-        editor.classes.panel:SetFrameStrata("FULLSCREEN_DIALOG")
-    end
-    row(240, "Add to group")
+    local typesHint = Kit.Label(editor, "none chosen = any type", "small")
+    typesHint:SetPoint("TOPLEFT", editor, "TOPLEFT", fieldX, -208)
+    editor.classes = Kit.CheckGrid(editor, {
+        items = classes,
+        columns = CLASS_COLUMNS,
+        columnWidth = CLASS_COLUMN_WIDTH,
+        rowHeight = CLASS_ROW,
+        onChange = function()
+            updateEditor()
+        end,
+    })
+    editor.classes:SetPoint("TOPLEFT", editor, "TOPLEFT", edge, -228)
+    local groupY = 236 + gridHeight
+    row(groupY, "Add to group")
     editor.group = Kit.Dropdown(editor, 260, { items = {}, onChange = function()
         updateEditor()
     end })
-    editor.group:SetPoint("TOPLEFT", editor, "TOPLEFT", fieldX, -236)
+    editor.group:SetPoint("TOPLEFT", editor, "TOPLEFT", fieldX, -(groupY - 4))
 
     local hint = Kit.Label(editor, "Every filter that you set must match. An item in a group never moves.", "small")
-    hint:SetPoint("TOPLEFT", editor, "TOPLEFT", edge, -270)
+    hint:SetPoint("TOPLEFT", editor, "TOPLEFT", edge, -(groupY + 30))
     hint:SetWidth(EDITOR_WIDTH - 2 * edge)
     hint:SetJustifyH("LEFT")
 

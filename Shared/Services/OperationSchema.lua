@@ -32,6 +32,13 @@ local QUALITIES = {
     { value = 5, label = "Legendary" },
 }
 
+-- Epic is the highest rarity of a mailing operation: Legendary items never go by mail.
+local MAIL_MAX_QUALITY = 4
+local MAIL_QUALITIES = {}
+for index = 1, MAIL_MAX_QUALITY + 1 do
+    MAIL_QUALITIES[index] = QUALITIES[index]
+end
+
 local SAFETY = {
     {
         key = "maxDataAgeHours", label = "Max data age (hours)", kind = "number",
@@ -157,12 +164,14 @@ local FIELDS = {
             help = "The most units of each item to send in one run. 0 means no limit.",
         },
         {
-            key = "minQuality", label = "Lowest rarity", kind = "choice", default = 0, choices = QUALITIES,
+            key = "minQuality", label = "Lowest rarity", kind = "choice", default = 0,
+            choices = MAIL_QUALITIES, quality = true,
             help = "Send only items of this rarity or better.",
         },
         {
-            key = "maxQuality", label = "Highest rarity", kind = "choice", default = 5, choices = QUALITIES,
-            help = "Send only items of this rarity or worse. Legendary means no upper limit.",
+            key = "maxQuality", label = "Highest rarity", kind = "choice", default = MAIL_MAX_QUALITY,
+            choices = MAIL_QUALITIES, quality = true,
+            help = "Send only items of this rarity or worse. Legendary items are never sent.",
         },
         {
             key = "itemClasses", label = "Item types", kind = "classes", default = "", maxLength = 200,
@@ -244,6 +253,14 @@ function OperationSchema.Normalize(type, settings)
     for _, f in ipairs(OperationSchema.Fields(type)) do
         if out[f.key] == nil then
             out[f.key] = f.default
+        end
+    end
+    -- An old mailing save can hold Legendary (5): clamp it to Epic.
+    if type == "mailing" then
+        for _, key in ipairs({ "minQuality", "maxQuality" }) do
+            if tonumber(out[key]) and tonumber(out[key]) > MAIL_MAX_QUALITY then
+                out[key] = MAIL_MAX_QUALITY
+            end
         end
     end
     return out

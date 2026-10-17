@@ -72,14 +72,16 @@ function MailingPlan.FormatClasses(set)
     return table.concat(ids, ",")
 end
 
-local MAX_QUALITY = 5
+-- Epic is the highest rarity that a mailing operation can choose. Legendary and better never go by mail.
+local MAX_QUALITY = 4
+local NEVER_MAILED_QUALITY = 5
 
 -- Returns the item filter of an operation. A missing field means no filter (an operation from an old save).
 local function ReadFilter(operation)
     local filter = { min = 0, max = MAX_QUALITY, classes = {} }
     if type(operation) == "table" then
         filter.min = tonumber(operation.minQuality) or 0
-        filter.max = tonumber(operation.maxQuality) or MAX_QUALITY
+        filter.max = math.min(tonumber(operation.maxQuality) or MAX_QUALITY, MAX_QUALITY)
         filter.classes = MailingPlan.ParseClasses(operation.itemClasses)
     end
     filter.byQuality = filter.min > 0 or filter.max < MAX_QUALITY
@@ -88,11 +90,14 @@ local function ReadFilter(operation)
 end
 
 -- True if a bag slot passes the filter. An unknown rarity or class does not pass an active filter.
--- The highest rarity Legendary has no upper limit, so Artifact and Heirloom items pass it.
+-- An item of rarity Legendary or better (Artifact, Heirloom) never passes, whatever the filter.
 local function Passes(filter, slot)
+    if slot.quality ~= nil and slot.quality >= NEVER_MAILED_QUALITY then
+        return false
+    end
     if filter.byQuality then
         local quality = slot.quality
-        if quality == nil or quality < filter.min or (filter.max < MAX_QUALITY and quality > filter.max) then
+        if quality == nil or quality < filter.min or quality > filter.max then
             return false
         end
     end

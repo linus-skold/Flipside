@@ -1698,4 +1698,69 @@ describe("Kit", function()
             _G.C_Item = nil
             assert.are.same({ 1, 1, 1, "ffffffff" }, { Kit.QualityColor(4) })
         end)
+    end)
+
+    describe("QualityText", function()
+        it("wraps the text in the colour of the quality", function()
+            assert.are.equal("|cffa335eeEpic|r", Kit.QualityText(4, "Epic"))
+        end)
+
+        it("uses white when the quality is unknown", function()
+            assert.are.equal("|cffffffffX|r", Kit.QualityText(99, "X"))
+        end)
+    end)
+
+    describe("CheckGrid", function()
+        local function grid(onChange)
+            return Kit.CheckGrid(CreateFrame("Frame"), {
+                items = { { value = 2, text = "A" }, { value = 4, text = "B" }, { value = 7, text = "C" } },
+                columns = 2,
+                columnWidth = 100,
+                rowHeight = 20,
+                onChange = onChange,
+            })
+        end
+
+        local function toggle(check, on)
+            check:SetChecked(on)
+            check.scripts.OnClick(check)
+        end
+
+        it("has one check box for each item and the size of the grid", function()
+            local g = grid()
+            assert.are.equal(3, #g.checks)
+            assert.are.equal(200, g.width)
+            assert.are.equal(40, g.height)
+        end)
+
+        it("reports the set after each click", function()
+            local seen
+            local g = grid(function(set)
+                seen = set
+            end)
+            toggle(g.checks[2], true)
+            assert.are.same({ [4] = true }, seen)
+            toggle(g.checks[3], true)
+            assert.are.same({ [4] = true, [7] = true }, g:GetValues())
+            toggle(g.checks[2], false)
+            assert.are.same({ [7] = true }, seen)
+        end)
+
+        it("sets the values without a call to onChange", function()
+            local calls = 0
+            local g = grid(function()
+                calls = calls + 1
+            end)
+            g:SetValues({ [2] = true, [7] = true })
+            assert.are.equal(0, calls)
+            assert.is_true(g.checks[1]:GetChecked())
+            assert.is_false(g.checks[2]:GetChecked())
+            assert.is_true(g.checks[3]:GetChecked())
+        end)
+
+        it("disables all check boxes", function()
+            local g = grid()
+            g:SetEnabled(false)
+            assert.is_false(g.checks[1].enabled)
+        end)
     end)end)
