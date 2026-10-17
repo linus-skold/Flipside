@@ -13,6 +13,15 @@ local RETRY_SECONDS = 5
 local MULTI_TIMEOUT = 15
 local MULTI_TIMEOUT_PER_STACK = 3
 local SECONDS_PER_HOUR = 3600
+local POST_TIMEOUT = 5 -- seconds after which the post lock ends, with or without a result
+local NAME_REFRESH_DELAY = 0.2 -- seconds that item name events wait before one redraw
+
+-- Write a line to the log. The logger can be missing.
+local function log(level, text)
+    if ns.Log and ns.Log.Write then
+        ns.Log.Write("selling", level, text)
+    end
+end
 
 local NONE_ID = "none"
 local BASE_GROUP = 1
@@ -409,6 +418,18 @@ local function defaultItemInfo(itemID)
 end
 
 -- The vendor sell price of one item in copper (return 11 of C_Item.GetItemInfo); nil if unknown or 0.
+local function defaultRequestItem(itemID)
+    if C_Item and C_Item.RequestLoadItemDataByID then
+        C_Item.RequestLoadItemDataByID(itemID)
+    end
+end
+
+-- The item name inside the brackets of a link; nil if the link is missing or its brackets are empty.
+local function linkName(link)
+    local name = type(link) == "string" and link:match("|h%[(.-)%]|h") or nil
+    return name ~= "" and name or nil
+end
+
 local function defaultVendorPrice(itemID)
     if not (C_Item and C_Item.GetItemInfo) then
         return nil
@@ -552,7 +573,45 @@ function Tab:_Name(entry)
     if item.name and item.name ~= "" then
         return item.name
     end
-    return (self.deps.itemInfo(item.itemID or 0))
+    local fromLink = linkName(item.link)
+    if fromLink then
+        return fromLink
+    end
+    local name = self.deps.itemInfo(item.itemID or 0)
+    if not name or name:match("^item %d+$") then
+        self:_RequestName(item.itemID)
+    end
+    return name
+end
+
+-- Ask the client to load the data of an item once. The redraw comes with ITEM_DATA_LOAD_RESULT.
+function Tab:_RequestName(itemID)
+    if type(itemID) ~= "number" or self.requested[itemID] then
+        return
+    end
+    self.requested[itemID], self.waiting[itemID] = true, true
+    log("debug", "name requested for item " .. itemID)
+    pcall(self.deps.requestItem, itemID)
+end
+
+-- Item data arrived. If a row waits for it, draw the rows again (one redraw for a burst of events).
+function Tab:_OnItemLoaded(itemID)
+    if not (type(itemID) == "number" and self.waiting[itemID]) then
+        return
+    end
+    self.waiting[itemID] = nil
+    log("debug", "name received for item " .. itemID)
+    if self.refreshQueued then
+        return
+    end
+    self.refreshQueued = true
+    self.deps.after(NAME_REFRESH_DELAY, function()
+        self.refreshQueued = false
+        if self.active and self.ui then
+            self.ui.tree:Refresh()
+            self:_UpdateDetails()
+        end
+    end)
 end
 
 -- The first entry of the selection that has a post left.
@@ -1343,11 +1402,16 @@ end
 -- The item as a link in the quality colour; nil while the client has no link yet.
 function Tab:_ItemLink(entry)
     local link, quality = entry.item.link, nil
+    -- A bag link of an item that is not loaded has empty brackets: do not use it.
+    if not linkName(link) then
+        link = nil
+    end
     if not (link and link:find("^|c")) then
         local found, foundQuality = self.deps.itemLink(entry.item.itemID or 0)
         link, quality = link or found, foundQuality
     end
     if not link then
+        self:_RequestName(entry.item.itemID)
         return nil
     end
     if link:find("^|c") then
@@ -1692,6 +1756,9 @@ function Tab:_PostStep()
     if self.multi then
         return false, "posting"
     end
+    if self.lock then
+        return false, "wait for the last post to end"
+    end
     if self.awaiting then
         self:_ShowConfirm()
         return true
@@ -1779,6 +1846,8 @@ function Tab:_PostStep()
     -- The post call reuses the kept slot when it holds the right item, else it fills the slot. After the call the
     -- post owns the slot: the tab does not release it, and the slot is empty after the post.
     self.held = nil
+    log("info", string.format("post click: %s, size %d, stacks %d, price %d, %d h", self:_Name(entry), quantity,
+        stacks, price, decision.duration))
     -- The events of the client can come while the call runs. The state exists before the call. The row stays in the
     -- list until the client confirms the post (_EndMulti).
     self:_StartMulti(entry, quantity, stacks, price, decision.duration)
@@ -1835,12 +1904,47 @@ function Tab:_ArmMulti()
     end
     m.armed = true
     local token = m.token
+    self:_LockPost(token)
     self.deps.after(MULTI_TIMEOUT + MULTI_TIMEOUT_PER_STACK * m.stacks, function()
         if self.multi and self.multi.token == token then
+            log("warn", "no answer from the Auction House")
             self:_EndMulti("no answer from the Auction House")
         end
     end)
     self:_CheckMulti()
+end
+
+-- Keep Post off after a post call until the result came and postDelay seconds passed. A timeout ends the lock too.
+-- With a delay of 0 the result alone ends it. The lock starts no post by itself (D26).
+function Tab:_LockPost(token)
+    local deps = self.deps
+    local lock = { token = token, resulted = false, delayed = deps.postDelay <= 0 }
+    self.lock = lock
+    if deps.postDelay <= 0 then
+        return
+    end
+    deps.after(deps.postDelay, function()
+        if self.lock == lock then
+            lock.delayed = true
+            self:_TryUnlock()
+        end
+    end)
+    deps.after(deps.postTimeout, function()
+        if self.lock == lock then
+            log("warn", "post delay timeout, Post is on again")
+            self.lock = nil
+            self:_Update()
+        end
+    end)
+end
+
+-- End the lock if the result came and the delay passed.
+function Tab:_TryUnlock()
+    local lock = self.lock
+    if lock and lock.resulted and lock.delayed then
+        self.lock = nil
+        self:_Update()
+    end
 end
 
 -- A multisell event of the client: kind is "start", "update" or "failure".
@@ -1849,6 +1953,7 @@ function Tab:_OnMultisell(kind, created, total, text)
     if not m then
         return
     end
+    log("debug", string.format("multisell %s %s of %s", tostring(kind), tostring(created), tostring(total)))
     if type(created) == "number" then
         m.created = math.max(m.created, created)
     end
@@ -1885,12 +1990,20 @@ function Tab:_EndMulti(failure)
     for _ = 1, created do
         self:_Record(entry, m.quantity, "post", m.price, m.duration)
     end
+    if self.lock then
+        self.lock.resulted = true
+    end
     if failure then
         entry.posted = entry.posted + created
         self.postedCount = self.postedCount + created
-        return self:_Fail(entry, string.format("%s (%d of %d stacks made)", failure, created, m.stacks))
+        log("error", string.format("post failed: %s (%d of %d stacks made)", failure, created, m.stacks))
+        local ok, text = self:_Fail(entry, string.format("%s (%d of %d stacks made)", failure, created, m.stacks))
+        self:_TryUnlock()
+        return ok, text
     end
+    log("info", string.format("post ok: %d x %d", created, m.quantity))
     self:_Advance(entry, true, created)
+    self:_TryUnlock()
 end
 
 -- Leave the next auction of the queue without a post. Makes no protected call.
@@ -2079,6 +2192,9 @@ end
 function Tab:PostLabel()
     if self.awaiting then
         return "Confirm post"
+    end
+    if self.lock then
+        return "Wait..."
     end
     return "Post"
 end
@@ -2312,7 +2428,8 @@ function Tab:_Update()
     ui.tree:Refresh()
     ui.postNext:SetText(self:PostLabel())
     local busy = self.multi ~= nil
-    ui.postNext:SetEnabled(client.CanPost() and not busy and (self.awaiting ~= nil or self:_Focus() ~= nil))
+    ui.postNext:SetEnabled(client.CanPost() and not busy and self.lock == nil
+        and (self.awaiting ~= nil or self:_Focus() ~= nil))
 
     ui.skip:SetEnabled(not busy and (self.awaiting ~= nil or self:_Focus() ~= nil))
     ui.progress:SetText(self:ProgressText())
@@ -2584,10 +2701,8 @@ function Tab:Mount(parent, api)
     end)
     self.events[#self.events + 1] = "BAG_UPDATE_DELAYED"
     -- Item data that loads late: draw the rows again. This makes no bag read.
-    bus:Subscribe("ITEM_DATA_LOAD_RESULT", OWNER, function()
-        if self.active and self.ui then
-            self.ui.tree:Refresh()
-        end
+    bus:Subscribe("ITEM_DATA_LOAD_RESULT", OWNER, function(_, itemID)
+        self:_OnItemLoaded(itemID)
     end)
     self.events[#self.events + 1] = "ITEM_DATA_LOAD_RESULT"
     -- A group or rule change moves items to other groups: build the tree again.
@@ -2614,7 +2729,9 @@ end
 -- deps: bus, rules, formulaRun, readBags() (bag items with stacks); optional after(seconds, fn), client, plan, log,
 -- itemInfo, maxStack(itemID), vendorPrice(itemID) (copper for one item, or nil), confirm(name, text, onAccept),
 -- getRecord(key), now(), itemLink(itemID) (link, quality), warn(title, text, onPost, onSkip, onCancel),
--- time() (seconds, default GetTime) and syncInterval (seconds between two automatic bag reads, default 1).
+-- time() (seconds, default GetTime) and syncInterval (seconds between two automatic bag reads, default 1),
+-- requestItem(itemID) (asks the client to load item data), postDelay (seconds that Post stays off after a post
+-- result, default ns.Flavour.postDelay) and postTimeout (seconds after which Post comes back with no result).
 function SellingTab.New(deps)
     if type(deps) ~= "table" or type(deps.bus) ~= "table" then
         error("deps.bus must be a table", 2)
@@ -2636,6 +2753,9 @@ function SellingTab.New(deps)
             return ns.Kit.Confirm(...)
         end,
         itemLink = deps.itemLink or defaultItemLink,
+        requestItem = deps.requestItem or defaultRequestItem,
+        postDelay = deps.postDelay or ns.Flavour and ns.Flavour.postDelay or 0,
+        postTimeout = deps.postTimeout or ns.Flavour and ns.Flavour.postTimeout or POST_TIMEOUT,
         warn = deps.warn or openWarning,
         time = deps.time or GetTime,
         syncInterval = deps.syncInterval or SYNC_INTERVAL,
@@ -2643,6 +2763,7 @@ function SellingTab.New(deps)
     resolved.log = deps.log or resolved.plan.Log
     return setmetatable({
         deps = resolved, entries = {}, selection = {}, events = {}, active = false, token = 0, postedCount = 0,
+        requested = {}, waiting = {},
     }, Tab)
 end
 
