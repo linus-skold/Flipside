@@ -112,10 +112,12 @@ MailHost.LAYOUTS = {
 
 -- deps: bus, create(parent, size) (returns a MailingView), after(seconds, fn), frame() (returns the MailFrame or
 -- nil), openMail() (the open-mail frame or nil), children() (the frames inside MailFrame that must keep their
--- width: InboxFrame, SendMailFrame), mode (a key of MailHost.LAYOUTS, default "wide").
--- Returns an object with View(), the view or nil.
+-- width: InboxFrame, SendMailFrame), mode (a key of MailHost.LAYOUTS, default "wide"), createInbox(mailFrame)
+-- (optional; returns the compact inbox list, an InboxList, or nil). The inbox list does not depend on the layout:
+-- it shows on MAIL_SHOW, refreshes on MAIL_INBOX_UPDATE and hides on MAIL_CLOSED.
+-- Returns an object with View(), the view or nil, and Inbox(), the inbox list or nil.
 function MailHost.Attach(deps)
-    local host = { view = nil }
+    local host = { view = nil, inbox = nil }
     local layout = MailHost.LAYOUTS[deps.mode or "wide"](deps, host)
     local open
 
@@ -133,6 +135,12 @@ function MailHost.Attach(deps)
         layout.Open(mailFrame)
         open = mailFrame
         host.view:Refresh()
+        if deps.createInbox then
+            host.inbox = host.inbox or deps.createInbox(mailFrame)
+            if host.inbox then
+                host.inbox:Show()
+            end
+        end
     end
 
     deps.bus:Subscribe("MAIL_SHOW", OWNER, function()
@@ -140,8 +148,16 @@ function MailHost.Attach(deps)
     end)
     deps.bus:Subscribe("MAIL_CLOSED", OWNER, function()
         if open then
+            if host.inbox then
+                host.inbox:Hide()
+            end
             layout.Close(open)
             open = nil
+        end
+    end)
+    deps.bus:Subscribe("MAIL_INBOX_UPDATE", OWNER, function()
+        if open and host.inbox and host.inbox.frame:IsShown() then
+            host.inbox:Refresh()
         end
     end)
     -- The bags changed: read the plan again, but not while a run changes the bags.
@@ -154,6 +170,9 @@ function MailHost.Attach(deps)
 
     function host.View()
         return host.view
+    end
+    function host.Inbox()
+        return host.inbox
     end
     return host
 end

@@ -251,6 +251,21 @@ function MailingPlan.Build(input)
     return { mails = mails, skipped = skipped }
 end
 
+-- Returns the Build entry of one group: its own items and its effective mailing operation.
+local function EntryFor(rules, id)
+    local opID = rules:EffectiveOperation(id, "mailing")
+    local op = opID and rules:GetOperation(opID)
+    local entry = { id = id, items = rules:ItemsIn(id), operation = op and op.settings or nil }
+    if rules.AllBagsGroup and rules:AllBagsGroup() == id then
+        entry.allBags = true
+        entry.isGrouped = function(key)
+            -- An item in no group belongs to Base (group 1).
+            return rules:GroupOf(key) ~= 1
+        end
+    end
+    return entry
+end
+
 -- Builds the groups of Build from the rules. groupIDs are the groups that the user selected.
 -- Each group and its subgroups are listed with their own items and their effective mailing operation.
 function MailingPlan.GroupsFor(rules, groupIDs)
@@ -260,17 +275,7 @@ function MailingPlan.GroupsFor(rules, groupIDs)
             return
         end
         done[id] = true
-        local opID = rules:EffectiveOperation(id, "mailing")
-        local op = opID and rules:GetOperation(opID)
-        local entry = { id = id, items = rules:ItemsIn(id), operation = op and op.settings or nil }
-        if rules.AllBagsGroup and rules:AllBagsGroup() == id then
-            entry.allBags = true
-            entry.isGrouped = function(key)
-                -- An item in no group belongs to Base (group 1).
-                return rules:GroupOf(key) ~= 1
-            end
-        end
-        out[#out + 1] = entry
+        out[#out + 1] = EntryFor(rules, id)
         for _, child in ipairs(rules:Children(id) or {}) do
             visit(child)
         end
@@ -278,5 +283,17 @@ function MailingPlan.GroupsFor(rules, groupIDs)
     for _, id in ipairs(groupIDs) do
         visit(id)
     end
+    return out
+end
+
+-- Builds the groups of Build for one mailing operation: every group below Base whose effective mailing operation
+-- is opID (the groups with the operation attached and the groups that inherit it), in tree order.
+function MailingPlan.GroupsForOperation(rules, opID)
+    local out = {}
+    rules:Walk(function(id)
+        if id ~= 1 and rules:EffectiveOperation(id, "mailing") == opID then
+            out[#out + 1] = EntryFor(rules, id)
+        end
+    end)
     return out
 end
