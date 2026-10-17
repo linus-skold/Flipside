@@ -108,8 +108,8 @@ describe("OperationsPage", function()
         return window
     end
 
-    local function rightClick(index)
-        local row = page.list.rows[index]
+    local function rightClick(position)
+        local row = page.list.rows[position]
         row.scripts.OnClick(row, "RightButton")
     end
 
