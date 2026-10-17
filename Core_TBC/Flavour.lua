@@ -39,6 +39,10 @@ ns.Flavour = {
     topTabTemplate = "PanelTopTabButtonTemplate",
     -- TabButtonTemplate does not size to text on its own. The Kit sizes it: text + padding + 32 for the sides.
     topTabMinWidth = 40,
+    -- Selling: Post stays off until the post result came and this many seconds passed. The client refuses fast posts.
+    postDelay = 1.0,
+    -- Seconds after which Post comes back even with no result.
+    postTimeout = 5,
     -- Mailing send run (SPEC 5.5). SendMail takes three arguments in the TBC UI.
     sendMailArgs = 3,
     -- Seconds to wait after BAG_UPDATE_DELAYED before the next mail (confirmed in game: 0.5 works).

@@ -349,10 +349,28 @@ end
 
 function Tab:_ItemName(entry)
     local name = self.deps.itemInfo(entry.itemID or 0)
-    if entry.name and (not name or name:match("^item %d+$")) then
-        return entry.name
+    if not name or name:match("^item %d+$") then
+        -- No name yet: ask the client once; ITEM_DATA_LOAD_RESULT draws the list again.
+        local itemID = entry.itemID
+        if type(itemID) == "number" and not self.requested[itemID] then
+            self.requested[itemID] = true
+            pcall(self.deps.requestItem, itemID)
+        end
+        if entry.name then
+            return entry.name
+        end
     end
     return name
+end
+
+-- Item data arrived for an item that the list asked for: draw the list again.
+function Tab:_OnItemLoaded(itemID)
+    if self.requested[itemID] == true then
+        self.requested[itemID] = false
+        if self.active and self.ui then
+            self:_Update()
+        end
+    end
 end
 
 -- Build the list again: from the groups and the operations, or from the selected search list.
@@ -2051,6 +2069,10 @@ function Tab:Mount(parent, api)
         end)
         self.events[#self.events + 1] = ready
     end
+    bus:Subscribe("ITEM_DATA_LOAD_RESULT", OWNER, function(_, itemID)
+        self:_OnItemLoaded(itemID)
+    end)
+    self.events[#self.events + 1] = "ITEM_DATA_LOAD_RESULT"
     self:_Update()
 end
 
@@ -2084,6 +2106,11 @@ function BuyingTab.New(deps)
         plan = deps.plan or ns.BuyingPlan,
         itemInfo = deps.itemInfo or defaultItemInfo,
         itemLink = deps.itemLink or defaultItemLink,
+        requestItem = deps.requestItem or function(itemID)
+            if C_Item and C_Item.RequestLoadItemDataByID then
+                C_Item.RequestLoadItemDataByID(itemID)
+            end
+        end,
         db = deps.db,
         searchLists = deps.searchLists or nil,
         itemNameIndex = deps.itemNameIndex,
@@ -2096,7 +2123,7 @@ function BuyingTab.New(deps)
     resolved.log = deps.log or resolved.plan.Log
     return setmetatable({
         deps = resolved, list = {}, results = {}, events = {}, active = false, token = 0, dryRun = false,
-        source = "groups", amount = DEFAULT_AMOUNT,
+        source = "groups", amount = DEFAULT_AMOUNT, requested = {},
     }, Tab)
 end
 

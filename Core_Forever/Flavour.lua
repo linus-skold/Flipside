@@ -24,6 +24,10 @@ ns.Flavour = {
     -- Tab templates. The Forever tab templates size to text on their own.
     pageTabTemplate = "PanelTabButtonTemplate",
     topTabTemplate = "PanelTopTabButtonTemplate",
+    -- Selling: Post stays off until the post result came and this many seconds passed. Not tested in game: tune it.
+    postDelay = 0.5,
+    -- Seconds after which Post comes back even with no result.
+    postTimeout = 5,
     -- Mailing send run (SPEC 5.5). SendMail takes four arguments in the Forever UI (the last is the reply mail id).
     sendMailArgs = 4,
     -- Seconds to wait after BAG_UPDATE_DELAYED before the next mail. Not tested in game on Forever: tune it here.
