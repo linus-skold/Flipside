@@ -140,6 +140,14 @@ function frameMethods:SetPoint(...)
     table.insert(self.points, { ... })
 end
 
+function frameMethods:GetNumPoints()
+    return #self.points
+end
+
+function frameMethods:GetPoint(index)
+    return unpack(self.points[index or 1], 1, 5)
+end
+
 function frameMethods:ClearAllPoints()
     self.points = {}
 end

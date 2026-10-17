@@ -2,23 +2,31 @@ local manifest = require("Tests.manifest")
 local mock = require("Tests.wow_mock")
 
 describe("MailHost", function()
-    local ns, bus, mailFrame, created, timers, refreshes, running
+    local ns, bus, mailFrame, created, timers, refreshes, running, inbox, send
 
-    local function makePanel(parent)
-        local panel = { frame = CreateFrame("Frame", nil, parent), run = { IsRunning = function()
+    local function makeView(parent, size)
+        local view = { frame = CreateFrame("Frame", nil, parent), size = size, run = { IsRunning = function()
             return running
         end } }
-        function panel:Show()
+        function view:Show()
             self.frame:Show()
         end
-        function panel:Hide()
+        function view:Hide()
             self.frame:Hide()
         end
-        function panel.Refresh()
+        function view.Refresh()
             refreshes = refreshes + 1
         end
-        created[#created + 1] = panel
-        return panel
+        created[#created + 1] = view
+        return view
+    end
+
+    -- A child frame of the mail frame that stretches with it, as the Forever Inbox and Send frames do.
+    local function stretched(name)
+        local frame = CreateFrame("Frame", name, mailFrame)
+        frame:SetPoint("TOPLEFT", mailFrame, "TOPLEFT")
+        frame:SetPoint("BOTTOMRIGHT", mailFrame, "BOTTOMRIGHT")
+        return frame
     end
 
     before_each(function()
@@ -29,12 +37,17 @@ describe("MailHost", function()
         bus = ns.EventBus.New()
         created, timers, refreshes, running = {}, {}, 0, false
         mailFrame = CreateFrame("Frame", "MailFrame", UIParent)
+        mailFrame:SetSize(384, 512)
+        inbox, send = stretched("InboxFrame"), stretched("SendMailFrame")
         ns.MailHost.Attach({
             bus = bus,
             frame = function()
                 return mailFrame
             end,
-            create = makePanel,
+            children = function()
+                return { inbox, send }
+            end,
+            create = makeView,
             after = function(_, fn)
                 timers[#timers + 1] = fn
             end,
@@ -45,15 +58,48 @@ describe("MailHost", function()
         mock.teardown()
     end)
 
-    it("shows the panel beside the mail frame on MAIL_SHOW and hides it on MAIL_CLOSED", function()
+    it("widens the mail frame on MAIL_SHOW and puts the view in the new strip", function()
         bus:Emit("MAIL_SHOW")
+        assert.is_true(mailFrame:GetWidth() > 384)
         assert.are.equal(1, #created)
+        assert.are.equal(mailFrame, created[1].frame.parent)
         assert.is_true(created[1].frame:IsShown())
         assert.are.equal(1, refreshes)
-        bus:Emit("MAIL_CLOSED")
-        assert.is_false(created[1].frame:IsShown())
+        local first = created[1].frame.points[1]
+        assert.are.equal("TOPLEFT", first[1])
+        assert.are.equal(mailFrame, first[2])
+        assert.are.equal(384, first[4], "the view starts at the old right edge")
+    end)
+
+    it("restores the width, the child frames and the view on MAIL_CLOSED", function()
         bus:Emit("MAIL_SHOW")
-        assert.are.equal(1, #created, "the panel is made once")
+        assert.are.equal(384, inbox:GetWidth(), "the Inbox frame keeps its width")
+        assert.are.equal(2, inbox:GetNumPoints())
+        local point1, _, _, _, _ = inbox:GetPoint(1)
+        assert.are.equal("TOPLEFT", point1)
+        local point2 = inbox:GetPoint(2)
+        assert.are.equal("BOTTOMLEFT", point2, "the Inbox frame does not stretch")
+        bus:Emit("MAIL_CLOSED")
+        assert.are.equal(384, mailFrame:GetWidth())
+        assert.is_false(created[1].frame:IsShown())
+        for _, frame in ipairs({ inbox, send }) do
+            assert.are.equal(0, frame:GetWidth())
+            assert.are.equal("TOPLEFT", frame:GetPoint(1))
+            assert.are.equal("BOTTOMRIGHT", frame:GetPoint(2))
+        end
+    end)
+
+    it("makes the view once and widens again when the mailbox opens again", function()
+        bus:Emit("MAIL_SHOW")
+        bus:Emit("MAIL_CLOSED")
+        bus:Emit("MAIL_SHOW")
+        assert.are.equal(1, #created, "the view is made once")
+        assert.is_true(mailFrame:GetWidth() > 384)
+        assert.is_true(created[1].frame:IsShown())
+        bus:Emit("MAIL_SHOW")
+        local width = mailFrame:GetWidth()
+        bus:Emit("MAIL_CLOSED")
+        assert.are.equal(384, mailFrame:GetWidth(), "a second MAIL_SHOW does not widen twice (was " .. width .. ")")
     end)
 
     it("reads the plan again on a bag update, but not while a run is active", function()
