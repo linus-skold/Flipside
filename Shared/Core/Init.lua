@@ -1032,6 +1032,54 @@ local function openAutoRules()
     end
 end
 
+-- The client frames that the compact inbox list hides: the seven mail buttons and the page buttons.
+local function inboxClientFrames()
+    local inbox = _G.InboxFrame
+    local list = {}
+    for index = 1, 7 do
+        list[#list + 1] = _G["MailItem" .. index]
+    end
+    -- TBC names the page buttons as globals; Forever keeps them in InboxFrame.
+    for _, key in ipairs({ "PrevPageButton", "NextPageButton", "PageTurnIndicatorLeft", "PageTurnIndicatorRight" }) do
+        list[#list + 1] = _G["Inbox" .. key] or (inbox and inbox[key])
+    end
+    return list
+end
+
+-- Make the compact inbox list in the client InboxFrame. Returns nil if the client has no inbox function to reuse.
+local function createInboxList()
+    local inbox = _G.InboxFrame
+    if not (ns.InboxList and inbox and type(InboxFrame_OnClick) == "function" and type(GetInboxHeaderInfo) == "function"
+        and type(GetInboxNumItems) == "function") then
+        return nil
+    end
+    return ns.InboxList.Create(inbox, {
+        api = {
+            numItems = GetInboxNumItems,
+            header = GetInboxHeaderInfo,
+            openID = function()
+                return inbox.openMailID
+            end,
+            -- The client function opens the mail from the state of the button: checked opens, unchecked closes.
+            open = function(index)
+                local opening = inbox.openMailID ~= index
+                InboxFrame_OnClick({ GetChecked = function() return opening end }, index)
+            end,
+        },
+        formatMoney = ns.TooltipLines.FormatMoney,
+        blizzard = inboxClientFrames,
+        openMail = function()
+            return _G.OpenMailFrame
+        end,
+        skin = ns.AuctionTabs and ns.AuctionTabs.Skin,
+        -- The area of the seven client buttons.
+        place = function(frame)
+            frame:SetPoint("TOPLEFT", _G.MailItem1, "TOPLEFT", 0, 0)
+            frame:SetPoint("BOTTOMRIGHT", _G.MailItem7, "BOTTOMRIGHT", 0, 0)
+        end,
+    })
+end
+
 -- Attach the mailing view to the MailFrame; it needs the groups and operations.
 local function openMailing()
     if not (ns.rules and ns.MailClient and ns.MailingRun and ns.MailingView and ns.MailHost and ns.Kit
@@ -1061,6 +1109,9 @@ local function openMailing()
                     list[#list + 1] = _G[name]
                 end
                 return list
+            end,
+            createInbox = function()
+                return createInboxList()
             end,
             create = function(parent, size)
                 return ns.MailingView.Create(parent, {

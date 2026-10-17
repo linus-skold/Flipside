@@ -5,6 +5,7 @@ local Kit = ns.Kit
 -- Create a list. options: rowHeight, heightOf(data) (optional, gives the height of one row),
 -- initRow(rowFrame, data), inset (true gives the client inset background),
 -- skin (client atlas names for the inset background, the row stripes and the row hover; see Kit.Inset).
+-- options.retainScroll = true keeps the scroll position when SetData runs again.
 -- Use list.frame to place the list. Call list:SetData(array) to fill it.
 -- list.contentInsets = { left, right } is the space between the list frame and the rows (for a header row).
 -- Multi-select: options.multiSelect = true makes a click on a row toggle it, and a Shift-click add the range from
@@ -122,7 +123,7 @@ function Kit.CreateList(parent, options)
         function list:SetData(array)
             self.data = array or {}
             local changed = pruneSelection()
-            box:SetDataProvider(CreateDataProvider(self.data))
+            box:SetDataProvider(CreateDataProvider(self.data), options.retainScroll)
             if changed and options.onSelectionChange then
                 options.onSelectionChange(self)
             end

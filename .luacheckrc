@@ -62,6 +62,7 @@ read_globals = {
     "GetSendMailMoney",
     "GetSendMailPrice",
     "InboxFrame",
+    "InboxFrame_OnClick",
     "MailFrame",
     "SendMail",
     "SendMailFrame",

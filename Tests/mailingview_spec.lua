@@ -2,72 +2,120 @@ local manifest = require("Tests.manifest")
 local mock = require("Tests.wow_mock")
 
 describe("MailingView", function()
-    local ns, view, rules, slots, started, stopped, confirms, callbacks, running, characters
+    local ns, view, rules, slots, started, stopped, confirms, callbacks, running, characters, logged
 
     local function loadModules()
         local env = { ReportError = function() end, Flavour = {} }
-        for _, name in ipairs({ "EventBus", "MailingPlan", "Theme", "Widgets", "List", "Tree", "MailingView" }) do
+        for _, name in ipairs({ "EventBus", "MailingPlan", "Theme", "Widgets", "List", "MailingView" }) do
             assert(loadfile(manifest.path(name)))("Flipside", env)
         end
         return env
     end
 
-    -- A fake rules store. Group 1 is Base; 2, 3 and 5 are children of Base; 4 is a child of 2; 6 is a child of 5.
-    -- Groups 2, 3 and 6 have their own mailing operation; 4 inherits the one of 2; 5 has none.
+    -- A fake rules store. Group 1 is Base; 2, 3, 5, 7 and 8 are children of Base; 4 is a child of 2; 6 is a child
+    -- of 5. Group 7 is All bag items. Operation 20 is on group 2 (group 4 inherits it), 21 on 3, 22 on 6, 23 on
+    -- 7, 24 (no recipient) on 8. Operation 25 is on no group.
     local function makeRules()
-        local names = { [1] = "Base", [2] = "Herbs", [3] = "Ore", [4] = "Peaceblooms", [5] = "Misc", [6] = "Cloth" }
-        local ops = { [2] = 20, [3] = 21, [6] = 22 }
+        local names = { [1] = "Base", [2] = "Herbs", [3] = "Ore", [4] = "Peaceblooms", [5] = "Misc", [6] = "Cloth",
+            [7] = "All bag items", [8] = "Gems" }
+        local attached = { [2] = 20, [3] = 21, [6] = 22, [7] = 23, [8] = 24 }
+        local opNames = { [20] = "Herbs to bank", [21] = "Ore to Nobody", [22] = "Cloth to me", [23] = "Leftovers",
+            [24] = "Blank", [25] = "Unused" }
         local settings = {
             [20] = { recipient = "Bank-Realm", keep = 0, maxSend = 0 },
             [21] = { recipient = "Nobody", keep = 0, maxSend = 0 },
             [22] = { recipient = "Me-Realm", keep = 0, maxSend = 0 },
+            [23] = { recipient = "Bank-Realm", keep = 0, maxSend = 0 },
+            [24] = { recipient = "", keep = 0, maxSend = 0 },
+            [25] = { recipient = "Bank-Realm", keep = 0, maxSend = 0 },
         }
         local items = { [2] = { "i:1" }, [3] = { "i:2" }, [4] = { "i:3" }, [6] = { "i:4" } }
-        local children = { [1] = { 2, 3, 5 }, [2] = { 4 }, [5] = { 6 } }
-        local parents = { [2] = 1, [3] = 1, [4] = 2, [5] = 1, [6] = 5 }
-        return {
-            EffectiveOperation = function(_, id)
-                local node = id
-                while node do
-                    if ops[node] then
-                        return ops[node], node
-                    end
-                    node = parents[node]
+        local children = { [1] = { 2, 3, 5, 7, 8 }, [2] = { 4 }, [5] = { 6 } }
+        local parents = { [2] = 1, [3] = 1, [4] = 2, [5] = 1, [6] = 5, [7] = 1, [8] = 1 }
+        local store = { settings = settings }
+        function store.EffectiveOperation(_, id)
+            local node = id
+            while node do
+                if attached[node] then
+                    return attached[node], node
                 end
-            end,
-            GetOperation = function(_, opID)
-                return { settings = settings[opID] }
-            end,
-            Name = function(_, id)
-                return names[id]
-            end,
-            ItemsIn = function(_, id)
-                return items[id] or {}
-            end,
-            Children = function(_, id)
-                return children[id] or {}
-            end,
-        }
+                node = parents[node]
+            end
+        end
+        function store.GetOperation(_, opID)
+            return { id = opID, name = opNames[opID], type = "mailing", settings = settings[opID] }
+        end
+        function store.ListOperations()
+            local list = {}
+            for _, id in ipairs({ 20, 21, 22, 23, 24, 25 }) do
+                list[#list + 1] = { id = id, name = opNames[id], type = "mailing" }
+            end
+            return list
+        end
+        function store.Name(_, id)
+            return names[id]
+        end
+        function store.ItemsIn(_, id)
+            return items[id] or {}
+        end
+        function store.Children(_, id)
+            return children[id] or {}
+        end
+        function store.Walk(_, fn)
+            local function visit(id, depth)
+                fn(id, depth)
+                for _, child in ipairs(children[id] or {}) do
+                    visit(child, depth + 1)
+                end
+            end
+            visit(1, 0)
+        end
+        function store.AllBagsGroup()
+            return 7
+        end
+        function store.GroupOf(_, key)
+            for group, keys in pairs(items) do
+                for _, grouped in ipairs(keys) do
+                    if grouped == key then
+                        return group
+                    end
+                end
+            end
+            return 1
+        end
+        return store
     end
 
-    -- The row frame that shows a node, or nil.
+    -- The row frame that shows a rule, or nil.
     local function rowOf(id)
-        for _, row in ipairs(view.tree.list.rows) do
-            if row.kitId == id then
+        for _, row in ipairs(view.list.rows) do
+            if row.rule and row.rule.id == id and row:IsShown() then
                 return row
             end
         end
     end
 
+    local function recipientsOfPlan(plan)
+        local names = {}
+        for _, mail in ipairs(plan.mails) do
+            names[#names + 1] = mail.recipient
+        end
+        return names
+    end
+
     before_each(function()
         mock.reset()
         _G.ScrollUtil = nil
-        getmetatable(CreateFrame("Frame")).__index.SetJustifyH = function() end
         ns = loadModules()
+        logged = {}
+        ns.Log = { Write = function(category, level, text)
+            logged[#logged + 1] = { category, level, text }
+        end }
         rules = makeRules()
         slots = {
             { key = "i:1", bag = 0, slot = 1, count = 20 }, { key = "i:1", bag = 0, slot = 2, count = 5 },
             { key = "i:2", bag = 0, slot = 3, count = 10 }, { key = "i:3", bag = 0, slot = 4, count = 3 },
+            { key = "i:4", bag = 0, slot = 5, count = 2 }, { key = "i:9", bag = 0, slot = 6, count = 7 },
         }
         started, stopped, confirms, running = {}, 0, {}, false
         characters = { "Me-Realm", "Bank-Realm" }
@@ -128,32 +176,55 @@ describe("MailingView", function()
         assert.is_not_nil(other.frame)
     end)
 
-    it("shows the groups that have a mailing operation, own or inherited, as a tree", function()
-        assert.are.equal(3, #view.nodes)
-        local herbs, ore, misc = view.nodes[1], view.nodes[2], view.nodes[3]
-        assert.are.equal("Herbs", herbs.text)
-        assert.are.equal("Ore", ore.text)
-        assert.are.equal("Peaceblooms", herbs.children[1].text)
-        assert.is_true(herbs.children[1].operated, "a subgroup shows the inherited operation")
-        -- Misc has no operation: it shows only to hold Cloth, and a click does not select it.
-        assert.is_false(misc.operated)
-        assert.are.equal("Cloth", misc.children[1].text)
+    it("shows one compact row for each mailing operation", function()
+        assert.are.equal(6, #view.rules)
+        local names = {}
+        for _, rule in ipairs(view.rules) do
+            names[#names + 1] = rule.name
+        end
+        assert.are.same({ "Herbs to bank", "Ore to Nobody", "Cloth to me", "Leftovers", "Blank", "Unused" }, names)
+        local row = rowOf(20)
+        assert.are.equal(18, row.height, "the row height is the Ledger row height")
+        assert.are.equal("Herbs to bank", row.nameText:GetText())
+        assert.are.equal("Bank-Realm", row.recipientText:GetText())
+        assert.are.equal("2 groups", row.groupsText:GetText())
+        assert.are.equal("any item", row.filterText:GetText())
+        assert.are.equal("1 group", rowOf(21).groupsText:GetText())
     end)
 
-    it("shows the recipient, the mails and the items on each row", function()
-        local herbs = view.nodes[1]
-        assert.are.equal("Bank-Realm", herbs.recipient)
-        -- Herbs also plans its subgroup Peaceblooms: 25 + 3 units in two slots and one slot.
-        assert.are.equal(1, herbs.mails)
-        assert.are.equal(28, herbs.items)
-        assert.are.equal("> Bank-Realm, 1 mail, 28 items", herbs.detail)
-        assert.are.equal("Bank-Realm", herbs.children[1].recipient, "the recipient comes from the inherited operation")
-        assert.are.equal(10, view.nodes[2].items)
+    it("resolves the groups of a rule, with inheritance and the All bag items group", function()
+        assert.are.same({ "Herbs", "Peaceblooms" }, view.byId[20].groupNames)
+        assert.are.same({ "Ore" }, view.byId[21].groupNames)
+        assert.are.same({ "All bag items" }, view.byId[23].groupNames)
+        assert.are.same({}, view.byId[25].groupNames)
+    end)
+
+    it("plans the mails of each rule from its own groups", function()
+        -- Herbs plans its subgroup Peaceblooms: 25 + 3 units in one mail.
+        assert.are.equal(1, view.byId[20].mails)
+        assert.are.equal(28, view.byId[20].items)
+        assert.are.equal(10, view.byId[21].items)
+        assert.are.equal(0, view.byId[22].mails, "a mail to the own character is skipped")
+        assert.are.equal(7, view.byId[23].items, "All bag items takes the item that is in no group")
+    end)
+
+    it("lists the groups of a rule in the tooltip of its row", function()
+        local row = rowOf(20)
+        row.scripts.OnEnter(row)
+        local lines = mock.tooltip.lines
+        assert.are.equal("Herbs to bank", mock.tooltip.title)
+        assert.are.equal("Recipient: Bank-Realm", lines[1])
+        assert.are.equal("Groups:", lines[2])
+        assert.are.equal("Herbs", lines[3])
+        assert.are.equal("Peaceblooms", lines[4])
+        assert.is_true(mock.tooltip.shown)
     end)
 
     it("warns about a recipient that is not an own character", function()
-        assert.is_nil(view.nodes[1].detail:find("not one of your characters"))
-        assert.is_truthy(view.nodes[2].detail:find("not one of your characters"))
+        assert.is_falsy(view.byId[20].unknown)
+        assert.is_true(view.byId[21].unknown)
+        local color = rowOf(21).recipientText.color
+        assert.are.same({ 1, 0.4, 0.4 }, { color[1], color[2], color[3] })
     end)
 
     it("matches a recipient without a realm to an own character name", function()
@@ -163,121 +234,153 @@ describe("MailingView", function()
         assert.is_false(ns.MailingView.IsKnownCharacter("Stranger", characters))
     end)
 
-    it("selects a group on a click, adds another group, and clears a selected group on a click", function()
-        view.tree:Select(2)
-        assert.is_true(view.selected[2])
-        assert.is_true(rowOf(2).selection:IsShown())
-        assert.are.equal("1 mail, 28 items", view.summaryText)
-        view.tree:Select(3)
-        assert.is_true(view.selected[2] and view.selected[3])
-        assert.is_true(rowOf(2).selection:IsShown(), "the first group stays selected")
-        assert.is_true(rowOf(3).selection:IsShown())
-        assert.are.equal("2 mails, 38 items", view.summaryText)
-        view.tree:Select(2)
-        assert.is_nil(view.selected[2])
-        assert.is_false(rowOf(2).selection:IsShown())
-        assert.are.equal("1 mail, 10 items", view.summaryText)
+    it("shows a rule with no recipient or no groups as disabled, with the reason", function()
+        assert.are.equal("no recipient", view.byId[24].reason)
+        assert.are.equal("no groups", view.byId[25].reason)
+        assert.is_false(rowOf(24).run.enabled)
+        assert.are.equal("no recipient", rowOf(24).filterText:GetText())
+        assert.is_false(rowOf(25).run.enabled)
+        assert.are.equal("no groups", rowOf(25).filterText:GetText())
+        assert.is_true(rowOf(20).run.enabled)
+        view:RunRule(24)
+        view:RunRule(25)
+        assert.are.equal(0, #confirms)
     end)
 
-    it("plans the mails of all selected groups", function()
-        view.tree:Select(2)
-        view.tree:Select(3)
-        local plan = view:Plan()
-        assert.are.equal(2, #plan.mails)
-        local recipients = { plan.mails[1].recipient, plan.mails[2].recipient }
-        table.sort(recipients)
-        assert.are.same({ "Bank-Realm", "Nobody" }, recipients)
-    end)
-
-    it("plans a subgroup once when the group and the subgroup are both selected", function()
-        view.tree:Select(2)
-        view.tree:Select(4)
-        assert.are.equal("1 mail, 28 items", view.summaryText)
-    end)
-
-    it("does not select a group that has no mailing operation", function()
-        view.tree:Select(5)
-        assert.is_nil(view.selected[5])
-        assert.are.equal("0 mails, 0 items", view.summaryText)
-    end)
-
-    it("keeps the selection when the tree is built again, but drops a group that is gone", function()
-        view.tree:Select(2)
-        view.tree:Select(3)
+    it("summarises the filter of a rule", function()
+        local text = ns.MailingView.FilterText
+        assert.are.equal("any item", (text({})))
+        assert.are.equal("Unc-Epic, 2 types", (text({ minQuality = 2, maxQuality = 4, itemClasses = "2,4" })))
+        assert.are.equal("Rare", (text({ minQuality = 3, maxQuality = 3 })))
+        assert.are.equal("Poor-Com, 1 type", (text({ minQuality = 0, maxQuality = 1, itemClasses = "7" })))
+        assert.are.equal("Rarity: Uncommon to Epic\nItem types: 2",
+            select(2, text({ minQuality = 2, maxQuality = 4, itemClasses = "2,4" })))
+        rules.settings[20].minQuality = 2
+        rules.settings[20].itemClasses = "2,4"
         view:Refresh()
-        assert.is_true(view.selected[2])
-        local children = rules.Children
-        rules.Children = function(self, id)
-            local list = children(self, id)
-            if id == 1 then
-                return { 3 }
-            end
-            return list
-        end
-        view:Refresh()
-        assert.is_nil(view.selected[2])
-        assert.is_true(view.selected[3])
+        assert.are.equal("Unc-Epic, 2 types", rowOf(20).filterText:GetText())
     end)
 
-    it("builds the confirm text with the number of mails and the recipients", function()
-        view.tree:Select(2)
-        view.tree:Select(3)
-        view:Send()
+    it("asks for one confirm for a rule and then runs only that rule", function()
+        view:RunRule(21)
         assert.are.equal(1, #confirms)
-        assert.are.equal("Send 2 mails to Bank-Realm, Nobody? The client charges the postage for each mail.",
-            confirms[1].text)
+        assert.are.equal("Send 1 mail to Nobody? The client charges the postage for each mail.", confirms[1].text)
         assert.are.equal(0, #started)
-    end)
-
-    it("starts the run only after the confirm", function()
-        view.tree:Select(2)
-        view:Send()
         confirms[1].accept()
         assert.are.equal(1, #started)
-        assert.are.equal(1, #started[1].mails)
+        assert.are.same({ "Nobody" }, recipientsOfPlan(started[1]))
     end)
 
-    it("does not ask for a confirm when nothing is selected", function()
-        view:Send()
+    it("runs the button of a row for that row only", function()
+        local button = rowOf(20).run
+        button.scripts.OnClick(button)
+        assert.are.equal(1, #confirms)
+        confirms[1].accept()
+        assert.are.same({ "Bank-Realm" }, recipientsOfPlan(started[1]))
+        assert.are.equal(1, #started[1].mails)
+        assert.are.equal(3, #started[1].mails[1].attachments)
+    end)
+
+    it("runs every rule in order after one confirm with Run all", function()
+        view.runAll.scripts.OnClick(view.runAll)
+        assert.are.equal(1, #confirms)
+        assert.are.equal("Send 3 mails to Bank-Realm, Nobody? The client charges the postage for each mail.",
+            confirms[1].text)
+        confirms[1].accept()
+        assert.are.equal(1, #started)
+        assert.are.same({ "Bank-Realm", "Nobody", "Bank-Realm" }, recipientsOfPlan(started[1]))
+    end)
+
+    it("reports a rule with nothing to send and starts no run", function()
+        view:RunRule(22)
         assert.are.equal(0, #confirms)
+        assert.are.equal("Nothing to send for Cloth to me", view.statusText)
+        assert.are.equal("Nothing to send for Cloth to me", view.status:GetText())
+        assert.are.equal("mail", logged[1][1])
     end)
 
     it("does not ask for a confirm while a run is active", function()
-        view.tree:Select(2)
         running = true
-        view:Send()
+        view:RunRule(20)
+        view:RunAll()
         assert.are.equal(0, #confirms)
+    end)
+
+    it("shows the rule and mail count in the status line when idle", function()
+        assert.are.equal("6 rules, 3 mails ready", view.statusText)
+        assert.is_true(view.runAll.enabled)
+    end)
+
+    it("disables Run all when no rule can run", function()
+        rules.ListOperations = function()
+            return { { id = 25, name = "Unused", type = "mailing" } }
+        end
+        view:Refresh()
+        assert.is_false(view.runAll.enabled)
     end)
 
     it("shows the progress and lets Stop reach the run", function()
         view:ShowProgress({ state = "delay", index = 2, total = 3, sent = 1 })
-        assert.are.equal("Mail 2 of 3 (1 sent)", view.progressText)
+        assert.are.equal("Mail 2 of 3 (1 sent)", view.statusText)
+        assert.is_true(view.stop.enabled)
+        assert.is_false(view.runAll.enabled)
         view.stop.scripts.OnClick(view.stop)
         assert.are.equal(1, stopped)
         view:ShowProgress({ state = "idle", index = 3, total = 3, sent = 3 })
-        assert.are.equal("", view.progressText)
+        assert.is_false(view.stop.enabled)
     end)
 
-    it("shows the result with the skips", function()
-        callbacks.onDone({ sent = 2, postage = 60, stopped = "mailbox closed",
-            recipients = { { name = "Bank-Realm", mails = 2, units = 30 } },
-            skipped = { { key = "i:9", count = 4, reason = "soulbound" },
-                { name = "Ore", count = 1, reason = "needs a confirm (cannot be returned)" } } })
+    it("has no bottom result box and no group tree", function()
+        assert.is_nil(view.results)
+        assert.is_nil(view.tree)
+        assert.is_nil(view.selected)
+        local handle = assert(io.open(manifest.path("MailingView"), "rb"))
+        local source = handle:read("*a")
+        handle:close()
+        assert.is_nil(source:find("CreateTree", 1, true))
+        assert.is_nil(source:find("view.results", 1, true))
+        assert.is_nil(source:find("Kit%.Check"))
+        assert.is_nil(source:find("Kit%.Input"))
+    end)
+
+    local result = { sent = 2, postage = 60, stopped = "mailbox closed",
+        recipients = { { name = "Bank-Realm", mails = 2, units = 30 } },
+        skipped = { { key = "i:9", count = 4, reason = "soulbound" },
+            { name = "Ore", count = 1, reason = "needs a confirm (cannot be returned)" } } }
+
+    it("shows the result as one status line", function()
+        callbacks.onDone(result)
+        assert.are.equal("Sent 2 mails, postage 60c, stopped: mailbox closed, 2 skipped", view.statusText)
+        assert.are.equal(view.statusText, view.status:GetText())
+    end)
+
+    it("writes the detail lines of a result to the log", function()
+        callbacks.onDone(result)
+        local texts = {}
+        for _, entry in ipairs(logged) do
+            assert.are.equal("mail", entry[1])
+            texts[#texts + 1] = entry[3]
+        end
+        assert.are.same({
+            "Sent 2 mails, postage 60c",
+            "  Bank-Realm: 2 mails, 30 items",
+            "Stopped: mailbox closed",
+            "Skipped Name of i:9 x4: soulbound",
+            "Skipped Ore x1: needs a confirm (cannot be returned)",
+        }, texts)
+    end)
+
+    it("builds the lines of a result", function()
         assert.are.same({
             "Sent 2 mails, postage 60c",
             "  Bank-Realm: 2 mails, 30 items",
             "|cffff6060Stopped: mailbox closed|r",
             "Skipped Name of i:9 x4: soulbound",
             "Skipped Ore x1: needs a confirm (cannot be returned)",
-        }, view.resultLines)
-    end)
-
-    it("has no recipient input and no check box code", function()
-        local handle = assert(io.open(manifest.path("MailingView"), "rb"))
-        local source = handle:read("*a")
-        handle:close()
-        assert.is_nil(source:find("Kit%.Check"))
-        assert.is_nil(source:find("Kit%.Input"))
-        assert.is_nil(source:find("SetChecked"))
+        }, ns.MailingView.ResultLines(result, function(key)
+            return "Name of " .. key
+        end, function(copper)
+            return copper .. "c"
+        end))
     end)
 end)

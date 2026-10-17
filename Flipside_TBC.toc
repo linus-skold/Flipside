@@ -94,6 +94,7 @@ Shared\Features\Selling\SellingTab.lua
 AH_TBC\AuctionTabHost.lua
 Shared\Features\Inventory\InventoryCapture.lua
 Shared\Features\Mailing\MailingView.lua
+Shared\Features\Mailing\InboxList.lua
 Shared\Features\Mailing\MailHost.lua
 Shared\Features\Tooltip\Tooltip.lua
 Core_TBC\TooltipHook.lua

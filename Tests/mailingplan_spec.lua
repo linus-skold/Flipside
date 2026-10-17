@@ -419,6 +419,68 @@ describe("MailingPlan", function()
             assert.is_not.equal(all, rules:EnsureAllBagsGroup())
         end)
 
+        it("lists the groups of one operation: attached, inherited and All bag items", function()
+            local herbs = rules:CreateGroup(1, "Herbs")
+            local flowers = rules:CreateGroup(herbs, "Flowers")
+            local ore = rules:CreateGroup(1, "Ore")
+            local all = rules:EnsureAllBagsGroup()
+            local bank = rules:CreateOperation("mailing", "To bank")
+            local other = rules:CreateOperation("mailing", "To alt")
+            assert(rules:AttachOperation(herbs, "mailing", bank))
+            assert(rules:AttachOperation(all, "mailing", bank))
+            assert(rules:AttachOperation(ore, "mailing", other))
+
+            local function ids(opID)
+                local set, count = {}, 0
+                for _, group in ipairs(P.GroupsForOperation(rules, opID)) do
+                    set[group.id] = group
+                    count = count + 1
+                end
+                return set, count
+            end
+            local set, count = ids(bank)
+            assert.equal(3, count)
+            assert.is_truthy(set[herbs] and set[flowers] and set[all])
+            assert.is_true(set[all].allBags)
+            assert.is_nil(set[ore])
+            local otherSet, otherCount = ids(other)
+            assert.equal(1, otherCount)
+            assert.is_truthy(otherSet[ore])
+
+            -- A subgroup with its own operation leaves the operation of its parent.
+            assert(rules:AttachOperation(flowers, "mailing", other))
+            set, count = ids(bank)
+            assert.equal(2, count)
+            assert.is_nil(set[flowers])
+            assert.is_truthy(ids(other)[flowers])
+        end)
+
+        it("gives every group below Base to an operation on Base, but not Base", function()
+            local herbs = rules:CreateGroup(1, "Herbs")
+            local bank = rules:CreateOperation("mailing", "To bank")
+            assert(rules:AttachOperation(1, "mailing", bank))
+            local groups = P.GroupsForOperation(rules, bank)
+            assert.equal(1, #groups)
+            assert.equal(herbs, groups[1].id)
+        end)
+
+        it("plans the mails of one operation from its own groups only", function()
+            local herbs = rules:CreateGroup(1, "Herbs")
+            local ore = rules:CreateGroup(1, "Ore")
+            rules:AddItem("100", herbs)
+            rules:AddItem("300", ore)
+            local bank = rules:CreateOperation("mailing", "To bank")
+            local alt = rules:CreateOperation("mailing", "To alt")
+            assert(rules:SetSetting(bank, "recipient", "Bank"))
+            assert(rules:SetSetting(alt, "recipient", "Alt"))
+            assert(rules:AttachOperation(herbs, "mailing", bank))
+            assert(rules:AttachOperation(ore, "mailing", alt))
+            local plan = build(P.GroupsForOperation(rules, bank), { slot("100", 0, 1, 4), slot("300", 0, 2, 4) })
+            assert.equal(1, #plan.mails)
+            assert.equal("Bank", plan.mails[1].recipient)
+            assert.equal("100", plan.mails[1].attachments[1].key)
+        end)
+
         it("lists a group once when the user selects it and its parent", function()
             local herbs = rules:CreateGroup(1, "Herbs")
             local flowers = rules:CreateGroup(herbs, "Flowers")

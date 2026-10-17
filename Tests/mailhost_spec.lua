@@ -2,7 +2,7 @@ local manifest = require("Tests.manifest")
 local mock = require("Tests.wow_mock")
 
 describe("MailHost", function()
-    local ns, bus, mailFrame, created, timers, refreshes, running, inbox, send, openMail
+    local ns, bus, mailFrame, created, timers, refreshes, running, inbox, send, openMail, lists
 
     local function makeView(parent, size)
         local view = { frame = CreateFrame("Frame", nil, parent), size = size, run = { IsRunning = function()
@@ -35,7 +35,7 @@ describe("MailHost", function()
         assert(loadfile(manifest.path("EventBus")))("Flipside", ns)
         assert(loadfile(manifest.path("MailHost")))("Flipside", ns)
         bus = ns.EventBus.New()
-        created, timers, refreshes, running = {}, {}, 0, false
+        created, timers, refreshes, running, lists = {}, {}, 0, false, {}
         mailFrame = CreateFrame("Frame", "MailFrame", UIParent)
         mailFrame:SetSize(384, 512)
         inbox, send = stretched("InboxFrame"), stretched("SendMailFrame")
@@ -53,6 +53,21 @@ describe("MailHost", function()
                 return { inbox, send }
             end,
             create = makeView,
+            createInbox = function()
+                local list = { frame = CreateFrame("Frame", nil, mailFrame), refreshes = 0 }
+                list.frame:Hide()
+                function list.Show(self)
+                    self.frame:Show()
+                end
+                function list.Hide(self)
+                    self.frame:Hide()
+                end
+                function list.Refresh(self)
+                    self.refreshes = self.refreshes + 1
+                end
+                lists[#lists + 1] = list
+                return list
+            end,
             after = function(_, fn)
                 timers[#timers + 1] = fn
             end,
@@ -125,6 +140,27 @@ describe("MailHost", function()
         running = true
         bus:Emit("BAG_UPDATE_DELAYED")
         assert.are.equal(2, refreshes)
+    end)
+
+    it("shows the compact inbox list on MAIL_SHOW and hides it on MAIL_CLOSED", function()
+        bus:Emit("MAIL_SHOW")
+        assert.are.equal(1, #lists)
+        assert.is_true(lists[1].frame:IsShown())
+        bus:Emit("MAIL_CLOSED")
+        assert.is_false(lists[1].frame:IsShown())
+        bus:Emit("MAIL_SHOW")
+        assert.are.equal(1, #lists, "the list is made once")
+        assert.is_true(lists[1].frame:IsShown())
+    end)
+
+    it("refreshes the compact inbox list on MAIL_INBOX_UPDATE while the mailbox is open", function()
+        bus:Emit("MAIL_INBOX_UPDATE")
+        bus:Emit("MAIL_SHOW")
+        bus:Emit("MAIL_INBOX_UPDATE")
+        assert.are.equal(1, lists[1].refreshes)
+        bus:Emit("MAIL_CLOSED")
+        bus:Emit("MAIL_INBOX_UPDATE")
+        assert.are.equal(1, lists[1].refreshes)
     end)
 
     it("tries again once when the mail frame does not exist yet", function()
