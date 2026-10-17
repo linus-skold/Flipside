@@ -217,6 +217,10 @@ describe("OperationsPage", function()
                         assert.are.equal(tostring(value), part.number:GetText())
                     elseif field.kind == "choice" then
                         assert.are.equal(value, part.choice:GetValue())
+                    elseif field.kind == "classes" then
+                        -- The spec has no client item class API, so the field has a label and no control.
+                        assert.is_nil(part.classes, field.key)
+                        assert.are.equal("", value)
                     else
                         assert.are.equal(value, part.check:GetChecked())
                     end
