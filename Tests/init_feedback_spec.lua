@@ -40,14 +40,19 @@ local function enter(widget, text)
     widget.scripts.OnEnterPressed(widget)
 end
 
-local function pickType(page, value)
-    for _, item in ipairs(page.newType.menuItems) do
-        if item.value == value then
+-- Click New, choose the type, type the name and press OK.
+local function createOperation(page, opType, name)
+    click(page.newButton)
+    local window = ns.Kit.Prompt("FlipsideNewOperationPrompt")
+    for _, item in ipairs(window.choice.menuItems) do
+        if item.value == opType then
             item.pick()
         end
     end
+    window.input:SetText(name)
+    window.input.scripts.OnTextChanged(window.input)
+    click(window.okButton)
 end
-
 local LINEN = "|cff1eff00|Hitem:2589::::::::60:::::|h[Linen Cloth]|h|r"
 
 describe("Init feedback", function()
@@ -213,9 +218,7 @@ describe("Init feedback", function()
 
         before_each(function()
             page = ns.OperationsPage.Build(CreateFrame("Frame", nil, UIParent), deps)
-            pickType(page, "selling")
-            page.nameInput:SetText("Main")
-            click(page.newButton)
+            createOperation(page, "selling", "Main")
             for _, op in ipairs(ns.rules:ListOperations()) do
                 if op.name == "Main" then
                     id = op.id
