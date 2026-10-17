@@ -8,7 +8,10 @@ ns.OperationsPage = OperationsPage
 local LEFT_WIDTH = 250
 local RIGHT_X = 260
 local RIGHT_WIDTH = 510
-local FIELD_ROW = 72
+local FIELD_ROW = 40
+local CLASS_COLUMNS, CLASS_COLUMN_WIDTH, CLASS_ROW = 3, 165, 22
+local CLASS_LABEL_HEIGHT = 22
+local FOOTER_HEIGHT = 40
 local DELETE_DIALOG = "FLIPSIDE_DELETE_OPERATION"
 local NEW_PROMPT = "FlipsideNewOperationPrompt"
 local RENAME_PROMPT = "FlipsideRenameOperationPrompt"
@@ -18,10 +21,6 @@ local EDITOR_HELP = "Missing prices are invalid, never 0. Functions: min max avg
 
 local function trim(text)
     return (tostring(text or ""):match("^%s*(.-)%s*$"))
-end
-
-local function isItem(text)
-    return text:match("^%d+$") or (text:match("^|[cH]") and text:find("|Hitem:", 1, true))
 end
 
 local function setEnabled(widget, enabled)
@@ -35,13 +34,13 @@ local function plural(count, word)
 end
 
 -- Build the page in the content frame.
--- deps: rules, formulaRun, itemNameIndex, itemCache, subscribe(fn) (all optional except rules).
+-- deps: rules, formulaRun, itemCache, subscribe(fn) (all optional except rules).
 function OperationsPage.Build(content, deps)
     local Kit, Schema = ns.Kit, ns.OperationSchema
-    local rules, run, index = deps.rules, deps.formulaRun, deps.itemNameIndex
+    local rules, run = deps.rules, deps.formulaRun
     local gap = Kit.Theme.gap
     local page = {}
-    local selected, filter, example
+    local selected, filter
 
     local function stored(key)
         local op = selected and rules:GetOperation(selected)
@@ -56,19 +55,9 @@ function OperationsPage.Build(content, deps)
         if not run then
             return "formulas are not available this session"
         end
-        local lines
-        if example then
-            local copper, info = run:Evaluate(formula, example)
-            lines = ns.FormulaPage.Describe(copper, info, nil, formula)
-            if copper ~= nil then
-                lines[1] = ns.TooltipLines.FormatMoney(copper)
-            end
-        else
-            local compiled, err = run:Compile(formula)
-            local info = compiled and { kind = "compiled", names = compiled.names, later = compiled.later }
-            lines = ns.FormulaPage.Describe(nil, info, err, formula)
-        end
-        return table.concat(lines, " - ")
+        local compiled, err = run:Compile(formula)
+        local info = compiled and { kind = "compiled", names = compiled.names, later = compiled.later }
+        return table.concat(ns.FormulaPage.Describe(nil, info, err, formula), " - ")
     end
 
     -- Field rows.
@@ -80,7 +69,8 @@ function OperationsPage.Build(content, deps)
         local kind = field.kind
         if kind == "formula" then
             part.input:SetText(value or "")
-            part.preview:SetText(previewText(value or ""))
+            -- A refusal message takes the place of the preview.
+            part.preview:SetText((part.message:GetText() or "") == "" and previewText(value or "") or "")
             setEnabled(part.input, not ro)
             setEnabled(part.expand, not ro)
         elseif kind == "money" or kind == "number" then
@@ -99,10 +89,8 @@ function OperationsPage.Build(content, deps)
             part.check:SetChecked(value)
             setEnabled(part.check, not ro)
         elseif kind == "classes" then
-            if part.classes then
-                part.classes:SetValues(ns.MailingPlan.ParseClasses(value))
-                setEnabled(part.classes, not ro)
-            end
+            part.classes:SetValues(ns.MailingPlan.ParseClasses(value))
+            setEnabled(part.classes, not ro)
         end
     end
 
@@ -122,31 +110,38 @@ function OperationsPage.Build(content, deps)
         part.message = add(Kit.Label(row, "", "bad"))
         part.message:SetJustifyH("LEFT")
         if kind == "formula" then
-            part.label:SetPoint("TOPLEFT", row, "TOPLEFT", 4, -2)
-            part.message:SetPoint("TOPLEFT", row, "TOPLEFT", 200, -2)
+            part.label:SetPoint("TOPLEFT", row, "TOPLEFT", 4, -6)
+            part.message:SetPoint("TOPLEFT", row, "TOPLEFT", 8, -26)
             local function save(text)
                 text = trim(text)
                 if text ~= stored(field.key) then
                     commit(part, text)
+                else
+                    -- The old value again: clear an earlier refusal message.
+                    part.message:SetText("")
+                    updatePart(part)
                 end
             end
-            part.input = tipOn(add(Kit.Input(row, 440, save, save)))
-            part.input:SetPoint("TOPLEFT", row, "TOPLEFT", 8, -18)
+            part.input = tipOn(add(Kit.Input(row, 270, save, save)))
+            part.input:SetPoint("TOPLEFT", row, "TOPLEFT", 176, -4)
             part.expand = add(Kit.Button(row, "...", 30, function()
                 local dialog = Kit.EditorDialog(EDITOR_DIALOG, { help = EDITOR_HELP })
                 dialog:Open(field.label, stored(field.key) or "", function(text)
                     save((text:gsub("[\r\n]+", " ")))
                 end)
             end))
-            part.expand:SetPoint("TOPLEFT", row, "TOPLEFT", 454, -18)
+            part.expand:SetPoint("TOPLEFT", row, "TOPLEFT", 454, -4)
             part.preview = add(Kit.Label(row, "", "small"))
-            part.preview:SetPoint("TOPLEFT", row, "TOPLEFT", 4, -40)
+            part.preview:SetPoint("TOPLEFT", row, "TOPLEFT", 8, -26)
             part.preview:SetWidth(RIGHT_WIDTH - 40)
             part.preview:SetJustifyH("LEFT")
+            if part.preview.SetMaxLines then
+                part.preview:SetMaxLines(1)
+            end
             return part
         end
         part.label:SetPoint("TOPLEFT", row, "TOPLEFT", 4, -6)
-        part.message:SetPoint("TOPLEFT", row, "TOPLEFT", 176, -30)
+        part.message:SetPoint("TOPLEFT", row, "TOPLEFT", 176, -27)
         if kind == "money" or kind == "number" then
             part.number = tipOn(add(Kit.NumberInput(row, 90, {
                 min = field.min,
@@ -168,6 +163,10 @@ function OperationsPage.Build(content, deps)
                 text = trim(text)
                 if text ~= stored(field.key) then
                     commit(part, text)
+                else
+                    -- The old value again: clear an earlier refusal message.
+                    part.message:SetText("")
+                    updatePart(part)
                 end
             end
             part.input = tipOn(add(Kit.Input(row, 220, save, save)))
@@ -175,7 +174,8 @@ function OperationsPage.Build(content, deps)
         elseif kind == "choice" then
             local items = {}
             for _, choice in ipairs(field.choices) do
-                items[#items + 1] = { value = choice.value, text = choice.label }
+                local text = field.quality and Kit.QualityText(choice.value, choice.label) or choice.label
+                items[#items + 1] = { value = choice.value, text = text }
             end
             part.choice = tipOn(add(Kit.Dropdown(row, 160, {
                 items = items,
@@ -189,22 +189,6 @@ function OperationsPage.Build(content, deps)
                 commit(part, checked)
             end)))
             part.check:SetPoint("TOPLEFT", row, "TOPLEFT", 170, -3)
-        elseif kind == "classes" then
-            -- The client gives the item types, so each flavour shows its own.
-            local classes = {}
-            if ns.MailClient and ns.MailingPlan and _G.C_Item and _G.C_Item.GetItemClassInfo then
-                classes = ns.MailClient.ItemClasses(_G.Enum and _G.Enum.ItemClass, _G.C_Item.GetItemClassInfo)
-            end
-            if #classes > 0 then
-                part.classes = tipOn(add(Kit.MultiSelect(row, 300, {
-                    items = classes,
-                    emptyText = "Any type",
-                    onChange = function(set)
-                        commit(part, ns.MailingPlan.FormatClasses(set))
-                    end,
-                })))
-                part.classes:SetPoint("TOPLEFT", row, "TOPLEFT", 176, -4)
-            end
         end
         return part
     end
@@ -415,57 +399,52 @@ function OperationsPage.Build(content, deps)
     page.readOnly = Kit.Label(right, "Settings are read-only", "bad")
     page.readOnly:SetPoint("TOPRIGHT", right, "TOPRIGHT", 0, -4)
 
-    page.exampleLabel = Kit.Label(right, index and "Example item (name, link or id)" or "Example item (link or id)",
-        "highlight")
-    page.exampleLabel:SetPoint("TOPLEFT", right, "TOPLEFT", 0, -28)
-    page.exampleStatus = Kit.Label(right, "", "small")
-    page.exampleStatus:SetPoint("TOPLEFT", right, "TOPLEFT", 190, -50)
-    page.exampleStatus:SetWidth(RIGHT_WIDTH - 190)
-    page.exampleStatus:SetJustifyH("LEFT")
+    -- The item types of a mailing operation: check boxes in the editor, below the field list.
+    local classes = {}
+    if ns.MailClient and ns.MailingPlan and _G.C_Item and _G.C_Item.GetItemClassInfo then
+        -- The client gives the item types, so each flavour shows its own.
+        classes = ns.MailClient.ItemClasses(_G.Enum and _G.Enum.ItemClass, _G.C_Item.GetItemClassInfo)
+    end
+    local classesHeight = 0
+    local classesPart
+    if #classes > 0 then
+        classesHeight = CLASS_LABEL_HEIGHT + math.ceil(#classes / CLASS_COLUMNS) * CLASS_ROW + gap
+        classesPart = { all = {} }
+        classesPart.label = Kit.Label(right, "", "normal")
+        classesPart.label:SetPoint("BOTTOMLEFT", right, "BOTTOMLEFT", 4,
+            FOOTER_HEIGHT + classesHeight - CLASS_LABEL_HEIGHT)
+        classesPart.help = Kit.Label(right, "", "small")
+        classesPart.help:SetPoint("LEFT", classesPart.label, "RIGHT", gap * 2, 0)
+        classesPart.message = Kit.Label(right, "", "bad")
+        classesPart.message:SetPoint("LEFT", classesPart.help, "RIGHT", gap, 0)
+        classesPart.classes = Kit.CheckGrid(right, {
+            items = classes,
+            columns = CLASS_COLUMNS,
+            columnWidth = CLASS_COLUMN_WIDTH,
+            rowHeight = CLASS_ROW,
+            onChange = function(set)
+                commit(classesPart, ns.MailingPlan.FormatClasses(set))
+            end,
+        })
+        classesPart.classes:SetPoint("BOTTOMLEFT", right, "BOTTOMLEFT", 4, FOOTER_HEIGHT + gap)
+        classesPart.all = { classesPart.label, classesPart.help, classesPart.message, classesPart.classes }
+    end
 
-    -- Sets example from the item box. An unclear item gives no example and a message.
-    local function resolveExample()
-        local text = trim(page.exampleInput:GetText())
-        local message = ""
-        example = nil
-        if text == "" then
-            page.exampleStatus:SetText("")
+    local function showClasses(field)
+        if not classesPart then
             return
         end
-        if isItem(text) then
-            example = text
-        elseif not index then
-            message = "not an item: " .. text
-        else
-            local result = index:Resolve(text)
-            if result.kind == "error" then
-                message = result.message
-            elseif result.kind == "item" then
-                example = text
-            else
-                local matches = result.matches
-                if #matches == 1 then
-                    example = ns.ItemNameIndex.ToInput(matches[1].key)
-                elseif #matches == 0 then
-                    message = 'no item named "' .. text .. '" in the scan data'
-                else
-                    message = #matches .. " items match, type more of the name"
-                end
-                if result.pendingCount > 0 then
-                    message = message .. (message ~= "" and " - " or "") .. result.pendingCount
-                        .. " item names are still loading"
-                end
-            end
+        classesPart.field = field
+        for _, region in ipairs(classesPart.all) do
+            region:SetShown(field ~= nil)
         end
-        page.exampleStatus:SetText(message)
+        if field then
+            classesPart.label:SetText(field.label)
+            classesPart.help:SetText(field.help)
+            classesPart.message:SetText("")
+            updatePart(classesPart)
+        end
     end
-
-    local function onExample()
-        resolveExample()
-        refresh(true)
-    end
-    page.exampleInput = Kit.Input(right, 180, onExample, onExample, { placeholder = "Item name, link or id" })
-    page.exampleInput:SetPoint("TOPLEFT", page.exampleLabel, "BOTTOMLEFT", 6, -2)
 
     page.footer = Kit.Label(right, "", "normal")
     page.footer:SetPoint("BOTTOMLEFT", right, "BOTTOMLEFT", 0, 0)
@@ -479,8 +458,7 @@ function OperationsPage.Build(content, deps)
             showPart(row, field)
         end,
     })
-    page.fieldList.frame:SetPoint("TOPLEFT", right, "TOPLEFT", 0, -(76 + gap))
-    page.fieldList.frame:SetPoint("BOTTOMRIGHT", right, "BOTTOMRIGHT", 0, 40)
+    page.fieldList.frame:SetPoint("TOPLEFT", right, "TOPLEFT", 0, -(28 + gap))
 
     local function footerText(id)
         local paths = {}
@@ -503,21 +481,37 @@ function OperationsPage.Build(content, deps)
         local op = selected and rules:GetOperation(selected)
         page.header:SetText(op and (op.name .. " (" .. Schema.TypeLabel(op.type) .. ")") or "No operation selected")
         page.fieldList.frame:SetShown(op ~= nil)
-        page.fieldList:SetData(op and Schema.Fields(op.type) or {})
+        local fields, classesField = {}, nil
+        for _, field in ipairs(op and Schema.Fields(op.type) or {}) do
+            if field.kind == "classes" and classesPart then
+                classesField = field
+            elseif field.kind ~= "classes" then
+                fields[#fields + 1] = field
+            end
+        end
+        -- The list ends above the item type boxes, when the operation has them.
+        page.fieldList.frame:ClearAllPoints()
+        page.fieldList.frame:SetPoint("TOPLEFT", right, "TOPLEFT", 0, -(28 + gap))
+        page.fieldList.frame:SetPoint("BOTTOMRIGHT", right, "BOTTOMRIGHT", 0,
+            FOOTER_HEIGHT + (classesField and classesHeight or 0))
+        page.fieldList:SetData(fields)
+        showClasses(classesField)
         page.footer:SetText(op and footerText(selected) or "")
         page.readOnly:SetShown(ro)
         setEnabled(page.newButton, not ro)
         setEnabled(page.importButton, not ro and deps.customSources ~= nil)
     end
 
-    -- Public refresh: reads the example item again, then redraws.
+    -- Public refresh: redraws.
     function page.Refresh()
-        resolveExample()
         refresh()
     end
 
     -- Returns the part of the field row that shows the field key, or nil.
     function page.FieldPart(key)
+        if classesPart and classesPart.field and classesPart.field.key == key then
+            return classesPart
+        end
         for _, row in ipairs(page.fieldList.rows or {}) do
             if row:IsShown() and row.active and row.active.field.key == key then
                 return row.active
@@ -534,14 +528,6 @@ function OperationsPage.Build(content, deps)
         deps.subscribe(page.Refresh)
     end
 
-    local hook, insertLink = _G.hooksecurefunc, _G.ChatEdit_InsertLink
-    if hook and insertLink then
-        hook("ChatEdit_InsertLink", function(link)
-            if type(link) == "string" and page.exampleInput:HasFocus() then
-                page.exampleInput:SetText(link)
-            end
-        end)
-    end
     refresh()
     return page
 end

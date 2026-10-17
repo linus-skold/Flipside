@@ -277,81 +277,69 @@ function Kit.Dropdown(parent, width, options)
     return dropdown
 end
 
-local MULTI_COLUMNS = 2
-local MULTI_COLUMN_WIDTH = 150
-local MULTI_ROW = 24
+local GRID_COLUMN_WIDTH = 140
+local GRID_ROW = 24
 
--- Create a multi-select: a button that opens a panel of check boxes.
--- options: items = { { value, text } }, emptyText (button text when nothing is chosen), onChange(set).
--- set is a table value -> true. Methods: SetValues(set) (does not call onChange), GetValues(), SetEnabled(enabled).
-function Kit.MultiSelect(parent, width, options)
+-- Create a grid of check boxes, placed row by row. It sits in the parent like any frame: place it with SetPoint.
+-- options: items = { { value, text } }, columns (default 3), columnWidth (default 140), rowHeight (default 24),
+-- onChange(set). set is a table value -> true.
+-- The grid has the size of all its check boxes. grid.checks lists the check buttons in item order.
+-- Methods: SetValues(set) (does not call onChange), GetValues(),
+-- SetEnabled(enabled).
+function Kit.CheckGrid(parent, options)
     options = options or {}
     local items = options.items or {}
+    local columns = math.max(1, options.columns or 3)
+    local columnWidth = options.columnWidth or GRID_COLUMN_WIDTH
+    local rowHeight = options.rowHeight or GRID_ROW
     local state = { values = {}, checks = {} }
-    local button
-
-    local function refresh()
-        local names = {}
-        for index, item in ipairs(items) do
-            state.checks[index]:SetChecked(state.values[item.value] == true)
-            if state.values[item.value] then
-                names[#names + 1] = item.text
-            end
-        end
-        button:SetText(#names == 0 and (options.emptyText or "None") or table.concat(names, ", "))
-    end
-
-    button = Kit.Button(parent, "", width or 220, function()
-        button.panel:SetShown(not button.panel:IsShown())
-    end)
-    local rows = math.ceil(#items / MULTI_COLUMNS)
-    local panel = Kit.Inset(UIParent)
-    panel:SetFrameStrata("DIALOG")
-    panel:SetSize(MULTI_COLUMNS * MULTI_COLUMN_WIDTH + 16, rows * MULTI_ROW + 16)
-    panel:SetPoint("TOPLEFT", button, "BOTTOMLEFT", 0, -2)
-    local background = panel:CreateTexture(nil, "BACKGROUND", nil, -5)
-    background:SetAllPoints(panel)
-    background:SetColorTexture(0, 0, 0, 0.92)
-    panel:Hide()
-    button.panel = panel
-    button:HookScript("OnHide", function()
-        panel:Hide()
-    end)
+    local grid = CreateFrame("Frame", nil, parent)
+    grid.checks = state.checks
+    grid:SetSize(columns * columnWidth, math.max(1, math.ceil(#items / columns)) * rowHeight)
 
     for index, item in ipairs(items) do
-        local column, row = math.floor((index - 1) / rows), (index - 1) % rows
-        local check = Kit.Check(panel, item.text, function(checked)
+        local column, row = (index - 1) % columns, math.floor((index - 1) / columns)
+        local check = Kit.Check(grid, item.text, function(checked)
             state.values[item.value] = checked or nil
-            refresh()
             if options.onChange then
                 options.onChange(state.values)
             end
         end)
-        check:SetPoint("TOPLEFT", panel, "TOPLEFT", 8 + column * MULTI_COLUMN_WIDTH, -8 - row * MULTI_ROW)
+        -- A long name must not run into the next column.
+        if check.Text and check.Text.SetWidth then
+            check.Text:SetWidth(columnWidth - 32)
+            if check.Text.SetWordWrap then
+                check.Text:SetWordWrap(false)
+            end
+        end
+        check:SetPoint("TOPLEFT", grid, "TOPLEFT", column * columnWidth, -row * rowHeight)
         state.checks[index] = check
     end
 
-    function button.SetValues(_, set)
+    local function refresh()
+        for index, item in ipairs(items) do
+            state.checks[index]:SetChecked(state.values[item.value] == true)
+        end
+    end
+
+    function grid.SetValues(_, set)
         state.values = {}
         for value, on in pairs(set or {}) do
             state.values[value] = on or nil
         end
         refresh()
     end
-    function button.GetValues()
+    function grid.GetValues()
         return state.values
     end
-    local setEnabled = button.SetEnabled
-    function button.SetEnabled(self, enabled)
-        setEnabled(self, enabled)
+    function grid.SetEnabled(_, enabled)
         for _, check in ipairs(state.checks) do
             check:SetEnabled(enabled)
         end
     end
     refresh()
-    return button
+    return grid
 end
-
 -- Create a number box. options: min, max, allowNegative, hint, onChange(number or nil).
 -- onChange runs on Enter and on focus loss when the number changed.
 -- Methods: SetNumber(n), GetNumber(). GetNumber gives nil for empty, bad or out-of-range text.

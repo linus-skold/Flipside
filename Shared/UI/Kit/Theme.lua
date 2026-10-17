@@ -38,3 +38,9 @@ function Kit.QualityColor(quality)
     end
     return 1, 1, 1, "ffffffff"
 end
+
+-- Return the text wrapped in the colour of an item quality.
+function Kit.QualityText(quality, text)
+    local _, _, _, hex = Kit.QualityColor(quality)
+    return "|c" .. hex .. text .. "|r"
+end

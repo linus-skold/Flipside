@@ -1304,9 +1304,15 @@ describe("GroupsPage", function()
                 end,
             }
             _G.Enum = { ItemClass = { Weapon = 2, Tradegoods = 7 } }
-            _G.C_Item = { GetItemClassInfo = function(id)
-                return id == 2 and "Weapon" or "Trade Goods"
-            end }
+            local colors = { [0] = "ff9d9d9d", "ffffffff", "ff1eff00", "ff0070dd", "ffa335ee", "ffff8000" }
+            _G.C_Item = {
+                GetItemClassInfo = function(id)
+                    return id == 2 and "Weapon" or "Trade Goods"
+                end,
+                GetItemQualityColor = function(level)
+                    return 1, 1, 1, colors[level]
+                end,
+            }
             linen = store:CreateGroup(1, "Linen")
             uncommon = store:CreateGroup(1, "Uncommon Linen")
             build()
@@ -1332,7 +1338,7 @@ describe("GroupsPage", function()
         it("adds a rule with the editor and lists it", function()
             click(page.autoAddButton)
             editor.pattern:SetText("^Linen")
-            pick(editor.minQuality, "Uncommon")
+            pick(editor.minQuality, "|cff1eff00Uncommon|r")
             pick(editor.group, "Uncommon Linen")
             editor.classes:SetValues({ [7] = true })
             fire(editor.pattern)
@@ -1344,6 +1350,32 @@ describe("GroupsPage", function()
             assert.are.same({ group = uncommon, pattern = "^Linen", minQuality = 2, maxQuality = 5, classes = "7" },
                 list[1])
             assert.are.same({ "1. /^Linen/  Uncommon to Legendary  Trade Goods  >  Uncommon Linen" }, rowTexts())
+        end)
+
+        it("shows each rarity in its quality colour, Legendary included", function()
+            local texts = {}
+            for _, item in ipairs(editor.minQuality.menuItems) do
+                texts[#texts + 1] = item.text
+            end
+            assert.are.same({ "|cff9d9d9dPoor|r", "|cffffffffCommon|r", "|cff1eff00Uncommon|r", "|cff0070ddRare|r",
+                "|cffa335eeEpic|r", "|cffff8000Legendary|r" }, texts)
+            assert.are.equal(6, #editor.maxQuality.menuItems)
+        end)
+
+        it("sets the item types with check boxes that keep the editor open", function()
+            click(page.autoAddButton)
+            pick(editor.group, "Linen")
+            assert.are.equal(2, #editor.classes.checks)
+            local tradeGoods = editor.classes.checks[1]
+            tradeGoods:SetChecked(true)
+            tradeGoods.scripts.OnClick(tradeGoods)
+            assert.are.same({ [7] = true }, editor.classes:GetValues())
+            assert.is_true(editor:IsShown())
+            assert.is_true(editor.saveButton.enabled)
+            tradeGoods:SetChecked(false)
+            tradeGoods.scripts.OnClick(tradeGoods)
+            assert.are.same({}, editor.classes:GetValues())
+            assert.is_true(editor:IsShown())
         end)
 
         it("shows the compile error of a bad pattern and blocks Save", function()

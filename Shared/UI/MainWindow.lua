@@ -1,6 +1,6 @@
 local _, ns = ...
 
--- The Flipside window: page tabs along the bottom edge.
+-- The Flipside window: page tabs along the bottom edge (Ledger, Groups, Operations, Tooltip, Formulas, About).
 
 local MainWindow = {}
 ns.MainWindow = MainWindow
@@ -8,7 +8,6 @@ ns.MainWindow = MainWindow
 local instance
 
 local MIN_WIDTH, MIN_HEIGHT = 800, 540
-local COG_ICON = "Interface\\Buttons\\UI-OptionsButton"
 
 -- The window if it exists, or nil.
 function MainWindow.Get()
@@ -107,6 +106,20 @@ function MainWindow.Create(deps)
             end,
         })
     end
+    table.insert(pages, {
+        key = "formula",
+        title = "Formulas",
+        build = function(content)
+            ns.FormulaPage.Build(content, deps)
+        end,
+    })
+    table.insert(pages, {
+        key = "about",
+        title = "About",
+        build = function(content)
+            buildAbout(content, deps)
+        end,
+    })
     -- The page loads the ledger each time it opens; the first open is in its build.
     local function openLedger()
         if justBuilt then
@@ -133,66 +146,7 @@ function MainWindow.Create(deps)
             end)
         end
     end
-    -- The settings view (Formulas, About) opens over the page with the cog button in the title bar.
-    local settings = CreateFrame("Frame", nil, window)
-    settings:SetAllPoints(tabs.contents[1])
-    settings:Hide()
-    local settingsTabs = Kit.CreateTopTabs(settings, {
-        { key = "formula", title = "Formulas" },
-        { key = "about", title = "About" },
-    }, {
-        template = flavour.topTabTemplate,
-        tabPadding = flavour.topTabPadding,
-        minTabWidth = flavour.topTabMinWidth,
-    })
-    local settingsBuilt = false
-    local function showSettings(key)
-        if not settingsBuilt then
-            settingsBuilt = true
-            ns.FormulaPage.Build(settingsTabs:GetContent("formula"), deps)
-            buildAbout(settingsTabs:GetContent("about"), deps)
-        end
-        for _, content in ipairs(tabs.contents) do
-            content:Hide()
-        end
-        settings:Show()
-        if key then
-            settingsTabs:Select(key)
-        end
-    end
-    local function hideSettings()
-        if not settings:IsShown() then
-            return
-        end
-        settings:Hide()
-        local selected = tabs:GetSelected()
-        for index, page in ipairs(pages) do
-            tabs.contents[index]:SetShown(page.key == selected)
-        end
-    end
-    for _, button in ipairs(tabs.buttons) do
-        button:HookScript("OnClick", hideSettings)
-    end
-    local cog = CreateFrame("Button", nil, window)
-    cog:SetSize(20, 20)
-    if window.CloseButton then
-        cog:SetPoint("RIGHT", window.CloseButton, "LEFT", -2, 0)
-    else
-        cog:SetPoint("TOPRIGHT", window, "TOPRIGHT", -30, -4)
-    end
-    -- The title container takes mouse clicks, so the cog must sit above it.
-    cog:SetFrameLevel((window.TitleContainer or window):GetFrameLevel() + 10)
-    cog:SetNormalTexture(COG_ICON)
-    cog:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
-    cog:SetScript("OnClick", function()
-        if settings:IsShown() then
-            hideSettings()
-        else
-            showSettings()
-        end
-    end)
-
-    local win = { frame = window, tabs = tabs, settings = settings, settingsTabs = settingsTabs, cog = cog }
+    local win = { frame = window, tabs = tabs }
     function win:Show()
         self.frame:Show()
     end
@@ -206,11 +160,6 @@ function MainWindow.Create(deps)
         return self.frame:IsShown() and true or false
     end
     function win:SelectPage(key)
-        if key == "formula" or key == "about" then
-            showSettings(key)
-            return
-        end
-        hideSettings()
         local before = self.tabs:GetSelected()
         self.tabs:Select(key)
         if key == "ledger" and before ~= "ledger" and self.tabs:GetSelected() == "ledger" then
@@ -218,9 +167,6 @@ function MainWindow.Create(deps)
         end
     end
     function win:GetSelectedPage()
-        if settings:IsShown() then
-            return "settings"
-        end
         return self.tabs:GetSelected()
     end
     function win:ResetPosition()

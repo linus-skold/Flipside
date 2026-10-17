@@ -78,7 +78,7 @@ describe("OperationSchema", function()
             S.Defaults("buying"))
         assert.same({ sellToVendor = false, keepInBags = 0, safetyMultiple = 2, maxDataAgeHours = 72, minSamples = 3 },
             S.Defaults("vendoring"))
-        assert.same({ recipient = "", keep = 0, maxSend = 0, minQuality = 0, maxQuality = 5, itemClasses = "" },
+        assert.same({ recipient = "", keep = 0, maxSend = 0, minQuality = 0, maxQuality = 4, itemClasses = "" },
             S.Defaults("mailing"))
         assert.is_not.equal(S.Defaults("buying"), S.Defaults("buying"))
     end)
@@ -117,8 +117,9 @@ describe("OperationSchema", function()
     it("validates the mailing rarity and item type fields", function()
         local function field(key, value) return (S.ValidateField("mailing", key, value, compile)) end
         assert.is_true(field("minQuality", 2))
-        assert.is_true(field("maxQuality", 5))
-        assert.is_false(field("minQuality", 6))
+        assert.is_true(field("maxQuality", 4))
+        assert.is_false(field("maxQuality", 5))
+        assert.is_false(field("minQuality", 5))
         assert.is_false(field("maxQuality", "4"))
         assert.is_true(field("itemClasses", ""))
         assert.is_true(field("itemClasses", "2"))
@@ -131,9 +132,23 @@ describe("OperationSchema", function()
     it("fills the new mailing fields for an operation from an old save", function()
         local settings = S.Normalize("mailing", { recipient = "Alt", keep = 3, maxSend = 9 })
         assert.equal(0, settings.minQuality)
-        assert.equal(5, settings.maxQuality)
+        assert.equal(4, settings.maxQuality)
         assert.equal("", settings.itemClasses)
         assert.equal(3, settings.keep)
+    end)
+
+    it("offers Poor to Epic for the mailing rarity and clamps an old Legendary value to Epic", function()
+        for _, f in ipairs(S.Fields("mailing")) do
+            if f.key == "minQuality" or f.key == "maxQuality" then
+                assert.equal(5, #f.choices)
+                assert.equal("Epic", f.choices[#f.choices].label)
+                assert.is_true(f.quality)
+            end
+        end
+        local settings = S.Normalize("mailing", { recipient = "Alt", minQuality = 5, maxQuality = 5 })
+        assert.equal(4, settings.minQuality)
+        assert.equal(4, settings.maxQuality)
+        assert.equal(3, S.Normalize("mailing", { maxQuality = 3 }).maxQuality)
     end)
 
     it("gives each field a label, help and kind", function()
