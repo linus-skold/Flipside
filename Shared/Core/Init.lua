@@ -999,9 +999,9 @@ local function openTooltip()
     end
 end
 
--- Attach the mailing panel to the MailFrame; it needs the groups and operations.
+-- Attach the mailing view to the MailFrame; it needs the groups and operations.
 local function openMailing()
-    if not (ns.rules and ns.MailClient and ns.MailingRun and ns.MailingPanel and ns.MailHost and ns.Kit
+    if not (ns.rules and ns.MailClient and ns.MailingRun and ns.MailingView and ns.MailHost and ns.Kit
         and type(SendMail) == "function") then
         return
     end
@@ -1018,10 +1018,21 @@ local function openMailing()
             frame = function()
                 return _G.MailFrame
             end,
-            create = function(parent)
-                return ns.MailingPanel.Create(parent, {
+            openMail = function()
+                return _G.OpenMailFrame
+            end,
+            children = function()
+                local list = {}
+                for _, name in ipairs({ "InboxFrame", "SendMailFrame" }) do
+                    list[#list + 1] = _G[name]
+                end
+                return list
+            end,
+            create = function(parent, size)
+                return ns.MailingView.Create(parent, {
                     rules = ns.rules,
                     client = client,
+                    skin = ns.AuctionTabs and ns.AuctionTabs.Skin,
                     characters = function()
                         return ns.holdings and ns.holdings:Characters() or {}
                     end,
@@ -1044,12 +1055,12 @@ local function openMailing()
                             onDone = callbacks.onDone,
                         })
                     end,
-                })
+                }, size)
             end,
         })
     end)
     if not ok then
-        ns.ReportError("the mailing panel is not available this session: " .. tostring(err))
+        ns.ReportError("the mailing view is not available this session: " .. tostring(err))
     end
 end
 

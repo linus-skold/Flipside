@@ -102,7 +102,7 @@ Nine features come from your list, twelve are ones TSM users rely on that are ea
 | Buying | Search the AH, buy below a max price, restock materials | Same as Shopping; adds "% of market" and data-age columns | You | MVP |
 | Selling | Post and cancel by rules with min / max / normal prices | Same as Auctioning; adds dry run and decision log | You | MVP |
 | Item groups | Organise items into a tree that rules apply to | Same model; adds starter groups and auto profession groups (later; not in build step 4) | You | MVP |
-| Mailing | Send grouped items to a named character: the mailing operation of a group (replaces the mail list, decided 2026-10-16) | Same as Mailing operations; the panel runs the mail groups at the mailbox | You | MVP |
+| Mailing | Send grouped items to a named character: the mailing operation of a group (replaces the mail list, decided 2026-10-16) | Same as Mailing operations; the mailing view runs the mail groups at the mailbox | You | MVP |
 | Keep stock | Hold target quantities per character and location | Unifies TSM restock settings from Mailing, Banking and Shopping | You | Phase 2 |
 | Vendoring | Sell junk and low-value items, buy vendor reagents | Same as Vendoring; adds "never vendor above X" safety | You | MVP |
 | Ledger | Record sales, purchases, fees and failures; show profit | Same as Accounting; adds documented CSV export | You | MVP |
@@ -472,15 +472,19 @@ Decision of 2026-10-16: mailing is a fourth operation type, "mailing", on groups
 - `MailingPlan.GroupsFor(rules, groupIDs)` lists the selected groups and their subgroups with their items and effective mailing operation.
 
 **Orchestrator defaults** (the user can change them later):
-- The recipient is a field of the operation. Any name is allowed. If the name is not a known own character from the holdings (§5.10), the panel shows a warning but still allows the run.
-- One summary and one confirm for each run: the panel lists the mails and the skipped items, then the user confirms once.
+- The recipient is a field of the operation. Any name is allowed. If the name is not a known own character from the holdings (§5.10), the view shows a warning but still allows the run.
+- One summary and one confirm for each run: the view lists the mails and the skipped items, then the user confirms once.
 - Postage is recorded in the ledger as an expense (§5.8).
 - An item that needs the confirm for an unrefundable mail (items that the recipient cannot return) is skipped and reported.
 - Soulbound, quest and unmailable items are skipped and reported.
 
-**Mail panel and send run** (built 2026-10-17). The panel is a frame anchored to the right edge of `MailFrame` (not a tab). `MailHost` shows it on `MAIL_SHOW` and hides it on `MAIL_CLOSED`. One host serves both flavours.
-- The panel lists the groups that have a mailing operation of their own, each with a check box, the recipient, and the planned mails and items. A recipient that is not an own character (holdings, §5.10) shows a warning. The summary line counts the mails and items of the ticked groups.
-- **Send mode (decided 2026-10-17): one confirm, then all mails go out in sequence.** The user clicks Send once and confirms once ("Send N mails to X, Y?"). No click is needed for each mail. The client charges the postage; the panel cannot show it before the attach calls, so the result shows the real total.
+**Mail view and send run** (built 2026-10-17; wide layout 2026-10-17). The mailing view sits inside Blizzard's `MailFrame`, which gets wider while the mailbox is open (not a floating frame, not a tab). `MailHost` places the view on `MAIL_SHOW` and takes the layout away on `MAIL_CLOSED`. One host serves both flavours.
+- **View and host (split).** `MailingView` (`Shared/Features/Mailing/MailingView.lua`) takes a parent frame, its deps and an optional size. It knows nothing about its place: it builds `view.frame` and the host anchors it. `MailHost` owns the place. It has a table of layouts, `MailHost.LAYOUTS`; each layout is `function(deps, host)` that returns `{ Open(mailFrame), Close(mailFrame) }`. Today there is one layout, `wide`.
+- **Wide layout.** Open: read the width of `MailFrame`, make it 330 px wider, and keep `InboxFrame` and `SendMailFrame` at the old width (on Forever they are anchored at two corners of `MailFrame` and would stretch; the host anchors them at TOPLEFT and BOTTOMLEFT with the old width). The `ButtonFrameTemplate` border and background of `MailFrame` stretch with it, so the wide frame has the client look. The view fills the new strip (from the old right edge, 64 px below the top, 8 px from the other edges). Close (on `MAIL_CLOSED`): set the old width and the old anchors back and hide the view. Only client assets are used. Both clients inherit `ButtonFrameTemplate` for `MailFrame`; the TBC `InboxFrame` and `SendMailFrame` have a fixed size at one anchor, so the host does not change them there. In both clients the host also anchors OpenMailFrame to the top right of MailFrame (x 46, as Forever does; TBC anchors it to InboxFrame, which would put it over the view) and sets the saved anchor back on close.
+- **Switch to a tab.** Add a new function to `MailHost.LAYOUTS`, for example `tab`: its `Open` makes or shows a Flipside tab page in `MailFrame` and anchors `host.view.frame` in it (the view is made with `deps.create(parent, size)`); its `Close` hides it. Then set `mode = "tab"` in `openMailing` in `Shared/Core/Init.lua`. `MailingView` and the send run do not change.
+- **Group tree.** The view shows the groups as the Kit tree (the same tree and list skin as the Selling tab). A group shows if it has a mailing operation, own or inherited. A group with no operation shows in grey, with no click, only when a subgroup of it shows. Each row shows the group name and a detail line: `> recipient, N mails, M items`, with the warning for a recipient that is not an own character (holdings, §5.10). The recipient comes from the mailing operation rules (own or inherited); the view has no recipient input.
+- **Multi-select.** A click on a group selects it (highlight). A click on another group adds it. A click on a selected group clears it. The planner takes all selected groups, with their subgroups, and lists a subgroup once. The summary line counts the mails and items of the selected groups. The selection stays after a refresh for groups that still show.
+- **Send mode (decided 2026-10-17): one confirm, then all mails go out in sequence.** The user clicks Send once and confirms once ("Send N mails to X, Y?"). No click is needed for each mail. The client charges the postage; the view cannot show it before the attach calls, so the result shows the real total.
 - `SendMail` needs no hardware event. The probe `MailTest` showed on TBC Anniversary that it works from a timer and from an event handler, and while the Inbox tab shows. **This is confirmed on TBC only. It is not confirmed on Forever.**
 - **Wait rule** (`Shared/Services/MailingRun.lua`). After `MAIL_SEND_SUCCESS` the run waits for `BAG_UPDATE_DELAYED` (fallback 5 s), then a flavour delay (`ns.Flavour.mailDelay`, 0.5 s on TBC; the same value on Forever until the Forever probe shows another value), then reads the bags again. Without this wait the next mail attached a stale slot and got no event. The run never reuses a slot that holds the sent item.
 - **Each mail:** read the bags; find the planned slot again (the planned slot if it still holds the item, else a slot with the same item and count that is not locked); attach with `PickupContainerItem` and `ClickSendMailItemButton(index)`; wait 0.2 s so that a lock event can arrive; read the attachments back; compare the postage (`GetSendMailPrice`) with the gold; send. A mail has up to 12 attachments (confirmed on TBC).
@@ -490,10 +494,10 @@ Decision of 2026-10-16: mailing is a fourth operation type, "mailing", on groups
 - **Ledger (changed 2026-10-17):** the send post-hook of the ledger writes the records of every sent mail, for this run and for the Blizzard Send tab alike (§5.8, "Ledger hooks"). A mail gives one `mailPostage` expense, one `mailMoneySent` expense if gold goes with it, and one `mailSent` row for each attachment, with the item, the quantity and the recipient. The run itself writes no ledger record and sends no claim, so there is no second record.
 
 **In-game checklist (mailing).**
-1. **Forever probe first.** On the Forever client run the `MailTest` probe again: `click 5`, `timer 5` and `fill 12` (README of `MailTest`). All 5 mails and the 12-attachment mail must arrive. If a step fails, tune `mailDelay` in `Core_Forever/Flavour.lua` or report the failure; do not use the panel before this.
-2. Open a mailbox. The panel shows beside the mail frame. Close the mailbox. The panel hides.
-3. Make a mailing operation on a group with a recipient that is an own character, and put items of that group in the bags. The group shows in the panel with the right mail and item counts. A recipient that is no own character shows the warning.
-4. Tick the group. The summary shows the mails and items. Click Send. One confirm shows; cancel it and check that nothing is sent.
+1. **Forever probe first.** On the Forever client run the `MailTest` probe again: `click 5`, `timer 5` and `fill 12` (README of `MailTest`). All 5 mails and the 12-attachment mail must arrive. If a step fails, tune `mailDelay` in `Core_Forever/Flavour.lua` or report the failure; do not use the mailing view before this.
+2. Open a mailbox. The mail frame gets wider and the Flipside mailing view fills the new strip. The Inbox and Send tabs keep their look and work (open a mail, take an attachment, write and send a mail by hand). Open a mail on the Inbox: note where Blizzard shows the open-mail frame. Close the mailbox. The frame has its old width, the Inbox and Send tabs look as before, and the view is gone. Open the mailbox again: the same.
+3. Make a mailing operation on a group with a recipient that is an own character, and put items of that group in the bags. The group shows in the tree with the recipient and the right mail and item counts. A subgroup shows below it. A recipient that is no own character shows the warning.
+4. Click the group (it highlights). Click a second group (both stay highlighted). Click the first group again (it clears). The summary shows the mails and items of the selected groups. Click Send. One confirm shows; cancel it and check that nothing is sent.
 5. Click Send and confirm. All mails go out with no further click; the progress line counts them. Check the mails at the recipient (items, stack sizes, subject).
 6. Use a group with more than 12 slots of items. The run sends more than one mail, each with up to 12 attachments.
 7. Click Stop during a run with 3 or more mails. The mail in flight arrives, no later mail is sent.
@@ -677,7 +681,7 @@ The `source` field is one of these values. The `type` field sets the view.
 
 **In-game checklist (ledger item detail, 2026-10-17).** Run each step on WoW: Forever and on TBC Anniversary. Open the Ledger page after each step. Each step must give one row for each money change.
 1. Blizzard Send tab: send one item with 1 gold to another character. Expect `Mail postage`, `Mail money sent` and one `Mail sent` row with the item, the quantity and the recipient. On Forever, send to a stranger and confirm the dialog.
-2. Flipside mailing panel: send a group with 2 mails. Expect the same rows for each mail, once only.
+2. Flipside mailing view: send a group with 2 mails. Expect the same rows for each mail, once only.
 3. Send a mail and cancel it (a mail to an unknown name gives `MAIL_FAILED`). Expect no row, and no `Unknown` row for the postage.
 4. Sell one stack and one single item to a vendor. Expect `Vendor sale` rows with the item and the quantity. Sell the same item twice. Expect two rows.
 5. Buy 1 item and 5 items of a stack to a vendor. Expect `Vendor purchase` rows with the item and the quantity.
@@ -1018,7 +1022,7 @@ The MVP is done when a player on WoW: Forever can scan, see prices in tooltips, 
 
 | Phase | Goal | Features | Done when |
 | --- | --- | --- | --- |
-| MVP | Scan → price → buy / sell → profit, one realm | Full scan, groups, operations and formulas, tooltips, inventory tracking, buying, selling (dry run and decision log: Buying tab and ledger only), vendoring, mailing (the mailing operation and the mail panel, §5.5), ledger, Great Deals, export and import of groups and operations | A week of daily use on one realm with no errors, under 5 s of scan processing on a mid-size realm (Flipside processing time; see §3.2 scan engine design) |
+| MVP | Scan → price → buy / sell → profit, one realm | Full scan, groups, operations and formulas, tooltips, inventory tracking, buying, selling (dry run and decision log: Buying tab and ledger only), vendoring, mailing (the mailing operation and the mail view, §5.5), ledger, Great Deals, export and import of groups and operations | A week of daily use on one realm with no errors, under 5 s of scan processing on a mid-size realm (Flipside processing time; see §3.2 scan engine design) |
 | Phase 2 | Run a multi-character business | Keep stock, banking, crafting and queue, sniper, profiles, import/export of keep-stock rules, dashboard, price history chart, deposit-aware posting, craft profit ranking, presets and undo | A crafter-and-seller pair of alts restocks and sells through one session without manual moves |
 | Phase 3 | Multi-account and polish | Account sync (incl. scan data), Task List, destroying, guild scan sharing, then Retail | Two accounts on one realm share inventory, ledger and prices |
 
@@ -1055,7 +1059,7 @@ The MVP is done when a player on WoW: Forever can scan, see prices in tooltips, 
 4. Groups and operations UI.
 5. Tooltips and inventory tracking. The tooltip price lines are configurable with the same formula language as operations. The player can show min, max and average values.
 6. AH tabs in Blizzard's Auction House frame: Buying, then Selling with dry run and decision log. Two new tabs, Selling and Buying (similar to the well-known Auctionator layout, in our own design), work from the player's groups and their operations.
-7. Mailbox parsing and the ledger; then Vendoring; then Mailing (the mailing operation and planner first, §5.5; the send run and the mail panel after an in-game probe). The ledger design is in §5.8. The work is split into pull requests (decided 2026-10-15):
+7. Mailbox parsing and the ledger; then Vendoring; then Mailing (the mailing operation and planner first, §5.5; the send run and the mail view after an in-game probe). The ledger design is in §5.8. The work is split into pull requests (decided 2026-10-15):
 
 | PR | Content | Depends on |
 | --- | --- | --- |
@@ -1082,7 +1086,7 @@ TSM behaviours this spec doesn't cover yet. Change the status as each one gets s
 | --- | --- | --- | --- |
 | UI and flow | Windows, AH tabs, settings layout, contextual frames | §6 | Partly scoped (2026-10-14: AH tabs, Flipside window, size, entry points; page layouts open; Groups and Operations pages: build step 4) |
 | TBC AH tabs | Buying tab and Selling tab in the TBC `AuctionFrame`: done (Buying 2026-10-16; Selling 2026-10-16; TBC multisell posting of several stacks in one click, with the Stack size and Max stacks fields, 2026-10-16, in this pull request; in-game checklists open, see §3 items 7 and 14a) | §3, §6 | Scoped (in-game checks open) |
-| Mailing | The mailing operation, the planner and the mail panel (§5.5) | §5.4 | Partly scoped (2026-10-17: operation, planner, rules, panel and send run built; send mode decided: one confirm, then all mails in sequence, confirmed in game on TBC only; open: the Forever probe (`MailTest` second round) and the in-game checklist on both clients) |
+| Mailing | The mailing operation, the planner and the mail view (§5.5) | §5.4 | Partly scoped (2026-10-17: operation, planner, rules, view and send run built; the view sits in a wider `MailFrame` (wide layout, group tree, multi-select; a tab layout needs only a new `MailHost.LAYOUTS` entry); send mode decided: one confirm, then all mails in sequence, confirmed in game on TBC only; open: the Forever probe (`MailTest` second round) and the in-game checklist on both clients) |
 | Onboarding | First-run steps: starter groups, presets, guild-sharing choice (D7), first scan (starter groups moved here, 2026-10-14) | §6.3 | Needs scoping |
 | One-click macro and keybinds | Bindable button for post, cancel, buy, craft next | §3, §6.2 | Partly scoped (2026-10-14: no keybinds in v1; every buy is one click, D26) |
 | My Auctions view | Own auctions list replacing Blizzard's Auctions tab (Blizzard's Auctions tab stays; decision B) | §3 | Needs scoping |
