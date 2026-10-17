@@ -63,6 +63,8 @@ read_globals = {
     "GetSendMailPrice",
     "InboxFrame",
     "InboxFrame_OnClick",
+    "AutoLootMailItem",
+    "IsModifiedClick",
     "MailFrame",
     "SendMail",
     "SendMailFrame",

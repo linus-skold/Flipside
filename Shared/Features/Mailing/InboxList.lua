@@ -115,7 +115,7 @@ local function buildRow(view, row)
         setNoWrap(label)
     end
     row:SetScript("OnClick", function(self)
-        view:Open(self.mail.index)
+        view:Click(self.mail.index)
     end)
     row:SetScript("OnEnter", function(self)
         showTooltip(self, self.mail, view.deps.formatMoney)
@@ -148,8 +148,11 @@ local function initRow(view, row, mail)
 end
 
 -- deps: api = { numItems() (GetInboxNumItems), header(index) (GetInboxHeaderInfo), open(index), openID()
--- (the index of the open mail or 0) }, formatMoney(copper), blizzard() (the client frames to hide while the list
--- shows), openMail() (the open-mail frame or nil), place(frame) (anchors the list), skin (optional).
+-- (the index of the open mail or 0), isModified() (optional, the Shift-click test), autoLoot(index) (optional,
+-- AutoLootMailItem), freeSlots() (optional, the free bag slots) }, notify(text) (optional, a short status),
+-- formatMoney(copper), blizzard() (the client frames to hide while the list shows),
+-- openMail() (the open-mail frame or nil),
+-- place(frame) (anchors the list), skin (optional).
 function InboxList.Create(parent, deps)
     local view = { deps = deps, mails = {}, openID = 0, hidden = nil }
     view.list = Kit.CreateList(parent, {
@@ -178,6 +181,42 @@ function InboxList:Refresh()
     self.mails = mails
     self.openID = api.openID() or 0
     self.list:SetData(mails)
+end
+
+-- Takes all money and attachments of a mail with the client function AutoLootMailItem, as the client does on a
+-- Shift-click. Never pays a COD mail. Does not take items when the bags have no free slot.
+function InboxList:TakeAll(index)
+    local api = self.deps.api
+    local mail = InboxList.ReadMail(api, index)
+    local tell = self.deps.notify or function() end
+    if mail.cod > 0 then
+        log("info", string.format("take skipped for mail %d from %s: COD %d", index, mail.sender, mail.cod))
+        tell("COD mail skipped: Shift-click never pays")
+        return false
+    end
+    if mail.items == 0 and mail.money == 0 then
+        log("info", string.format("take skipped for mail %d: nothing to take", index))
+        return false
+    end
+    if mail.items > 0 and api.freeSlots and api.freeSlots() == 0 then
+        log("warn", string.format("take stopped for mail %d: bags are full", index))
+        tell("Bags are full")
+        return false
+    end
+    log("info", string.format("take all from mail %d from %s: %d items, money %d", index, mail.sender, mail.items,
+        mail.money))
+    api.autoLoot(index)
+    return true
+end
+
+-- A click on a row. With the client modifier (Shift by default) it takes the contents first, then it opens the mail,
+-- as InboxFrame_OnModifiedClick does. A normal click only opens the mail.
+function InboxList:Click(index)
+    local api = self.deps.api
+    if api.isModified and api.autoLoot and api.isModified() then
+        self:TakeAll(index)
+    end
+    self:Open(index)
 end
 
 -- Opens the mail with the client function. A second click on the open mail closes it, as the client does.

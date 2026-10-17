@@ -1050,7 +1050,8 @@ end
 local function createInboxList()
     local inbox = _G.InboxFrame
     if not (ns.InboxList and inbox and type(InboxFrame_OnClick) == "function" and type(GetInboxHeaderInfo) == "function"
-        and type(GetInboxNumItems) == "function") then
+        and type(GetInboxNumItems) == "function" and type(AutoLootMailItem) == "function"
+        and type(IsModifiedClick) == "function") then
         return nil
     end
     return ns.InboxList.Create(inbox, {
@@ -1060,6 +1061,18 @@ local function createInboxList()
             openID = function()
                 return inbox.openMailID
             end,
+            -- Shift-click (the client setting MAILAUTOLOOTTOGGLE) takes all contents with AutoLootMailItem.
+            isModified = function()
+                return IsModifiedClick("MAILAUTOLOOTTOGGLE")
+            end,
+            autoLoot = AutoLootMailItem,
+            freeSlots = function()
+                local free = 0
+                for bag = 0, _G.NUM_BAG_SLOTS or 4 do
+                    free = free + (C_Container.GetContainerNumFreeSlots(bag) or 0)
+                end
+                return free
+            end,
             -- The client function opens the mail from the state of the button: checked opens, unchecked closes.
             open = function(index)
                 local opening = inbox.openMailID ~= index
@@ -1067,6 +1080,7 @@ local function createInboxList()
             end,
         },
         formatMoney = ns.TooltipLines.FormatMoney,
+        notify = printLine,
         blizzard = inboxClientFrames,
         openMail = function()
             return _G.OpenMailFrame

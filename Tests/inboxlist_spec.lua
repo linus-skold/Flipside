@@ -2,7 +2,7 @@ local manifest = require("Tests.manifest")
 local mock = require("Tests.wow_mock")
 
 describe("InboxList", function()
-    local ns, list, mails, opened, openID, clientFrames, openMail, failing
+    local ns, list, mails, opened, openID, clientFrames, openMail, failing, shift, looted, free, told
 
     local function loadModules()
         local env = { Flavour = {} }
@@ -46,7 +46,7 @@ describe("InboxList", function()
             { package = "pkg3", stationery = "mail3", sender = nil, subject = "Pay me", money = 0, cod = 500,
                 days = 0.5, items = 1, read = false, gm = true },
         }
-        opened, openID, failing = {}, 0, false
+        opened, openID, failing, shift, looted, free, told = {}, 0, false, false, {}, 10, {}
         clientFrames = {
             CreateFrame("Frame", "MailItem1", UIParent),
             CreateFrame("Frame", "MailItem2", UIParent),
@@ -64,6 +64,15 @@ describe("InboxList", function()
                 openID = function()
                     return openID
                 end,
+                isModified = function()
+                    return shift
+                end,
+                autoLoot = function(index)
+                    looted[#looted + 1] = index
+                end,
+                freeSlots = function()
+                    return free
+                end,
                 open = function(index)
                     opened[#opened + 1] = index
                     openID = openID == index and 0 or index
@@ -71,6 +80,9 @@ describe("InboxList", function()
             },
             formatMoney = function(copper)
                 return copper .. "c"
+            end,
+            notify = function(text)
+                told[#told + 1] = text
             end,
             blizzard = function()
                 return clientFrames
@@ -129,6 +141,60 @@ describe("InboxList", function()
         assert.are.same({ 2 }, opened)
         assert.is_true(rows()[2].selection:IsShown())
         assert.is_false(rows()[1].selection:IsShown())
+    end)
+
+    it("opens the mail and takes all its contents on a Shift-click", function()
+        shift = true
+        local row = rows()[1]
+        row.scripts.OnClick(row)
+        assert.are.same({ 1 }, looted)
+        assert.are.same({ 1 }, opened)
+    end)
+
+    it("takes a mail with only money on a Shift-click even when the bags are full", function()
+        shift, free = true, 0
+        local row = rows()[2]
+        row.scripts.OnClick(row)
+        assert.are.same({ 2 }, looted)
+    end)
+
+    it("skips a COD mail on a Shift-click, opens it, and never pays", function()
+        shift = true
+        local row = rows()[3]
+        row.scripts.OnClick(row)
+        assert.are.same({}, looted)
+        assert.are.same({ 3 }, opened)
+        assert.are.same({ "COD mail skipped: Shift-click never pays" }, told)
+    end)
+
+    it("stops the take when the bags are full", function()
+        shift, free = true, 0
+        local row = rows()[1]
+        row.scripts.OnClick(row)
+        assert.are.same({}, looted)
+        assert.are.same({ "Bags are full" }, told)
+        assert.are.same({ 1 }, opened)
+    end)
+
+    it("logs each step of a take to the mail log", function()
+        local logged = {}
+        ns.Log = { Write = function(category, level, text)
+            logged[#logged + 1] = { category, level, text }
+        end }
+        shift = true
+        rows()[1].scripts.OnClick(rows()[1])
+        free = 0
+        rows()[1].scripts.OnClick(rows()[1])
+        assert.are.equal("mail", logged[1][1])
+        assert.is_truthy(logged[1][3]:find("take all from mail 1", 1, true))
+        assert.is_truthy(logged[2][3]:find("bags are full", 1, true))
+    end)
+
+    it("does not take anything on a normal click", function()
+        local row = rows()[1]
+        row.scripts.OnClick(row)
+        assert.are.same({}, looted)
+        assert.are.same({ 1 }, opened)
     end)
 
     it("closes the open mail on a second click, as the client does", function()
