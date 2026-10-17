@@ -8,10 +8,16 @@ ns.OperationsPage = OperationsPage
 local LEFT_WIDTH = 250
 local RIGHT_X = 260
 local RIGHT_WIDTH = 510
-local FIELD_ROW = 40
+local RIGHT_HEIGHT = 468
+-- One line for a simple field; a formula field adds one preview line.
+local FIELD_ROW, FORMULA_ROW = 28, 44
+-- Where the refusal message of a simple field starts, for each kind.
+local MESSAGE_X = { money = 346, number = 346, text = 372, choice = 336, bool = 336 }
 local CLASS_COLUMNS, CLASS_COLUMN_WIDTH, CLASS_ROW = 3, 165, 22
 local CLASS_LABEL_HEIGHT = 22
-local FOOTER_HEIGHT = 40
+-- The footer shows "Used by:" and at most USED_SHOWN groups, with one line for the rest.
+local USED_SHOWN, FOOTER_LINE = 5, 14
+local FOOTER_MAX = (USED_SHOWN + 2) * FOOTER_LINE
 local DELETE_DIALOG = "FLIPSIDE_DELETE_OPERATION"
 local NEW_PROMPT = "FlipsideNewOperationPrompt"
 local RENAME_PROMPT = "FlipsideRenameOperationPrompt"
@@ -77,6 +83,8 @@ function OperationsPage.Build(content, deps)
             part.number:SetNumber(value)
             if kind == "money" then
                 part.moneyText:SetText(ns.TooltipLines.FormatMoney(value or 0))
+                -- A refusal message takes the place of the money text.
+                part.moneyText:SetShown((part.message:GetText() or "") == "")
             end
             setEnabled(part.number, not ro)
         elseif kind == "text" then
@@ -110,8 +118,8 @@ function OperationsPage.Build(content, deps)
         part.message = add(Kit.Label(row, "", "bad"))
         part.message:SetJustifyH("LEFT")
         if kind == "formula" then
-            part.label:SetPoint("TOPLEFT", row, "TOPLEFT", 4, -6)
-            part.message:SetPoint("TOPLEFT", row, "TOPLEFT", 8, -26)
+            part.label:SetPoint("TOPLEFT", row, "TOPLEFT", 4, -8)
+            part.message:SetPoint("TOPLEFT", row, "TOPLEFT", 8, -28)
             local function save(text)
                 text = trim(text)
                 if text ~= stored(field.key) then
@@ -132,7 +140,7 @@ function OperationsPage.Build(content, deps)
             end))
             part.expand:SetPoint("TOPLEFT", row, "TOPLEFT", 454, -4)
             part.preview = add(Kit.Label(row, "", "small"))
-            part.preview:SetPoint("TOPLEFT", row, "TOPLEFT", 8, -26)
+            part.preview:SetPoint("TOPLEFT", row, "TOPLEFT", 8, -28)
             part.preview:SetWidth(RIGHT_WIDTH - 40)
             part.preview:SetJustifyH("LEFT")
             if part.preview.SetMaxLines then
@@ -140,8 +148,14 @@ function OperationsPage.Build(content, deps)
             end
             return part
         end
-        part.label:SetPoint("TOPLEFT", row, "TOPLEFT", 4, -6)
-        part.message:SetPoint("TOPLEFT", row, "TOPLEFT", 176, -27)
+        -- Label and control sit on the middle line of the row.
+        part.label:SetPoint("LEFT", row, "LEFT", 4, 0)
+        part.message:SetPoint("LEFT", row, "LEFT", MESSAGE_X[kind] or 336, 0)
+        part.message:SetWidth(RIGHT_WIDTH - (MESSAGE_X[kind] or 336) - 24)
+        part.message:SetJustifyV("MIDDLE")
+        if part.message.SetMaxLines then
+            part.message:SetMaxLines(2)
+        end
         if kind == "money" or kind == "number" then
             part.number = tipOn(add(Kit.NumberInput(row, 90, {
                 min = field.min,
@@ -153,10 +167,10 @@ function OperationsPage.Build(content, deps)
                     commit(part, number)
                 end,
             })))
-            part.number:SetPoint("TOPLEFT", row, "TOPLEFT", 176, -4)
+            part.number:SetPoint("LEFT", row, "LEFT", 176, 0)
             if kind == "money" then
                 part.moneyText = add(Kit.Label(row, "", "small"))
-                part.moneyText:SetPoint("TOPLEFT", row, "TOPLEFT", 360, -8)
+                part.moneyText:SetPoint("LEFT", row, "LEFT", 360, 0)
             end
         elseif kind == "text" then
             local function save(text)
@@ -169,8 +183,8 @@ function OperationsPage.Build(content, deps)
                     updatePart(part)
                 end
             end
-            part.input = tipOn(add(Kit.Input(row, 220, save, save)))
-            part.input:SetPoint("TOPLEFT", row, "TOPLEFT", 176, -4)
+            part.input = tipOn(add(Kit.Input(row, 190, save, save)))
+            part.input:SetPoint("LEFT", row, "LEFT", 176, 0)
         elseif kind == "choice" then
             local items = {}
             for _, choice in ipairs(field.choices) do
@@ -183,12 +197,12 @@ function OperationsPage.Build(content, deps)
                     commit(part, value)
                 end,
             })))
-            part.choice:SetPoint("TOPLEFT", row, "TOPLEFT", 170, -3)
+            part.choice:SetPoint("LEFT", row, "LEFT", 170, 0)
         elseif kind == "bool" then
             part.check = tipOn(add(Kit.Check(row, "", function(checked)
                 commit(part, checked)
             end)))
-            part.check:SetPoint("TOPLEFT", row, "TOPLEFT", 170, -3)
+            part.check:SetPoint("LEFT", row, "LEFT", 170, 0)
         end
         return part
     end
@@ -411,8 +425,6 @@ function OperationsPage.Build(content, deps)
         classesHeight = CLASS_LABEL_HEIGHT + math.ceil(#classes / CLASS_COLUMNS) * CLASS_ROW + gap
         classesPart = { all = {} }
         classesPart.label = Kit.Label(right, "", "normal")
-        classesPart.label:SetPoint("BOTTOMLEFT", right, "BOTTOMLEFT", 4,
-            FOOTER_HEIGHT + classesHeight - CLASS_LABEL_HEIGHT)
         classesPart.help = Kit.Label(right, "", "small")
         classesPart.help:SetPoint("LEFT", classesPart.label, "RIGHT", gap * 2, 0)
         classesPart.message = Kit.Label(right, "", "bad")
@@ -426,7 +438,6 @@ function OperationsPage.Build(content, deps)
                 commit(classesPart, ns.MailingPlan.FormatClasses(set))
             end,
         })
-        classesPart.classes:SetPoint("BOTTOMLEFT", right, "BOTTOMLEFT", 4, FOOTER_HEIGHT + gap)
         classesPart.all = { classesPart.label, classesPart.help, classesPart.message, classesPart.classes }
     end
 
@@ -447,25 +458,40 @@ function OperationsPage.Build(content, deps)
     end
 
     page.footer = Kit.Label(right, "", "normal")
-    page.footer:SetPoint("BOTTOMLEFT", right, "BOTTOMLEFT", 0, 0)
     page.footer:SetWidth(RIGHT_WIDTH)
     page.footer:SetJustifyH("LEFT")
+    page.footer:SetJustifyV("TOP")
+
+    local function heightOf(field)
+        return field.kind == "formula" and FORMULA_ROW or FIELD_ROW
+    end
 
     page.fieldList = Kit.CreateList(right, {
         inset = true,
         rowHeight = FIELD_ROW,
+        heightOf = heightOf,
         initRow = function(row, field)
             showPart(row, field)
         end,
     })
-    page.fieldList.frame:SetPoint("TOPLEFT", right, "TOPLEFT", 0, -(28 + gap))
 
+    -- One line for "Used by:" and one line for each group. A long list ends with "and N more".
     local function footerText(id)
         local paths = {}
         for _, groupID in ipairs(rules:GroupsUsing(id)) do
             paths[#paths + 1] = table.concat(rules:Path(groupID) or {}, " > ")
         end
-        return "Used by: " .. (#paths > 0 and table.concat(paths, ", ") or "no groups")
+        if #paths == 0 then
+            return "Used by: none"
+        end
+        local lines = { "Used by:" }
+        for index = 1, math.min(#paths, USED_SHOWN) do
+            lines[#lines + 1] = "- " .. paths[index]
+        end
+        if #paths > USED_SHOWN then
+            lines[#lines + 1] = "and " .. (#paths - USED_SHOWN) .. " more"
+        end
+        return table.concat(lines, "\n")
     end
 
     -- Redraws the lists and the right side. keepStatus keeps the left message.
@@ -489,13 +515,29 @@ function OperationsPage.Build(content, deps)
                 fields[#fields + 1] = field
             end
         end
-        -- The list ends above the item type boxes, when the operation has them.
+        -- The list has the height of its rows. The item type boxes and the footer follow it, from the top.
+        local top = 28 + gap
+        local rowsHeight = 2 * Kit.Theme.insetPadding
+        for _, field in ipairs(fields) do
+            rowsHeight = rowsHeight + heightOf(field)
+        end
+        local room = RIGHT_HEIGHT - top - FOOTER_MAX - gap - (classesField and classesHeight or 0)
+        local listHeight = math.min(rowsHeight, room)
         page.fieldList.frame:ClearAllPoints()
-        page.fieldList.frame:SetPoint("TOPLEFT", right, "TOPLEFT", 0, -(28 + gap))
-        page.fieldList.frame:SetPoint("BOTTOMRIGHT", right, "BOTTOMRIGHT", 0,
-            FOOTER_HEIGHT + (classesField and classesHeight or 0))
+        page.fieldList.frame:SetPoint("TOPLEFT", right, "TOPLEFT", 0, -top)
+        page.fieldList.frame:SetSize(RIGHT_WIDTH, listHeight)
         page.fieldList:SetData(fields)
+        local y = top + listHeight + gap
+        if classesField then
+            classesPart.label:ClearAllPoints()
+            classesPart.label:SetPoint("TOPLEFT", right, "TOPLEFT", 4, -y)
+            classesPart.classes:ClearAllPoints()
+            classesPart.classes:SetPoint("TOPLEFT", right, "TOPLEFT", 4, -(y + CLASS_LABEL_HEIGHT))
+            y = y + classesHeight
+        end
         showClasses(classesField)
+        page.footer:ClearAllPoints()
+        page.footer:SetPoint("TOPLEFT", right, "TOPLEFT", 0, -y)
         page.footer:SetText(op and footerText(selected) or "")
         page.readOnly:SetShown(ro)
         setEnabled(page.newButton, not ro)

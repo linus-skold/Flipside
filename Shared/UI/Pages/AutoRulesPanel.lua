@@ -38,10 +38,6 @@ function AutoRulesPanel.Build(panel, deps, page, hooks)
     if ns.MailClient and ns.MailingPlan and _G.C_Item and _G.C_Item.GetItemClassInfo then
         classes = ns.MailClient.ItemClasses(_G.Enum and _G.Enum.ItemClass, _G.C_Item.GetItemClassInfo)
     end
-    local classNames = {}
-    for _, class in ipairs(classes) do
-        classNames[class.value] = class.text
-    end
 
     local function groupPath(id)
         local names = {}
@@ -78,13 +74,21 @@ function AutoRulesPanel.Build(panel, deps, page, hooks)
             end
         end
         if rule.classes ~= "" then
-            local names, count = {}, 0
-            for id in pairs(ns.MailingPlan.ParseClasses(rule.classes)) do
-                count = count + 1
-                names[#names + 1] = classNames[id] or tostring(id)
+            -- One name for each list entry that has a saved id.
+            local set, names = ns.MailingPlan.ParseClasses(rule.classes), {}
+            for _, class in ipairs(classes) do
+                for _, id in ipairs(class.ids or { class.value }) do
+                    if set[id] then
+                        names[#names + 1] = class.text
+                        break
+                    end
+                end
             end
             table.sort(names)
-            parts[#parts + 1] = count > 2 and (count .. " types") or table.concat(names, ", ")
+            parts[#parts + 1] = #names > 2 and (#names .. " types") or table.concat(names, ", ")
+            if #names == 0 then
+                parts[#parts] = "other types"
+            end
         end
         return #parts > 0 and table.concat(parts, "  ") or "(no filter)"
     end

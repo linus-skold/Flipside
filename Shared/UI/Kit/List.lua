@@ -2,7 +2,8 @@ local _, ns = ...
 ns.Kit = ns.Kit or {}
 local Kit = ns.Kit
 
--- Create a list. options: rowHeight, initRow(rowFrame, data), inset (true gives the client inset background),
+-- Create a list. options: rowHeight, heightOf(data) (optional, gives the height of one row),
+-- initRow(rowFrame, data), inset (true gives the client inset background),
 -- skin (client atlas names for the inset background, the row stripes and the row hover; see Kit.Inset).
 -- Use list.frame to place the list. Call list:SetData(array) to fill it.
 -- list.contentInsets = { left, right } is the space between the list frame and the rows (for a header row).
@@ -14,6 +15,7 @@ local Kit = ns.Kit
 function Kit.CreateList(parent, options)
     options = options or {}
     local rowHeight = options.rowHeight or Kit.Theme.rowHeight
+    local heightOf = options.heightOf
     local initRow = options.initRow or function() end
     local multi = options.multiSelect == true
     local keyOf = options.keyOf or function(data)
@@ -104,6 +106,11 @@ function Kit.CreateList(parent, options)
         bar:SetPoint("BOTTOMLEFT", box, "BOTTOMRIGHT", 4, 0)
         local view = CreateScrollBoxListLinearView()
         view:SetElementExtent(rowHeight)
+        if heightOf and view.SetElementExtentCalculator then
+            view:SetElementExtentCalculator(function(_, data)
+                return heightOf(data)
+            end)
+        end
         view:SetElementInitializer("Button", function(row, data)
             prepareRow(row, nil, data)
             initRow(row, data)
@@ -126,15 +133,19 @@ function Kit.CreateList(parent, options)
         function list:SetData(array)
             self.data = array or {}
             local changed = pruneSelection()
+            local y = pad
             for index, data in ipairs(self.data) do
                 local row = self.rows[index]
                 if not row then
                     row = CreateFrame("Button", nil, container)
-                    row:SetHeight(rowHeight)
-                    row:SetPoint("TOPLEFT", container, "TOPLEFT", pad, -pad - (index - 1) * rowHeight)
-                    row:SetPoint("TOPRIGHT", container, "TOPRIGHT", -pad, -pad - (index - 1) * rowHeight)
                     self.rows[index] = row
                 end
+                local height = heightOf and heightOf(data) or rowHeight
+                row:SetHeight(height)
+                row:ClearAllPoints()
+                row:SetPoint("TOPLEFT", container, "TOPLEFT", pad, -y)
+                row:SetPoint("TOPRIGHT", container, "TOPRIGHT", -pad, -y)
+                y = y + height
                 prepareRow(row, index % 2 == 1, data)
                 row:Show()
                 initRow(row, data)

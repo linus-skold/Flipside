@@ -693,10 +693,13 @@ describe("OperationsPage", function()
         before_each(function()
             oldItem, oldEnum = _G.C_Item, _G.Enum
             local colors = { [0] = "ff9d9d9d", "ffffffff", "ff1eff00", "ff0070dd", "ffa335ee", "ffff8000" }
-            _G.Enum = { ItemClass = { Weapon = 2, Tradegoods = 7 } }
+            _G.Enum = { ItemClass = { Weapon = 2, Tradegoods = 7, Container = 1, Quiver = 11, Questitem = 12, Key = 13,
+                WoWToken = 18, ItemEnhancement = 8 } }
+            local classNames = { [1] = "Container", [2] = "Weapon", [7] = "Trade Goods", [8] = "Generic(OBSOLETE)",
+                [11] = "Quiver", [12] = "Quest", [13] = "Key", [18] = "WoW Token" }
             _G.C_Item = {
                 GetItemClassInfo = function(id)
-                    return id == 2 and "Weapon" or "Trade Goods"
+                    return classNames[id]
                 end,
                 GetItemQualityColor = function(quality)
                     return 1, 1, 1, colors[quality]
@@ -733,13 +736,13 @@ describe("OperationsPage", function()
             end
             local part = page.FieldPart("itemClasses")
             assert.are.equal("Item types", part.label:GetText())
-            assert.are.equal(2, #part.classes.checks)
+            assert.are.equal(3, #part.classes.checks)
             assert.is_true(part.classes:IsShown())
         end)
 
         it("saves a toggled item type and keeps the boxes open", function()
             local part = page.FieldPart("itemClasses")
-            local trade, weapon = part.classes.checks[1], part.classes.checks[2]
+            local trade, weapon = part.classes.checks[2], part.classes.checks[3]
             trade:SetChecked(true)
             trade.scripts.OnClick(trade)
             assert.are.equal("7", rules:GetOperation(mailID).settings.itemClasses)
@@ -750,6 +753,35 @@ describe("OperationsPage", function()
             trade:SetChecked(false)
             trade.scripts.OnClick(trade)
             assert.are.equal("2", rules:GetOperation(mailID).settings.itemClasses)
+        end)
+
+        it("does not offer Quest, Key, WoW Token or Generic and merges Quiver into Container", function()
+            local part = page.FieldPart("itemClasses")
+            local names = {}
+            for index, item in ipairs(part.classes.checks) do
+                names[index] = item.Text:GetText()
+            end
+            table.sort(names)
+            assert.are.same({ "Container", "Trade Goods", "Weapon" }, names)
+        end)
+
+        it("checks Container for an old saved Quiver and writes both ids on a click", function()
+            rules:SetSetting(mailID, "itemClasses", "11")
+            page.Refresh()
+            local part = page.FieldPart("itemClasses")
+            local container
+            for _, check in ipairs(part.classes.checks) do
+                if check.Text:GetText() == "Container" then
+                    container = check
+                end
+            end
+            assert.is_true(container:GetChecked())
+            container:SetChecked(false)
+            container.scripts.OnClick(container)
+            assert.are.equal("", rules:GetOperation(mailID).settings.itemClasses)
+            container:SetChecked(true)
+            container.scripts.OnClick(container)
+            assert.are.equal("1,11", rules:GetOperation(mailID).settings.itemClasses)
         end)
 
         it("hides the item types for another operation type", function()
@@ -865,8 +897,22 @@ describe("OperationsPage", function()
 
         it("uses compact field rows with room for the input and one preview line", function()
             local row = page.fieldList.rows[1]
+            assert.are.equal("formula", row.active.field.kind)
             assert.is_true(row.height >= 26 + 12)
             assert.is_true(row.height <= 46)
+        end)
+
+        it("uses one line of 26 to 28 for a simple field and centres its label", function()
+            create("mailing", "Mail")
+            local part = page.FieldPart("recipient")
+            local row
+            for _, candidate in ipairs(page.fieldList.rows) do
+                if candidate:IsShown() and candidate.active == part then
+                    row = candidate
+                end
+            end
+            assert.is_true(row.height >= 26 and row.height <= 28)
+            assert.are.equal("LEFT", part.label.points[#part.label.points][1])
         end)
 
         it("disables the expand button for a read-only store", function()
@@ -881,13 +927,30 @@ describe("OperationsPage", function()
         it("lists the group paths that use the operation", function()
             create("selling", "Main")
             local id = rules:ListOperations()[1].id
-            assert.are.equal("Used by: no groups", page.footer:GetText())
+            assert.are.equal("Used by: none", page.footer:GetText())
             local herbs = rules:CreateGroup(1, "Herbs")
             local leaf = rules:CreateGroup(herbs, "Fine")
             rules:AttachOperation(herbs, "selling", id)
             rules:AttachOperation(leaf, "selling", id)
             page.Refresh()
-            assert.are.equal("Used by: Base > Herbs, Base > Herbs > Fine", page.footer:GetText())
+            assert.are.equal("Used by:\n- Base > Herbs\n- Base > Herbs > Fine", page.footer:GetText())
+        end)
+
+        it("shows at most five groups and then the rest as a count", function()
+            create("selling", "Main")
+            local id = rules:ListOperations()[1].id
+            for index = 1, 7 do
+                rules:AttachOperation(rules:CreateGroup(1, "G" .. index), "selling", id)
+            end
+            page.Refresh()
+            local lines = {}
+            for line in page.footer:GetText():gmatch("[^\n]+") do
+                lines[#lines + 1] = line
+            end
+            assert.are.equal(7, #lines)
+            assert.are.equal("Used by:", lines[1])
+            assert.are.equal("- Base > G5", lines[6])
+            assert.are.equal("and 2 more", lines[7])
         end)
     end)
 
