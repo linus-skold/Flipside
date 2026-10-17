@@ -54,6 +54,7 @@ read_globals = {
     "GetSendMailItem",
     "GetSendMailPrice",
     "InboxFrame",
+    "MailFrame",
     "SendMail",
     "SendMailFrame",
     "InCombatLockdown",

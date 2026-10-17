@@ -478,8 +478,31 @@ Decision of 2026-10-16: mailing is a fourth operation type, "mailing", on groups
 - An item that needs the confirm for an unrefundable mail (items that the recipient cannot return) is skipped and reported.
 - Soulbound, quest and unmailable items are skipped and reported.
 
-**Mail panel and send run (not built yet).** The user selects mail groups in a panel beside the `MailFrame` (not a tab) and runs them: Flipside puts as many items of a group as fit in a mail, sends it and repeats until nothing is left. The send mode is open: one click for the whole run, or one click for each mail (D26 limits protected calls). An in-game probe decides it (open question). The panel, the client and the send run wait for the probe result.
+**Mail panel and send run** (built 2026-10-17). The panel is a frame anchored to the right edge of `MailFrame` (not a tab). `MailHost` shows it on `MAIL_SHOW` and hides it on `MAIL_CLOSED`. One host serves both flavours.
+- The panel lists the groups that have a mailing operation of their own, each with a check box, the recipient, and the planned mails and items. A recipient that is not an own character (holdings, §5.10) shows a warning. The summary line counts the mails and items of the ticked groups.
+- **Send mode (decided 2026-10-17): one confirm, then all mails go out in sequence.** The user clicks Send once and confirms once ("Send N mails to X, Y?"). No click is needed for each mail. The client charges the postage; the panel cannot show it before the attach calls, so the result shows the real total.
+- `SendMail` needs no hardware event. The probe `MailTest` showed on TBC Anniversary that it works from a timer and from an event handler, and while the Inbox tab shows. **This is confirmed on TBC only. It is not confirmed on Forever.**
+- **Wait rule** (`Shared/Services/MailingRun.lua`). After `MAIL_SEND_SUCCESS` the run waits for `BAG_UPDATE_DELAYED` (fallback 5 s), then a flavour delay (`ns.Flavour.mailDelay`, 0.5 s on TBC; the same value on Forever until the Forever probe shows another value), then reads the bags again. Without this wait the next mail attached a stale slot and got no event. The run never reuses a slot that holds the sent item.
+- **Each mail:** read the bags; find the planned slot again (the planned slot if it still holds the item, else a slot with the same item and count that is not locked); attach with `PickupContainerItem` and `ClickSendMailItemButton(index)`; wait 0.2 s so that a lock event can arrive; read the attachments back; compare the postage (`GetSendMailPrice`) with the gold; send. A mail has up to 12 attachments (confirmed on TBC).
+- `SendMail` takes `(name, subject, body)` on TBC and `(name, subject, body, replyMailID)` on Forever (`ns.Flavour.sendMailArgs`). Neither client source has `ClearSendMail`; the run clears an attachment with `ClickSendMailItemButton(index, true)` (the right click of the client UI).
+- **Stops:** `MAIL_CLOSED`, the Stop button (a mail in flight finishes first), not enough gold for the postage. `MAIL_LOCK_SEND_ITEMS` (the client wants a confirm for an item that the recipient cannot return): the run clears that item, reports it as skipped and sends the rest; it never accepts. `MAIL_FAILED` or no result after 10 s (an unknown recipient, a full mailbox, the text of the last `UI_ERROR_MESSAGE` is the reason): the rest of that recipient is skipped and the run goes on with the next recipient.
+- **Result:** mails sent, items for each recipient, the postage total, and the skipped items with the reason (the planner reasons, "item not found in the bags", the lock and failure reasons).
+- **Ledger:** one `mailPostage` expense record for each sent mail, with the recipient as counterparty (§5.8). The ledger has no record type for the items of a mail, so the items are not recorded. The run tells the money tracker about the postage before the send call, so that the tracker writes no second record.
 
+**In-game checklist (mailing).**
+1. **Forever probe first.** On the Forever client run the `MailTest` probe again: `click 5`, `timer 5` and `fill 12` (README of `MailTest`). All 5 mails and the 12-attachment mail must arrive. If a step fails, tune `mailDelay` in `Core_Forever/Flavour.lua` or report the failure; do not use the panel before this.
+2. Open a mailbox. The panel shows beside the mail frame. Close the mailbox. The panel hides.
+3. Make a mailing operation on a group with a recipient that is an own character, and put items of that group in the bags. The group shows in the panel with the right mail and item counts. A recipient that is no own character shows the warning.
+4. Tick the group. The summary shows the mails and items. Click Send. One confirm shows; cancel it and check that nothing is sent.
+5. Click Send and confirm. All mails go out with no further click; the progress line counts them. Check the mails at the recipient (items, stack sizes, subject).
+6. Use a group with more than 12 slots of items. The run sends more than one mail, each with up to 12 attachments.
+7. Click Stop during a run with 3 or more mails. The mail in flight arrives, no later mail is sent.
+8. Close the mailbox during a run. The run stops with "mailbox closed" and the items return to the bags.
+9. Use a recipient that does not exist. The mail fails, the rest of that recipient is skipped, and the result shows the reason.
+10. Put a soulbound item, a quest item and an item that the client wants to confirm (a non-refundable item) in a mail group. The first two show as skipped; the third is cleared and shown as skipped, and no confirm window stays open.
+11. Spend most of the gold. The run stops with "not enough money for the postage" before the mail that costs too much.
+12. Open the Ledger. Each sent mail has a "Mail postage" expense with the right amount and the recipient. No second "Unknown" expense shows for the same postage.
+13. Do the checks 2 to 12 on both clients (Forever and TBC Anniversary).
 **Keep stock (D8).** D8 says keep stock beats every outgoing rule. The `keep` field of a mailing operation is a per-operation floor, as `keepInBags` is for selling. When keep-stock rules exist (Phase 2), the planner reads the keep-stock target of an item and uses the larger of the two numbers. Going below the target needs the same **Override stock** button, for one run only. Mailing does not change D8.
 
 **Export.** The rules export lists the mailing operation like any other operation. The recipient is exported as typed (no placeholder in this step).
@@ -634,6 +657,7 @@ The `source` field is one of these values. The `type` field sets the view.
 | `vendorPurchase` | `expense` | Merchant context (PR5) |
 | `repair` | `expense` | Merchant context (PR5) |
 | `mailMoney` | `income` | Mail from players (PR3) |
+| `mailPostage` | `expense` | Mailing run (§5.5); one record for each sent mail, the recipient is the counterparty |
 | `trade` | `income` or `expense` | Trade context (PR6) |
 | `quest` | `income` | Quest context (PR6) |
 | `unknown` | `income` or `expense` | Money tracker (PR2) |
@@ -1034,7 +1058,7 @@ TSM behaviours this spec doesn't cover yet. Change the status as each one gets s
 | --- | --- | --- | --- |
 | UI and flow | Windows, AH tabs, settings layout, contextual frames | §6 | Partly scoped (2026-10-14: AH tabs, Flipside window, size, entry points; page layouts open; Groups and Operations pages: build step 4) |
 | TBC AH tabs | Buying tab and Selling tab in the TBC `AuctionFrame`: done (Buying 2026-10-16; Selling 2026-10-16; TBC multisell posting of several stacks in one click, with the Stack size and Max stacks fields, 2026-10-16, in this pull request; in-game checklists open, see §3 items 7 and 14a) | §3, §6 | Scoped (in-game checks open) |
-| Mailing | The mailing operation, the planner and the mail panel (§5.5) | §5.4 | Partly scoped (2026-10-16: operation, planner and rules; open: send mode, one click for all or one click per mail, pending an in-game probe; panel and send run not built) |
+| Mailing | The mailing operation, the planner and the mail panel (§5.5) | §5.4 | Partly scoped (2026-10-17: operation, planner, rules, panel and send run built; send mode decided: one confirm, then all mails in sequence, confirmed in game on TBC only; open: the Forever probe (`MailTest` second round) and the in-game checklist on both clients) |
 | Onboarding | First-run steps: starter groups, presets, guild-sharing choice (D7), first scan (starter groups moved here, 2026-10-14) | §6.3 | Needs scoping |
 | One-click macro and keybinds | Bindable button for post, cancel, buy, craft next | §3, §6.2 | Partly scoped (2026-10-14: no keybinds in v1; every buy is one click, D26) |
 | My Auctions view | Own auctions list replacing Blizzard's Auctions tab (Blizzard's Auctions tab stays; decision B) | §3 | Needs scoping |

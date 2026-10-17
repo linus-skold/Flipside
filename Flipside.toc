@@ -43,6 +43,9 @@ Shared\Services\CustomSources.lua
 Shared\Services\AHNameSearch.lua
 Shared\Services\RulesExport.lua
 Shared\Services\MailingPlan.lua
+Shared\Services\MailClient.lua
+Shared\Services\MailingRun.lua
+Shared\Services\MailingLedger.lua
 Shared\Services\BuyingPlan.lua
 Shared\Services\SearchLists.lua
 Shared\Services\SellingPlan.lua
@@ -82,6 +85,8 @@ Shared\Features\Buying\BuyingTab.lua
 Shared\Features\Selling\SellingTab.lua
 AH_Forever\AuctionTabHost.lua
 Shared\Features\Inventory\InventoryCapture.lua
+Shared\Features\Mailing\MailingPanel.lua
+Shared\Features\Mailing\MailHost.lua
 Shared\Features\Tooltip\Tooltip.lua
 Core_Forever\TooltipHook.lua
 Core_Forever\RecipeSearch.lua

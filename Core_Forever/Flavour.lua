@@ -24,6 +24,12 @@ ns.Flavour = {
     -- Tab templates. The Forever tab templates size to text on their own.
     pageTabTemplate = "PanelTabButtonTemplate",
     topTabTemplate = "PanelTopTabButtonTemplate",
+    -- Mailing send run (SPEC 5.5). SendMail takes four arguments in the Forever UI (the last is the reply mail id).
+    sendMailArgs = 4,
+    -- Seconds to wait after BAG_UPDATE_DELAYED before the next mail. Not tested in game on Forever: tune it here.
+    mailDelay = 0.5,
+    -- Seconds to wait for BAG_UPDATE_DELAYED after a mail before the run goes on.
+    mailBagWait = 5,
     savedVariables = { main = "FlipsideDB", scan = "FlipsideScanDB", ledger = "FlipsideLedgerDB" },
     -- Bag and bank container ids; each call returns a new list.
     bagIDs = function()
