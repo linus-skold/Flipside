@@ -1244,4 +1244,175 @@ describe("GroupsPage", function()
             assert.is_false(page.readOnlyLabel:IsShown())
         end)
     end)
+
+    describe("auto rules tab", function()
+        local linen, uncommon, editor
+
+        local function fire(input)
+            input.scripts.OnTextChanged(input)
+        end
+
+        local function rowTexts()
+            local texts = {}
+            for _, row in ipairs(page.autoList.rows) do
+                texts[#texts + 1] = row.text:GetText()
+            end
+            return texts
+        end
+
+        before_each(function()
+            for _, name in ipairs({ "MailingPlan", "MailClient", "AutoRules", "AutoRulesPanel" }) do
+                assert(loadfile(manifest.path(name)))("Flipside", ns)
+            end
+            ns.NameRegex = {
+                Compile = function(source)
+                    if source == "(" then
+                        return nil, "missing )"
+                    end
+                    local anchored = source:sub(1, 1) == "^"
+                    local body = (anchored and source:sub(2) or source):lower()
+                    return {
+                        Match = function(_, name)
+                            name = name:lower()
+                            return anchored and name:sub(1, #body) == body or name:find(body, 1, true) ~= nil
+                        end,
+                    }
+                end,
+            }
+            _G.Enum = { ItemClass = { Weapon = 2, Tradegoods = 7 } }
+            _G.C_Item = { GetItemClassInfo = function(id)
+                return id == 2 and "Weapon" or "Trade Goods"
+            end }
+            linen = store:CreateGroup(1, "Linen")
+            uncommon = store:CreateGroup(1, "Uncommon Linen")
+            build()
+            editor = page.autoEditor
+        end)
+
+        after_each(function()
+            _G.Enum, _G.C_Item = nil, nil
+        end)
+
+        it("adds a third tab and the auto switch is on by default", function()
+            assert.are.equal("Auto rules", page.topTabs.buttons[3]:GetText())
+            assert.is_true(page.autoCheck:GetChecked())
+            assert.are.same({}, rowTexts())
+        end)
+
+        it("has no tab when the logic is not loaded", function()
+            ns.AutoRulesPanel = nil
+            build()
+            assert.is_nil(page.topTabs.buttons[3])
+        end)
+
+        it("adds a rule with the editor and lists it", function()
+            click(page.autoAddButton)
+            editor.pattern:SetText("^Linen")
+            pick(editor.minQuality, "Uncommon")
+            pick(editor.group, "Uncommon Linen")
+            editor.classes:SetValues({ [7] = true })
+            fire(editor.pattern)
+            assert.are.equal("", editor.error:GetText())
+            assert.is_true(editor.saveButton.enabled)
+            click(editor.saveButton)
+            local list = store:AutoRules()
+            assert.are.equal(1, #list)
+            assert.are.same({ group = uncommon, pattern = "^Linen", minQuality = 2, maxQuality = 5, classes = "7" },
+                list[1])
+            assert.are.same({ "1. /^Linen/  Uncommon to Legendary  Trade Goods  >  Uncommon Linen" }, rowTexts())
+        end)
+
+        it("shows the compile error of a bad pattern and blocks Save", function()
+            click(page.autoAddButton)
+            pick(editor.group, "Linen")
+            editor.pattern:SetText("(")
+            fire(editor.pattern)
+            assert.are.equal("missing )", editor.error:GetText())
+            assert.is_false(editor.saveButton.enabled)
+        end)
+
+        it("blocks Save for a rule with no filter", function()
+            click(page.autoAddButton)
+            pick(editor.group, "Linen")
+            fire(editor.pattern)
+            assert.is_false(editor.saveButton.enabled)
+            click(editor.saveButton)
+            assert.are.same({}, store:AutoRules())
+        end)
+
+        it("edits a rule", function()
+            store:AddAutoRule({ group = linen, pattern = "Linen" })
+            page.Refresh()
+            click(page.autoList.rows[1].editButton)
+            assert.are.equal("Linen", editor.pattern:GetText())
+            editor.pattern:SetText("Silk")
+            click(editor.saveButton)
+            assert.are.equal("Silk", store:AutoRules()[1].pattern)
+        end)
+
+        it("moves and deletes rules with the row buttons", function()
+            store:AddAutoRule({ group = linen, pattern = "a" })
+            store:AddAutoRule({ group = linen, pattern = "b" })
+            page.Refresh()
+            assert.is_false(page.autoList.rows[1].upButton.enabled)
+            assert.is_false(page.autoList.rows[2].downButton.enabled)
+            click(page.autoList.rows[2].upButton)
+            assert.are.equal("b", store:AutoRules()[1].pattern)
+            click(page.autoList.rows[1].downButton)
+            assert.are.equal("a", store:AutoRules()[1].pattern)
+            click(page.autoList.rows[1].deleteButton)
+            assert.are.equal(1, #store:AutoRules())
+            assert.are.equal("b", store:AutoRules()[1].pattern)
+        end)
+
+        it("shows a rule with a deleted group in red", function()
+            store:AddAutoRule({ group = linen, pattern = "a" })
+            store:DeleteGroup(linen)
+            page.Refresh()
+            local row = page.autoList.rows[1]
+            assert.are.equal("1. /a/  >  (no group)", row.text:GetText())
+            assert.are.same({ 1, 0.3, 0.3 }, { row.text.color[1], row.text.color[2], row.text.color[3] })
+        end)
+
+        it("saves the switch", function()
+            page.autoCheck:SetChecked(false)
+            page.autoCheck.scripts.OnClick(page.autoCheck)
+            assert.is_false(store:AutoRulesEnabled())
+        end)
+
+        describe("Apply now", function()
+            before_each(function()
+                deps.itemCache = {
+                    Get = function()
+                        return { name = "Linen Cloth", quality = 1, classID = 7 }
+                    end,
+                }
+                bags = { { key = "100", itemID = 100, name = "Linen Cloth", count = 1 } }
+                store:AddAutoRule({ group = linen, pattern = "^Linen" })
+                build()
+            end)
+
+            it("shows the preview and adds the items after the confirm", function()
+                click(page.autoApplyButton)
+                assert.is_truthy(mock.popup.text:find("Linen Cloth > Linen", 1, true))
+                assert.are.equal(1, store:GroupOf("100"))
+                mock.acceptPopup()
+                assert.are.equal(linen, store:GroupOf("100"))
+                assert.are.equal("Added 1 items to groups", page.status:GetText())
+            end)
+
+            it("adds nothing when the player cancels", function()
+                click(page.autoApplyButton)
+                mock.cancelPopup()
+                assert.are.equal(1, store:GroupOf("100"))
+            end)
+
+            it("says so when no item matches", function()
+                bags = {}
+                click(page.autoApplyButton)
+                assert.is_nil(mock.popup)
+                assert.are.equal("No bag item matches the rules", page.status:GetText())
+            end)
+        end)
+    end)
 end)

@@ -331,10 +331,13 @@ function GroupsPage.Build(content, deps)
     place(right, RIGHT, TAB_Y)
     local flavour = ns.Flavour or {}
     right:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", 0, STATUS_HEIGHT)
-    page.topTabs = Kit.CreateTopTabs(right, {
-        { key = "items", title = "Items" },
-        { key = "rules", title = "Rules" },
-    }, {
+    -- The Auto rules tab needs the auto rules logic and the store methods (SPEC 5.2a).
+    local hasAuto = ns.AutoRules ~= nil and ns.AutoRulesPanel ~= nil and rules.AutoRules ~= nil
+    local tabs = { { key = "items", title = "Items" }, { key = "rules", title = "Rules" } }
+    if hasAuto then
+        tabs[#tabs + 1] = { key = "auto", title = "Auto rules" }
+    end
+    page.topTabs = Kit.CreateTopTabs(right, tabs, {
         template = flavour.topTabTemplate,
         tabPadding = flavour.topTabPadding,
         minTabWidth = flavour.topTabMinWidth,
@@ -708,6 +711,18 @@ function GroupsPage.Build(content, deps)
         showResults(text, matches, note)
     end
 
+    if hasAuto then
+        page.autoPanel = page.topTabs:GetContent("auto")
+        ns.AutoRulesPanel.Build(page.autoPanel, deps, page, {
+            say = say,
+            report = report,
+            refresh = function()
+                refresh()
+            end,
+            editable = editable,
+        })
+    end
+
     -- Status lines.
 
     page.readOnlyLabel = Kit.Label(content, "Settings are read-only", "bad")
@@ -787,6 +802,9 @@ function GroupsPage.Build(content, deps)
         setEnabled(page.addSelectedButton, canAdd)
         setEnabled(page.removeSelectedButton, canAdd)
         page.readOnlyLabel:SetShown(not canEdit)
+        if page.RefreshAuto then
+            page.RefreshAuto()
+        end
     end
 
     function refresh()

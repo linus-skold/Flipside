@@ -254,6 +254,114 @@ function Store:RemoveItem(key)
     end)
 end
 
+-- Auto rules (SPEC 5.2a). The ordered list and the switch live in the group data (autoRules, autoRulesOff).
+-- An old profile has neither: the list is empty and the switch is on.
+
+-- Returns true if a group can take auto-added items: it exists and it is not Base or All bag items.
+function Store:AutoRuleTarget(id)
+    return id ~= ns.GroupTree.BASE_ID and id ~= self._groups.allBagsID and ns.GroupTree.Exists(self._groups, id)
+end
+
+-- Returns the rules as clean copies, in order. A rule with a deleted group stays in the list; it never matches.
+function Store:AutoRules()
+    local list = {}
+    if ns.AutoRules and type(self._groups.autoRules) == "table" then
+        for index, raw in ipairs(self._groups.autoRules) do
+            list[index] = ns.AutoRules.Normalize(raw) or ns.AutoRules.Normalize({})
+        end
+    end
+    return list
+end
+
+function Store:AutoRulesEnabled()
+    return self._groups.autoRulesOff ~= true
+end
+
+function Store:SetAutoRulesEnabled(on)
+    return self:_Change({ "groups" }, function()
+        self._groups.autoRulesOff = (not on) or nil
+        return true
+    end)
+end
+
+-- Returns the clean rule, or nil and a message.
+function Store:_CheckAutoRule(rule)
+    if not ns.AutoRules then
+        return nil, "auto rules are not available"
+    end
+    local ok, message = ns.AutoRules.Validate(rule)
+    if not ok then
+        return nil, message
+    end
+    local clean = ns.AutoRules.Normalize(rule)
+    if not clean.group or not ns.GroupTree.Exists(self._groups, clean.group) then
+        return nil, "choose a group"
+    end
+    if not self:AutoRuleTarget(clean.group) then
+        return nil, "choose a group that is not Base or All bag items"
+    end
+    return clean
+end
+
+-- Adds a rule at the end of the list. Returns its index.
+function Store:AddAutoRule(rule)
+    return self:_Change({ "groups" }, function()
+        local clean, message = self:_CheckAutoRule(rule)
+        if not clean then
+            return nil, message
+        end
+        local list = self._groups.autoRules or {}
+        if #list >= ns.AutoRules.MAX_RULES then
+            return nil, "there are too many auto rules"
+        end
+        list[#list + 1] = clean
+        self._groups.autoRules = list
+        return #list
+    end)
+end
+
+function Store:UpdateAutoRule(index, rule)
+    return self:_Change({ "groups" }, function()
+        local list = self._groups.autoRules
+        if not (list and list[index]) then
+            return nil, "the rule does not exist"
+        end
+        local clean, message = self:_CheckAutoRule(rule)
+        if not clean then
+            return nil, message
+        end
+        list[index] = clean
+        return true
+    end)
+end
+
+function Store:DeleteAutoRule(index)
+    return self:_Change({ "groups" }, function()
+        local list = self._groups.autoRules
+        if not (list and list[index]) then
+            return nil, "the rule does not exist"
+        end
+        table.remove(list, index)
+        if #list == 0 then
+            self._groups.autoRules = nil
+        end
+        return true
+    end)
+end
+
+-- Moves a rule up (delta -1) or down (delta 1). Returns the new index.
+function Store:MoveAutoRule(index, delta)
+    return self:_Change({ "groups" }, function()
+        local list = self._groups.autoRules
+        local target = index + delta
+        if not (list and list[index] and list[target]) then
+            return nil, "the rule cannot move"
+        end
+        list[index], list[target] = list[target], list[index]
+        return target
+    end)
+end
+
 function Store:GroupOf(key)
     return ns.GroupTree.GroupOf(self._groups, key)
 end
