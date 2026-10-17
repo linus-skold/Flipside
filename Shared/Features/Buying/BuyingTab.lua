@@ -474,6 +474,7 @@ function Tab:RemoveListItem(index)
 end
 
 local QUICK_LIST = "Quick search"
+local NAME_SETTLE_SECONDS = 1 -- a name search ends after this many seconds with no new results
 
 -- Forget the name search results and the saved selection. The caller sets the new selection.
 function Tab:_DropSearch()
@@ -507,26 +508,37 @@ function Tab:SearchName(text)
     end
     local query = ns.ItemNameIndex and ns.ItemNameIndex.ParseQuery(text) or { raw = text }
     self.nameSearching = true
+    -- The finder reports the items found so far on each result event, then the end. All of them add to one list.
+    local shown = false
+    local function show(items)
+        if shown and not self.searchResults then
+            return
+        end
+        self:_ShowSearch(text, items, shown)
+        shown = true
+    end
     finder:Find(query.raw, function(items, err)
         self.nameSearching = false
         if not items then
             self:_Say(err or "the search failed")
             return
         end
-        self:_ShowSearch(text, items)
-    end, { exact = query.exact })
+        show(items)
+    end, { exact = query.exact, settle = NAME_SETTLE_SECONDS, onItems = show })
     return true
 end
 
--- Show the items of a finished name search in the list.
-function Tab:_ShowSearch(text, items)
+-- Show the items of a name search in the list. keep is true for a later update of the same search.
+function Tab:_ShowSearch(text, items, keep)
     if not self.searchResults then
         self.preSearchKey = self.selectedKey
     end
     self.searchText = text
     self.searchResults = self.deps.plan.ListEntries(items, { formulaRun = self.deps.formulaRun, label = "Search" })
-    self.selectedKey, self.levelSel, self.run = nil, nil, nil
-    self:_CancelQuote("the list changed")
+    if not keep then
+        self.selectedKey, self.levelSel, self.run = nil, nil, nil
+        self:_CancelQuote("the list changed")
+    end
     self:RefreshList()
     self:_Say(#self.searchResults == 0 and "no items found" or "")
 end
