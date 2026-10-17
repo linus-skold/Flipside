@@ -757,12 +757,12 @@ describe("OperationsPage", function()
 
         it("does not offer Quest, Key, WoW Token or Generic and merges Quiver into Container", function()
             local part = page.FieldPart("itemClasses")
-            local names = {}
+            local boxNames = {}
             for index, item in ipairs(part.classes.checks) do
-                names[index] = item.Text:GetText()
+                boxNames[index] = item.Text:GetText()
             end
-            table.sort(names)
-            assert.are.same({ "Container", "Trade Goods", "Weapon" }, names)
+            table.sort(boxNames)
+            assert.are.same({ "Container", "Trade Goods", "Weapon" }, boxNames)
         end)
 
         it("checks Container for an old saved Quiver and writes both ids on a click", function()
@@ -904,15 +904,15 @@ describe("OperationsPage", function()
 
         it("uses one line of 26 to 28 for a simple field and centres its label", function()
             create("mailing", "Mail")
-            local part = page.FieldPart("recipient")
+            local recipientPart = page.FieldPart("recipient")
             local row
             for _, candidate in ipairs(page.fieldList.rows) do
-                if candidate:IsShown() and candidate.active == part then
+                if candidate:IsShown() and candidate.active == recipientPart then
                     row = candidate
                 end
             end
             assert.is_true(row.height >= 26 and row.height <= 28)
-            assert.are.equal("LEFT", part.label.points[#part.label.points][1])
+            assert.are.equal("LEFT", recipientPart.label.points[#recipientPart.label.points][1])
         end)
 
         it("disables the expand button for a read-only store", function()
