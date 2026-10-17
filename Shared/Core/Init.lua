@@ -524,6 +524,7 @@ local function openAHSearch()
             getItemKeyInfo = ns.AuctionClient.NameItemKeyInfo,
         },
         event = ns.AuctionClient.NameResultEvent(),
+        addedEvent = ns.AuctionClient.NameAddedEvent(),
         isAuctionHouseOpen = ns.IsAuctionHouseOpen,
         clock = GetTime,
         after = C_Timer.After,

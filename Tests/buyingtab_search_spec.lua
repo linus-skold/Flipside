@@ -96,6 +96,27 @@ describe("BuyingTab name search", function()
         assert.are.equal("no max", ui.tree.list.rows[1].parts.price.text)
     end)
 
+    it("adds the items of a later update to the list and keeps the selection", function()
+        local push, finish
+        function finder.Find(_, _, callback, options)
+            push, finish = options.onItems, callback
+            assert.is_true(options.settle > 0)
+        end
+        assert.is_true(tab:SearchName("peace"))
+        push({ { itemID = 100, name = "Peacebloom", key = "100" } })
+        assert.are.equal(1, #tab.list)
+        tab:Select_("100")
+        push({ { itemID = 100, name = "Peacebloom", key = "100" },
+            { itemID = 300, name = "Peacebloom Seed", key = "300" } })
+        assert.are.equal(2, #tab.list)
+        assert.are.equal("100", tab.selectedKey)
+        finish({ { itemID = 100, name = "Peacebloom", key = "100" },
+            { itemID = 300, name = "Peacebloom Seed", key = "300" } })
+        assert.are.equal(2, #tab.nodes)
+        assert.are.equal("100", tab.selectedKey)
+        assert.is_false(tab.nameSearching)
+    end)
+
     it("passes an exact name in quotes to the query", function()
         tab:SearchName('"Peacebloom"')
         assert.are.same({ query = "Peacebloom", exact = true }, finder.calls[1])

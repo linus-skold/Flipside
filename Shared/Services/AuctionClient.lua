@@ -62,6 +62,7 @@ query("CanLiveSearch", false)
 -- Event names: nil without a backend function.
 query("ScanDoneEvent")
 query("NameResultEvent")
+query("NameAddedEvent")
 query("OwnedEvent")
 query("OpenEvent")
 query("CloseEvent")

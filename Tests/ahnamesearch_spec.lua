@@ -77,6 +77,78 @@ describe("AHNameSearch", function()
         assert.are.equal(1, got.items[1].itemID)
     end)
 
+    describe("with settle", function()
+        local seenLists
+
+        local function runSettle(name, options)
+            options = options or {}
+            options.settle = 1
+            seenLists = {}
+            options.onItems = function(items)
+                seenLists[#seenLists + 1] = #items
+            end
+            return run(name, options)
+        end
+
+        it("keeps two browse results and ends after a quiet time", function()
+            api.rows = { { itemKey = key(1) }, { itemKey = key(2) } }
+            api.names = { [1] = "Linen Cloth", [2] = "Bolt of Linen Cloth" }
+            local got = runSettle("Linen Cloth")
+            bus:Emit(EVENT)
+            assert.is_nil(got.n)
+            assert.are.same({ 2 }, seenLists)
+            assert.are.equal(1, timers[#timers].sec)
+            timers[#timers].fn()
+            assert.are.equal(1, got.n)
+            assert.are.equal(2, #got.items)
+            assert.is_false(bus:HasSubscribers(EVENT))
+        end)
+
+        it("appends the items of a later event and ignores the earlier timer", function()
+            api.rows = { { itemKey = key(1) } }
+            api.names = { [1] = "Linen Cloth", [2] = "Bolt of Linen Cloth" }
+            local got = runSettle("Linen Cloth")
+            bus:Emit(EVENT)
+            local firstTimer = timers[#timers]
+            api.rows = { { itemKey = key(1) }, { itemKey = key(2) } }
+            bus:Emit(EVENT)
+            assert.are.same({ 1, 2 }, seenLists)
+            firstTimer.fn()
+            assert.is_nil(got.n)
+            timers[#timers].fn()
+            assert.are.equal(1, got.n)
+            assert.are.same({ "Bolt of Linen Cloth", "Linen Cloth" }, { got.items[1].name, got.items[2].name })
+        end)
+
+        it("reads again on the added event", function()
+            local ADDED = "AUCTION_HOUSE_BROWSE_RESULTS_ADDED"
+            search = ns.AHNameSearch.New({
+                bus = bus, api = api, clock = function() return now end, addedEvent = ADDED,
+                isAuctionHouseOpen = function() return open end,
+                after = function(sec, fn) timers[#timers + 1] = { sec = sec, fn = fn } end,
+            })
+            api.rows = { { itemKey = key(1) } }
+            api.names = { [1] = "Linen Cloth", [2] = "Bolt of Linen Cloth" }
+            runSettle("Linen")
+            bus:Emit(EVENT)
+            api.rows = { { itemKey = key(1) }, { itemKey = key(2) } }
+            bus:Emit(ADDED, {})
+            assert.are.same({ 1, 2 }, seenLists)
+            timers[#timers].fn()
+            assert.is_false(bus:HasSubscribers(ADDED))
+        end)
+
+        it("keeps only the exact name with the exact option", function()
+            api.rows = { { itemKey = key(1) }, { itemKey = key(2) } }
+            api.names = { [1] = "Linen Cloth", [2] = "Bolt of Linen Cloth" }
+            local got = runSettle("linen cloth", { exact = true })
+            bus:Emit(EVENT)
+            timers[#timers].fn()
+            assert.are.equal(1, #got.items)
+            assert.are.equal(1, got.items[1].itemID)
+        end)
+    end)
+
     it("times out through after()", function()
         local got = run("X")
         assert.are.equal(10, timers[1].sec)

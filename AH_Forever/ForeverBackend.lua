@@ -125,6 +125,11 @@ function Backend.NameResultEvent()
     return "AUCTION_HOUSE_BROWSE_RESULTS_UPDATED"
 end
 
+-- Later batches of a browse result come with this event; the payload is the added rows.
+function Backend.NameAddedEvent()
+    return "AUCTION_HOUSE_BROWSE_RESULTS_ADDED"
+end
+
 function Backend.NameResults()
     return call("GetBrowseResults")
 end
