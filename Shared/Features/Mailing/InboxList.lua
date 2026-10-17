@@ -150,7 +150,8 @@ end
 -- deps: api = { numItems() (GetInboxNumItems), header(index) (GetInboxHeaderInfo), open(index), openID()
 -- (the index of the open mail or 0), isModified() (optional, the Shift-click test), autoLoot(index) (optional,
 -- AutoLootMailItem), freeSlots() (optional, the free bag slots) }, notify(text) (optional, a short status),
--- formatMoney(copper), blizzard() (the client frames to hide while the list shows), openMail() (the open-mail frame or nil), place(frame) (anchors the list), skin (optional).
+-- formatMoney(copper), blizzard() (the client frames to hide while the list shows), openMail() (the open-mail frame or nil),
+-- place(frame) (anchors the list), skin (optional).
 function InboxList.Create(parent, deps)
     local view = { deps = deps, mails = {}, openID = 0, hidden = nil }
     view.list = Kit.CreateList(parent, {
