@@ -58,6 +58,7 @@ Shared\Services\LedgerStore.lua
 Shared\Services\LedgerLoader.lua
 Shared\Services\LedgerMoney.lua
 Shared\Services\LedgerMail.lua
+Shared\Services\LedgerHooks.lua
 Shared\Services\LedgerBalance.lua
 Shared\UI\Kit\Theme.lua
 Shared\UI\Kit\Window.lua

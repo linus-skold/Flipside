@@ -52,6 +52,7 @@ read_globals = {
     "ClearCursor",
     "ClickSendMailItemButton",
     "GetSendMailItem",
+    "GetSendMailMoney",
     "GetSendMailPrice",
     "InboxFrame",
     "MailFrame",

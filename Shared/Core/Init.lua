@@ -859,6 +859,49 @@ local function openLedgerMail()
     end
 end
 
+-- Install the four read-only post-hooks of the ledger (SPEC 5.8). The send hook is the only writer of sent mail,
+-- for the Blizzard Send tab and for the Flipside mailing run.
+local function openLedgerHooks()
+    if not (ns.ledgerBuffer and ns.ledgerMoney and ns.MailingLedger and ns.LedgerHooks) then
+        return
+    end
+    local ok, err = pcall(function()
+        local mail = ns.MailingLedger.New({
+            buffer = ns.ledgerBuffer,
+            tracker = ns.ledgerMoney,
+            bus = ns.bus,
+            character = characterKey,
+            serverTime = GetServerTime,
+            now = GetTime,
+            itemKey = function(itemID)
+                return ns.ItemString.ToKey(itemID, false)
+            end,
+            api = {
+                item = function(index)
+                    return GetSendMailItem(index)
+                end,
+                money = function()
+                    return GetSendMailMoney()
+                end,
+                price = function()
+                    return GetSendMailPrice()
+                end,
+            },
+        })
+        ns.LedgerHooks.Install({
+            hook = hooksecurefunc,
+            globals = _G,
+            report = ns.ReportError,
+            onSendMail = function(recipient)
+                mail.OnSendMail(recipient)
+            end,
+        })
+    end)
+    if not ok then
+        ns.ReportError("the ledger hooks are not available this session: " .. tostring(err))
+    end
+end
+
 -- Save the gold balance of this character for the Ledger graph, at login and at logout.
 local function saveBalance()
     if not (ns.db and ns.LedgerBalance and type(GetMoney) == "function") then
@@ -925,12 +968,6 @@ local function openMailing()
     end
     local ok, err = pcall(function()
         local client = ns.MailClient.New(ns.MailClient.Default())
-        local ledger = ns.ledgerBuffer and ns.MailingLedger.New({
-            buffer = ns.ledgerBuffer,
-            tracker = ns.ledgerMoney,
-            character = characterKey,
-            serverTime = GetServerTime,
-        }) or nil
         local function itemName(key)
             local parsed = ns.ItemString.ParseKey(key)
             local info = parsed and ns.itemCache:Get(parsed.itemID)
@@ -966,8 +1003,6 @@ local function openMailing()
                             bagWait = ns.Flavour.mailBagWait,
                             onProgress = callbacks.onProgress,
                             onDone = callbacks.onDone,
-                            onSending = ledger and ledger.Sending or nil,
-                            onSent = ledger and ledger.Sent or nil,
                         })
                     end,
                 })
@@ -1000,6 +1035,7 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
         openLedger()
         openLedgerMoney()
         openLedgerMail()
+        openLedgerHooks()
         openBalance()
         openTooltip()
         openMailing()

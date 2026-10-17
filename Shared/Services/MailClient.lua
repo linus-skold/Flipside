@@ -33,7 +33,10 @@ function MailClient.Default()
         getItem = GetSendMailItem,
         price = GetSendMailPrice,
         money = GetMoney,
-        sendMail = SendMail,
+        -- The call looks up SendMail each time, so the post-hook of the ledger (LedgerHooks) always runs.
+        sendMail = function(...)
+            return SendMail(...)
+        end,
     }
 end
 

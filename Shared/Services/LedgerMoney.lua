@@ -141,14 +141,58 @@ end
 
 -- Another module wrote a record for a change of this amount. The tracker then writes none for it.
 -- direction is "in" or "out".
-function Tracker:Claim(amount, direction)
+-- seconds is optional: how long the claim lasts (default CLAIM_SECONDS).
+function Tracker:Claim(amount, direction, seconds)
     if type(amount) ~= "number" or amount <= 0 or (direction ~= "in" and direction ~= "out") then
         return false
     end
     self._claims[#self._claims + 1] = {
-        amount = amount, direction = direction, untilTime = self._now() + LedgerMoney.CLAIM_SECONDS,
+        amount = amount, direction = direction, untilTime = self._now() + (seconds or LedgerMoney.CLAIM_SECONDS),
     }
     return true
+end
+
+-- Claim one action that can show as one change (the total) or as separate changes (the parts), for example the
+-- postage and the gold of a mail. parts is a list of amounts. When a part arrives, the total claim ends. When the
+-- total arrives, all part claims end. Returns a handle for ReleaseClaims, or nil if there is nothing to claim.
+function Tracker:ClaimGroup(parts, direction, seconds)
+    if type(parts) ~= "table" or (direction ~= "in" and direction ~= "out") then
+        return nil
+    end
+    local group = { claims = {} }
+    local total = 0
+    local untilTime = self._now() + (seconds or LedgerMoney.CLAIM_SECONDS)
+    local function add(amount, isTotal)
+        local claim = {
+            amount = amount, direction = direction, untilTime = untilTime, group = group, isTotal = isTotal,
+        }
+        group.claims[#group.claims + 1] = claim
+        self._claims[#self._claims + 1] = claim
+    end
+    for _, amount in ipairs(parts) do
+        if type(amount) == "number" and amount > 0 then
+            total = total + amount
+            add(amount, false)
+        end
+    end
+    if #group.claims == 0 then
+        return nil
+    end
+    if #group.claims > 1 then
+        add(total, true)
+    end
+    return group
+end
+
+-- Remove the claims of a group that the money change did not use (for example a mail that failed).
+function Tracker:ReleaseClaims(group)
+    local keep = {}
+    for _, claim in ipairs(self._claims) do
+        if claim.group ~= group then
+            keep[#keep + 1] = claim
+        end
+    end
+    self._claims = keep
 end
 
 -- Write a record. Returns true if the buffer took it.
@@ -316,6 +360,16 @@ function Tracker:_Claimed(delta)
             return self:_Claimed(delta)
         elseif claim.amount == math.abs(delta) and claim.direction == direction then
             table.remove(self._claims, i)
+            if claim.group then
+                -- A total ends the parts. A part ends the total, because the total cannot arrive now.
+                local keep = {}
+                for _, other in ipairs(self._claims) do
+                    if other.group ~= claim.group or (not claim.isTotal and not other.isTotal) then
+                        keep[#keep + 1] = other
+                    end
+                end
+                self._claims = keep
+            end
             return true
         end
     end
