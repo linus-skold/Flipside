@@ -775,7 +775,7 @@ The `source` field is one of these values. The `type` field sets the view.
 7. Forever: the Ledger page shows the single character dropdown and works as before.
 **Edit a ledger entry (decided 2026-10-18).** The user can correct one full record.
 - Open the menu with a right click on a row of the Ledger page. "Edit..." opens the edit window. "Revert" shows only for an edited record. A daily total (a record past the retention days) and a decision log record cannot be edited.
-- The window has the fields in `LedgerEdit.FIELDS`: source (drop-down of all sources), item (empty, an item link, an item id or an item name from the name index), quantity, amount and note. Time, character and type are not editable. A new source sets the type: the type stays if the source allows it, else the type with the same money direction.
+- The window has the fields in `LedgerEdit.FIELDS`: source (drop-down of all sources), item (empty, an item link, an item id or an item name from the name index; the user can also drop an item from the cursor on the box; the window adds no hook, because the ledger allows only four hooks), quantity, amount and note. Time, character and type are not editable. A new source sets the type: the type stays if the source allows it, else the type with the same money direction.
 - Rules: the amount is a whole number of copper, 0 or more. The quantity is a whole number, 0 or more. The source must be known. A quantity above 0 needs an item. A bad value gives a message and the window stays open.
 - Store: `LedgerStore:UpdateRecord(char, id, changes)` and `LedgerStore:RevertRecord(char, id)`. They work on the loaded store (D25) and change the record in place, so `FlipsideLedgerDB` keeps the edit. A record in the Main DB buffer is not on the page, so it is not editable. A read-only store refuses an edit.
 - Record id: `LedgerStore:Move` gives each new record an id. A record from before this change has none. `LedgerStore:IdOf(char, record)` finds the record by table identity in the list of the character and gives it an id at the first edit. After that, `UpdateRecord` finds it by id.
@@ -789,7 +789,7 @@ The `source` field is one of these values. The `type` field sets the view.
 2. Click "Edit...". The window shows the source, item, quantity, amount and note of the row.
 3. Change the amount and add a note. Click Save. The row shows "*" and the note in Detail. The totals and the graph change.
 4. Point at the row. The tooltip shows the note and the first values.
-5. Edit the item three ways: shift-click an item link into the box, type an item id, type an item name. Each gives the item in the row.
+5. Edit the item four ways: drop an item from the bags on the item box (click the box with the item on the cursor), paste an item link, type an item id, type an item name. Each gives the item in the row. `GetCursorInfo` must give "item" on both clients.
 6. Clear the item and keep a quantity above 0. A message shows and the window stays open.
 7. Change the source to one in the other direction (a sale to a vendor purchase). The row moves to the matching tab and the totals follow.
 8. Right-click the row and pick "Revert". The first values come back and the "*" goes.

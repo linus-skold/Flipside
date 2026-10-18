@@ -1253,6 +1253,11 @@ describe("LedgerPage", function()
             return rows("sales")[1]
         end
 
+        local function editWindow()
+            local data = build_sales()
+            return page.EditRow(data), data
+        end
+
         local function rowFor(data)
             local init = initializers[page.views[page.tab].list.box].initializer
             local row = CreateFrame("Button", nil, UIParent)
@@ -1360,7 +1365,7 @@ describe("LedgerPage", function()
         end)
 
         it("lists every known source in the drop-down", function()
-            local win = page.EditRow(build_sales())
+            local win = editWindow()
             assert.are.same(ns.LedgerRecord.SOURCES, values(win.controls.source))
         end)
 
@@ -1400,27 +1405,27 @@ describe("LedgerPage", function()
             assert.are.equal("555", data.record.item)
         end)
 
-        it("fills the item box from a shift-clicked link while it has focus", function()
-            local hooked
-            _G.hooksecurefunc = function(name, fn)
-                if name == "ChatEdit_InsertLink" then
-                    hooked = fn
-                end
+        it("fills the item box when the user drops an item on it", function()
+            local cleared = 0
+            _G.GetCursorInfo = function()
+                return "item", 9, "|Hitem:9|h[X]|h"
             end
-            _G.ChatEdit_InsertLink = function() end
-            local win = page.EditRow(build_sales())
-            win.controls.item.HasFocus = function(self)
-                return self.focused
+            _G.ClearCursor = function()
+                cleared = cleared + 1
             end
-            assert.is_function(hooked)
-            hooked("|Hitem:9|h[X]|h")
-            assert.are_not.equal("|Hitem:9|h[X]|h", win.controls.item:GetText())
-            win.controls.item:SetFocus()
-            hooked("|Hitem:9|h[X]|h")
+            local win = editWindow()
+            win.controls.item.scripts.OnReceiveDrag(win.controls.item)
             assert.are.equal("|Hitem:9|h[X]|h", win.controls.item:GetText())
-            _G.hooksecurefunc, _G.ChatEdit_InsertLink = nil, nil
+            assert.are.equal(1, cleared)
+            _G.GetCursorInfo = function()
+                return "money"
+            end
+            win.controls.item:SetText("5")
+            win.controls.item.scripts.OnMouseDown(win.controls.item)
+            assert.are.equal("5", win.controls.item:GetText())
+            assert.are.equal(1, cleared)
+            _G.GetCursorInfo, _G.ClearCursor = nil, nil
         end)
-
         it("reverts and shows the first values again", function()
             local data = build_sales()
             page.SaveEdit(data, { money = 1, note = "n" })

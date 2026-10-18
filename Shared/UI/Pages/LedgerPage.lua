@@ -830,7 +830,7 @@ function LedgerPage.Build(content, deps)
                             page.OpenRowMenu(self, self.data)
                         end
                     end)
-                    row:HookScript("OnEnter", function(self)
+                    row:SetScript("OnEnter", function(self)
                         local title, lines = LedgerPage.TooltipLines(self.data and self.data.record)
                         if title then
                             GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
@@ -841,7 +841,7 @@ function LedgerPage.Build(content, deps)
                             GameTooltip:Show()
                         end
                     end)
-                    row:HookScript("OnLeave", function()
+                    row:SetScript("OnLeave", function()
                         GameTooltip:Hide()
                     end)
                 end

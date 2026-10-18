@@ -136,16 +136,24 @@ local function build()
     window.error = Kit.Label(window, "", "bad")
     window.error:SetWidth(WIDTH - 2 * pad - 16)
 
-    -- A shift-click on an item link fills the item box while it has focus.
-    local hook = _G.hooksecurefunc
-    if hook and _G.ChatEdit_InsertLink then
-        hook("ChatEdit_InsertLink", function(link)
-            local box = window.controls.item
-            if type(link) == "string" and window:IsShown() and box:HasFocus() then
-                box:SetText(link)
+    -- The user can drop an item from the cursor on the item box (no hook).
+    local box = window.controls.item
+    local function drop()
+        local getInfo = _G.GetCursorInfo
+        local kind, itemID, link = nil, nil, nil
+        if getInfo then
+            kind, itemID, link = getInfo()
+        end
+        if kind == "item" then
+            box:SetText(type(link) == "string" and link or tostring(itemID))
+            if _G.ClearCursor then
+                _G.ClearCursor()
             end
-        end)
+        end
     end
+    window.DropItem = drop
+    box:SetScript("OnReceiveDrag", drop)
+    box:SetScript("OnMouseDown", drop)
 
     local function save()
         local config = window.config
