@@ -587,6 +587,25 @@ How features use it: Banking moves to and from the bank; Mailing sends shortfall
 - Buyback tab with one-click undo of the last sale batch.
 - **Keep in bags:** the operation has a number for each item (default 0). Vendoring leaves that many units of the item in the bags (see the feedback decisions in §5.2).
 
+### 5.7a Destroy window (added 2026-10-18)
+
+A free window, opened and closed with `/flip destroy`. It helps the player to disenchant many bag items, one cast for each click.
+
+- **List:** the bag items that match the rules and are not ignored. A row shows the icon, the name in the colour of its quality, the required level and bag/slot. Bound items are included. The list reads the bags again on `BAG_UPDATE_DELAYED` (at most one read every 0.3 seconds).
+- **Rules** (saved in the account scope of the settings DB, key `destroy.rules`; all characters share them). Defaults: quality Uncommon to Epic (Legendary never), level rule on with gap 1, unequippable rule on.
+  - Only armor and weapon items count. Shirts, tabards, cosmetic armor and fishing poles do not.
+  - Level rule: matches if the required level is at most the player level minus the gap.
+  - Unequippable rule: matches if the player class can never equip the item. A fixed table of armor and weapon subclasses for each class decides this (`DestroyRules.CanEquip`). It does not use `IsUsableItem`, because that function depends on the level and on skills. A class that is not in the table never matches.
+  - Combination: the quality is in the range AND (the level rule matches OR the unequippable rule matches). A sub-rule that is off does not count. If both are off, the quality alone decides.
+- **Actions** for the current item (the selected row, else the first row):
+  - **Destroy:** a secure button (`SecureActionButtonTemplate`) with `type = "macro"` and `macrotext = "/cast <Disenchant>\n/use <bag> <slot>"`. The spell name comes from spell 13262. One click is one cast. In combat the button is disabled and the attributes do not change. If the player does not know Disenchant, the button is disabled and a message shows.
+  - **Ignore:** adds the item id to the ignore list (account scope, key `destroy.ignored`). The item never shows again, in any stack.
+  - **Skip:** hides that bag slot until `/reload`. The skip list is not saved.
+- **Ignored tab:** lists the ignored items, each with a Remove button.
+- The window cannot open for the first time in combat, because the Destroy button is secure. The code adds no hook.
+- Follow-up (not built): show the value of the item and the value of its disenchant result, before and after.
+- Files: `Shared/Services/DestroyRules.lua` (rules, no frame code), `Shared/Features/Destroy/DestroyWindow.lua` (window).
+
 ### 5.8 Ledger (reference §5.7)
 
 - Same record types and views (sales, purchases, other income and expenses, expired, cancelled, resale).
@@ -1226,6 +1245,7 @@ TSM behaviours this spec doesn't cover yet. Change the status as each one gets s
 | TBC AH tabs | Buying tab and Selling tab in the TBC `AuctionFrame`: done (Buying 2026-10-16; Selling 2026-10-16; TBC multisell posting of several stacks in one click, with the Stack size and Max stacks fields, 2026-10-16, in this pull request; in-game checklists open, see §3 items 7 and 14a) | §3, §6 | Scoped (in-game checks open) |
 | Mailing | The mailing operation, the planner and the mail view (§5.5) | §5.4 | Partly scoped (2026-10-17: operation, planner, rules, view and send run built; the view sits in a wider `MailFrame` (wide layout, rules list; a tab layout needs only a new `MailHost.LAYOUTS` entry); item filters (rarity range, many item types) and the built-in All bag items group built 2026-10-17; rules list with Run and Run all (2026-10-18, replaces the group tree) and the compact inbox list (2026-10-18); send mode decided: one confirm, then all mails in sequence, confirmed in game on TBC only; open: the Forever probe (`MailTest` second round) and the in-game checklist on both clients) |
 | Auto rules for groups | Rules that add new bag items to groups by name pattern, rarity and item type (§5.2a) | - | Partly scoped (2026-10-17: rules, runner, tab and Apply now built; the name pattern uses Shared/Services/NameRegex.lua; in-game checklist open; open: export of rules, a bank or mail trigger) |
+| Destroy window | Free window to disenchant bag items by rules, with ignore and skip (§5.7a) | - | Scoped (2026-10-18; in-game checklist open; open: value before and after the disenchant) |
 | Onboarding | First-run steps: starter groups, presets, guild-sharing choice (D7), first scan (starter groups moved here, 2026-10-14) | §6.3 | Needs scoping |
 | One-click macro and keybinds | Bindable button for post, cancel, buy, craft next | §3, §6.2 | Partly scoped (2026-10-14: no keybinds in v1; every buy is one click, D26) |
 | My Auctions view | Own auctions list replacing Blizzard's Auctions tab (Blizzard's Auctions tab stays; decision B) | §3 | Needs scoping |

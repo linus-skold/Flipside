@@ -636,6 +636,22 @@ local function openRules()
                 itemInfo = C_Container.GetContainerItemInfo,
             }, resolver, { bagIDs = ns.Flavour.bagIDs(), stacks = true }))
         end
+        -- The bag stacks for the Destroy window, flat, with the bound items. Each one is { bag, slot, itemID, link }.
+        ns.readDestroyStacks = function()
+            local items = ns.BagItems.Read({
+                numSlots = C_Container.GetContainerNumSlots,
+                itemInfo = C_Container.GetContainerItemInfo,
+            }, resolver, { bagIDs = ns.Flavour.bagIDs(), stacks = true, includeBound = true })
+            local stacks = {}
+            for _, item in ipairs(items) do
+                for _, stack in ipairs(item.stacks) do
+                    stacks[#stacks + 1] = {
+                        bag = stack.bag, slot = stack.slot, itemID = item.itemID, link = stack.link,
+                    }
+                end
+            end
+            return stacks
+        end
     end)
     if not ok then
         ns.rules, ns.customSources = nil, nil
@@ -1429,6 +1445,71 @@ function ns.OpenLogWindow()
     end
 end
 
+local DISENCHANT_SPELL = 13262
+
+-- Return the name of the Disenchant spell (nil if the client gives none) and true if the player knows it.
+-- The two clients have different spell functions, so each call checks which one exists.
+local function disenchantSpell()
+    local name
+    if C_Spell and C_Spell.GetSpellName then
+        name = C_Spell.GetSpellName(DISENCHANT_SPELL)
+    elseif GetSpellInfo then
+        name = GetSpellInfo(DISENCHANT_SPELL)
+    end
+    local known = false
+    if IsPlayerSpell then
+        known = IsPlayerSpell(DISENCHANT_SPELL)
+    elseif IsSpellKnown then
+        known = IsSpellKnown(DISENCHANT_SPELL)
+    elseif C_SpellBook and C_SpellBook.IsSpellKnown then
+        known = C_SpellBook.IsSpellKnown(DISENCHANT_SPELL)
+    end
+    return name, known == true
+end
+
+-- Show or hide the Destroy window. It is created on first use, and not in combat (the Destroy button is secure).
+function ns.OpenDestroyWindow()
+    if not (ns.DestroyWindow and ns.DestroyRules and ns.db and ns.readDestroyStacks) then
+        printLine("the Destroy window is not available this session")
+        return
+    end
+    if not ns.DestroyWindow.Get() and InCombatLockdown() then
+        printLine("the Destroy window cannot open for the first time in combat")
+        return
+    end
+    local ok, err = pcall(function()
+        ns.DestroyWindow.Create({
+            store = ns.DestroyRules.NewStore(ns.db),
+            readStacks = ns.readDestroyStacks,
+            itemInfo = function(itemID)
+                return (ns.itemCache:Get(itemID))
+            end,
+            requestInfo = function(itemID, callback)
+                ns.itemCache:Request(itemID, callback)
+            end,
+            player = function()
+                return { level = UnitLevel("player"), class = select(2, UnitClass("player")) }
+            end,
+            disenchant = disenchantSpell,
+            inCombat = InCombatLockdown,
+            bus = ns.bus,
+            after = C_Timer.After,
+            print = printLine,
+            position = {
+                get = function()
+                    return ns.db:Get("account", "ui.destroyPosition")
+                end,
+                set = function(position)
+                    ns.db:Set("account", "ui.destroyPosition", position)
+                end,
+            },
+        }):Toggle()
+    end)
+    if not ok then
+        ns.ReportError("the Destroy window is not available this session: " .. tostring(err))
+    end
+end
+
 -- The minimap button: hide the window if it shows the Ledger page; otherwise show the Ledger page.
 function ns.ToggleLedgerWindow()
     withMainWindow(function(window)
@@ -1915,6 +1996,9 @@ function ns.HandleSlash(msg)
     elseif command == "log" then
         ns.OpenLogWindow()
         return
+    elseif command == "destroy" then
+        ns.OpenDestroyWindow()
+        return
     elseif command == "minimap" then
         minimapCommand()
         return
@@ -1933,6 +2017,7 @@ function ns.HandleSlash(msg)
     if ns.scanStore and ns.scanCooldown then
         printScanHelp()
     end
+    printLine("/flip destroy opens the Destroy window")
     printLine("No feature exists yet.")
 end
 
