@@ -380,6 +380,177 @@ describe("LedgerPage", function()
         end)
     end)
 
+    describe("realm filter", function()
+        local BOB, TWO, OLD = "Bob-Other", "Cy-Other", "Old"
+
+        local function seedRealms()
+            local data = seed()
+            local list = data.records.EU.standard
+            local function sale(char, money)
+                return { time = NOW - 3600, char = char, type = "sale", source = "ahSale", item = "100", qty = 1,
+                    money = money }
+            end
+            list[BOB] = { sale(BOB, 111) }
+            list[TWO] = { sale(TWO, 222) }
+            list[OLD] = { sale(OLD, 333) }
+            return data
+        end
+
+        local function buildTbc(flag)
+            setup({ saved = seedRealms() })
+            ns.Flavour = { ledgerRealmFilter = flag }
+            return build()
+        end
+
+        local function graphNames()
+            local names = {}
+            for _, list in ipairs({ page.series.included, page.series.omitted }) do
+                for _, name in ipairs(list) do
+                    names[#names + 1] = name
+                end
+            end
+            table.sort(names)
+            return names
+        end
+
+        it("shows no realm dropdown when the flag is off", function()
+            buildTbc(false)
+            assert.is_nil(page.realmDropdown)
+            assert.is_nil(page.filter.realm)
+            assert.are.equal(ME, page.filter.char)
+            assert.are.same({ "all", ME, ALT, BOB, TWO, OLD }, values(page.charDropdown))
+        end)
+
+        it("shows no realm dropdown when the flag is missing", function()
+            setup({ saved = seedRealms() })
+            build()
+            assert.is_nil(page.realmDropdown)
+        end)
+
+        it("shows both dropdowns when the flag is on", function()
+            buildTbc(true)
+            assert.is_not_nil(page.realmDropdown)
+            assert.are.same({ "Realm", "Other", "?" }, values(page.realmDropdown))
+            assert.are.same({ "all", ALT, ME }, values(page.charDropdown))
+        end)
+
+        it("defaults to the current realm and All", function()
+            buildTbc(true)
+            assert.are.equal("Realm", page.filter.realm)
+            assert.are.equal("all", page.filter.char)
+            assert.are.equal(4, #rows("sales"))
+        end)
+
+        it("lists the current realm even with no records", function()
+            setup({ saved = { records = { EU = { standard = { [BOB] = { { time = NOW - 60, char = BOB,
+                type = "sale", source = "ahSale", item = "100", qty = 1, money = 5 } } } } } } })
+            ns.Flavour = { ledgerRealmFilter = true }
+            build()
+            assert.are.same({ "Realm", "Other" }, values(page.realmDropdown))
+            assert.are.same({ "all" }, values(page.charDropdown))
+            assert.are.equal(0, #rows("sales"))
+        end)
+
+        it("resets the character when the server changes and saves both", function()
+            buildTbc(true)
+            pick(page.charDropdown, ALT)
+            assert.are.equal(1, #rows("sales"))
+            pick(page.realmDropdown, "Other")
+            assert.are.equal("all", page.filter.char)
+            assert.are.same({ "all", BOB, TWO }, values(page.charDropdown))
+            assert.are.equal(2, #rows("sales"))
+            assert.are.equal("Other", db:Get("character", "ledger.view.realm"))
+            assert.are.equal("all", db:Get("character", "ledger.view.char"))
+        end)
+
+        it("filters rows and totals by character", function()
+            buildTbc(true)
+            pick(page.realmDropdown, "Other")
+            pick(page.charDropdown, BOB)
+            assert.are.equal(1, #rows("sales"))
+            assert.are.equal(111, ns.LedgerPage.Totals(rows("sales")).moneyIn)
+            pick(page.charDropdown, "all")
+            assert.are.equal(333, ns.LedgerPage.Totals(rows("sales")).moneyIn)
+        end)
+
+        it("filters the daily sums by realm", function()
+            local data = seedRealms()
+            data.sums = { EU = { standard = {
+                [BOB] = { { day = 380, source = "ahSale", item = "100", count = 2, qty = 2, moneyIn = 50,
+                    moneyOut = 0 } },
+                [ALT] = { { day = 380, source = "ahSale", item = "100", count = 1, qty = 1, moneyIn = 9,
+                    moneyOut = 0 } },
+            } } }
+            setup({ saved = data })
+            ns.Flavour = { ledgerRealmFilter = true }
+            build()
+            pick(page.realmDropdown, "Other")
+            local daily = 0
+            for _, row in ipairs(rows("sales")) do
+                if row.daily then
+                    daily = daily + row.moneyIn
+                end
+            end
+            assert.are.equal(50, daily)
+        end)
+
+        it("puts a record with no realm under Unknown", function()
+            buildTbc(true)
+            pick(page.realmDropdown, "?")
+            assert.are.same({ "all", OLD }, values(page.charDropdown))
+            assert.are.equal(1, #rows("sales"))
+            assert.are.equal(333, rows("sales")[1].moneyIn)
+        end)
+
+        it("limits the graph to the selected realm and character", function()
+            buildTbc(true)
+            assert.are.same({ ALT, ME }, graphNames())
+            pick(page.realmDropdown, "Other")
+            assert.are.same({ BOB, TWO }, graphNames())
+            pick(page.charDropdown, BOB)
+            assert.are.same({ BOB }, graphNames())
+        end)
+
+        it("restores the saved choice", function()
+            buildTbc(true)
+            pick(page.realmDropdown, "Other")
+            pick(page.charDropdown, TWO)
+            local again = build()
+            assert.are.equal("Other", again.filter.realm)
+            assert.are.equal(TWO, again.filter.char)
+            assert.are.equal(1, #rows("sales"))
+        end)
+
+        it("falls back to the defaults when the saved realm has no records", function()
+            buildTbc(true)
+            db:Set("character", "ledger.view.realm", "Gone")
+            db:Set("character", "ledger.view.char", BOB)
+            build()
+            assert.are.equal("Realm", page.filter.realm)
+            assert.are.equal("all", page.filter.char)
+        end)
+
+        it("falls back to All when the saved character has no records on the realm", function()
+            buildTbc(true)
+            db:Set("character", "ledger.view.realm", "Realm")
+            db:Set("character", "ledger.view.char", "Gone-Realm")
+            build()
+            assert.are.equal("Realm", page.filter.realm)
+            assert.are.equal("all", page.filter.char)
+        end)
+
+        it("writes a debug line when the filter changes", function()
+            buildTbc(true)
+            local lines = {}
+            ns.Log = { Write = function(category, level, text)
+                lines[#lines + 1] = category .. "|" .. level .. "|" .. text
+            end }
+            pick(page.realmDropdown, "Other")
+            assert.are.equal(1, #lines)
+            assert.is_truthy(lines[1]:find("^ledger|debug|filter realm=Other"))
+        end)
+    end)
+
     describe("rows", function()
         before_each(function()
             setup()
