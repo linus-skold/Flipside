@@ -168,6 +168,15 @@ function frameMethods:GetID()
     return self.id
 end
 
+function frameMethods:SetAttribute(name, value)
+    self.attributes = self.attributes or {}
+    self.attributes[name] = value
+end
+
+function frameMethods:GetAttribute(name)
+    return self.attributes and self.attributes[name]
+end
+
 function frameMethods:SetEnabled(enabled)
     self.enabled = enabled and true or false
 end

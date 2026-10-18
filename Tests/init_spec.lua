@@ -181,6 +181,7 @@ describe("Init", function()
             assert.are.same({
                 "Flipside: /flip opens the Flipside window",
                 "Flipside: client 1.60.1, build 70009, interface 16001",
+                "Flipside: /flip destroy opens the Destroy window",
                 "Flipside: No feature exists yet.",
             }, mock.messages)
         end)
@@ -310,7 +311,7 @@ describe("Init", function()
 
         it("shows the profile line in /flipside only if the DB exists", function()
             _G.SlashCmdList.FLIPSIDE("help")
-            assert.are.equal(3, #mock.messages)
+            assert.are.equal(4, #mock.messages)
             mock.fire("PLAYER_LOGIN")
             mock.messages = {}
             _G.SlashCmdList.FLIPSIDE("help")
@@ -318,6 +319,7 @@ describe("Init", function()
                 "Flipside: /flip opens the Flipside window",
                 "Flipside: profile Default",
                 "Flipside: client 1.60.1, build 70009, interface 16001",
+                "Flipside: /flip destroy opens the Destroy window",
                 "Flipside: No feature exists yet.",
             }, mock.messages)
         end)
