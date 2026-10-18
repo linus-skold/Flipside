@@ -635,6 +635,38 @@ describe("GroupsPage", function()
             assert.are.same({ "100", "200", "300", "400" }, store:ItemsIn(herbs))
         end)
 
+        it("adds one item with a double-click and clears the selection", function()
+            local row = page.bagList.rows[1]
+            click(row)
+            row.scripts.OnDoubleClick(row)
+            assert.are.same({ "100", "400" }, store:ItemsIn(herbs))
+            assert.are.equal("Added Peacebloom", page.status:GetText())
+            assert.are.same({}, page.bagList:GetSelected())
+            assert.are.same({ "200", "300" }, bagKeys())
+        end)
+
+        it("moves an item from another group with a double-click", function()
+            local row = page.bagList.rows[3]
+            row.scripts.OnDoubleClick(row)
+            assert.are.equal(herbs, store:GroupOf("300"))
+        end)
+
+        it("does not add with a double-click for Base", function()
+            page.tree:Select(1)
+            local row = page.bagList.rows[1]
+            row.scripts.OnDoubleClick(row)
+            assert.are.equal(1, store:GroupOf("100"))
+        end)
+
+        it("does not add with a double-click when the page is read-only", function()
+            local row = page.bagList.rows[1]
+            store.IsReadOnly = function()
+                return true
+            end
+            row.scripts.OnDoubleClick(row)
+            assert.are.equal(1, store:GroupOf("100"))
+        end)
+
         it("asks for a selection first", function()
             click(page.addSelectedButton)
             assert.are.equal("Select bag items first", page.status:GetText())
@@ -914,6 +946,17 @@ describe("GroupsPage", function()
             assert.is_false(page.nameList.rows[1].addButton.enabled)
             assert.are.equal("Add", page.nameList.rows[2].addButton:GetText())
             assert.are.equal("peace", page.addInput:GetText())
+        end)
+
+        it("adds an item with a double-click on the row", function()
+            index.matches = { PEACE, ORB }
+            search("peace")
+            local row = page.nameList.rows[1]
+            row.scripts.OnDoubleClick(row)
+            assert.are.same({ "100" }, store:ItemsIn(herbs))
+            assert.are.equal("Added", page.nameList.rows[1].addButton:GetText())
+            row.scripts.OnDoubleClick(row)
+            assert.are.same({ "100" }, store:ItemsIn(herbs))
         end)
 
         it("moves an item from another group", function()

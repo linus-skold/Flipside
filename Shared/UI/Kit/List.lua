@@ -11,6 +11,7 @@ local Kit = ns.Kit
 -- Multi-select: options.multiSelect = true makes a click on a row toggle it, and a Shift-click add the range from
 -- the last clicked row. Selected rows show the selection highlight. Extra options: keyOf(data) gives the identity
 -- of a row (default: the data itself), onSelectionChange(list) runs after each change.
+-- options.onDoubleClick(data, index) runs after a double-click on a row.
 -- Methods: list:GetSelected() (array of data, in list order), list:IsSelected(data), list:ClearSelection(),
 -- list:Click(index, shift) (the logic of a row click).
 function Kit.CreateList(parent, options)
@@ -43,6 +44,15 @@ function Kit.CreateList(parent, options)
 
     local function prepareRow(row, alternate, data)
         Kit.SkinRow(row, options.skin, alternate)
+        if options.onDoubleClick then
+            row.kitData = data
+            row:SetScript("OnDoubleClick", function(self)
+                local index = indexOfKey(keyOf(self.kitData))
+                if index then
+                    options.onDoubleClick(self.kitData, index)
+                end
+            end)
+        end
         if multi then
             if not row.kitSelect then
                 row.kitSelect = Kit.SelectionTexture(row, options.skin)
