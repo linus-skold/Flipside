@@ -688,6 +688,10 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
             assert.are.equal("skip", entryOf("10").status)
             click(ui.skip)
             assert.are.equal("skipped", entryOf("10").status)
+            -- The skip moves on to the next item, which starts a search. End it, as a scan locks Post.
+            if tab.pending then
+                fire("COMMODITY_RESULTS", tab.pending.itemID)
+            end
             pick("i10")
             assert.are.equal("skip", entryOf("10").status)
             assert.is_true(ui.postNext.enabled)
@@ -815,7 +819,9 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
 
         it("is not part of a group post", function()
             skipLinen()
+            client.rows[11] = { row(5, 1) }
             pick("g2")
+            fire("COMMODITY_RESULTS", 11)
             assert.is_false(ui.postNext.enabled)
             local ok, why = tab:PostNext()
             assert.is_false(ok)
@@ -1973,6 +1979,16 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
             assert.is_not_nil(tab.pending)
         end
 
+        -- Select the group, then end the first search while the AH is not ready: the queue waits to go on.
+        local function waiting()
+            client.rows[10] = { row(120, 1) }
+            client.rows[11] = { row(150, 5) }
+            pick("g2")
+            local id = tab.pending.itemID
+            client.ready = false
+            fire(client.commodity[id] and "COMMODITY_RESULTS" or "ITEM_RESULTS", id)
+        end
+
         local function endScan()
             local id = tab.pending.itemID
             fire(client.commodity[id] and "COMMODITY_RESULTS" or "ITEM_RESULTS", id)
@@ -2041,9 +2057,7 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
         end)
 
         it("keeps Post off while the queue waits for the AH to be ready, and frees it at the end", function()
-            scanning()
-            client.ready = false
-            endScan()
+            waiting()
             assert.is_nil(tab.pending)
             assert.is_not_nil(tab.queue)
             assert.is_false(ui.postNext.enabled)
@@ -2059,9 +2073,7 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
             client.CloseEvent = function() return "CLOSED" end
             tab = mount()
             ui = tab.ui
-            scanning()
-            client.ready = false
-            endScan()
+            waiting()
             assert.is_false(ui.postNext.enabled)
             fire("CLOSED")
             assert.is_nil(tab.queue)
