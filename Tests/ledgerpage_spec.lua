@@ -1,7 +1,7 @@
 local manifest = require("Tests.manifest")
 local mock = require("Tests.wow_mock")
 
-local KIT = { "Theme", "Window", "Widgets", "Tabs", "List", "Columns", "Combat", "Graph" }
+local KIT = { "Theme", "Window", "Widgets", "MoneyInput", "Tabs", "List", "Columns", "Combat", "Graph" }
 local CORE = {
     "EventBus", "ItemString", "SettingsDB", "LedgerRecord", "LedgerBuffer", "LedgerStore", "LedgerLoader",
     "LedgerBalance",
@@ -19,6 +19,7 @@ local function load()
     for _, name in ipairs(CORE) do
         assert(loadfile(manifest.path(name)))("Flipside", ns)
     end
+    assert(loadfile(manifest.path("LedgerEdit")))("Flipside", ns)
     assert(loadfile(manifest.path("LedgerPage")))("Flipside", ns)
     assert(loadfile(manifest.path("MainWindow")))("Flipside", ns)
     return ns
@@ -1296,6 +1297,277 @@ describe("LedgerPage", function()
             assert.is_true(page.graph:IsShown())
             select("loot")
             assert.is_true(page.graph:IsShown())
+        end)
+    end)
+
+    describe("editing a record", function()
+        local logged
+
+        before_each(function()
+            setup()
+            logged = {}
+            ns.Log = {
+                Write = function(category, level, text)
+                    logged[#logged + 1] = { category, level, text }
+                end,
+            }
+        end)
+
+        local function build_sales(extra)
+            build(extra)
+            return rows("sales")[1]
+        end
+
+        local function editWindow()
+            local data = build_sales()
+            return page.EditRow(data), data
+        end
+
+        local function rowFor(data)
+            local init = initializers[page.views[page.tab].list.box].initializer
+            local row = CreateFrame("Button", nil, UIParent)
+            init(row, data)
+            return row
+        end
+
+        local function texts(entries)
+            local out = {}
+            for _, entry in ipairs(entries) do
+                out[#out + 1] = entry.text
+            end
+            return out
+        end
+
+        it("opens a menu with Edit on a right click of a record row", function()
+            local data = build_sales()
+            local row = rowFor(data)
+            row.scripts.OnClick(row, "RightButton")
+            assert.are.equal(row, mock.menu.owner)
+            assert.are.equal("Edit...", mock.menu.items[1].text)
+            assert.are.equal(1, #mock.menu.items)
+        end)
+
+        it("opens no menu on a left click or on a daily total", function()
+            local data = build_sales()
+            local row = rowFor(data)
+            mock.menu = nil
+            row.scripts.OnClick(row, "LeftButton")
+            assert.is_nil(mock.menu)
+            assert.are.same({}, page.RowMenuEntries({ daily = true, char = ME }))
+        end)
+
+        it("shows Revert only for an edited record", function()
+            local data = build_sales()
+            assert.are.same({ "Edit..." }, texts(page.RowMenuEntries(data)))
+            assert.is_nil(page.SaveEdit(data, { money = 1 }))
+            assert.are.same({ "Edit...", "Revert" }, texts(page.RowMenuEntries(rows("sales")[1])))
+        end)
+
+        it("opens the edit window with the values of the record", function()
+            local data = build_sales()
+            local win = page.EditRow(data)
+            assert.is_true(win:IsShown())
+            assert.are.equal("100", win.controls.item:GetText())
+            assert.are.equal("2", win.controls.qty:GetText())
+            assert.are.equal(5000, win.controls.money:GetCopper())
+            assert.are.equal("ahSale", win.sourceValue)
+        end)
+
+        it("saves the edit window, marks the row and draws again", function()
+            local data = build_sales()
+            local win = page.EditRow(data)
+            win.controls.money:SetCopper(1234)
+            win.controls.qty:SetText("3")
+            win.controls.note:SetText("checked")
+            win.Save()
+            assert.is_false(win:IsShown())
+            local row = rows("sales")[1]
+            assert.is_true(row.edited)
+            assert.are.equal(1234, row.money)
+            assert.are.equal(3, row.qty)
+            assert.matches("^%* ", row.detail)
+            assert.matches("checked", row.detail)
+            local totals = ns.LedgerPage.Totals(rows("sales"))
+            assert.are.equal(totals.moneyIn .. "c", page.views.sales.totals.moneyIn:GetText())
+            assert.is_true(totals.moneyIn < 5000 + 2000 + 700 + 1)
+        end)
+
+        it("changes the revision of the store, so the graph draws again", function()
+            local data = build_sales()
+            local before = loader:Store():Revision()
+            page.SaveEdit(data, { money = 99 })
+            assert.is_true(loader:Store():Revision() > before)
+        end)
+
+        it("keeps the window open and shows a message for a bad value", function()
+            local data = build_sales()
+            local win = page.EditRow(data)
+            win.controls.item:SetText("not an item")
+            win.Save()
+            assert.is_true(win:IsShown())
+            assert.is_truthy(win.error:GetText() ~= "")
+            assert.are.equal(5000, data.record.money)
+            assert.is_nil(data.record.edited)
+        end)
+
+        it("shows the message of the store when it refuses a value", function()
+            local data = build_sales()
+            local win = page.EditRow(data)
+            win.controls.item:SetText("")
+            win.Save()
+            assert.is_true(win:IsShown())
+            assert.matches("qty needs an item", win.error:GetText())
+        end)
+
+        it("changes the source from the drop-down", function()
+            local data = build_sales()
+            local win = page.EditRow(data)
+            pick(win.controls.source, "vendorSale")
+            win.Save()
+            assert.are.equal("vendorSale", data.record.source)
+            assert.are.equal("income", data.record.type)
+            assert.are.equal("ahSale", data.record.orig.source)
+        end)
+
+        it("lists every known source in the drop-down", function()
+            local win = editWindow()
+            assert.are.same(ns.LedgerRecord.SOURCES, values(win.controls.source))
+        end)
+
+        it("resolves an item link, an id and a name", function()
+            local index = {
+                Resolve = function(_, text)
+                    if text == "Copper Bar" then
+                        return { kind = "name", matches = { { key = "555", name = "Copper Bar" } } }
+                    elseif text == "Bar" then
+                        return { kind = "name", matches = { { key = "1", name = "A Bar" },
+                            { key = "2", name = "B Bar" } } }
+                    end
+                    return { kind = "name", matches = {} }
+                end,
+            }
+            local edit = ns.LedgerEdit
+            assert.are.equal("", edit.ResolveItem("  ", index))
+            assert.are.equal("777", edit.ResolveItem("|cffffffff|Hitem:777|h[X]|h|r", index))
+            assert.are.equal("888", edit.ResolveItem("888", index))
+            assert.are.equal("100#s5", edit.ResolveItem("100#s5", index))
+            assert.are.equal("555", edit.ResolveItem("Copper Bar", index))
+            assert.is_nil((edit.ResolveItem("Bar", index)))
+            assert.is_nil((edit.ResolveItem("Nothing", index)))
+            assert.is_nil((edit.ResolveItem("Copper Bar", nil)))
+        end)
+
+        it("takes an item name from the name index in the window", function()
+            local index = {
+                Resolve = function()
+                    return { kind = "name", matches = { { key = "555", name = "Copper Bar" } } }
+                end,
+            }
+            local data = build_sales({ itemNameIndex = index })
+            local win = page.EditRow(data)
+            win.controls.item:SetText("Copper Bar")
+            win.Save()
+            assert.are.equal("555", data.record.item)
+        end)
+
+        it("fills the item box when the user drops an item on it", function()
+            local cleared = 0
+            _G.GetCursorInfo = function()
+                return "item", 9, "|Hitem:9|h[X]|h"
+            end
+            _G.ClearCursor = function()
+                cleared = cleared + 1
+            end
+            local win = editWindow()
+            win.controls.item.scripts.OnReceiveDrag(win.controls.item)
+            assert.are.equal("|Hitem:9|h[X]|h", win.controls.item:GetText())
+            assert.are.equal(1, cleared)
+            _G.GetCursorInfo = function()
+                return "money"
+            end
+            win.controls.item:SetText("5")
+            win.controls.item.scripts.OnMouseDown(win.controls.item)
+            assert.are.equal("5", win.controls.item:GetText())
+            assert.are.equal(1, cleared)
+            _G.GetCursorInfo, _G.ClearCursor = nil, nil
+        end)
+        it("reverts and shows the first values again", function()
+            local data = build_sales()
+            page.SaveEdit(data, { money = 1, note = "n" })
+            assert.is_true(page.RevertRow(rows("sales")[1]))
+            local row = rows("sales")[1]
+            assert.is_false(row.edited)
+            assert.are.equal(5000, row.money)
+            assert.are.equal("Buyer", row.detail)
+            assert.is_false(page.RevertRow(row))
+        end)
+
+        it("writes an info line on an edit and on a revert", function()
+            local data = build_sales()
+            page.SaveEdit(data, { money = 1, note = "n" })
+            assert.are.equal("ledger", logged[1][1])
+            assert.are.equal("info", logged[1][2])
+            assert.matches("^edit Me%-Realm %S+: money, note$", logged[1][3])
+            page.RevertRow(rows("sales")[1])
+            assert.matches("^revert Me%-Realm ", logged[2][3])
+            page.SaveEdit(rows("sales")[1], { money = 5000 })
+            assert.are.equal(2, #logged)
+        end)
+
+        it("shows the note and the first values in the tooltip", function()
+            local data = build_sales()
+            assert.is_nil(ns.LedgerPage.TooltipLines(data.record))
+            page.SaveEdit(data, { money = 1, note = "check this", source = "vendorSale" })
+            local title, lines = ns.LedgerPage.TooltipLines(data.record)
+            assert.are.equal("Edited entry", title)
+            local text = table.concat(lines, "\n")
+            assert.matches("Note: check this", text)
+            assert.matches("Source: Auction sale", text)
+            assert.matches("Amount: 5000c", text)
+            assert.matches("quantity 2", text)
+        end)
+
+        it("shows a tooltip on mouse over of an edited row", function()
+            local data = build_sales()
+            page.SaveEdit(data, { note = "hello" })
+            local row = rowFor(rows("sales")[1])
+            assert.has_no.errors(function()
+                row.scripts.OnEnter(row)
+                row.scripts.OnLeave(row)
+            end)
+        end)
+
+        it("does not edit when the ledger is not loaded", function()
+            local data = build_sales()
+            local lost = {
+                Store = function() end,
+                Ensure = function()
+                    return false, "MISSING"
+                end,
+            }
+            local bare = ns.LedgerPage.Build(CreateFrame("Frame", nil, UIParent), {
+                ledgerLoader = lost,
+                bus = bus,
+                db = db,
+                character = ME,
+                now = function()
+                    return NOW
+                end,
+            })
+            assert.are.same({}, bare.RowMenuEntries(data))
+            assert.is_string(bare.SaveEdit(data, { money = 1 }))
+            assert.is_false(bare.RevertRow(data))
+            assert.is_nil(data.record.edited)
+        end)
+
+        it("does not edit in a read-only store", function()
+            local locked = seed()
+            locked._schema = 9
+            setup({ saved = locked })
+            local data = build_sales()
+            assert.are.same({}, page.RowMenuEntries(data))
+            assert.is_string(page.SaveEdit(data, { money = 1 }))
+            assert.is_nil(page.EditRow(data))
         end)
     end)
 end)

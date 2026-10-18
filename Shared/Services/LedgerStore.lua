@@ -59,8 +59,18 @@ function Store:Move(records)
     end
     local slot = self:_Slot("records")
     local count = 0
+    local used = {}
     for _, record in ipairs(records) do
         if ns.LedgerRecord.Validate(record) then
+            -- A new record gets a stable id (an old record gets one when it is first edited).
+            if record.id == nil then
+                local id = ns.LedgerRecord.NewId(record.time)
+                while used[id] do
+                    id = ns.LedgerRecord.NewId(record.time)
+                end
+                record.id = id
+            end
+            used[record.id] = true
             local list = ensure(slot, record.char)
             list[#list + 1] = record
             count = count + 1
@@ -68,6 +78,149 @@ function Store:Move(records)
     end
     self._revision = self._revision + count
     return count
+end
+
+-- Returns the stored record with this id under the character, or nil.
+function Store:_FindById(char, id)
+    local slot = self:_Find("records")
+    local list = slot and slot[char]
+    if type(list) == "table" and id ~= nil then
+        for _, record in ipairs(list) do
+            if record.id == id then
+                return record
+            end
+        end
+    end
+    return nil
+end
+
+-- Returns the id of a stored record (a table that Records gave). An old record with no id gets one now.
+-- Returns nil if the store is read-only or the record is not stored under the character.
+function Store:IdOf(char, record)
+    if self._readOnly then
+        return nil
+    end
+    local slot = self:_Find("records")
+    local list = slot and slot[char]
+    if type(list) ~= "table" then
+        return nil
+    end
+    for _, candidate in ipairs(list) do
+        if candidate == record then
+            while record.id == nil do
+                local id = ns.LedgerRecord.NewId(record.time)
+                if not self:_FindById(char, id) then
+                    record.id = id
+                end
+            end
+            return record.id
+        end
+    end
+    return nil
+end
+
+-- Returns the copy of a record with the changes applied, or nil and a message.
+local function applyChanges(record, changes)
+    local LedgerRecord = ns.LedgerRecord
+    local allowed = {}
+    for _, name in ipairs(LedgerRecord.EDIT_FIELDS) do
+        allowed[name] = true
+    end
+    local candidate = {}
+    for name, value in pairs(record) do
+        candidate[name] = value
+    end
+    for name, value in pairs(changes) do
+        if not allowed[name] then
+            return nil, "field " .. tostring(name) .. " cannot be edited"
+        end
+        candidate[name] = value
+    end
+    if changes.source ~= nil then
+        local newType = LedgerRecord.TypeFor(changes.source, record.type)
+        if not newType then
+            return nil, "unknown source " .. tostring(changes.source)
+        end
+        candidate.type = newType
+    end
+    if changes.item ~= nil and (changes.item ~= record.item or changes.item == "") then
+        candidate.itemName = nil
+    end
+    if candidate.note == "" then
+        candidate.note = nil
+    end
+    local ok, message = LedgerRecord.Validate(candidate)
+    if not ok then
+        return nil, message
+    end
+    return candidate
+end
+
+-- Applies changes to one record: a table of field -> value, from LedgerRecord.EDIT_FIELDS. An empty item or note
+-- clears the field. A new source can change the type. The first edit keeps the first values in record.orig and
+-- sets record.edited. The daily sums need no change: they hold only records past the retention days, and the
+-- queries read the full records as they are now. Returns true, or false and a message.
+function Store:UpdateRecord(char, id, changes)
+    if self._readOnly then
+        return false, "the ledger is read-only"
+    end
+    local record = self:_FindById(char, id)
+    if not record then
+        return false, "record not found"
+    end
+    if type(changes) ~= "table" then
+        return false, "changes must be a table"
+    end
+    if record.type == "log" then
+        return false, "a log record cannot be edited"
+    end
+    local candidate, message = applyChanges(record, changes)
+    if not candidate then
+        return false, message
+    end
+    local changed = false
+    for _, name in ipairs(ns.LedgerRecord.RESTORE_FIELDS) do
+        changed = changed or candidate[name] ~= record[name]
+    end
+    if not changed then
+        return true
+    end
+    if record.orig == nil then
+        local orig = {}
+        for _, name in ipairs(ns.LedgerRecord.RESTORE_FIELDS) do
+            orig[name] = record[name]
+        end
+        candidate.orig = orig
+    end
+    candidate.edited = true
+    for _, name in ipairs(ns.LedgerRecord.RESTORE_FIELDS) do
+        record[name] = candidate[name]
+    end
+    record.orig = candidate.orig
+    record.edited = true
+    self._revision = self._revision + 1
+    return true
+end
+
+-- Restores the first values of an edited record and removes the edit marks. Returns true, or false and a message.
+function Store:RevertRecord(char, id)
+    if self._readOnly then
+        return false, "the ledger is read-only"
+    end
+    local record = self:_FindById(char, id)
+    if not record then
+        return false, "record not found"
+    end
+    if type(record.orig) ~= "table" then
+        return false, "the record is not edited"
+    end
+    for _, name in ipairs(ns.LedgerRecord.RESTORE_FIELDS) do
+        record[name] = record.orig[name]
+    end
+    record.orig = nil
+    record.edited = nil
+    self._revision = self._revision + 1
+    return true
 end
 
 -- Returns the sorted names of the characters that have records or sums.

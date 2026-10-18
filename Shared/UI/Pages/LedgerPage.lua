@@ -1,6 +1,7 @@
 local _, ns = ...
 
--- The Ledger page of the Flipside window (SPEC 5.8 point 9). It reads the ledger store and writes nothing to it.
+-- The Ledger page of the Flipside window (SPEC 5.8 point 9). It reads the ledger store. Its only write is the edit
+-- of one record (right-click menu, SPEC 5.8 edit).
 
 local LedgerPage = {}
 ns.LedgerPage = LedgerPage
@@ -265,11 +266,48 @@ end
 
 local dryRunRow
 
+-- The detail text of a record row: the tab detail, then the note. An edited record starts with "*".
+local function withMarks(detail, record)
+    if record.note then
+        detail = detail == "" and record.note or (detail .. ", " .. record.note)
+    end
+    if record.edited then
+        detail = detail == "" and "*" or ("* " .. detail)
+    end
+    return detail
+end
+
+-- Returns the title and the lines of the row tooltip of a record, or nil if there is nothing to show.
+-- It shows the note and, for an edited record, the first values.
+function LedgerPage.TooltipLines(record)
+    if type(record) ~= "table" or not (record.note or record.edited) then
+        return nil
+    end
+    local lines = {}
+    if record.note then
+        lines[#lines + 1] = "Note: " .. record.note
+    end
+    local orig = record.orig
+    if record.edited and type(orig) == "table" then
+        lines[#lines + 1] = "Edited. First values:"
+        lines[#lines + 1] = "Source: " .. LedgerPage.SourceLabel(orig.source)
+        local item = (orig.item or "") ~= "" and orig.item or orig.itemName or "-"
+        lines[#lines + 1] = "Item: " .. item .. ", quantity " .. (orig.qty or 0)
+        lines[#lines + 1] = "Amount: " .. money(orig.money or 0)
+        if orig.note then
+            lines[#lines + 1] = "Note: " .. orig.note
+        end
+    end
+    return record.edited and "Edited entry" or "Note", lines
+end
+
 -- Builds the row of a full record. Money in or out follows the record type.
 local function recordRow(tab, record, log)
     local dir = direction(record.type)
     local qty = record.qty or 0
     return {
+        record = record,
+        edited = record.edited == true,
         time = record.time,
         char = record.char,
         item = (record.item or "") ~= "" and record.item or record.itemName or "",
@@ -278,7 +316,7 @@ local function recordRow(tab, record, log)
         moneyIn = dir == "in" and (record.money or 0) or 0,
         moneyOut = dir == "out" and (record.money or 0) or 0,
         value = tab == "loot" and record.value and record.value * math.max(qty, 1) or nil,
-        detail = detailOf(tab, record, log),
+        detail = withMarks(detailOf(tab, record, log), record),
         source = record.source,
         kind = tab == "overview" and LedgerPage.TypeLabel(record.source) or nil,
         flow = tab == "overview" and (dir == "in" and (record.money or 0) or dir == "out" and -(record.money or 0)
@@ -802,6 +840,29 @@ function LedgerPage.Build(content, deps)
                     end
                 end
                 row.data = data
+                if not row.ledgerHooked then
+                    row.ledgerHooked = true
+                    row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+                    row:SetScript("OnClick", function(self, button)
+                        if button == "RightButton" and self.data then
+                            page.OpenRowMenu(self, self.data)
+                        end
+                    end)
+                    row:SetScript("OnEnter", function(self)
+                        local title, lines = LedgerPage.TooltipLines(self.data and self.data.record)
+                        if title then
+                            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+                            GameTooltip:SetText(title)
+                            for _, line in ipairs(lines) do
+                                GameTooltip:AddLine(line, 1, 1, 1, true)
+                            end
+                            GameTooltip:Show()
+                        end
+                    end)
+                    row:SetScript("OnLeave", function()
+                        GameTooltip:Hide()
+                    end)
+                end
             end,
         })
         -- The rows sit inside the list, so only the header takes the list insets.
@@ -980,6 +1041,102 @@ function LedgerPage.Build(content, deps)
         view.totals.count:SetText(totals.count .. (totals.count == 1 and " row" or " rows"))
         page.DrawGraph()
         showStatus("")
+    end
+
+    -- Edit (SPEC 5.8). Only a full record in the loaded store can be edited; a daily sum cannot.
+
+    local function logEdit(text)
+        if ns.Log then
+            ns.Log.Write("ledger", "info", text)
+        end
+    end
+
+    -- Returns the store, the record id and the record of a row, or nil if the row cannot be edited.
+    local function editTarget(data)
+        local current = store()
+        if not (current and data and data.record) or current:IsReadOnly() then
+            return nil
+        end
+        local id = current:IdOf(data.char, data.record)
+        if not id then
+            return nil
+        end
+        return current, id, data.record
+    end
+
+    -- Saves the changes of one row. Returns nil, or a message for the edit window.
+    function page.SaveEdit(data, changes)
+        local current, id, record = editTarget(data)
+        if not current then
+            return "The ledger is not available."
+        end
+        local names = {}
+        for name, value in pairs(changes) do
+            if value ~= record[name] then
+                names[#names + 1] = name
+            end
+        end
+        table.sort(names)
+        local ok, message = current:UpdateRecord(data.char, id, changes)
+        if not ok then
+            return message
+        end
+        if #names > 0 then
+            logEdit("edit " .. data.char .. " " .. id .. ": " .. table.concat(names, ", "))
+        end
+        page.Draw()
+        return nil
+    end
+
+    function page.RevertRow(data)
+        local current, id = editTarget(data)
+        if not current then
+            return false
+        end
+        local ok = current:RevertRecord(data.char, id)
+        if ok then
+            logEdit("revert " .. data.char .. " " .. id)
+            page.Draw()
+        end
+        return ok
+    end
+
+    function page.EditRow(data)
+        local _, _, record = editTarget(data)
+        if not (record and ns.LedgerEdit) then
+            return nil
+        end
+        return ns.LedgerEdit.Open({
+            record = record,
+            sourceLabel = LedgerPage.SourceLabel,
+            itemIndex = deps.itemNameIndex,
+            onSave = function(changes)
+                return page.SaveEdit(data, changes)
+            end,
+        })
+    end
+
+    -- The entries of the row menu: Edit, and Revert for an edited record. Empty for a row that cannot be edited.
+    function page.RowMenuEntries(data)
+        if not (data and data.record and store() and not store():IsReadOnly()) then
+            return {}
+        end
+        local entries = { { text = "Edit...", onClick = function()
+            page.EditRow(data)
+        end } }
+        if data.record.edited then
+            entries[#entries + 1] = { text = "Revert", onClick = function()
+                page.RevertRow(data)
+            end }
+        end
+        return entries
+    end
+
+    function page.OpenRowMenu(row, data)
+        local entries = page.RowMenuEntries(data)
+        if #entries > 0 then
+            page.menu = Kit.ContextMenu(row, entries, { title = "Ledger entry" })
+        end
     end
 
     -- Load the ledger and draw. It never loads in combat: the loader waits for the end of combat.
