@@ -308,13 +308,48 @@ function Backend.BuyItemAuction(auctionID, buyout)
     return call("PlaceBid", auctionID, buyout)
 end
 
--- Info of one auction by id (doc 132): itemKey, itemLink, buyoutAmount. Nil if the client has none.
+-- The most item search results that the owner lookup reads.
+local OWNER_SCAN_LIMIT = 500
+
+-- The owner of an item auction. GetAuctionInfoByID has no owner. The result list of the last item search has it
+-- (ItemSearchResultInfo.owners). Commodities have no owner, so they give nil. Nil if the result is not in the list.
+local function ownerOf(itemKey, auctionID)
+    if type(itemKey) ~= "table" or not (has("GetNumItemSearchResults") and has("GetItemSearchResultInfo")) then
+        return nil
+    end
+    local ok, owner = pcall(function()
+        for index = 1, math.min(call("GetNumItemSearchResults", itemKey), OWNER_SCAN_LIMIT) do
+            local result = call("GetItemSearchResultInfo", itemKey, index)
+            if result and result.auctionID == auctionID then
+                local owners = result.owners
+                return type(owners) == "table" and #owners == 1 and owners[1] or nil
+            end
+        end
+        return nil
+    end)
+    return ok and type(owner) == "string" and owner ~= "" and owner or nil
+end
+
+-- Info of one auction by id (doc 132): itemKey, itemLink, buyoutAmount, and owner when the last item search has it.
+-- Nil if the client has none.
 function Backend.AuctionInfo(auctionID)
     if not has("GetAuctionInfoByID") then
         return nil
     end
     local ok, info = pcall(call, "GetAuctionInfoByID", auctionID)
-    return ok and info or nil
+    if not ok or type(info) ~= "table" then
+        return nil
+    end
+    local owner = ownerOf(info.itemKey, auctionID)
+    if owner then
+        local copy = {}
+        for name, value in pairs(info) do
+            copy[name] = value
+        end
+        copy.owner = owner
+        return copy
+    end
+    return info
 end
 
 -- The bid post-hook of the ledger (SPEC 5.8, user decision 2026-10-17). hook is hooksecurefunc; handler(auctionID)

@@ -18,6 +18,7 @@ LedgerEdit.FIELDS = {
     { key = "item", kind = "item", label = "Item (name, link or id; empty for none)" },
     { key = "qty", kind = "count", label = "Quantity" },
     { key = "money", kind = "money", label = "Amount" },
+    { key = "counterparty", kind = "text", label = "Who" },
     { key = "note", kind = "text", label = "Note" },
 }
 

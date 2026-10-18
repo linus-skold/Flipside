@@ -21,9 +21,9 @@ describe("LedgerRecord", function()
     it("lists every source of the spec table", function()
         assert.are.same({ "ahCancelled", "ahDeposit", "ahDepositRefund",
             "ahExpired", "ahOutbidRefund", "ahPost",
-            "ahPurchase", "ahSale",
-            "loot", "mailMoney", "mailMoneySent", "mailPostage", "mailSent", "quest", "repair", "trade",
-            "unknown", "vendorPurchase", "vendorSale" }, R.SOURCES)
+            "ahPurchase", "ahSale", "bankSlot", "barber", "flight", "guildBank",
+            "loot", "mailMoney", "mailMoneySent", "mailPostage", "mailSent", "quest", "repair", "stable",
+            "talentReset", "trade", "training", "unknown", "vendorPurchase", "vendorSale" }, R.SOURCES)
     end)
 
     it("lists the types", function()
@@ -89,6 +89,26 @@ describe("LedgerRecord", function()
         assert.is_true(R.Validate(record))
     end)
 
+    it("takes a record with no counterparty and no place (an old record)", function()
+        assert.is_true(R.Validate(base({ source = "ahPurchase", type = "purchase", item = "25", qty = 1 })))
+    end)
+
+    it("takes the counterparty and the place as text only", function()
+        assert.is_true(R.Validate(base({ source = "flight", type = "expense", place = "Orgrimmar, Durotar" })))
+        assert.is_true(R.Validate(base({ source = "ahPurchase", type = "purchase", counterparty = "Poor" })))
+        assert.is_false((R.Validate(base({ counterparty = 5 }))))
+        assert.is_false((R.Validate(base({ place = false }))))
+    end)
+
+    it("gives each new source its types", function()
+        for _, source in ipairs({ "flight", "training", "bankSlot", "stable", "barber", "talentReset" }) do
+            assert.is_true(R.Validate(base({ source = source, type = "expense" })), source)
+            assert.is_false((R.Validate(base({ source = source, type = "income" }))), source)
+        end
+        assert.is_true(R.Validate(base({ source = "guildBank", type = "income" })))
+        assert.is_true(R.Validate(base({ source = "guildBank", type = "expense" })))
+    end)
+
     describe("New", function()
         it("sets the defaults and copies the fields", function()
             local fields = { time = 1, char = "A-R", type = "income", source = "quest" }
@@ -140,7 +160,7 @@ describe("LedgerRecord", function()
     end)
 
     it("lists the editable fields", function()
-        assert.are.same({ "source", "item", "qty", "money", "note" }, R.EDIT_FIELDS)
+        assert.are.same({ "source", "item", "qty", "money", "counterparty", "note" }, R.EDIT_FIELDS)
     end)
 
     it("makes an id from the time", function()

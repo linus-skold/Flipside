@@ -779,6 +779,22 @@ local function openLedgerMoney()
             client = client,
             commodityMarket = ns.Flavour.hasCommodityMarket,
             auctionInfo = client.AuctionInfo,
+            tradePartner = function()
+                local name, realm = UnitName("NPC")
+                if name and realm and realm ~= "" then
+                    return name .. "-" .. realm
+                end
+                return name
+            end,
+            taxiNodes = type(NumTaxiNodes) == "function" and function()
+                local nodes = {}
+                for index = 1, NumTaxiNodes() do
+                    if TaxiNodeGetType(index) == "REACHABLE" then
+                        nodes[#nodes + 1] = { name = TaxiNodeName(index), cost = TaxiNodeCost(index) }
+                    end
+                end
+                return nodes
+            end or nil,
             bagLink = function(bag, slot)
                 local info = C_Container.GetContainerItemInfo(bag, slot)
                 return info and info.hyperlink or nil
@@ -862,6 +878,19 @@ local function openLedgerMail()
                 return ns.ItemString.ToKey(input, false)
             end,
             itemKeyByName = itemKeyByName,
+            fillSeller = function(item, qty, seller)
+                local me = characterKey()
+                local function match(record)
+                    return record.source == "ahPurchase" and record.char == me and record.item == item
+                        and (not qty or qty == 0 or record.qty == 0 or record.qty == qty)
+                end
+                if ns.ledgerBuffer:FillCounterparty(seller, match) then
+                    return true
+                end
+                -- A record that moved to the ledger addon is changed only if the addon is loaded.
+                local store = ns.ledgerLoader and ns.ledgerLoader:Store()
+                return store ~= nil and store:FillCounterparty(me, seller, match) or false
+            end,
             fingerprints = fingerprints,
             saveFingerprints = function(value)
                 ns.db:Set("account", KEY, value)

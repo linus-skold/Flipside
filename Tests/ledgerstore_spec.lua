@@ -344,6 +344,63 @@ describe("LedgerStore Revision", function()
             assert.are.equal("", first().item)
         end)
 
+        it("edits the counterparty, keeps the first value in orig and restores it on revert", function()
+            store:UpdateRecord("Alice-Realm", id, { counterparty = "Bob" })
+            assert.are.equal("Bob", first().counterparty)
+            assert.is_nil(first().orig.counterparty)
+            store:UpdateRecord("Alice-Realm", id, { counterparty = "Cy" })
+            assert.is_nil(first().orig.counterparty)
+            store:RevertRecord("Alice-Realm", id)
+            assert.is_nil(first().counterparty)
+            store:UpdateRecord("Alice-Realm", id, { counterparty = "Bob" })
+            store:UpdateRecord("Alice-Realm", id, { counterparty = "" })
+            assert.is_nil(first().counterparty)
+            assert.is_nil(first().orig.counterparty)
+        end)
+
+        it("fills the counterparty of the newest matching record with no edit mark", function()
+            local before = store:Revision()
+            local ok = store:FillCounterparty("Alice-Realm", "Poor", function(record)
+                return record.money > 0
+            end)
+            assert.is_true(ok)
+            local record = store:Records()[2]
+            assert.are.equal("Poor", record.counterparty)
+            assert.is_nil(record.edited)
+            assert.is_nil(record.orig)
+            assert.are.equal(before + 1, store:Revision())
+            assert.is_nil(first().counterparty)
+        end)
+
+        it("fills only a record with no counterparty and only when a record matches", function()
+            store:Records()[2].counterparty = "Own"
+            assert.is_true(store:FillCounterparty("Alice-Realm", "Poor", function()
+                return true
+            end))
+            assert.are.equal("Own", store:Records()[2].counterparty)
+            assert.are.equal("Poor", first().counterparty)
+            assert.is_false(store:FillCounterparty("Alice-Realm", "X", function()
+                return false
+            end))
+            assert.is_false(store:FillCounterparty("Alice-Realm", "", function()
+                return true
+            end))
+            assert.is_false(store:FillCounterparty("Nobody-Realm", "X", function()
+                return true
+            end))
+        end)
+
+        it("keeps the edit marks of a record that the user edited when it fills the counterparty", function()
+            store:UpdateRecord("Alice-Realm", id, { money = 7 })
+            store:FillCounterparty("Alice-Realm", "Poor", function(record)
+                return record.time == 1000
+            end)
+            assert.are.equal("Poor", first().counterparty)
+            assert.is_true(first().edited)
+            assert.are.equal(100, first().orig.money)
+            assert.is_nil(first().orig.counterparty)
+        end)
+
         it("drops a stored item name when the item changes", function()
             store:Move({ rec(3000, { item = "", itemName = "Old Name", qty = 1 }) })
             local named = store:Records()[3]

@@ -33,7 +33,7 @@ ns.Flavour = {
     captureEnabled = true,
     hasCommodityMarket = false, -- every listing is a stack with a stack buyout
     multisell = true, -- PostAuction posts several stacks in one click; the operation has the Max stacks field
-    hasMailInvoices = false, -- the TBC invoice fields are not checked yet; only the mail headers are read
+    hasMailInvoices = true, -- GetInboxInvoiceInfo has the Forever field order (classic_anniversary MailFrame.lua 514)
     ledgerRealmFilter = true, -- the Ledger page has a server and character filter (mail does not cross servers)
     -- Tab templates from the TBC client. Bottom tabs look like the Character and Auction House frame tabs.
     pageTabTemplate = "CharacterFrameTabButtonTemplate",

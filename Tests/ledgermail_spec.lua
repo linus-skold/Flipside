@@ -542,4 +542,75 @@ describe("LedgerMail", function()
             assert.is_nil(ns.LedgerMail.FormatToPattern(nil))
         end)
     end)
+
+    describe("a won-auction mail", function()
+        local textCalls, filled
+
+        local function wonMail(invoice)
+            textCalls, filled = 0, {}
+            inbox[1] = { sender = "AH", subject = "Won: Linen Cloth", money = 0, itemCount = 1, hidden = invoice }
+            mail = attach({
+                api = {
+                    numItems = function()
+                        return #inbox
+                    end,
+                    header = function(index)
+                        return inbox[index]
+                    end,
+                    invoice = function(index)
+                        return inbox[index].invoice
+                    end,
+                    text = function(index)
+                        textCalls = textCalls + 1
+                        inbox[index].invoice = inbox[index].hidden
+                    end,
+                },
+                fillSeller = function(item, qty, seller)
+                    filled[#filled + 1] = { item = item, qty = qty, seller = seller }
+                    return true
+                end,
+            })
+        end
+
+        local BUYER_INVOICE = { type = "buyer", itemName = "Linen Cloth", player = "Poor", bid = 900, buyout = 900,
+            deposit = 0, consignment = 0, count = 5 }
+
+        it("reads the text and gives the seller to the purchase", function()
+            wonMail(BUYER_INVOICE)
+            open()
+            assert.are.equal(1, textCalls)
+            assert.are.same({ { item = "2589", qty = 5, seller = "Poor" } }, filled)
+            assert.are.equal(1, mail:Stats().sellers)
+            assert.are.equal(0, #records)
+        end)
+
+        it("fills once for the same mail on a later visit", function()
+            wonMail(BUYER_INVOICE)
+            open()
+            bus:Emit("MAIL_CLOSED")
+            inbox[1].invoice = nil
+            open()
+            assert.are.equal(1, #filled)
+        end)
+
+        it("does nothing when the invoice names no seller", function()
+            wonMail({ type = "buyer", itemName = "Linen Cloth", count = 5 })
+            open()
+            assert.are.equal(0, #filled)
+        end)
+
+        it("does nothing when the item name has no key", function()
+            wonMail({ type = "buyer", itemName = "Unknown Thing", player = "Poor", count = 1 })
+            open()
+            assert.are.equal(0, #filled)
+        end)
+
+        it("does not fill from a sale invoice", function()
+            wonMail(nil)
+            inbox[1].subject = "Sold: Linen Cloth"
+            inbox[1].hidden = saleMail("Rich", 9500, 100, 550).invoice
+            open()
+            assert.are.equal(0, #filled)
+        end)
+    end)
 end)

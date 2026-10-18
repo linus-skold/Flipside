@@ -131,8 +131,9 @@ function Mail:_Read()
         local header = api.header(index)
         if type(header) == "table" then
             local invoice = self._invoices and api.invoice(index) or nil
-            if self._invoices and invoice == nil and api.text and count(header.money) and header.money > 0
-                and not self:_AnySecret(header) then
+            -- A mail with money, or a won-auction mail (it names the seller), needs the text read first.
+            if self._invoices and invoice == nil and api.text and not self:_AnySecret(header)
+                and ((count(header.money) and header.money > 0) or self:_SubjectKind(header.subject) == "won") then
                 -- The client gives the invoice only after the mail text is read (this marks the mail as read).
                 api.text(index)
                 invoice = api.invoice(index)
@@ -363,6 +364,28 @@ function Mail:_Pay(drop)
     end
 end
 
+-- A won-auction mail with a buyer invoice names the seller. The purchase record was written at the buy, so this
+-- sets the seller on the newest unfilled purchase of the same item that is still in the buffer. Each mail does it once.
+function Mail:_FillSeller(entry)
+    local invoice = entry.invoice
+    local seller = invoice and invoice.type == "buyer" and text(invoice.player) or nil
+    if not seller or not self._fill or not entry.fp or self._fps[entry.fp] then
+        return
+    end
+    local key = self:_ResolveName(text(invoice.itemName) or entry.subjectName)
+    local qty = count(invoice.count)
+    local filled = key and self._fill(key, qty, seller)
+    -- Save the fingerprint even if nothing matched, so a later visit cannot fill an older purchase by mistake.
+    self._fps[entry.fp] = self._serverTime()
+    if self._fpSet then
+        self._fpSet(self._fps)
+    end
+    if filled then
+        self._stats.sellers = self._stats.sellers + 1
+    end
+    self:_Note("seller", entry.index, tostring(seller), tostring(filled == true))
+end
+
 -- A mail that returns an item (expired or cancelled auction) gives a record without money.
 function Mail:_WriteReturned(entry)
     local expired = entry.kind == "expired"
@@ -460,6 +483,11 @@ function Mail:Refresh(reset)
             self:_WriteReturned(entry)
         end
     end
+    for _, entry in ipairs(list) do
+        if entry.kind == "purchase" then
+            self:_FillSeller(entry)
+        end
+    end
     self._snapshot = list
     if #drops > 0 then
         local now = self._now()
@@ -517,7 +545,8 @@ end
 -- reads the mail text so that the invoice becomes available), now (seconds),
 -- serverTime, character (function), after, itemKey(link), fingerprints (a saved table of fingerprint -> time) and
 -- saveFingerprints(table). Optional: isSecret, strings(name) -> client global string, itemKeyByName(name),
--- invoices (false turns the invoice read off), report.
+-- invoices (false turns the invoice read off), report, fillSeller(item, qty, seller) -> true when it set the seller
+-- on a purchase record that had none.
 function LedgerMail.Attach(deps)
     local patterns = {}
     for kind, globalName in pairs(LedgerMail.SUBJECT_GLOBALS) do
@@ -540,11 +569,12 @@ function LedgerMail.Attach(deps)
         _report = deps.report,
         _fps = deps.fingerprints or {},
         _fpSet = deps.saveFingerprints,
+        _fill = deps.fillSeller,
         _invoices = deps.invoices ~= false,
         _patterns = patterns,
         _pending = {},
         _stats = {
-            sales = 0, expired = 0, cancelled = 0, refunds = 0, mailMoney = 0, duplicates = 0, skipped = 0,
+            sales = 0, sellers = 0, expired = 0, cancelled = 0, refunds = 0, mailMoney = 0, duplicates = 0, skipped = 0,
             rejected = 0, noInvoice = 0, unknownInvoice = 0, late = 0,
         },
     }, Mail)

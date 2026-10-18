@@ -58,6 +58,23 @@ function Buffer:Peek()
     return type(list) == "table" and list or {}
 end
 
+-- Sets the counterparty on the newest buffered record that has none and that match(record) accepts.
+-- Returns true if it set the field. A record that already moved to the ledger addon is not changed.
+function Buffer:FillCounterparty(value, match)
+    local list = self._db:Get("account", KEY)
+    if type(list) ~= "table" or type(value) ~= "string" or value == "" then
+        return false
+    end
+    for index = #list, 1, -1 do
+        local record = list[index]
+        if record.counterparty == nil and match(record) then
+            record.counterparty = value
+            return true
+        end
+    end
+    return false
+end
+
 -- Returns the number of records dropped in this session.
 function Buffer:Dropped()
     return self._dropped

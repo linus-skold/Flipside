@@ -62,6 +62,13 @@ local SOURCE_LABELS = {
     mailSent = "Mail sent",
     trade = "Trade",
     quest = "Quest",
+    flight = "Flight path",
+    training = "Training",
+    bankSlot = "Bank slot",
+    stable = "Stable",
+    barber = "Barber",
+    talentReset = "Talent reset",
+    guildBank = "Guild bank",
     unknown = "Unknown",
 }
 
@@ -101,6 +108,13 @@ local TYPE_LABELS = {
     mailSent = "Mail sent",
     trade = "Trade",
     quest = "Quest",
+    flight = "Flight path",
+    training = "Training",
+    bankSlot = "Bank slot",
+    stable = "Stable",
+    barber = "Barber",
+    talentReset = "Talent reset",
+    guildBank = "Guild bank",
     unknown = "Unknown",
 }
 LedgerPage.TYPE_LABELS = TYPE_LABELS
@@ -192,6 +206,9 @@ local AUCTION_KINDS = { post = "Posted", purchase = "Bought", expired = "Expired
 
 local function auctionDetail(record, log)
     local parts = { AUCTION_KINDS[record.type] or LedgerPage.SourceLabel(record.source) }
+    if record.type == "purchase" and record.counterparty then
+        parts[1] = parts[1] .. " from " .. record.counterparty
+    end
     if record.type == "post" then
         if (record.buyout or 0) > 0 then
             parts[#parts + 1] = "buyout " .. money(record.buyout)
@@ -234,14 +251,15 @@ local function detailOf(tab, record, log)
                 return table.concat(parts, ", ")
             end
         end
-        return record.counterparty or record.mob or ""
+        return record.counterparty or record.place or record.mob or ""
     elseif tab == "sales" or tab == "purchases" then
         return record.counterparty or (tab == "purchases" and LedgerPage.SourceLabel(record.source)) or ""
     elseif tab == "loot" then
         return record.mob or ""
     elseif tab == "expenses" then
         local label = LedgerPage.SourceLabel(record.source)
-        return record.counterparty and (label .. ", " .. record.counterparty) or label
+        local who = record.counterparty or record.place
+        return who and (label .. ", " .. who) or label
     end
     return auctionDetail(record, log)
 end

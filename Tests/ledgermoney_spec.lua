@@ -283,7 +283,8 @@ describe("LedgerMoney", function()
 
     describe("the context priority", function()
         it("lists the rule", function()
-            assert.are.same({ "trade", "loot", "ah", "merchant", "mail" }, M.PRIORITY)
+            assert.are.same({ "trade", "loot", "ah", "merchant", "mail", "taxi", "trainer", "stable", "bank",
+                "guildbank", "barber" }, M.PRIORITY)
         end)
 
         it("prefers trade over loot, loot over ah, ah over merchant and merchant over mail", function()
@@ -412,6 +413,70 @@ describe("LedgerMoney", function()
             advance(M.QUEST_WINDOW_SECONDS)
             assert.are.equal(1, #records)
             assert.are.equal("unknown", last().source)
+        end)
+
+        describe("with an owner in the auction data (the seller)", function()
+            local info
+
+            before_each(function()
+                info = { itemLink = "link9", quantity = 3, owner = "Poor" }
+                bus = ns.EventBus.New({})
+                timers = {}
+                tracker = attach({
+                    auctionInfo = function()
+                        return info
+                    end,
+                })
+                bus:Emit("AUCTION_HOUSE_SHOW")
+            end)
+
+            it("writes the owner as the counterparty of the bid hook buy", function()
+                tracker:OnBid(9)
+                change(-500)
+                assert.are.equal("Poor", last().counterparty)
+                assert.are.equal("e:link9", last().item)
+            end)
+
+            it("writes the owner as the counterparty of a buy of the Buying tab", function()
+                calls("BuyItemAuction", 9, 500)
+                change(-500)
+                assert.are.equal("Poor", last().counterparty)
+            end)
+
+            it("keeps the owner when the call and the bid hook both come", function()
+                info.owner = nil
+                calls("BuyItemAuction", 9, 500)
+                info.owner = "Poor"
+                tracker:OnBid(9)
+                change(-500)
+                assert.are.equal(1, #records)
+                assert.are.equal("Poor", last().counterparty)
+            end)
+
+            it("writes no counterparty when the data has no owner", function()
+                info.owner = nil
+                tracker:OnBid(9)
+                change(-500)
+                assert.is_nil(last().counterparty)
+            end)
+
+            it("writes no counterparty for a secret owner or an empty owner", function()
+                secrets.Poor = true
+                tracker:OnBid(9)
+                change(-500)
+                assert.is_nil(last().counterparty)
+                info.owner = ""
+                tracker:OnBid(9)
+                change(-500)
+                assert.is_nil(last().counterparty)
+            end)
+
+            it("writes no counterparty for a post deposit", function()
+                calls("PostItem", 0, 1, 2, 5, 100, 200)
+                change(-40)
+                assert.are.equal("ahDeposit", last().source)
+                assert.is_nil(last().counterparty)
+            end)
         end)
 
         describe("with Forever auction data (no quantity, a nilable link)", function()
@@ -774,6 +839,207 @@ describe("LedgerMoney", function()
         end)
     end)
 
+    describe("service contexts", function()
+        local cases = {
+            { "TRAINER_SHOW", "TRAINER_CLOSED", -50, "training", "expense" },
+            { "PET_STABLE_SHOW", "PET_STABLE_CLOSED", -50, "stable", "expense" },
+            { "BANKFRAME_OPENED", "BANKFRAME_CLOSED", -50, "bankSlot", "expense" },
+            { "BARBER_SHOP_OPEN", "BARBER_SHOP_CLOSE", -50, "barber", "expense" },
+            { "GUILDBANKFRAME_OPENED", "GUILDBANKFRAME_CLOSED", -50, "guildBank", "expense" },
+            { "GUILDBANKFRAME_OPENED", "GUILDBANKFRAME_CLOSED", 50, "guildBank", "income" },
+            { "TAXIMAP_OPENED", "TAXIMAP_CLOSED", -50, "flight", "expense" },
+            { "TRAINER_SHOW", "TRAINER_CLOSED", 50, "unknown", "income" },
+            { "TAXIMAP_OPENED", "TAXIMAP_CLOSED", 50, "unknown", "income" },
+        }
+        for _, case in ipairs(cases) do
+            it(string.format("%s with %d gives %s", case[1], case[3], case[4]), function()
+                bus:Emit(case[1])
+                change(case[3])
+                advance(M.QUEST_WINDOW_SECONDS)
+                assert.are.equal(1, #records)
+                assert.are.equal(case[4], last().source)
+                assert.are.equal(case[5], last().type)
+                assert.are.equal(math.abs(case[3]), last().money)
+            end)
+        end
+
+        it("gives the records of one window the same context", function()
+            bus:Emit("TRAINER_SHOW")
+            change(-10)
+            change(-20)
+            assert.are.equal(records[1].ctx, records[2].ctx)
+        end)
+
+        it("gives unknown after the window closes", function()
+            bus:Emit("TRAINER_SHOW")
+            bus:Emit("TRAINER_CLOSED")
+            change(-50)
+            assert.are.equal("unknown", last().source)
+        end)
+    end)
+
+    describe("flight path", function()
+        local nodes
+
+        before_each(function()
+            nodes = {
+                { name = "Orgrimmar, Durotar", cost = 1200 },
+                { name = "Crossroads, The Barrens", cost = 300 },
+                { name = "Sen'jin Village, Durotar", cost = 300 },
+            }
+            bus = ns.EventBus.New({})
+            timers = {}
+            tracker = attach({
+                taxiNodes = function()
+                    return nodes
+                end,
+            })
+        end)
+
+        it("labels a spend after the map closes as a flight with the destination", function()
+            bus:Emit("TAXIMAP_OPENED")
+            bus:Emit("TAXIMAP_CLOSED")
+            clock = clock + 1
+            change(-1200)
+            assert.are.equal("flight", last().source)
+            assert.are.equal("Orgrimmar, Durotar", last().place)
+        end)
+
+        it("labels a spend while the map is open", function()
+            bus:Emit("TAXIMAP_OPENED")
+            change(-1200)
+            assert.are.equal("flight", last().source)
+            assert.are.equal("Orgrimmar, Durotar", last().place)
+        end)
+
+        it("leaves the destination out when two nodes have the cost", function()
+            bus:Emit("TAXIMAP_OPENED")
+            bus:Emit("TAXIMAP_CLOSED")
+            change(-300)
+            assert.are.equal("flight", last().source)
+            assert.is_nil(last().place)
+        end)
+
+        it("leaves the destination out when no node has the cost", function()
+            bus:Emit("TAXIMAP_OPENED")
+            change(-777)
+            assert.are.equal("flight", last().source)
+            assert.is_nil(last().place)
+        end)
+
+        it("gives unknown after the tail ends", function()
+            bus:Emit("TAXIMAP_OPENED")
+            bus:Emit("TAXIMAP_CLOSED")
+            clock = clock + M.TAXI_TAIL_SECONDS + 1
+            change(-1200)
+            assert.are.equal("unknown", last().source)
+        end)
+
+        it("still labels a flight when the node read fails", function()
+            tracker = attach({
+                taxiNodes = function()
+                    error("no taxi data")
+                end,
+            })
+            bus:Emit("TAXIMAP_OPENED")
+            change(-300)
+            assert.are.equal("flight", last().source)
+            assert.is_nil(last().place)
+        end)
+
+        it("labels a flight when the client has no node read", function()
+            tracker = attach()
+            bus:Emit("TAXIMAP_OPENED")
+            change(-300)
+            assert.are.equal("flight", last().source)
+        end)
+    end)
+
+    describe("talent reset", function()
+        it("labels a spend of the confirmed cost", function()
+            bus:Emit("CONFIRM_TALENT_WIPE", 50000, 1)
+            clock = clock + 20
+            change(-50000)
+            assert.are.equal("talentReset", last().source)
+            assert.are.equal("expense", last().type)
+            assert.are.equal(50000, last().money)
+        end)
+
+        it("labels the spend once", function()
+            bus:Emit("CONFIRM_TALENT_WIPE", 50000, 1)
+            change(-50000)
+            change(-50000)
+            assert.are.equal("unknown", last().source)
+        end)
+
+        it("does not label a spend of another amount", function()
+            bus:Emit("CONFIRM_TALENT_WIPE", 50000, 1)
+            change(-40)
+            assert.are.equal("unknown", last().source)
+        end)
+
+        it("does not label a spend after the wait ends", function()
+            bus:Emit("CONFIRM_TALENT_WIPE", 50000, 1)
+            clock = clock + M.WIPE_SECONDS + 1
+            change(-50000)
+            assert.are.equal("unknown", last().source)
+        end)
+
+        it("skips a secret cost and a cost of zero", function()
+            secrets[50000] = true
+            bus:Emit("CONFIRM_TALENT_WIPE", 50000, 1)
+            bus:Emit("CONFIRM_TALENT_WIPE", 0, 1)
+            change(-50000)
+            assert.are.equal("unknown", last().source)
+            assert.are.equal(1, tracker:Stats().skipped)
+        end)
+    end)
+
+    describe("trade partner", function()
+        it("writes the partner as the counterparty of a trade", function()
+            tracker = attach({
+                tradePartner = function()
+                    return "Bob-Realm"
+                end,
+            })
+            bus:Emit("TRADE_SHOW")
+            change(-50)
+            assert.are.equal("trade", last().source)
+            assert.are.equal("Bob-Realm", last().counterparty)
+            change(70)
+            assert.are.equal("Bob-Realm", last().counterparty)
+        end)
+
+        it("writes no counterparty when the partner is not readable", function()
+            tracker = attach({
+                tradePartner = function()
+                    error("no unit")
+                end,
+            })
+            bus:Emit("TRADE_SHOW")
+            change(-50)
+            assert.are.equal("trade", last().source)
+            assert.is_nil(last().counterparty)
+        end)
+
+        it("ends the partner with the window", function()
+            tracker = attach({
+                tradePartner = function()
+                    return "Bob"
+                end,
+            })
+            bus:Emit("TRADE_SHOW")
+            bus:Emit("TRADE_CLOSED")
+            bus:Emit("TRADE_SHOW")
+            change(-5)
+            assert.are.equal("Bob", last().counterparty)
+            bus:Emit("TRADE_CLOSED")
+            change(-5)
+            assert.are.equal("unknown", last().source)
+            assert.is_nil(last().counterparty)
+        end)
+    end)
+
     describe("events", function()
         it("registers no restricted event and only known events", function()
             local known = {
@@ -781,7 +1047,11 @@ describe("LedgerMoney", function()
                 LOOT_CLOSED = true, TRADE_SHOW = true, TRADE_CLOSED = true, MAIL_SHOW = true, MAIL_CLOSED = true,
                 QUEST_TURNED_IN = true, AUCTION_HOUSE_SHOW = true, AUCTION_HOUSE_CLOSED = true,
                 AUCTION_HOUSE_PURCHASE_COMPLETED = true, COMMODITY_PURCHASE_SUCCEEDED = true,
-                COMMODITY_PURCHASED = true, AUCTION_HOUSE_AUCTION_CREATED = true,
+                COMMODITY_PURCHASED = true, AUCTION_HOUSE_AUCTION_CREATED = true, CONFIRM_TALENT_WIPE = true,
+                TAXIMAP_OPENED = true, TAXIMAP_CLOSED = true, TRAINER_SHOW = true, TRAINER_CLOSED = true,
+                PET_STABLE_SHOW = true, PET_STABLE_CLOSED = true, BANKFRAME_OPENED = true, BANKFRAME_CLOSED = true,
+                GUILDBANKFRAME_OPENED = true, GUILDBANKFRAME_CLOSED = true, BARBER_SHOP_OPEN = true,
+                BARBER_SHOP_CLOSE = true,
             }
             assert.is_true(#subscribed > 0)
             for _, event in ipairs(subscribed) do
