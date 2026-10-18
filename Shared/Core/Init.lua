@@ -1453,7 +1453,8 @@ local function disenchantSpell()
     local name
     if C_Spell and C_Spell.GetSpellName then
         name = C_Spell.GetSpellName(DISENCHANT_SPELL)
-    elseif GetSpellInfo then
+    end
+    if not name and GetSpellInfo then
         name = GetSpellInfo(DISENCHANT_SPELL)
     end
     local known = false
@@ -1492,6 +1493,9 @@ function ns.OpenDestroyWindow()
             end,
             disenchant = disenchantSpell,
             inCombat = InCombatLockdown,
+            log = function(text)
+                log("destroy", "debug", "%s", text)
+            end,
             bus = ns.bus,
             after = C_Timer.After,
             print = printLine,

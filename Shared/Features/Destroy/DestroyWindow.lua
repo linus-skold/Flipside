@@ -183,9 +183,17 @@ function DestroyWindow.Create(deps)
     local destroyButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate, SecureActionButtonTemplate")
     destroyButton:SetSize(160, 24)
     destroyButton:SetText("Destroy")
-    destroyButton:RegisterForClicks("AnyUp")
+    -- The clients use the key-down mode by default, so the button needs both click phases.
+    destroyButton:RegisterForClicks("AnyUp", "AnyDown")
     destroyButton:SetAttribute("type", "macro")
     destroyButton:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", PAD, 16)
+    -- Write the macro to the log before the secure handler runs. SetScript PreClick is not a hook.
+    destroyButton:SetScript("PreClick", function(self)
+        if deps.log then
+            deps.log("macrotext: " .. tostring(self:GetAttribute("macrotext")) .. ", type: "
+                .. tostring(self:GetAttribute("type")) .. ", enabled: " .. tostring(self:IsEnabled()))
+        end
+    end)
     local ignoreButton = Kit.Button(frame, "Ignore", 100, function()
         view:Ignore()
     end)
