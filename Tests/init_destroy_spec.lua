@@ -172,7 +172,7 @@ describe("Init Destroy window", function()
             view.destroyButton.scripts.PreClick(view.destroyButton)
             local found = false
             for _, entry in ipairs(ns.Log.Query({ category = "destroy" })) do
-                found = found or (entry.text:find("/cast Disenchant\n/use 0 2", 1, true) ~= nil)
+                found = found or (entry.text:find("/cast Disenchant | /use 0 2", 1, true) ~= nil)
             end
             assert.is_true(found)
         end)
