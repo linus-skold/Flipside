@@ -83,6 +83,7 @@ Shared\UI\Pages\GroupsPage.lua
 Shared\UI\Pages\OperationsPage.lua
 Shared\UI\TooltipTable.lua
 Shared\UI\Pages\TooltipPage.lua
+Shared\UI\Pages\LedgerEdit.lua
 Shared\UI\Pages\LedgerPage.lua
 Shared\UI\LogWindow.lua
 Shared\UI\MainWindow.lua

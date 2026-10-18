@@ -105,12 +105,31 @@ local CHECKS = {
     fp = isText,
     invoiceType = isText,
     counterparty = isText,
+    id = isText,
+    note = isText,
+    edited = function(v)
+        return v == true
+    end,
+    orig = function(v)
+        return type(v) == "table"
+    end,
     bid = isCount,
     buyout = isCount,
     deposit = isCount,
     cut = isCount,
     value = isCount,
 }
+
+-- The fields that the user can edit (SPEC 5.8, edit). Add a field name here and in CHECKS to edit it.
+LedgerRecord.EDIT_FIELDS = { "source", "item", "qty", "money", "note" }
+-- The fields that a revert restores: the editable fields and the fields that follow them.
+local RESTORE_FIELDS = { "source", "type", "item", "itemName", "qty", "money", "note" }
+LedgerRecord.RESTORE_FIELDS = RESTORE_FIELDS
+
+-- Returns a new record id from the record time and a random part: "<time hex>-<random hex>".
+function LedgerRecord.NewId(time)
+    return string.format("%x-%06x", time or 0, math.random(0, 0xFFFFFF))
+end
 
 -- Returns true, or false and a message.
 function LedgerRecord.Validate(record)
@@ -149,6 +168,29 @@ function LedgerRecord.Validate(record)
         return false, "qty needs an item"
     end
     return true
+end
+
+-- Returns the type that a record gets when its source changes, or nil if the source has none.
+-- The current type stays if the source allows it. Else the type with the same money direction is the first choice.
+function LedgerRecord.TypeFor(source, currentType)
+    local allowed = SOURCE_TYPES[source]
+    if not allowed then
+        return nil
+    end
+    if allowed[currentType] then
+        return currentType
+    end
+    local direction = LedgerRecord.Direction(currentType)
+    local fallback
+    for _, name in ipairs(LedgerRecord.TYPES) do
+        if allowed[name] then
+            fallback = fallback or name
+            if direction and LedgerRecord.Direction(name) == direction then
+                return name
+            end
+        end
+    end
+    return fallback
 end
 
 -- Returns a new record with defaults (item "", qty 0, money 0, mob "unknown" for loot), or nil and a message.

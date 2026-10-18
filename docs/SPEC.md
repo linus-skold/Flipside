@@ -761,6 +761,9 @@ The `source` field is one of these values. The `type` field sets the view.
 | `fp` | Mail fingerprint (mail records only) |
 | `invoiceType`, `counterparty`, `bid`, `buyout`, `deposit`, `cut` | The fields that the invoice gives: the invoice type, the other player, the bid, the buyout, the deposit and the cut (`consignment`) |
 | `value` | Vendor price at loot time (loot items only) |
+| `id` | Stable record id, "<time hex>-<random hex>". `LedgerStore:Move` sets it on each new record. An old record gets it when the user first edits it (2026-10-18) |
+| `note` | Free text from the user (edit only) |
+| `edited`, `orig` | `edited` is true after an edit. `orig` holds the first values of the editable fields and of `type` and `itemName` (2026-10-18) |
 
 **In-game checklist (ledger server filter, 2026-10-18).** Run on TBC Anniversary, then on Forever.
 1. TBC: open the Ledger page. A Server and a Character dropdown show next to the date range. They do not overlap the range, the graph button or the status text.
@@ -770,6 +773,29 @@ The `source` field is one of these values. The `type` field sets the view.
 5. TBC: reload the UI. The page opens with the same server and character. Remove all records of that character (or use a new profile): the page opens on the current server and All.
 6. TBC: `/flip log` shows a "ledger" debug line for each change (the setting for debug lines must be on).
 7. Forever: the Ledger page shows the single character dropdown and works as before.
+**Edit a ledger entry (decided 2026-10-18).** The user can correct one full record.
+- Open the menu with a right click on a row of the Ledger page. "Edit..." opens the edit window. "Revert" shows only for an edited record. A daily total (a record past the retention days) and a decision log record cannot be edited.
+- The window has the fields in `LedgerEdit.FIELDS`: source (drop-down of all sources), item (empty, an item link, an item id or an item name from the name index), quantity, amount and note. Time, character and type are not editable. A new source sets the type: the type stays if the source allows it, else the type with the same money direction.
+- Rules: the amount is a whole number of copper, 0 or more. The quantity is a whole number, 0 or more. The source must be known. A quantity above 0 needs an item. A bad value gives a message and the window stays open.
+- Store: `LedgerStore:UpdateRecord(char, id, changes)` and `LedgerStore:RevertRecord(char, id)`. They work on the loaded store (D25) and change the record in place, so `FlipsideLedgerDB` keeps the edit. A record in the Main DB buffer is not on the page, so it is not editable. A read-only store refuses an edit.
+- Record id: `LedgerStore:Move` gives each new record an id. A record from before this change has none. `LedgerStore:IdOf(char, record)` finds the record by table identity in the list of the character and gives it an id at the first edit. After that, `UpdateRecord` finds it by id.
+- First values: the first edit keeps the old values in `orig` and sets `edited`. Later edits keep the same `orig`. "Revert" restores `orig` and removes both marks.
+- Sums: the daily sums hold only records past the retention days. The queries read the full records as they are now, and the roll-up reads the edited values. So no sum needs a correction, and the day (the time) does not change.
+- Page: an edited row starts the Detail text with "*". The note shows in the Detail text. The tooltip of the row shows the note and the first values. The table, the totals and the graph draw again after a save or a revert.
+- Log: each edit and revert writes one info line in the category "ledger".
+
+**In-game checklist (ledger edit, 2026-10-18).** Run on WoW: Forever and on TBC Anniversary.
+1. Open the Ledger page. Right-click a sale row. The menu shows "Edit..." and no "Revert".
+2. Click "Edit...". The window shows the source, item, quantity, amount and note of the row.
+3. Change the amount and add a note. Click Save. The row shows "*" and the note in Detail. The totals and the graph change.
+4. Point at the row. The tooltip shows the note and the first values.
+5. Edit the item three ways: shift-click an item link into the box, type an item id, type an item name. Each gives the item in the row.
+6. Clear the item and keep a quantity above 0. A message shows and the window stays open.
+7. Change the source to one in the other direction (a sale to a vendor purchase). The row moves to the matching tab and the totals follow.
+8. Right-click the row and pick "Revert". The first values come back and the "*" goes.
+9. Reload the UI. An edited row still shows its edit.
+10. `/flip log` shows one "ledger" info line for each edit and revert.
+
 **Mail invoices (decided 2026-10-15, PR3).** The code is `LedgerMail`.
 - Invoice fields. Forever `Blizzard_MailFrame/MailFrame.lua` (lines 575 and 785) reads `GetInboxInvoiceInfo(index)` as: invoiceType, itemName, playerName, bid, buyout, deposit, consignment, moneyDelay, etaHour, etaMin, count, commerceAuction. The types are `seller`, `buyer` and `seller_temp_invoice`. The payout of a `seller` invoice is bid + deposit - consignment (lines 827-831). For a sale with count > 1 the client shows bid / count as the unit price, so `bid` is the total. `GetInboxHeaderInfo` gives: packageIcon, stationeryIcon, sender, subject, money, CODAmount, daysLeft, itemCount, wasRead, wasReturned, textCreated, canReply, isGM, firstItemQuantity, firstItemLink (lines 340 and 761).
 - `GetInboxText` is called for a mail that has money and no invoice. The client gives the invoice fields only after it reads the mail text (it calls `GetInboxText` before `GetInboxInvoiceInfo`, lines 572 and 776). Without this call, `GetInboxInvoiceInfo` returns nil for an unopened mail, and a sale was recorded as `mailMoney`. So `LedgerMail` calls `api.text(index)` on each inbox read, then reads the invoice again. This happens before the money gain is classified. The call marks the mail as read. This is a visible side effect for a mail with money that is not an Auction House mail (a mail from a player). The subject match stays as the fallback. A mail with no invoice and no subject match is still `mailMoney`. A secret header skips the call. TBC (`hasMailInvoices` false) never calls it. The Forever API documents have no entry for `GetInboxText` or `GetInboxInvoiceInfo`. In game check: see the checklist of the PR. If a sale subject comes without invoice fields, the sale still gets a record from the mail money, with the item name from the subject, and the counter `without invoice` goes up.
@@ -1179,7 +1205,7 @@ TSM behaviours this spec doesn't cover yet. Change the status as each one gets s
 | My Auctions view | Own auctions list replacing Blizzard's Auctions tab (Blizzard's Auctions tab stays; decision B) | §3 | Needs scoping |
 | Commodities vs items | Separate buy, sell and snipe paths for region commodities and individual listings | §3 | Partly scoped (2026-10-14: buy unit and post size defined in the step 6 decisions; 2026-10-15: stack size, post quantity in units and the vendor skip for a commodity, §5.4 point 27; snipe open) |
 | Auction House cut | The real cut rate in Forever for the profit estimate (§5.4 point 18) | §5.4 | Scoped (2026-10-15: the estimate before a sale uses 5%; the ledger uses the real cut from the sale invoice, §5.8) |
-| Ledger | Storage, retention, record types, money tracking, loot, mail, page, build step 7 PR split | §5.7 | Scoped (2026-10-15; §5.8; Phase stays MVP). 2026-10-17: item detail for mail sends, vendor sales and buys, repairs and AH buys, with four read-only post-hooks (user decision). 2026-10-18: server and character filter on the TBC Ledger page |
+| Ledger | Storage, retention, record types, money tracking, loot, mail, page, build step 7 PR split | §5.7 | Scoped (2026-10-15; §5.8; Phase stays MVP). 2026-10-18: edit and revert of one full record from the Ledger page (§5.8; in-game checklist open). 2026-10-17: item detail for mail sends, vendor sales and buys, repairs and AH buys, with four read-only post-hooks (user decision). 2026-10-18: server and character filter on the TBC Ledger page |
 | Retail crafting details | Quality tiers and optional reagents in item identity and crafting cost | §5.3 | Needs scoping |
 | Smaller settings | Forget character (function in step 5, button later), ignore guilds, sale and purchase sounds, chat output, slash commands | §5.11, §8.3 | Needs scoping |
 | Performance budgets | Memory, SavedVariables size, login time, tooltip speed (tooltip: 1 ms, decided 2026-10-14), scan processing | §10.3 | Needs scoping |
