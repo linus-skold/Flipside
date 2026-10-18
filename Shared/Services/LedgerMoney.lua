@@ -163,7 +163,7 @@ function Tracker:_Entry(kind)
 end
 
 -- Returns the name of the only taxi node with this cost, or nil if no node or more than one node has it.
-function Tracker:_TaxiPlace(entry, cost)
+local function taxiPlace(entry, cost)
     local place
     for _, node in ipairs(entry and entry.nodes or {}) do
         if node.cost == cost then
@@ -314,7 +314,7 @@ function Tracker:_WriteKind(kind, delta, ctx)
     if kind == "trade" and entry then
         fields.counterparty = entry.partner
     elseif kind == "taxi" and delta < 0 then
-        fields.place = self:_TaxiPlace(entry, -delta)
+        fields.place = taxiPlace(entry, -delta)
     end
     self:_Write(fields)
 end
