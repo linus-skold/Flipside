@@ -146,8 +146,10 @@ local function applyChanges(record, changes)
     if changes.item ~= nil and (changes.item ~= record.item or changes.item == "") then
         candidate.itemName = nil
     end
-    if candidate.note == "" then
-        candidate.note = nil
+    for _, name in ipairs({ "note", "counterparty" }) do
+        if candidate[name] == "" then
+            candidate[name] = nil
+        end
     end
     local ok, message = LedgerRecord.Validate(candidate)
     if not ok then
@@ -160,7 +162,8 @@ end
 -- clears the field. A new source can change the type. The first edit keeps the first values in record.orig and
 -- sets record.edited. The daily sums need no change: they hold only records past the retention days, and the
 -- queries read the full records as they are now. Returns true, or false and a message.
-function Store:UpdateRecord(char, id, changes)
+-- silent (internal, optional): the change is not a user edit, so it sets no orig and no edited mark.
+function Store:UpdateRecord(char, id, changes, silent)
     if self._readOnly then
         return false, "the ledger is read-only"
     end
@@ -185,6 +188,13 @@ function Store:UpdateRecord(char, id, changes)
     if not changed then
         return true
     end
+    if silent then
+        for _, name in ipairs(ns.LedgerRecord.RESTORE_FIELDS) do
+            record[name] = candidate[name]
+        end
+        self._revision = self._revision + 1
+        return true
+    end
     if record.orig == nil then
         local orig = {}
         for _, name in ipairs(ns.LedgerRecord.RESTORE_FIELDS) do
@@ -200,6 +210,24 @@ function Store:UpdateRecord(char, id, changes)
     record.edited = true
     self._revision = self._revision + 1
     return true
+end
+
+-- Sets the counterparty on the newest record of a character that has none and that match(record) accepts. It is
+-- not a user edit (no edited mark). Returns true if it set the field.
+function Store:FillCounterparty(char, value, match)
+    local slot = self:_Find("records")
+    local list = slot and slot[char]
+    if self._readOnly or type(list) ~= "table" or type(value) ~= "string" or value == "" then
+        return false
+    end
+    for index = #list, 1, -1 do
+        local record = list[index]
+        if record.counterparty == nil and record.type ~= "log" and match(record) then
+            local id = self:IdOf(char, record)
+            return id ~= nil and self:UpdateRecord(char, id, { counterparty = value }, true) == true
+        end
+    end
+    return false
 end
 
 -- Restores the first values of an edited record and removes the edit marks. Returns true, or false and a message.

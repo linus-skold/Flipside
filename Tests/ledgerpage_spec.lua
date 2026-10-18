@@ -1434,6 +1434,36 @@ describe("LedgerPage", function()
             assert.are.same(ns.LedgerRecord.SOURCES, values(win.controls.source))
         end)
 
+        it("lists the window money sources with their labels in the drop-down", function()
+            local win = editWindow()
+            local labels = {}
+            for _, item in ipairs(win.controls.source.menuItems) do
+                labels[item.value] = item.text
+            end
+            local expected = {
+                flight = "Flight path", training = "Training", stable = "Stable", bankSlot = "Bank slot",
+                barber = "Barber", guildBank = "Guild bank", talentReset = "Talent reset",
+            }
+            for source, label in pairs(expected) do
+                assert.are.equal(label, labels[source], source)
+            end
+        end)
+
+        it("edits the counterparty in the Who box and clears it with an empty text", function()
+            local data = build_sales()
+            local win = page.EditRow(data)
+            assert.are.equal("Buyer", win.controls.counterparty:GetText())
+            win.controls.counterparty:SetText("Rich")
+            win.Save()
+            assert.are.equal("Rich", data.record.counterparty)
+            assert.are.equal("Buyer", data.record.orig.counterparty)
+            win = page.EditRow(data)
+            win.controls.counterparty:SetText("")
+            win.Save()
+            assert.is_nil(data.record.counterparty)
+            assert.are.equal("Buyer", data.record.orig.counterparty)
+        end)
+
         it("resolves an item link, an id and a name", function()
             local index = {
                 Resolve = function(_, text)

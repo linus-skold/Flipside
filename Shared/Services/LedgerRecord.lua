@@ -129,9 +129,9 @@ local CHECKS = {
 }
 
 -- The fields that the user can edit (SPEC 5.8, edit). Add a field name here and in CHECKS to edit it.
-LedgerRecord.EDIT_FIELDS = { "source", "item", "qty", "money", "note" }
+LedgerRecord.EDIT_FIELDS = { "source", "item", "qty", "money", "counterparty", "note" }
 -- The fields that a revert restores: the editable fields and the fields that follow them.
-local RESTORE_FIELDS = { "source", "type", "item", "itemName", "qty", "money", "note" }
+local RESTORE_FIELDS = { "source", "type", "item", "itemName", "qty", "money", "counterparty", "note" }
 LedgerRecord.RESTORE_FIELDS = RESTORE_FIELDS
 
 -- Returns a new record id from the record time and a random part: "<time hex>-<random hex>".

@@ -160,7 +160,7 @@ describe("LedgerRecord", function()
     end)
 
     it("lists the editable fields", function()
-        assert.are.same({ "source", "item", "qty", "money", "note" }, R.EDIT_FIELDS)
+        assert.are.same({ "source", "item", "qty", "money", "counterparty", "note" }, R.EDIT_FIELDS)
     end)
 
     it("makes an id from the time", function()

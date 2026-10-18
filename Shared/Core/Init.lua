@@ -880,10 +880,16 @@ local function openLedgerMail()
             itemKeyByName = itemKeyByName,
             fillSeller = function(item, qty, seller)
                 local me = characterKey()
-                return ns.ledgerBuffer:FillCounterparty(seller, function(record)
+                local function match(record)
                     return record.source == "ahPurchase" and record.char == me and record.item == item
                         and (not qty or qty == 0 or record.qty == 0 or record.qty == qty)
-                end)
+                end
+                if ns.ledgerBuffer:FillCounterparty(seller, match) then
+                    return true
+                end
+                -- A record that moved to the ledger addon is changed only if the addon is loaded.
+                local store = ns.ledgerLoader and ns.ledgerLoader:Store()
+                return store ~= nil and store:FillCounterparty(me, seller, match) or false
             end,
             fingerprints = fingerprints,
             saveFingerprints = function(value)
