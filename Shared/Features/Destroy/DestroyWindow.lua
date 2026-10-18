@@ -215,13 +215,13 @@ function DestroyWindow.Create(deps)
     function view:UpdateAction()
         local row = self:Current()
         local spellName, known = deps.disenchant()
-        local message, canDestroy = nil, false
+        local message, canDestroy
         if not (spellName and known) then
-            message = "You do not know Disenchant."
+            message, canDestroy = "You do not know Disenchant.", false
         elseif deps.inCombat() then
-            message = "Destroy is not possible in combat."
+            message, canDestroy = "Destroy is not possible in combat.", false
         elseif not row then
-            message = "No item matches the rules."
+            message, canDestroy = "No item matches the rules.", false
         else
             canDestroy = true
             message = "Next: " .. coloured(Kit, row.quality, row.name) .. " in bag " .. row.bag .. ", slot " .. row.slot
