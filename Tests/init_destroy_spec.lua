@@ -162,6 +162,25 @@ describe("Init Destroy window", function()
             assert.is_true(view.destroyButton.enabled)
         end)
 
+        it("registers the Destroy button for the up and the down click", function()
+            assert.are.same({ "AnyUp", "AnyDown" }, view.destroyButton.clickButtons)
+            assert.is_truthy(view.destroyButton.template:find("SecureActionButtonTemplate", 1, true))
+        end)
+
+        it("writes the macro to the log before a click", function()
+            ns.Log.SetDebug(true)
+            view.destroyButton.scripts.PreClick(view.destroyButton)
+            local found = false
+            for _, entry in ipairs(ns.Log.Query({ category = "destroy" })) do
+                found = found or (entry.text:find("/cast Disenchant\n/use 0 2", 1, true) ~= nil)
+            end
+            assert.is_true(found)
+        end)
+
+        it("keeps the secure click handler", function()
+            assert.is_nil(view.destroyButton.scripts.OnClick)
+        end)
+
         it("sets the Destroy button for the selected row", function()
             local row = view.list.rows[2]
             row.scripts.OnClick(row)

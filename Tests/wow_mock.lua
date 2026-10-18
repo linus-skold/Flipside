@@ -181,6 +181,10 @@ function frameMethods:SetEnabled(enabled)
     self.enabled = enabled and true or false
 end
 
+function frameMethods:IsEnabled()
+    return self.enabled ~= false
+end
+
 function frameMethods:Enable()
     self.enabled = true
 end
