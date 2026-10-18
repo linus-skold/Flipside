@@ -264,4 +264,161 @@ describe("LedgerStore Revision", function()
         store:Compact(10 + 400 * DAY, { force = true })
         assert.is_true(store:Revision() > 2)
     end)
+
+    describe("editing a record", function()
+        local store, saved, id
+
+        before_each(function()
+            saved = {}
+            store = Open(saved)
+            store:Move({ rec(1000), rec(2000, { money = 300, qty = 2 }) })
+            id = store:Records()[1].id
+        end)
+
+        local function first()
+            return store:Records()[1]
+        end
+
+        it("gives a new record a stable id and keeps it", function()
+            assert.is_string(id)
+            assert.are_not.equal(id, store:Records()[2].id)
+            assert.are.equal(id, store:IdOf("Alice-Realm", first()))
+        end)
+
+        it("gives an old record with no id one when it is looked up, and keeps it", function()
+            local old = rec(5, { char = "Old-Realm", item = "9", money = 4 })
+            saved.records.EU.standard["Old-Realm"] = { old }
+            local oldId = store:IdOf("Old-Realm", old)
+            assert.is_string(oldId)
+            assert.are.equal(oldId, old.id)
+            assert.are.equal(oldId, store:IdOf("Old-Realm", old))
+            assert.is_true(store:UpdateRecord("Old-Realm", oldId, { money = 8 }))
+            assert.are.equal(8, old.money)
+        end)
+
+        it("finds no id for a record that is not stored under the character", function()
+            assert.is_nil(store:IdOf("Bob-Realm", first()))
+            assert.is_nil(store:IdOf("Alice-Realm", rec(1)))
+        end)
+
+        it("changes the fields and keeps the first values in orig", function()
+            local ok = store:UpdateRecord("Alice-Realm", id, { money = 250, qty = 5, item = "30", note = "fix" })
+            assert.is_true(ok)
+            local record = first()
+            assert.are.equal(250, record.money)
+            assert.are.equal(5, record.qty)
+            assert.are.equal("30", record.item)
+            assert.are.equal("fix", record.note)
+            assert.is_true(record.edited)
+            assert.are.same({ source = "ahSale", type = "sale", item = "25", qty = 1, money = 100 }, record.orig)
+            assert.are.equal(1000, record.time)
+        end)
+
+        it("keeps the first values over a second edit", function()
+            store:UpdateRecord("Alice-Realm", id, { money = 250 })
+            store:UpdateRecord("Alice-Realm", id, { money = 260, note = "x" })
+            assert.are.equal(100, first().orig.money)
+            assert.are.equal(260, first().money)
+        end)
+
+        it("does nothing when no value changes", function()
+            local before = store:Revision()
+            assert.is_true(store:UpdateRecord("Alice-Realm", id, { money = 100, item = "25" }))
+            assert.is_nil(first().edited)
+            assert.is_nil(first().orig)
+            assert.are.equal(before, store:Revision())
+        end)
+
+        it("grows the revision on an edit and on a revert", function()
+            local before = store:Revision()
+            store:UpdateRecord("Alice-Realm", id, { money = 1 })
+            assert.are.equal(before + 1, store:Revision())
+            store:RevertRecord("Alice-Realm", id)
+            assert.are.equal(before + 2, store:Revision())
+        end)
+
+        it("clears the item and the note with an empty text", function()
+            store:UpdateRecord("Alice-Realm", id, { note = "a" })
+            store:UpdateRecord("Alice-Realm", id, { note = "", item = "", qty = 0 })
+            assert.is_nil(first().note)
+            assert.are.equal("", first().item)
+        end)
+
+        it("drops a stored item name when the item changes", function()
+            store:Move({ rec(3000, { item = "", itemName = "Old Name", qty = 1 }) })
+            local named = store:Records()[3]
+            assert.is_true(store:UpdateRecord("Alice-Realm", named.id, { item = "77" }))
+            assert.is_nil(named.itemName)
+            assert.are.equal("Old Name", named.orig.itemName)
+        end)
+
+        it("keeps the sums right when the amount changes", function()
+            store:UpdateRecord("Alice-Realm", id, { money = 700 })
+            local totals = store:SumsBySource()
+            assert.are.same({ count = 2, qty = 3, moneyIn = 1000, moneyOut = 0 }, totals.ahSale)
+        end)
+
+        it("moves the money to the other source and type when the source changes", function()
+            assert.is_true(store:UpdateRecord("Alice-Realm", id, { source = "vendorPurchase" }))
+            assert.are.equal("expense", first().type)
+            local totals = store:SumsBySource()
+            assert.are.same({ count = 1, qty = 2, moneyIn = 300, moneyOut = 0 }, totals.ahSale)
+            assert.are.same({ count = 1, qty = 1, moneyIn = 0, moneyOut = 100 }, totals.vendorPurchase)
+        end)
+
+        it("keeps the day, so a later compaction uses the edited values", function()
+            store:UpdateRecord("Alice-Realm", id, { money = 700 })
+            assert.are.equal(1000, first().time)
+            store:Compact(1000 + 400 * DAY, { force = true })
+            local sums = store:Sums()
+            local total = 0
+            for _, sum in ipairs(sums) do
+                total = total + sum.moneyIn
+            end
+            assert.are.equal(1000, total)
+        end)
+
+        it("restores the first values on a revert", function()
+            store:UpdateRecord("Alice-Realm", id,
+                { source = "vendorPurchase", money = 5, note = "n", item = "", qty = 0 })
+            assert.is_true(store:RevertRecord("Alice-Realm", id))
+            local record = first()
+            local expected = rec(1000)
+            expected.id = id
+            assert.are.same(expected, record)
+        end)
+
+        it("refuses a revert of a record that is not edited", function()
+            local ok, message = store:RevertRecord("Alice-Realm", id)
+            assert.is_false(ok)
+            assert.is_string(message)
+        end)
+
+        it("refuses bad values and changes nothing", function()
+            for _, changes in ipairs({
+                { money = -1 }, { money = 1.5 }, { money = "5" }, { qty = -1 }, { qty = 1.5 },
+                { source = "nothing" }, { source = 5 }, { item = 5 }, { note = 5 }, { qty = 1, item = "" },
+                { time = 5 }, { type = "loot" }, { orig = {} },
+            }) do
+                local ok, message = store:UpdateRecord("Alice-Realm", id, changes)
+                assert.is_false(ok)
+                assert.is_string(message)
+            end
+            assert.are.equal(100, first().money)
+            assert.is_nil(first().edited)
+            assert.is_nil(first().orig)
+        end)
+
+        it("refuses an unknown record, a log record and a read-only store", function()
+            assert.is_false((store:UpdateRecord("Alice-Realm", "nope", { money = 1 })))
+            assert.is_false((store:UpdateRecord("Bob-Realm", id, { money = 1 })))
+            store:Move({ { time = 9, char = "Alice-Realm", type = "log", item = "25", qty = 1 } })
+            local log = store:Records()[1]
+            assert.is_false((store:UpdateRecord("Alice-Realm", log.id, { note = "x" })))
+            local data = { ["A-R"] = { rec(1, { id = "i" }) } }
+            local locked = Open({ _schema = 9, records = { EU = { standard = data } } })
+            assert.is_false((locked:UpdateRecord("A-R", "i", { money = 1 })))
+            assert.is_false((locked:RevertRecord("A-R", "i")))
+        end)
+    end)
 end)
