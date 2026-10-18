@@ -21,6 +21,7 @@ ns.Flavour = {
     captureEnabled = true,
     hasCommodityMarket = true, -- stackables trade as commodities (D15)
     hasMailInvoices = true, -- GetInboxInvoiceInfo is read-only; the field order is checked in the Forever source
+    ledgerRealmFilter = false, -- the Ledger page has no server filter
     -- Tab templates. The Forever tab templates size to text on their own.
     pageTabTemplate = "PanelTabButtonTemplate",
     topTabTemplate = "PanelTopTabButtonTemplate",

@@ -13,6 +13,8 @@ local LOADING_TEXT = "Loading ledger..."
 local COMBAT_TEXT = "Loading ledger... It loads when combat ends."
 local OWNER = "Flipside.LedgerPage"
 local KEY_CHAR, KEY_RANGE, KEY_GRAPH = "ledger.view.char", "ledger.view.range", "ledger.view.graph"
+local KEY_REALM = "ledger.view.realm"
+local UNKNOWN_REALM = "?"
 local DEFAULT_RANGE = "30"
 local FILTER_HEIGHT = 28
 local GRAPH_HEIGHT = 130
@@ -320,6 +322,21 @@ local function sumRow(tab, sum, char)
     }
 end
 
+-- Returns the realm part of a "Name-Realm" key, or UNKNOWN_REALM if the key has no realm (an old record).
+function LedgerPage.RealmOf(char)
+    return type(char) == "string" and char:match("^[^-]+%-(.+)$") or UNKNOWN_REALM
+end
+
+-- Returns the name part of a "Name-Realm" key. A key with no realm is returned as it is.
+function LedgerPage.NameOf(char)
+    return type(char) == "string" and char:match("^([^-]+)%-") or tostring(char)
+end
+
+-- True if the filter has no realm, or the character is on the realm of the filter.
+local function inRealm(filter, char)
+    return filter.realm == nil or LedgerPage.RealmOf(char) == filter.realm
+end
+
 -- The store options of a filter: { char = name or nil, fromTime = number or nil }.
 local function storeOptions(filter, now)
     local char = filter.char
@@ -329,10 +346,20 @@ local function storeOptions(filter, now)
     return { char = char, fromTime = LedgerPage.RangeStart(filter.range, now), toTime = nil }
 end
 
--- Returns the rows of a record tab, newest first. filter: { char, range }. char "all" means every character.
+-- Returns the rows of a record tab, newest first. filter: { char, range, realm }. char "all" means every character.
+-- If realm is set (TBC), "all" means every character of that realm.
 function LedgerPage.Rows(store, tab, filter, now)
     local options = storeOptions(filter, now)
     local records = store:Records(options)
+    if filter.realm ~= nil and options.char == nil then
+        local kept = {}
+        for _, record in ipairs(records) do
+            if inRealm(filter, record.char) then
+                kept[#kept + 1] = record
+            end
+        end
+        records = kept
+    end
     local logs = {}
     if tab == "auctions" then
         for _, record in ipairs(records) do
@@ -357,10 +384,12 @@ function LedgerPage.Rows(store, tab, filter, now)
     end
     local chars = options.char and { options.char } or store:Characters()
     for _, char in ipairs(chars) do
-        local sums = store:Sums({ char = char, fromTime = options.fromTime })
-        for _, sum in ipairs(sums) do
-            if sumInTab(tab, sum) then
-                rows[#rows + 1] = sumRow(tab, sum, char)
+        if options.char or inRealm(filter, char) then
+            local sums = store:Sums({ char = char, fromTime = options.fromTime })
+            for _, sum in ipairs(sums) do
+                if sumInTab(tab, sum) then
+                    rows[#rows + 1] = sumRow(tab, sum, char)
+                end
             end
         end
     end
@@ -451,10 +480,21 @@ function LedgerPage.Build(content, deps)
         end
         return value
     end
+    -- With the realm filter (TBC) the default is the current server and All characters.
+    local realmFilter = (ns.Flavour or {}).ledgerRealmFilter == true
+    local currentRealm = deps.character and LedgerPage.RealmOf(deps.character) or nil
     page.filter = {
-        char = readSetting(KEY_CHAR, deps.character or ALL),
+        char = readSetting(KEY_CHAR, realmFilter and ALL or deps.character or ALL),
         range = tostring(readSetting(KEY_RANGE, DEFAULT_RANGE)),
+        realm = realmFilter and readSetting(KEY_REALM, currentRealm or UNKNOWN_REALM) or nil,
     }
+
+    local function logFilter()
+        if ns.Log then
+            ns.Log.Write("ledger", "debug", "filter realm=" .. tostring(page.filter.realm) .. " char="
+                .. tostring(page.filter.char) .. " range=" .. tostring(page.filter.range))
+        end
+    end
 
     local function store()
         return loader and loader:Store() or nil
@@ -501,18 +541,42 @@ function LedgerPage.Build(content, deps)
 
     -- Filters.
 
-    page.charDropdown = Kit.Dropdown(content, 190, {
-        items = { { value = ALL, text = "All characters" } },
+    if realmFilter then
+        page.realmDropdown = Kit.Dropdown(content, 150, {
+            items = {},
+            value = page.filter.realm,
+            onChange = function(value)
+                page.filter.realm = value
+                page.filter.char = ALL
+                if deps.db then
+                    deps.db:Set("character", KEY_REALM, value)
+                    deps.db:Set("character", KEY_CHAR, ALL)
+                end
+                logFilter()
+                page.Draw()
+            end,
+        })
+        page.realmDropdown:SetPoint("TOPLEFT", content, "TOPLEFT", 0, 0)
+    end
+    page.charDropdown = Kit.Dropdown(content, realmFilter and 150 or 190, {
+        items = { { value = ALL, text = realmFilter and "All" or "All characters" } },
         value = page.filter.char,
         onChange = function(value)
             page.filter.char = value
             if deps.db then
                 deps.db:Set("character", KEY_CHAR, value)
             end
+            if realmFilter then
+                logFilter()
+            end
             page.Draw()
         end,
     })
-    page.charDropdown:SetPoint("TOPLEFT", content, "TOPLEFT", 0, 0)
+    if realmFilter then
+        page.charDropdown:SetPoint("LEFT", page.realmDropdown, "RIGHT", 8, 0)
+    else
+        page.charDropdown:SetPoint("TOPLEFT", content, "TOPLEFT", 0, 0)
+    end
     local rangeItems = {}
     for _, range in ipairs(LedgerPage.RANGES) do
         rangeItems[#rangeItems + 1] = { value = range.value, text = range.text }
@@ -525,6 +589,9 @@ function LedgerPage.Build(content, deps)
             if deps.db then
                 deps.db:Set("character", KEY_RANGE, value)
             end
+            if realmFilter then
+                logFilter()
+            end
             page.Draw()
         end,
     })
@@ -534,7 +601,68 @@ function LedgerPage.Build(content, deps)
     page.status:SetJustifyH("LEFT")
 
     -- The character list: all, the current character first, then the others.
+    -- The server and character lists of the realm filter. A saved choice with no records falls back to the defaults.
+    local function refreshRealmLists()
+        local current = store()
+        local byRealm, realms = {}, {}
+        local function addRealm(realm)
+            if not byRealm[realm] then
+                byRealm[realm] = {}
+                realms[#realms + 1] = realm
+            end
+            return byRealm[realm]
+        end
+        if currentRealm then
+            addRealm(currentRealm)
+        end
+        for _, name in ipairs(current and current:Characters() or {}) do
+            local list = addRealm(LedgerPage.RealmOf(name))
+            list[#list + 1] = name
+        end
+        table.sort(realms, function(a, b)
+            if (a == currentRealm) ~= (b == currentRealm) then
+                return a == currentRealm
+            end
+            if (a == UNKNOWN_REALM) ~= (b == UNKNOWN_REALM) then
+                return b == UNKNOWN_REALM
+            end
+            return a < b
+        end)
+        if not byRealm[page.filter.realm] then
+            page.filter.realm = currentRealm or realms[1] or UNKNOWN_REALM
+            page.filter.char = ALL
+        end
+        local realmItems = {}
+        for _, realm in ipairs(realms) do
+            local text = realm
+            if realm == UNKNOWN_REALM then
+                text = "Unknown"
+            elseif realm == currentRealm and type(_G.GetRealmName) == "function" then
+                text = _G.GetRealmName() or realm
+            end
+            realmItems[#realmItems + 1] = { value = realm, text = text }
+        end
+        local list = byRealm[page.filter.realm] or {}
+        local charItems = { { value = ALL, text = "All" } }
+        local found = page.filter.char == ALL
+        for _, name in ipairs(list) do
+            found = found or name == page.filter.char
+            charItems[#charItems + 1] = { value = name, text = LedgerPage.NameOf(name) }
+        end
+        if not found then
+            page.filter.char = ALL
+        end
+        page.realmDropdown:SetItems(realmItems)
+        page.realmDropdown:SetValue(page.filter.realm)
+        page.charDropdown:SetItems(charItems)
+        page.charDropdown:SetValue(page.filter.char)
+    end
+
     local function refreshCharacters()
+        if realmFilter then
+            refreshRealmLists()
+            return
+        end
         local items = { { value = ALL, text = "All characters" } }
         local seen = { [ALL] = true }
         local function add(name)
@@ -742,6 +870,15 @@ function LedgerPage.Build(content, deps)
             end
         end
         table.sort(names)
+        if page.filter.realm ~= nil then
+            local kept = {}
+            for _, name in ipairs(names) do
+                if inRealm(page.filter, name) then
+                    kept[#kept + 1] = name
+                end
+            end
+            names = kept
+        end
         return names
     end
 
@@ -759,8 +896,8 @@ function LedgerPage.Build(content, deps)
         end
         local buffer = deps.ledgerBuffer
         local signature = table.concat({
-            page.filter.char, page.filter.range, current:Revision(), buffer and buffer:Count() or 0,
-            copper or "-", math.floor(at / 60),
+            page.filter.char, page.filter.realm or "-", page.filter.range, current:Revision(),
+            buffer and buffer:Count() or 0, copper or "-", math.floor(at / 60),
         }, "|")
         if page.graphSignature == signature then
             return
