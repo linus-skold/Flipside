@@ -582,6 +582,71 @@ describe("LedgerPage", function()
             assert.are.equal("Rich-Realm", first.detail)
         end)
 
+        describe("with the counterparty and the place", function()
+            before_each(function()
+                local mine = saved.records.EU.standard[ME]
+                mine[#mine + 1] = { time = NOW - 60, char = ME, type = "purchase", source = "ahPurchase",
+                    item = "201", qty = 2, money = 400, counterparty = "Poor-Realm", ctx = "ah:9" }
+                mine[#mine + 1] = { time = NOW - 50, char = ME, type = "expense", source = "flight", item = "",
+                    qty = 0, money = 1200, place = "Orgrimmar, Durotar" }
+                mine[#mine + 1] = { time = NOW - 40, char = ME, type = "expense", source = "trade", item = "",
+                    qty = 0, money = 90, counterparty = "Bob" }
+                mine[#mine + 1] = { time = NOW - 30, char = ME, type = "expense", source = "training", item = "",
+                    qty = 0, money = 300 }
+                setup({ saved = saved })
+                build()
+            end)
+
+            it("shows the seller of an Auction House purchase in Purchases", function()
+                select("purchases")
+                assert.are.equal("Poor-Realm", rows("purchases")[1].detail)
+                assert.are.equal("Auction purchase", rows("purchases")[2].detail)
+            end)
+
+            it("shows the seller of an Auction House purchase in Auctions", function()
+                select("auctions")
+                local details = {}
+                for _, row in ipairs(rows("auctions")) do
+                    details[#details + 1] = row.detail
+                end
+                assert.are.equal("Bought from Poor-Realm", details[1])
+                assert.are.equal("Bought", details[#details])
+            end)
+
+            it("shows the place and the partner in Expenses", function()
+                select("expenses")
+                local details = {}
+                for _, row in ipairs(rows("expenses")) do
+                    details[#details + 1] = row.detail
+                end
+                assert.are.same({ "Training", "Trade, Bob", "Flight path, Orgrimmar, Durotar" },
+                    { details[1], details[2], details[3] })
+            end)
+
+            it("shows the seller and the place in the Overview detail", function()
+                select("overview")
+                local found = {}
+                for _, row in ipairs(rows("overview")) do
+                    found[row.kind] = found[row.kind] or row.detail
+                end
+                assert.are.equal("Poor-Realm", found["AH purchase"])
+                assert.are.equal("Orgrimmar, Durotar", found["Flight path"])
+                assert.are.equal("Bob", found["Trade"])
+                assert.are.equal("", found["Training"])
+            end)
+
+            it("has labels for the money sources that the windows give", function()
+                local labels = {
+                    flight = "Flight path", training = "Training", bankSlot = "Bank slot", stable = "Stable",
+                    barber = "Barber", talentReset = "Talent reset", guildBank = "Guild bank",
+                }
+                for source, label in pairs(labels) do
+                    assert.are.equal(label, ns.LedgerPage.SourceLabel(source))
+                    assert.are.equal(label, ns.LedgerPage.TypeLabel(source))
+                end
+            end)
+        end)
+
         it("shows the purchases of the Auction House", function()
             select("purchases")
             assert.are.equal(1, #rows("purchases"))

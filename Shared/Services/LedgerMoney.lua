@@ -17,6 +17,10 @@ LedgerMoney.QUEST_WINDOW_SECONDS = 1
 LedgerMoney.HINT_SECONDS = 10
 -- The time that a claim from another module waits for its money change.
 LedgerMoney.CLAIM_SECONDS = 5
+-- The flight money can arrive after TAXIMAP_CLOSED. The tail keeps the taxi context open for this time (seconds).
+LedgerMoney.TAXI_TAIL_SECONDS = 3
+-- The time that a talent reset cost (CONFIRM_TALENT_WIPE) waits for its money change. The user confirms a dialog.
+LedgerMoney.WIPE_SECONDS = 60
 -- The size of the debug ring.
 LedgerMoney.RING_SIZE = 200
 
@@ -24,8 +28,11 @@ LedgerMoney.RING_SIZE = 200
 -- reward event with the same amount, and that match always wins. The order is the rule:
 -- trade (the other player gives or takes money directly),
 -- loot (a short action, so it is more specific than a frame that stays open),
--- ah, merchant and mail (frames that stay open; the client closes one before it opens another).
-LedgerMoney.PRIORITY = { "trade", "loot", "ah", "merchant", "mail" }
+-- ah, merchant and mail (frames that stay open; the client closes one before it opens another),
+-- then the other service frames: taxi map, trainer, pet stable, bank, guild bank and barber shop.
+LedgerMoney.PRIORITY = {
+    "trade", "loot", "ah", "merchant", "mail", "taxi", "trainer", "stable", "bank", "guildbank", "barber",
+}
 
 -- Events that Flipside never registers (the client restricts them).
 LedgerMoney.RESTRICTED = { COMBAT_LOG_EVENT_UNFILTERED = true }
@@ -36,10 +43,16 @@ local WINDOWS = {
     loot = { "LOOT_OPENED", "LOOT_CLOSED" },
     trade = { "TRADE_SHOW", "TRADE_CLOSED" },
     mail = { "MAIL_SHOW", "MAIL_CLOSED" },
+    taxi = { "TAXIMAP_OPENED", "TAXIMAP_CLOSED" },
+    trainer = { "TRAINER_SHOW", "TRAINER_CLOSED" },
+    stable = { "PET_STABLE_SHOW", "PET_STABLE_CLOSED" },
+    bank = { "BANKFRAME_OPENED", "BANKFRAME_CLOSED" },
+    guildbank = { "GUILDBANKFRAME_OPENED", "GUILDBANKFRAME_CLOSED" },
+    barber = { "BARBER_SHOP_OPEN", "BARBER_SHOP_CLOSE" },
 }
 
 -- Tail time after the close, in seconds, for each kind.
-local TAILS = { loot = LedgerMoney.LOOT_TAIL_SECONDS }
+local TAILS = { loot = LedgerMoney.LOOT_TAIL_SECONDS, taxi = LedgerMoney.TAXI_TAIL_SECONDS }
 
 -- Money in: kind -> source, type. Money out: kind -> source, type. A kind that is not here gives "unknown".
 local INCOME = {
@@ -47,10 +60,17 @@ local INCOME = {
     loot = { "loot", "loot" },
     trade = { "trade", "income" },
     mail = { "mailMoney", "income" },
+    guildbank = { "guildBank", "income" },
 }
 local EXPENSE = {
     merchant = { "vendorPurchase", "expense" },
     trade = { "trade", "expense" },
+    taxi = { "flight", "expense" },
+    trainer = { "training", "expense" },
+    stable = { "stable", "expense" },
+    bank = { "bankSlot", "expense" },
+    guildbank = { "guildBank", "expense" },
+    barber = { "barber", "expense" },
 }
 
 local Tracker = {}
@@ -126,6 +146,34 @@ function Tracker:Context(kind)
         return tail.id
     end
     return nil
+end
+
+-- Returns the data of the open context of a kind (a tail counts as open), or nil. It has the id and the extra values
+-- that the opening read: the trade partner or the taxi nodes.
+function Tracker:_Entry(kind)
+    local open = self._open[kind]
+    if open then
+        return open
+    end
+    local tail = self._tail[kind]
+    if tail and self._now() <= tail.untilTime then
+        return tail
+    end
+    return nil
+end
+
+-- Returns the name of the only taxi node with this cost, or nil if no node or more than one node has it.
+function Tracker:_TaxiPlace(entry, cost)
+    local place
+    for _, node in ipairs(entry and entry.nodes or {}) do
+        if node.cost == cost then
+            if place ~= nil or type(node.name) ~= "string" or node.name == "" then
+                return nil
+            end
+            place = node.name
+        end
+    end
+    return place
 end
 
 -- Returns the kind and id of the context with the highest priority, or nil.
@@ -261,7 +309,14 @@ function Tracker:_WriteKind(kind, delta, ctx)
     else
         source, recordType = "unknown", delta > 0 and "income" or "expense"
     end
-    self:_Write({ source = source, type = recordType, money = math.abs(delta), ctx = ctx })
+    local fields = { source = source, type = recordType, money = math.abs(delta), ctx = ctx }
+    local entry = self:_Entry(kind)
+    if kind == "trade" and entry then
+        fields.counterparty = entry.partner
+    elseif kind == "taxi" and delta < 0 then
+        fields.place = self:_TaxiPlace(entry, -delta)
+    end
+    self:_Write(fields)
 end
 
 function Tracker:_WriteUnknown(delta, ctx)
@@ -303,6 +358,9 @@ function Tracker:_WriteHint(hint, delta, ctx)
     }
     if fields.item == nil then
         fields.qty = nil
+    end
+    if hint.kind == "buy" then
+        fields.counterparty = hint.seller
     end
     self:_Write(fields)
 end
@@ -432,6 +490,34 @@ function Tracker:_TakeQuest(delta)
     return nil
 end
 
+-- Find the talent reset cost that fits a spend. Returns its context id and removes it, or nil.
+function Tracker:_TakeWipe(delta)
+    local wipe = self._wipe
+    if not wipe then
+        return nil
+    end
+    if self._now() - wipe.time > LedgerMoney.WIPE_SECONDS then
+        self._wipe = nil
+        return nil
+    end
+    if delta < 0 and wipe.amount == -delta then
+        self._wipe = nil
+        return wipe.ctx
+    end
+    return nil
+end
+
+-- CONFIRM_TALENT_WIPE gives the cost. The money change follows when the user confirms the dialog.
+function Tracker:_OnWipe(cost)
+    if self:_Secret(cost) then
+        self:_Skip()
+        return
+    end
+    if type(cost) == "number" and cost > 0 then
+        self._wipe = { amount = cost, time = self._now(), ctx = self:_NewId("talentReset") }
+    end
+end
+
 -- One money change.
 function Tracker:_Process(delta)
     self:_Ring("delta", delta)
@@ -442,6 +528,11 @@ function Tracker:_Process(delta)
     local questCtx = self:_TakeQuest(delta)
     if questCtx then
         self:_Write({ source = "quest", type = "income", money = delta, ctx = questCtx })
+        return
+    end
+    local wipeCtx = self:_TakeWipe(delta)
+    if wipeCtx then
+        self:_Write({ source = "talentReset", type = "expense", money = -delta, ctx = wipeCtx })
         return
     end
     local kind, ctx = self:ActiveContext()
@@ -498,9 +589,30 @@ function Tracker:_OnMoney()
     self:_Process(money - previous)
 end
 
+-- Read a text or a list with a dependency. A failing or secret read gives nil.
+function Tracker:_Read(name)
+    local read = self._deps[name]
+    if type(read) ~= "function" then
+        return nil
+    end
+    local ok, value = pcall(read)
+    if not ok or self:_Secret(value) then
+        return nil
+    end
+    return value
+end
+
 function Tracker:_Open(kind)
     self._tail[kind] = nil
-    self._open[kind] = { id = self:_NewId(kind) }
+    local entry = { id = self:_NewId(kind) }
+    if kind == "trade" then
+        local partner = self:_Read("tradePartner")
+        entry.partner = type(partner) == "string" and partner ~= "" and partner or nil
+    elseif kind == "taxi" then
+        local nodes = self:_Read("taxiNodes")
+        entry.nodes = type(nodes) == "table" and nodes or nil
+    end
+    self._open[kind] = entry
 end
 
 function Tracker:_Close(kind)
@@ -508,7 +620,7 @@ function Tracker:_Close(kind)
     self._open[kind] = nil
     local tail = TAILS[kind]
     if open and tail then
-        self._tail[kind] = { id = open.id, untilTime = self._now() + tail }
+        self._tail[kind] = { id = open.id, untilTime = self._now() + tail, nodes = open.nodes }
     end
 end
 
@@ -534,7 +646,11 @@ end
 
 -- Add a hint for the buy of one item auction. Flipside's own buy call and the bid post-hook (OnBid) both come here,
 -- so a buy of the Buying tab gives one hint: a fresh unpaid hint with the same auction ID only gets what it lacks.
-function Tracker:AddBuyHint(auctionID, item, qty)
+-- seller is the owner name of the auction, when the client gives it (TBC list row, Forever item search result).
+function Tracker:AddBuyHint(auctionID, item, qty, seller)
+    if type(seller) ~= "string" or seller == "" or self:_Secret(seller) then
+        seller = nil
+    end
     local now = self._now()
     local hint
     if auctionID ~= nil then
@@ -549,9 +665,10 @@ function Tracker:AddBuyHint(auctionID, item, qty)
     if hint then
         hint.item = hint.item or item
         hint.qty = hint.qty or qty
+        hint.seller = hint.seller or seller
         return hint
     end
-    hint = { kind = "buy", auctionID = auctionID, item = item, qty = qty, time = now, seen = {} }
+    hint = { kind = "buy", auctionID = auctionID, item = item, qty = qty, seller = seller, time = now, seen = {} }
     hint.ctx = self:Context("ah")
     self._hints[#self._hints + 1] = hint
     self:_ResolveHeld()
@@ -568,8 +685,9 @@ function Tracker:OnBid(auctionID)
     end
     local deps = self._deps
     local info = deps.auctionInfo and deps.auctionInfo(auctionID)
-    local item, qty
+    local item, qty, seller
     if type(info) == "table" then
+        seller = info.owner
         local source = info.itemLink
         if source == nil and type(info.itemKey) == "table" then
             source = info.itemKey.itemID
@@ -578,7 +696,7 @@ function Tracker:OnBid(auctionID)
         qty = type(info.quantity) == "number" and info.quantity or (item and 1 or nil)
     end
     self:_Ring("bid", auctionID)
-    self:AddBuyHint(auctionID, item, qty)
+    self:AddBuyHint(auctionID, item, qty, seller)
 end
 
 -- A call to buy or post that Flipside made. The arguments are the ones of the AuctionClient call.
@@ -596,7 +714,7 @@ function Tracker:_OnCall(name, ...)
             item = deps.itemKey(info.itemLink, false)
             qty = type(info.quantity) == "number" and info.quantity or nil
         end
-        self:AddBuyHint(auctionID, item, qty)
+        self:AddBuyHint(auctionID, item, qty, type(info) == "table" and info.owner or nil)
         self:_Ring("call", name)
         return
     elseif name == "PostItem" or name == "ConfirmPostItem" or name == "PostCommodity"
@@ -707,7 +825,8 @@ end
 -- deps: bus, buffer, getMoney, now (seconds, GetTime), serverTime, character (function), after, itemKey(input,
 -- isCommodity), setting(key). Optional: isSecret, client (AuctionClient: OnCall, OpenEvent, CloseEvent, BuyEvents,
 -- PostedEvent), auctionInfo(auctionID), bagLink(bag, slot), deposit(bag, slot, duration, quantity, isCommodity),
--- commodityMarket (flag), report.
+-- commodityMarket (flag), report, tradePartner() (the name of the trade partner), taxiNodes() (a list of
+-- { name, cost } for the nodes that the player can fly to).
 function LedgerMoney.Attach(deps)
     local tracker = setmetatable({
         _deps = deps,
@@ -754,6 +873,9 @@ function LedgerMoney.Attach(deps)
     end
     listen("QUEST_TURNED_IN", function(...)
         tracker:_OnQuest(...)
+    end)
+    listen("CONFIRM_TALENT_WIPE", function(...)
+        tracker:_OnWipe(...)
     end)
     bus:Subscribe("PLAYER_MONEY", OWNER, function()
         tracker:_OnMoney()

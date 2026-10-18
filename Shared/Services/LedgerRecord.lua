@@ -27,6 +27,13 @@ local SOURCE_TYPES = {
     mailSent = { expense = true },
     trade = { income = true, expense = true },
     quest = { income = true },
+    flight = { expense = true },
+    training = { expense = true },
+    bankSlot = { expense = true },
+    stable = { expense = true },
+    barber = { expense = true },
+    talentReset = { expense = true },
+    guildBank = { income = true, expense = true },
     unknown = { income = true, expense = true },
 }
 LedgerRecord.SOURCE_TYPES = SOURCE_TYPES
@@ -105,6 +112,7 @@ local CHECKS = {
     fp = isText,
     invoiceType = isText,
     counterparty = isText,
+    place = isText,
     bid = isCount,
     buyout = isCount,
     deposit = isCount,

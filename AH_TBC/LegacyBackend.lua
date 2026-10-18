@@ -14,6 +14,7 @@ end
 
 -- Legacy GetAuctionItemInfo return positions.
 local INFO_NAME, INFO_COUNT, INFO_SALE_STATUS, INFO_ITEM_ID = 1, 3, 16, 17
+local INFO_OWNER = 14
 
 local SCAN_SETTLE_SECONDS = 2
 local DIAG_KEEP = 5
@@ -571,7 +572,11 @@ function Backend.AuctionInfo(auctionID)
     if link == nil then
         link = "item:" .. info[INFO_ITEM_ID]
     end
-    return { itemLink = link, quantity = info[INFO_COUNT], buyoutAmount = info[10] }
+    local owner = info[INFO_OWNER]
+    return {
+        itemLink = link, quantity = info[INFO_COUNT], buyoutAmount = info[10],
+        owner = type(owner) == "string" and owner ~= "" and owner or nil,
+    }
 end
 
 -- Posting (Selling tab). The legacy client posts the item in the sale slot: the code puts the bag item there, checks
