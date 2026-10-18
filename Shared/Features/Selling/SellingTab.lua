@@ -1745,6 +1745,11 @@ function Tab:PostNext()
     return self:_PostStep()
 end
 
+-- True while a live search of the selection runs. It ends with the result, a refusal or SEARCH_TIMEOUT.
+function Tab:_Scanning()
+    return self.pending ~= nil
+end
+
 function Tab:_DropMulti()
     local m = self.multi
     if m then
@@ -1755,6 +1760,9 @@ end
 function Tab:_PostStep()
     if self.multi then
         return false, "posting"
+    end
+    if self:_Scanning() then
+        return false, "Wait for the scan to finish."
     end
     if self.lock then
         return false, "wait for the last post to end"
@@ -2193,6 +2201,9 @@ function Tab:PostLabel()
     if self.awaiting then
         return "Confirm post"
     end
+    if self:_Scanning() then
+        return "Scanning..."
+    end
     if self.lock then
         return "Wait..."
     end
@@ -2428,7 +2439,7 @@ function Tab:_Update()
     ui.tree:Refresh()
     ui.postNext:SetText(self:PostLabel())
     local busy = self.multi ~= nil
-    ui.postNext:SetEnabled(client.CanPost() and not busy and self.lock == nil
+    ui.postNext:SetEnabled(client.CanPost() and not busy and self.lock == nil and not self:_Scanning()
         and (self.awaiting ~= nil or self:_Focus() ~= nil))
 
     ui.skip:SetEnabled(not busy and (self.awaiting ~= nil or self:_Focus() ~= nil))
