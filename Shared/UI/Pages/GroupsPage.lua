@@ -392,6 +392,10 @@ function GroupsPage.Build(content, deps)
         keyOf = function(entry)
             return entry.key
         end,
+        onDoubleClick = function(entry)
+            page.addOnDoubleClick(entry.key)
+            page.bagList:ClearSelection()
+        end,
         initRow = function(row, entry)
             if not row.text then
                 row.text = Kit.Label(row, "", "normal")
@@ -446,6 +450,14 @@ function GroupsPage.Build(content, deps)
         return ok ~= nil
     end
 
+    -- A double-click adds one item. It does nothing for Base, for a locked page or for an item already in the group.
+    function page.addOnDoubleClick(key)
+        if not editable() or page.selected == BASE_ID or rules:GroupOf(key) == page.selected then
+            return
+        end
+        addKey(key)
+    end
+
     local function clearSelections()
         page.bagList:ClearSelection()
         page.itemList:ClearSelection()
@@ -469,7 +481,10 @@ function GroupsPage.Build(content, deps)
         refresh()
     end)
     page.addSelectedButton:SetPoint("CENTER", middle, "CENTER", 0, 20)
-    Kit.Tooltip(page.addSelectedButton, "Add to group", { "Adds the selected bag items to the group." })
+    Kit.Tooltip(page.addSelectedButton, "Add to group", {
+        "Adds the selected bag items to the group.",
+        "Double-click an item to add it.",
+    })
 
     -- The left arrow: remove the selected group items from the group.
     page.removeSelectedButton = Kit.Button(middle, "<", 36, function()
@@ -545,6 +560,9 @@ function GroupsPage.Build(content, deps)
 
     page.nameList = Kit.CreateList(popup, {
         inset = true,
+        onDoubleClick = function(match)
+            page.addOnDoubleClick(match.key)
+        end,
         initRow = function(row, match)
             if not row.nameText then
                 row.nameText = Kit.Label(row, "", "normal")
