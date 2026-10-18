@@ -2039,5 +2039,32 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
             assert.are.equal("Post", ui.postNext.text)
             assert.are.equal(tab:_Focus() ~= nil, ui.postNext.enabled)
         end)
+
+        it("keeps Post off while the queue waits for the AH to be ready, and frees it at the end", function()
+            scanning()
+            client.ready = false
+            endScan()
+            assert.is_nil(tab.pending)
+            assert.is_not_nil(tab.queue)
+            assert.is_false(ui.postNext.enabled)
+            assert.are.equal("Scanning...", ui.postNext.text)
+            assert.are.equal("wait for the scan", (tab:PostNext() and "" or "wait for the scan"))
+            tab:Stop()
+            assert.is_true(ui.postNext.enabled)
+        end)
+
+        it("ends the scan and the lock when the AH closes", function()
+            client.CloseEvent = function() return "CLOSED" end
+            tab = mount()
+            ui = tab.ui
+            scanning()
+            client.ready = false
+            endScan()
+            assert.is_false(ui.postNext.enabled)
+            fire("CLOSED")
+            assert.is_nil(tab.queue)
+            assert.is_nil(tab.pending)
+            assert.is_true(ui.postNext.enabled)
+        end)
     end)
 end)

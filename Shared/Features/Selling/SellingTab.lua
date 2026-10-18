@@ -1745,9 +1745,10 @@ function Tab:PostNext()
     return self:_PostStep()
 end
 
--- True while a live search of the selection runs. It ends with the result, a refusal or SEARCH_TIMEOUT.
+-- True while the scan of the selection runs: a search in flight, or a queue that waits for the next search.
+-- The queue ends at its last item, at Stop, at a new selection, at a bag read and when the AH closes.
 function Tab:_Scanning()
-    return self.pending ~= nil
+    return self.pending ~= nil or self.queue ~= nil
 end
 
 function Tab:_DropMulti()
@@ -2702,7 +2703,10 @@ function Tab:Mount(parent, api)
     local closeEvent = client.CloseEvent and client.CloseEvent()
     if closeEvent then
         bus:Subscribe(closeEvent, OWNER, function()
+            -- A scan cannot go on without the AH: end it so that Post is not locked for ever.
+            self.queue, self.pending = nil, nil
             self:_Release()
+            self:_Update()
         end)
         self.events[#self.events + 1] = closeEvent
     end
