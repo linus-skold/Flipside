@@ -688,6 +688,10 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
             assert.are.equal("skip", entryOf("10").status)
             click(ui.skip)
             assert.are.equal("skipped", entryOf("10").status)
+            -- The skip moves on to the next item, which starts a search. End it, as a scan locks Post.
+            if tab.pending then
+                fire("COMMODITY_RESULTS", tab.pending.itemID)
+            end
             pick("i10")
             assert.are.equal("skip", entryOf("10").status)
             assert.is_true(ui.postNext.enabled)
@@ -815,7 +819,9 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
 
         it("is not part of a group post", function()
             skipLinen()
+            client.rows[11] = { row(5, 1) }
             pick("g2")
+            fire("COMMODITY_RESULTS", 11)
             assert.is_false(ui.postNext.enabled)
             local ok, why = tab:PostNext()
             assert.is_false(ok)
@@ -1959,6 +1965,120 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
             for index = before + 1, #delays do
                 assert.are_not.equal(5, delays[index].seconds)
             end
+        end)
+    end)
+
+    describe("the scan lock", function()
+        -- Select the Cloth group and end the first search. The second search runs, and one item is ready.
+        local function scanning()
+            client.rows[10] = { row(120, 1) }
+            client.rows[11] = { row(150, 5) }
+            pick("g2")
+            local id = tab.pending.itemID
+            fire(client.commodity[id] and "COMMODITY_RESULTS" or "ITEM_RESULTS", id)
+            assert.is_not_nil(tab.pending)
+        end
+
+        -- Select the group, then end the first search while the AH is not ready: the queue waits to go on.
+        local function waiting()
+            client.rows[10] = { row(120, 1) }
+            client.rows[11] = { row(150, 5) }
+            pick("g2")
+            local id = tab.pending.itemID
+            client.ready = false
+            fire(client.commodity[id] and "COMMODITY_RESULTS" or "ITEM_RESULTS", id)
+        end
+
+        local function endScan()
+            local id = tab.pending.itemID
+            fire(client.commodity[id] and "COMMODITY_RESULTS" or "ITEM_RESULTS", id)
+        end
+
+        it("keeps Post off while a search runs and turns it on at the result", function()
+            scanning()
+            assert.is_false(ui.postNext.enabled)
+            assert.are.equal("Scanning...", ui.postNext.text)
+            endScan()
+            assert.is_nil(tab.pending)
+            assert.is_true(ui.postNext.enabled)
+            assert.are.equal("Post", ui.postNext.text)
+        end)
+
+        it("turns Post on again when the search runs into the timeout", function()
+            scanning()
+            assert.is_false(ui.postNext.enabled)
+            delays[#delays].fn()
+            assert.is_nil(tab.pending)
+            assert.is_true(ui.postNext.enabled)
+        end)
+
+        it("turns Post on again after Stop, when the search in flight ends", function()
+            scanning()
+            tab:Stop()
+            endScan()
+            assert.is_false(tab:_Scanning())
+            assert.is_true(ui.postNext.enabled)
+        end)
+
+        it("refuses the post handler with a text and makes no post call", function()
+            scanning()
+            local ok, text = tab:PostNext()
+            assert.is_false(ok)
+            assert.are.equal("Wait for the scan to finish.", text)
+            click(ui.postNext)
+            assert.are.equal(0, #client.posts)
+            endScan()
+            click(ui.postNext)
+            assert.are.equal(1, #client.posts)
+        end)
+
+        it("combines with the post lock: Post is on only when both are off", function()
+            scanning()
+            tab.lock = { token = 0, resulted = false, delayed = false }
+            tab:_Update()
+            assert.is_false(ui.postNext.enabled)
+            endScan()
+            assert.is_false(ui.postNext.enabled)
+            assert.are.equal("Wait...", ui.postNext.text)
+            tab.lock = nil
+            tab:_Update()
+            assert.is_true(ui.postNext.enabled)
+        end)
+
+        it("keeps the lock for a search in flight after a new selection, and frees it at the result", function()
+            scanning()
+            pick("i13")
+            assert.is_false(ui.postNext.enabled)
+            assert.is_true(tab:_Scanning())
+            endScan()
+            assert.is_false(tab:_Scanning())
+            assert.are.equal("Post", ui.postNext.text)
+            assert.are.equal(tab:_Focus() ~= nil, ui.postNext.enabled)
+        end)
+
+        it("keeps Post off while the queue waits for the AH to be ready, and frees it at the end", function()
+            waiting()
+            assert.is_nil(tab.pending)
+            assert.is_not_nil(tab.queue)
+            assert.is_false(ui.postNext.enabled)
+            assert.are.equal("Scanning...", ui.postNext.text)
+            local ok, text = tab:PostNext()
+            assert.is_false(ok)
+            assert.are.equal("Wait for the scan to finish.", text)
+            tab:Stop()
+            assert.is_true(ui.postNext.enabled)
+        end)
+
+        it("ends the scan and the lock when the AH closes", function()
+            client.CloseEvent = function() return "CLOSED" end
+            tab = mount()
+            ui = tab.ui
+            waiting()
+            assert.is_false(ui.postNext.enabled)
+            fire("CLOSED")
+            assert.is_nil(tab.queue)
+            assert.is_nil(tab.pending)
+            assert.is_true(ui.postNext.enabled)
         end)
     end)
 end)

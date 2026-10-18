@@ -1745,6 +1745,12 @@ function Tab:PostNext()
     return self:_PostStep()
 end
 
+-- True while the scan of the selection runs: a search in flight, or a queue that waits for the next search.
+-- The queue ends at its last item, at Stop, at a new selection, at a bag read and when the AH closes.
+function Tab:_Scanning()
+    return self.pending ~= nil or self.queue ~= nil
+end
+
 function Tab:_DropMulti()
     local m = self.multi
     if m then
@@ -1755,6 +1761,9 @@ end
 function Tab:_PostStep()
     if self.multi then
         return false, "posting"
+    end
+    if self:_Scanning() then
+        return false, "Wait for the scan to finish."
     end
     if self.lock then
         return false, "wait for the last post to end"
@@ -2193,6 +2202,9 @@ function Tab:PostLabel()
     if self.awaiting then
         return "Confirm post"
     end
+    if self:_Scanning() then
+        return "Scanning..."
+    end
     if self.lock then
         return "Wait..."
     end
@@ -2428,7 +2440,7 @@ function Tab:_Update()
     ui.tree:Refresh()
     ui.postNext:SetText(self:PostLabel())
     local busy = self.multi ~= nil
-    ui.postNext:SetEnabled(client.CanPost() and not busy and self.lock == nil
+    ui.postNext:SetEnabled(client.CanPost() and not busy and self.lock == nil and not self:_Scanning()
         and (self.awaiting ~= nil or self:_Focus() ~= nil))
 
     ui.skip:SetEnabled(not busy and (self.awaiting ~= nil or self:_Focus() ~= nil))
@@ -2691,7 +2703,10 @@ function Tab:Mount(parent, api)
     local closeEvent = client.CloseEvent and client.CloseEvent()
     if closeEvent then
         bus:Subscribe(closeEvent, OWNER, function()
+            -- A scan cannot go on without the AH: end it so that Post is not locked for ever.
+            self.queue, self.pending = nil, nil
             self:_Release()
+            self:_Update()
         end)
         self.events[#self.events + 1] = closeEvent
     end
