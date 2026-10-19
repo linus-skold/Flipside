@@ -46,9 +46,15 @@ function InboxList.Anchor(frame, inbox, first, openAll, lastItem)
     local right = (left or 0) + first:GetWidth() - inbox:GetWidth()
     frame:ClearAllPoints()
     frame:SetPoint("TOPLEFT", first, "TOPLEFT", 0, 0)
-    local _, _, relativePoint, _, openY = openAll and openAll:GetPoint(1)
-    if openAll and relativePoint == "BOTTOM" then
-        local bottom = (openY or 0) + openAll:GetHeight() / 2 + OPEN_ALL_GAP
+    local bottom
+    if openAll then
+        -- A call inside "and" gives one value only, so the call has its own statement.
+        local _, _, relativePoint, _, openY = openAll:GetPoint(1)
+        if relativePoint == "BOTTOM" then
+            bottom = (openY or 0) + openAll:GetHeight() / 2 + OPEN_ALL_GAP
+        end
+    end
+    if bottom then
         frame:SetPoint("BOTTOMRIGHT", inbox, "BOTTOMRIGHT", right, bottom)
     else
         frame:SetPoint("BOTTOMRIGHT", lastItem or first, "BOTTOMRIGHT", 0, 0)
