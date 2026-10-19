@@ -912,6 +912,19 @@ local function openLedgerMail()
                 ns.db:Set("account", KEY, value)
             end,
         })
+        -- The key mail.totalLine has no page yet. A false value turns the chat line off.
+        ns.MailTotal.Attach({
+            bus = ns.bus,
+            event = ns.LedgerMail.EVENT_TAKEN,
+            print = printLine,
+            format = ns.TooltipLines.FormatMoney,
+            enabled = function()
+                return ns.db:Get("account", "mail.totalLine") ~= false
+            end,
+            log = function(fmt, ...)
+                log("mail", "debug", fmt, ...)
+            end,
+        })
     end)
     if not ok then
         ns.ledgerMail = nil

@@ -34,6 +34,9 @@ LedgerMail.SUBJECT_GLOBALS = {
 -- Events that this module listens to. It listens to nothing else.
 LedgerMail.EVENTS = { "MAIL_SHOW", "MAIL_CLOSED", "MAIL_INBOX_UPDATE" }
 
+-- The bus event after the player takes the money of one mail. The argument is the copper amount.
+LedgerMail.EVENT_TAKEN = "Flipside.MailMoneyTaken"
+
 local Mail = {}
 Mail.__index = Mail
 
@@ -333,6 +336,8 @@ end
 -- Write the record for money that left a mail. amount is the copper that arrived.
 function Mail:_Pay(drop)
     local entry, amount = drop.entry, drop.amount
+    -- One event for each mail whose money the player took (MailTotal adds them up).
+    self._bus:Emit(LedgerMail.EVENT_TAKEN, amount)
     if entry.kind == "sale" then
         local invoice = entry.invoice
         local fields = { source = "ahSale", type = "sale", money = amount }
@@ -556,6 +561,7 @@ function LedgerMail.Attach(deps)
         end
     end
     local mail = setmetatable({
+        _bus = deps.bus,
         _buffer = deps.buffer,
         _tracker = deps.tracker,
         _api = deps.api,
