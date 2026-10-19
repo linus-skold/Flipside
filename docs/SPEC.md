@@ -939,6 +939,21 @@ On Retail the deposit is returned on sale and lost on expiry; the AH keeps a cut
 - Recipes with stale or thin data (min-samples rule) drop to the bottom, flagged.
 - *Queue* adds the craft to the crafting queue up to the Keep stock target, or a quantity you type.
 
+### 5.14a Craft profit panel (added 2026-10-19)
+
+A small panel docks to the right side of the profession window (`TradeSkillFrame` on TBC, `ProfessionsFrame` on WoW: Forever). It shows the cost and the profit of the selected recipe. It adds no hook.
+
+- **Reagents:** icon, name, quantity, unit price and line cost. A reagent with no price shows "no price". A slot with quality tiers uses its first item. Optional and modifying slots do not count (see "Retail crafting details" in Needs scoping).
+- **Craft cost:** the sum of the line costs. If a reagent has no price, the panel shows "at least" and the profit is "at most".
+- **Item value:** the AH price of one item times the average made, (min + max) / 2.
+- **Profit:** value - AH cut - cost. The cut is `SellingPlan.AH_CUT` (5%, §5.4 point 18). The panel shows the profit in green or red, and the profit as a percent of the cost.
+- **No item result** (an enchant): the panel shows the cost and "No item to sell".
+- **Prices** come from two formulas in the account scope of the settings DB. Reagent price, key `crafting.reagentFormula`, default `min(vendorbuy, scanmin)`. Item value, key `crafting.itemFormula`, default `scanmin`. `vendorbuy` is a later source (see Price sources), so today it is invalid and `min` skips it. If a formula is invalid for an item, the item has no price. The Formulas button of the panel edits both formulas.
+- **Refresh:** on `TRADE_SKILL_SHOW` (show), `TRADE_SKILL_CLOSE` (hide), `TRADE_SKILL_UPDATE` (TBC), `TRADE_SKILL_LIST_UPDATE` and `TRADE_SKILL_DATA_SOURCE_CHANGED` (Forever), `Flipside.ScanFinished` and `Flipside.PriceCaptured`. The panel also reads the selected recipe every 0.2 s in an OnUpdate of its own frame, and draws again only when it changes.
+- **API:** TBC uses `GetTradeSkillSelectionIndex`, `GetTradeSkillInfo`, `GetTradeSkillItemLink`, `GetTradeSkillNumMade`, `GetTradeSkillNumReagents`, `GetTradeSkillReagentInfo` and `GetTradeSkillReagentItemLink`. Forever uses `ProfessionsFrame.CraftingPage.SchematicForm:GetRecipeInfo()` and `C_TradeSkillUI.GetRecipeSchematic`. A missing API gives "Not supported on this client".
+- Files: `Shared/Services/CraftCost.lua` (no frame code), `Shared/Features/Crafting/CraftClient.lua` (client adapter), `Shared/Features/Crafting/CraftPanel.lua` (panel).
+- Follow-up (not built): the `crafting` and `matprice` formula sources, the ranking in 5.14, and quality tiers.
+
 ### 5.15 Presets and undo (new)
 
 - **Presets:** ready-made operations to start from, e.g. "Safe seller" (never below 80% of market), "Fast undercut", "Material buyer" (max 90% of market, buy up to stock) and "Flipper" (buy below 60%, sell at market). Presets are copied, never linked, so editing one doesn't change others.
@@ -1246,6 +1261,7 @@ TSM behaviours this spec doesn't cover yet. Change the status as each one gets s
 | Mailing | The mailing operation, the planner and the mail view (§5.5) | §5.4 | Partly scoped (2026-10-17: operation, planner, rules, view and send run built; the view sits in a wider `MailFrame` (wide layout, rules list; a tab layout needs only a new `MailHost.LAYOUTS` entry); item filters (rarity range, many item types) and the built-in All bag items group built 2026-10-17; rules list with Run and Run all (2026-10-18, replaces the group tree) and the compact inbox list (2026-10-18); send mode decided: one confirm, then all mails in sequence, confirmed in game on TBC only; open: the Forever probe (`MailTest` second round) and the in-game checklist on both clients) |
 | Auto rules for groups | Rules that add new bag items to groups by name pattern, rarity and item type (§5.2a) | - | Partly scoped (2026-10-17: rules, runner, tab and Apply now built; the name pattern uses Shared/Services/NameRegex.lua; in-game checklist open; open: export of rules, a bank or mail trigger) |
 | Destroy window | Free window to disenchant bag items by rules, with ignore and skip (§5.7a) | - | Scoped (2026-10-18; in-game checklist open; open: value before and after the disenchant) |
+| Craft profit panel | Panel at the profession window with reagent cost, AH value and profit of the selected recipe (§5.14a) | - | Scoped (2026-10-19; in-game checklist open; open: vendor buy price source, quality tiers, optional reagents) |
 | Onboarding | First-run steps: starter groups, presets, guild-sharing choice (D7), first scan (starter groups moved here, 2026-10-14) | §6.3 | Needs scoping |
 | One-click macro and keybinds | Bindable button for post, cancel, buy, craft next | §3, §6.2 | Partly scoped (2026-10-14: no keybinds in v1; every buy is one click, D26) |
 | My Auctions view | Own auctions list replacing Blizzard's Auctions tab (Blizzard's Auctions tab stays; decision B) | §3 | Needs scoping |

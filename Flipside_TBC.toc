@@ -66,6 +66,7 @@ Shared\Services\LedgerVendor.lua
 Shared\Services\LedgerHooks.lua
 Shared\Services\LedgerBalance.lua
 Shared\Services\DestroyRules.lua
+Shared\Services\CraftCost.lua
 Shared\UI\Kit\Theme.lua
 Shared\UI\Kit\Window.lua
 Shared\UI\Kit\Widgets.lua
@@ -100,6 +101,8 @@ Shared\Features\Mailing\MailingView.lua
 Shared\Features\Mailing\InboxList.lua
 Shared\Features\Mailing\MailHost.lua
 Shared\Features\Destroy\DestroyWindow.lua
+Shared\Features\Crafting\CraftClient.lua
+Shared\Features\Crafting\CraftPanel.lua
 Shared\Features\Tooltip\Tooltip.lua
 Core_TBC\TooltipHook.lua
 Shared\Core\Init.lua
