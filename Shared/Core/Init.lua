@@ -918,6 +918,10 @@ local function openLedgerMail()
             event = ns.LedgerMail.EVENT_TAKEN,
             print = printLine,
             format = ns.TooltipLines.FormatMoney,
+            after = C_Timer.After,
+            pending = function()
+                return ns.ledgerMail ~= nil and ns.ledgerMail:HasPending()
+            end,
             enabled = function()
                 return ns.db:Get("account", "mail.totalLine") ~= false
             end,

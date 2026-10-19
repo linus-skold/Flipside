@@ -523,6 +523,11 @@ function Mail:_OnGain(amount)
     return true
 end
 
+-- True while a drop waits for its money change or a refresh is scheduled.
+function Mail:HasPending()
+    return #self._pending > 0 or self._scheduled == true
+end
+
 function Mail:_Schedule()
     if self._scheduled then
         return
