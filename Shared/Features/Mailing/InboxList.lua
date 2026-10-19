@@ -17,6 +17,11 @@ local SUBJECT_X = 92
 local EXTRA_WIDTH = 74
 local DAYS_WIDTH = 30
 local TEXT_GAP = 4
+-- The gap between the bottom of the list and the Open All button of the client.
+local OPEN_ALL_GAP = 4
+-- The list frame is above the client buttons (children of the Inbox frame) so that they never show through.
+local COVER_LEVEL = 10
+local COVER_COLOR = { 0.04, 0.03, 0.02, 0.92 }
 local GREY = { 0.75, 0.75, 0.75 }
 local GOLD = { 1, 0.82, 0 }
 local WHITE = { 1, 1, 1 }
@@ -24,6 +29,35 @@ local WHITE = { 1, 1, 1 }
 local function log(level, text)
     if ns.Log and ns.Log.Write then
         ns.Log.Write("mail", level, text)
+    end
+end
+
+-- Returns the number of rows that fit in a list of the given height, in pixels.
+function InboxList.VisibleRows(height)
+    return math.max(0, math.floor(height / ROW_HEIGHT))
+end
+
+-- Anchors the list on the area of the client mail buttons. first is MailItem1, inbox is the Inbox frame, openAll is
+-- the client Open All button (optional). The area keeps the left edge, the top edge and the width of MailItem1. It
+-- reaches down to the Open All button, so it fits more rows than the seven client buttons. Without Open All it ends
+-- at the last client button, lastItem (optional).
+function InboxList.Anchor(frame, inbox, first, openAll, lastItem)
+    local _, _, _, left = first:GetPoint(1)
+    local right = (left or 0) + first:GetWidth() - inbox:GetWidth()
+    frame:ClearAllPoints()
+    frame:SetPoint("TOPLEFT", first, "TOPLEFT", 0, 0)
+    local bottom
+    if openAll then
+        -- A call inside "and" gives one value only, so the call has its own statement.
+        local _, _, relativePoint, _, openY = openAll:GetPoint(1)
+        if relativePoint == "BOTTOM" then
+            bottom = (openY or 0) + openAll:GetHeight() / 2 + OPEN_ALL_GAP
+        end
+    end
+    if bottom then
+        frame:SetPoint("BOTTOMRIGHT", inbox, "BOTTOMRIGHT", right, bottom)
+    else
+        frame:SetPoint("BOTTOMRIGHT", lastItem or first, "BOTTOMRIGHT", 0, 0)
     end
 end
 
@@ -165,6 +199,10 @@ function InboxList.Create(parent, deps)
         end,
     })
     view.frame = view.list.frame
+    view.frame:SetFrameLevel(parent:GetFrameLevel() + COVER_LEVEL)
+    view.cover = view.frame:CreateTexture(nil, "BACKGROUND", nil, -8)
+    view.cover:SetAllPoints(view.frame)
+    view.cover:SetColorTexture(COVER_COLOR[1], COVER_COLOR[2], COVER_COLOR[3], COVER_COLOR[4])
     if deps.place then
         deps.place(view.frame)
     end

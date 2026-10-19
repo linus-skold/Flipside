@@ -17,6 +17,9 @@ describe("MailHost", function()
         function view.Refresh()
             refreshes = refreshes + 1
         end
+        function view:AlignBar(ref, fallback)
+            self.aligned = { ref = ref, fallback = fallback }
+        end
         created[#created + 1] = view
         return view
     end
@@ -171,5 +174,42 @@ describe("MailHost", function()
         mailFrame = frame
         timers[1]()
         assert.are.equal(1, #created)
+    end)
+
+    it("aligns the bottom bar of the view with the client button of the tab that shows", function()
+        local openAll = CreateFrame("Button", "OpenAllMail", inbox)
+        local cancel = CreateFrame("Button", "SendMailCancelButton", send)
+        local inboxBar, sendBar = { bottom = 14, height = 24 }, { bottom = 4, height = 22 }
+        local bus2 = ns.EventBus.New()
+        send:Hide()
+        local host = ns.MailHost.Attach({
+            bus = bus2,
+            frame = function()
+                return mailFrame
+            end,
+            children = function()
+                return {}
+            end,
+            create = makeView,
+            tabs = function()
+                return {
+                    { frame = inbox, ref = openAll, fallback = inboxBar },
+                    { frame = send, ref = cancel, fallback = sendBar },
+                }
+            end,
+            after = function() end,
+        })
+        inbox:Show()
+        bus2:Emit("MAIL_SHOW")
+        local view = host.View()
+        assert.are.equal(2, #host.markers)
+        assert.are.equal(openAll, view.aligned.ref, "the Inbox tab shows first: the bar follows Open All")
+        assert.are.equal(inboxBar, view.aligned.fallback)
+        host.markers[2].scripts.OnShow(host.markers[2])
+        assert.are.equal(cancel, view.aligned.ref, "the Send Mail tab shows: the bar follows Cancel")
+        assert.are.equal(sendBar, view.aligned.fallback)
+        bus2:Emit("MAIL_CLOSED")
+        bus2:Emit("MAIL_SHOW")
+        assert.are.equal(2, #host.markers, "the markers are made once")
     end)
 end)

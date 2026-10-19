@@ -330,6 +330,85 @@ describe("MailingView", function()
         assert.is_false(view.stop.enabled)
     end)
 
+    it("uses the client title font for the header, not a large title font", function()
+        assert.are.equal("Flipside mailing", view.header:GetText())
+        assert.are.equal("GameFontNormal", view.header.fontObject)
+    end)
+
+    local function pointOf(frame, name)
+        for _, point in ipairs(frame.points) do
+            if point[1] == name then
+                return point
+            end
+        end
+    end
+
+    it("puts the status line, Run all and Stop on one bottom bar row", function()
+        assert.are.same({ bottom = 4, height = 22 }, view.bar, "the fallback is the Forever Cancel button")
+        local stop = pointOf(view.stop, "BOTTOMRIGHT")
+        assert.are.equal(view.frame, stop[2])
+        assert.are.equal(4, stop[5])
+        local runAll = pointOf(view.runAll, "RIGHT")
+        assert.are.equal(view.stop, runAll[2], "Run all sits left of Stop")
+        assert.are.equal(22, view.stop.height)
+        assert.are.equal(22, view.runAll.height)
+        local left, right = pointOf(view.status, "LEFT"), pointOf(view.status, "RIGHT")
+        assert.are.equal(4 + 22 / 2, left[5], "the status line is centred on the bar row")
+        assert.are.equal(view.runAll, right[2], "the status line ends at Run all")
+    end)
+
+    it("ends the list above the bottom bar, so the list fills the panel", function()
+        local corner = pointOf(view.list.frame, "BOTTOMRIGHT")
+        assert.are.equal(4 + 22 + 4, corner[5])
+        assert.are.equal("TOPLEFT", pointOf(view.list.frame, "TOPLEFT")[1])
+    end)
+
+    it("takes the baseline and the height of a client button for the bar", function()
+        local cancel = CreateFrame("Button", nil, UIParent)
+        cancel:SetSize(80, 24)
+        cancel.bottom = 100
+        view.frame.bottom = 10
+        view:AlignBar(cancel, { bottom = 1, height = 1 })
+        assert.are.same({ bottom = 90, height = 24 }, view.bar)
+        assert.are.equal(90, pointOf(view.stop, "BOTTOMRIGHT")[5])
+        assert.are.equal(24, view.runAll.height)
+        assert.are.equal(90 + 24 + 4, pointOf(view.list.frame, "BOTTOMRIGHT")[5])
+        local unplaced = CreateFrame("Button", nil, UIParent)
+        unplaced:SetSize(80, 24)
+        view:AlignBar(unplaced, { bottom = 92, height = 22 })
+        assert.are.same({ bottom = 92, height = 22 }, view.bar, "a client button with no layout gives the fallback")
+    end)
+
+    it("has the column titles of the rule row above the list", function()
+        assert.are.equal("Rule", view.columnTitles.name:GetText())
+        assert.are.equal("To", view.columnTitles.recipient:GetText())
+        assert.are.equal("Groups", view.columnTitles.groups:GetText())
+        assert.are.equal("Filter", view.columnTitles.filter:GetText())
+    end)
+
+    it("fits the columns of a row: fixed texts do not overlap and the filter takes the rest up to Run", function()
+        local row = rowOf(20)
+        local name, recipient, groups = pointOf(row.nameText, "LEFT"), pointOf(row.recipientText, "LEFT"),
+            pointOf(row.groupsText, "LEFT")
+        assert.is_true(name[4] + row.nameText.width <= recipient[4])
+        assert.is_true(recipient[4] + row.recipientText.width <= groups[4])
+        local filter = pointOf(row.filterText, "LEFT")
+        assert.is_true(groups[4] + row.groupsText.width <= filter[4])
+        assert.are.equal(row.run, pointOf(row.filterText, "RIGHT")[2], "the filter text ends at the Run button")
+        assert.is_nil(row.filterText.width, "the filter text has no fixed width")
+    end)
+
+    it("shows the full filter text in the tooltip of the row, because the column is short", function()
+        local row = rowOf(20)
+        row.scripts.OnEnter(row)
+        local found = false
+        for _, line in ipairs(mock.tooltip.lines) do
+            if line == "No item filter" then
+                found = true
+            end
+        end
+        assert.is_true(found)
+    end)
     it("has no bottom result box and no group tree", function()
         assert.is_nil(view.results)
         assert.is_nil(view.tree)

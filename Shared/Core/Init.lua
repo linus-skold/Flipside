@@ -1148,10 +1148,9 @@ local function createInboxList()
             return _G.OpenMailFrame
         end,
         skin = ns.AuctionTabs and ns.AuctionTabs.Skin,
-        -- The area of the seven client buttons.
+        -- The area of the client buttons, taller: down to the Open All button.
         place = function(frame)
-            frame:SetPoint("TOPLEFT", _G.MailItem1, "TOPLEFT", 0, 0)
-            frame:SetPoint("BOTTOMRIGHT", _G.MailItem7, "BOTTOMRIGHT", 0, 0)
+            ns.InboxList.Anchor(frame, inbox, _G.MailItem1, _G.OpenAllMail, _G.MailItem7)
         end,
     })
 end
@@ -1188,6 +1187,14 @@ local function openMailing()
             end,
             createInbox = function()
                 return createInboxList()
+            end,
+            -- The bottom bar of the view follows Open All on the Inbox tab and Cancel on the Send Mail tab.
+            tabs = function()
+                local bar = ns.Flavour.mailBar
+                return {
+                    { frame = _G.InboxFrame, ref = _G.OpenAllMail, fallback = bar.inbox },
+                    { frame = _G.SendMailFrame, ref = _G.SendMailCancelButton, fallback = bar.send },
+                }
             end,
             create = function(parent, size)
                 return ns.MailingView.Create(parent, {

@@ -8,9 +8,10 @@ local MailHost = {}
 ns.MailHost = MailHost
 
 local OWNER = "Flipside.MailHost"
--- The extra width of the wide layout, and the gaps of the view in the new strip, in pixels.
-local EXTRA_WIDTH = 330
-local VIEW_GAP = { top = 64, right = 8, bottom = 8 }
+-- The extra width of the wide layout, and the gaps of the view in the new strip, in pixels. The view has the full
+-- height of the strip: its header sits in the row of the client title, its bottom bar on the client bottom row.
+local EXTRA_WIDTH = 380
+local VIEW_GAP = { top = 2, right = 2, bottom = 0 }
 local VIEW_LEVEL = 5
 local OPEN_MAIL_X = 46
 
@@ -110,10 +111,34 @@ MailHost.LAYOUTS = {
     end,
 }
 
+-- Each tab of MailFrame has its own bottom button. A small child frame of each tab frame shows and hides with the
+-- tab. Its OnShow script (a script of our own frame, not a hook) puts the bottom bar of the view on the row of
+-- the button of that tab. tab = { frame, ref (the client button), fallback = { bottom, height } }.
+local function watchTabs(deps, host)
+    if host.watching or not deps.tabs then
+        return
+    end
+    host.watching = true
+    host.markers = {}
+    for _, tab in ipairs(deps.tabs()) do
+        local marker = CreateFrame("Frame", nil, tab.frame)
+        marker:SetSize(1, 1)
+        local function align()
+            host.view:AlignBar(tab.ref, tab.fallback)
+        end
+        marker:SetScript("OnShow", align)
+        host.markers[#host.markers + 1] = marker
+        if tab.frame:IsShown() then
+            align()
+        end
+    end
+end
+
 -- deps: bus, create(parent, size) (returns a MailingView), after(seconds, fn), frame() (returns the MailFrame or
 -- nil), openMail() (the open-mail frame or nil), children() (the frames inside MailFrame that must keep their
 -- width: InboxFrame, SendMailFrame), mode (a key of MailHost.LAYOUTS, default "wide"), createInbox(mailFrame)
--- (optional; returns the compact inbox list, an InboxList, or nil). The inbox list does not depend on the layout:
+-- (optional; returns the compact inbox list, an InboxList, or nil), tabs() (optional; returns the tab list of
+-- watchTabs, one entry for each of Inbox and Send Mail). The inbox list does not depend on the layout:
 -- it shows on MAIL_SHOW, refreshes on MAIL_INBOX_UPDATE and hides on MAIL_CLOSED.
 -- Returns an object with View(), the view or nil, and Inbox(), the inbox list or nil.
 function MailHost.Attach(deps)
@@ -134,6 +159,7 @@ function MailHost.Attach(deps)
         end
         layout.Open(mailFrame)
         open = mailFrame
+        watchTabs(deps, host)
         host.view:Refresh()
         if deps.createInbox then
             host.inbox = host.inbox or deps.createInbox(mailFrame)

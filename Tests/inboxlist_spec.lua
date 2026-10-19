@@ -110,6 +110,62 @@ describe("InboxList", function()
         assert.are.equal(18, rows()[1].height)
     end)
 
+    it("counts the rows that fit in a height", function()
+        assert.are.equal(17, ns.InboxList.VisibleRows(312))
+        assert.are.equal(14, ns.InboxList.VisibleRows(14 * 18))
+        assert.are.equal(0, ns.InboxList.VisibleRows(10))
+        assert.are.equal(0, ns.InboxList.VisibleRows(0))
+    end)
+
+    describe("Anchor", function()
+        local inbox, first, openAll, frame
+
+        before_each(function()
+            inbox = CreateFrame("Frame", nil, UIParent)
+            inbox:SetSize(340, 424)
+            first = CreateFrame("Frame", nil, inbox)
+            first:SetSize(305, 45)
+            first:SetPoint("TOPLEFT", inbox, "TOPLEFT", 13, -70)
+            openAll = CreateFrame("Button", nil, inbox)
+            openAll:SetSize(120, 24)
+            openAll:SetPoint("CENTER", inbox, "BOTTOM", 0, 26)
+            frame = CreateFrame("Frame", nil, inbox)
+        end)
+
+        it("fills the area down to the Open All button, with 14 or more rows", function()
+            ns.InboxList.Anchor(frame, inbox, first, openAll)
+            assert.are.same({ "TOPLEFT", first, "TOPLEFT", 0, 0 }, frame.points[1])
+            local corner = frame.points[2]
+            assert.are.equal("BOTTOMRIGHT", corner[1])
+            assert.are.equal(inbox, corner[2])
+            assert.are.equal(13 + 305 - 340, corner[4], "the right edge is the right edge of the client buttons")
+            assert.are.equal(26 + 12 + 4, corner[5], "the bottom edge is above Open All")
+            local height = 424 - 70 - corner[5]
+            assert.is_true(ns.InboxList.VisibleRows(height) >= 14)
+        end)
+
+        it("ends at the last client button when there is no Open All button", function()
+            local last = CreateFrame("Frame", nil, inbox)
+            ns.InboxList.Anchor(frame, inbox, first, nil, last)
+            assert.are.same({ "BOTTOMRIGHT", last, "BOTTOMRIGHT", 0, 0 }, frame.points[2])
+        end)
+    end)
+
+    it("covers the client buttons: a higher frame level and a solid background", function()
+        assert.is_true(list.frame:GetFrameLevel() > list.frame:GetParent():GetFrameLevel())
+        assert.is_not_nil(list.cover.colorTexture)
+        assert.is_true(list.cover.colorTexture[4] > 0.8)
+    end)
+
+    it("scrolls for more mails than rows", function()
+        assert.is_not_nil(list.list.rows, "the plain list has one row for each mail")
+        for index = 4, 40 do
+            mails[index] = { package = "p", stationery = "m", sender = "S" .. index, subject = "x", money = 0,
+                cod = 0, days = 5, items = 0, read = true }
+        end
+        list:Refresh()
+        assert.are.equal(40, #list.list:GetData())
+    end)
     it("is placed by the host function", function()
         assert.are.equal("TOPLEFT", list.frame.points[1][1])
     end)
