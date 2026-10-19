@@ -259,7 +259,7 @@ local function buildView(deps)
 
     view.usedRows, view.usedSummary = 0, 0
 
-    function view:Show()
+    function view.Show()
         local host = deps.client:Host()
         frame:ClearAllPoints()
         if host then
@@ -270,11 +270,11 @@ local function buildView(deps)
         frame:Show()
     end
 
-    function view:Hide()
+    function view.Hide()
         frame:Hide()
     end
 
-    function view:IsShown()
+    function view.IsShown()
         return frame:IsShown()
     end
 
