@@ -50,6 +50,9 @@ ns.Flavour = {
     mailDelay = 0.5,
     -- Seconds to wait for BAG_UPDATE_DELAYED after a mail before the run goes on.
     mailBagWait = 5,
+    -- Fallback bar of the mailing view (bottom offset, height). Open All is 114 px up (centre), Cancel is 92 px up.
+    -- Source: classic_anniversary Classic/MailFrame.xml.
+    mailBar = { inbox = { bottom = 102, height = 24 }, send = { bottom = 92, height = 22 } },
     savedVariables = { main = "FlipsideDB_TBC", scan = "FlipsideScanDB_TBC", ledger = "FlipsideLedgerDB_TBC" },
     -- Backpack and bag slots 0..NUM_BAG_SLOTS.
     bagIDs = function()

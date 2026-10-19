@@ -35,6 +35,9 @@ ns.Flavour = {
     mailDelay = 0.5,
     -- Seconds to wait for BAG_UPDATE_DELAYED after a mail before the run goes on.
     mailBagWait = 5,
+    -- Fallback bar of the mailing view (bottom offset, height). Open All is 26 px up (centre), Cancel is 4 px up.
+    -- Source: Blizzard_MailFrame/MailFrame.xml.
+    mailBar = { inbox = { bottom = 14, height = 24 }, send = { bottom = 4, height = 22 } },
     savedVariables = { main = "FlipsideDB", scan = "FlipsideScanDB", ledger = "FlipsideLedgerDB" },
     -- Bag and bank container ids; each call returns a new list.
     bagIDs = function()

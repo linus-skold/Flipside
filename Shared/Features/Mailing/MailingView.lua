@@ -10,20 +10,29 @@ ns.MailingView = MailingView
 local Kit = ns.Kit
 -- The row height of the Ledger list (LedgerPage).
 local ROW_HEIGHT = 18
-local SIDE = 6
-local TOP = -30
--- Space under the list, from the bottom edge: the buttons and the status line.
-local LIST_BOTTOM = 64
-local STATUS_BOTTOM = 40
+-- The gap at the left and the right edge: the inset of the client frames starts 4 px from the frame edge.
+local SIDE = 4
+-- The centre of the header text, from the top edge. It is the row of the client title.
+local HEADER_Y = -10
+-- The top edge of the list inset, and the centre of the column titles. The client Inbox inset starts at 58.
+local TOP = -58
+local COLUMN_TITLE_Y = -49
+local BAR_GAP = 4
 local RUN_WIDTH = 34
 local RUN_HEIGHT = 16
--- The columns of a rule row: the x offset and the width of each text.
+local BUTTON_WIDTH = 70
+local BUTTON_GAP = 4
+-- The bottom bar when the client buttons are not known: the Forever Send and Cancel buttons (22 px high, 4 px up).
+local DEFAULT_BAR = { bottom = 4, height = 22 }
+-- The columns of a rule row: the x offset and the width of each text. The filter text takes the space that is left
+-- up to the Run button.
 local COLUMNS = {
-    name = { 4, 68 },
-    recipient = { 76, 56 },
-    groups = { 136, 44 },
-    filter = { 184, 70 },
+    name = { 4, 72 },
+    recipient = { 78, 58 },
+    groups = { 140, 48 },
+    filter = { 192 },
 }
+local COLUMN_TITLES = { name = "Rule", recipient = "To", groups = "Groups", filter = "Filter" }
 local GROUP_TIP_LINES = 12
 local GREY = { 0.5, 0.5, 0.5 }
 local GOLD = { 1, 0.82, 0 }
@@ -190,9 +199,13 @@ local function showTooltip(row, rule)
     GameTooltip:Show()
 end
 
-local function placeText(row, label, column)
+local function placeText(row, label, column, rightOf)
     label:SetPoint("LEFT", row, "LEFT", column[1], 0)
-    label:SetWidth(column[2])
+    if rightOf then
+        label:SetPoint("RIGHT", rightOf, "LEFT", -BAR_GAP, 0)
+    else
+        label:SetWidth(column[2])
+    end
     label:SetJustifyH("LEFT")
     setNoWrap(label)
 end
@@ -205,13 +218,13 @@ local function buildRow(view, row)
     placeText(row, row.recipientText, COLUMNS.recipient)
     row.groupsText = Kit.Label(row, "", "small")
     placeText(row, row.groupsText, COLUMNS.groups)
-    row.filterText = Kit.Label(row, "", "small")
-    placeText(row, row.filterText, COLUMNS.filter)
     row.run = Kit.Button(row, "Run", RUN_WIDTH, function()
         view:RunRule(row.rule.id)
     end)
     row.run:SetHeight(RUN_HEIGHT)
     row.run:SetPoint("RIGHT", row, "RIGHT", -2, 0)
+    row.filterText = Kit.Label(row, "", "small")
+    placeText(row, row.filterText, COLUMNS.filter, row.run)
     row:SetScript("OnEnter", function(self)
         showTooltip(self, self.rule)
     end)
@@ -250,8 +263,17 @@ function MailingView.Create(parent, deps, size)
     end
     view.frame = frame
 
-    local title = Kit.Label(frame, "Flipside mailing", "title")
-    title:SetPoint("TOPLEFT", frame, "TOPLEFT", SIDE + 2, -8)
+    -- The header uses the font of the client title (GameFontNormal), on the row of the client title.
+    view.header = Kit.Label(frame, "Flipside mailing", "normal")
+    view.header:SetPoint("LEFT", frame, "TOPLEFT", SIDE + 4, HEADER_Y)
+    -- The column titles sit above the list, over the columns of the rows.
+    view.columnTitles = {}
+    for key, column in pairs(COLUMNS) do
+        local label = Kit.Label(frame, COLUMN_TITLES[key], "small")
+        label:SetPoint("LEFT", frame, "TOPLEFT", SIDE + Kit.Theme.insetPadding + column[1], COLUMN_TITLE_Y)
+        label:SetTextColor(GREY[1], GREY[2], GREY[3])
+        view.columnTitles[key] = label
+    end
 
     view.list = Kit.CreateList(frame, {
         rowHeight = ROW_HEIGHT,
@@ -262,25 +284,19 @@ function MailingView.Create(parent, deps, size)
             initRow(view, row, rule)
         end,
     })
-    view.list.frame:SetPoint("TOPLEFT", frame, "TOPLEFT", SIDE, TOP)
-    view.list.frame:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -SIDE, LIST_BOTTOM)
-
     view.status = Kit.Label(frame, "", "small")
-    view.status:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", SIDE + 4, STATUS_BOTTOM)
-    view.status:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -SIDE - 4, STATUS_BOTTOM)
     view.status:SetJustifyH("LEFT")
     setNoWrap(view.status)
 
-    view.runAll = Kit.Button(frame, "Run all", 80, function()
+    view.runAll = Kit.Button(frame, "Run all", BUTTON_WIDTH, function()
         view:RunAll()
     end)
-    view.runAll:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", SIDE, SIDE + 2)
-    view.stop = Kit.Button(frame, "Stop", 80, function()
+    view.stop = Kit.Button(frame, "Stop", BUTTON_WIDTH, function()
         view.run:Stop()
     end)
-    view.stop:SetPoint("LEFT", view.runAll, "RIGHT", 8, 0)
     view.stop:Disable()
-
+    setmetatable(view, { __index = MailingView })
+    view:AlignBar(nil, DEFAULT_BAR)
     view.run = deps.newRun({
         onProgress = function(status)
             view:ShowProgress(status)
@@ -289,7 +305,34 @@ function MailingView.Create(parent, deps, size)
             view:ShowResult(result)
         end,
     })
-    return setmetatable(view, { __index = MailingView })
+    return view
+end
+
+-- Places the bottom bar (the status line, Run all and Stop) and the bottom of the list. The bar takes the baseline
+-- and the height of ref, a client button (Open All on the Inbox tab, Cancel on the Send Mail tab), when the client
+-- has laid it out. Otherwise it takes fallback = { bottom, height }.
+function MailingView:AlignBar(ref, fallback)
+    local frame = self.frame
+    local bottom, height = fallback.bottom, fallback.height
+    local refBottom = ref and ref.GetBottom and ref:GetBottom()
+    local frameBottom = frame.GetBottom and frame:GetBottom()
+    if refBottom and frameBottom and ref:GetHeight() > 0 then
+        bottom, height = refBottom - frameBottom, ref:GetHeight()
+    end
+    self.bar = { bottom = bottom, height = height }
+    self.stop:SetHeight(height)
+    self.stop:ClearAllPoints()
+    self.stop:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -SIDE - 1, bottom)
+    self.runAll:SetHeight(height)
+    self.runAll:ClearAllPoints()
+    self.runAll:SetPoint("RIGHT", self.stop, "LEFT", -BUTTON_GAP, 0)
+    self.status:ClearAllPoints()
+    self.status:SetPoint("LEFT", frame, "BOTTOMLEFT", SIDE + 4, bottom + height / 2)
+    self.status:SetPoint("RIGHT", self.runAll, "LEFT", -BUTTON_GAP, 0)
+    local list = self.list.frame
+    list:ClearAllPoints()
+    list:SetPoint("TOPLEFT", frame, "TOPLEFT", SIDE, TOP)
+    list:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -SIDE, bottom + height + BAR_GAP)
 end
 
 -- Builds the row data of one mailing operation, with its groups and its planned mails.

@@ -314,6 +314,11 @@ function frameMethods:GetLeft()
     return self.left or 0
 end
 
+-- Set f.bottom in a test to place the frame on the screen. Without it the frame has no layout (nil), as in the client.
+function frameMethods:GetBottom()
+    return self.bottom
+end
+
 function frameMethods:SetColorTexture(r, g, b, a)
     self.colorTexture = { r, g, b, a }
 end
