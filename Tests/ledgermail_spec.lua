@@ -613,4 +613,32 @@ describe("LedgerMail", function()
             assert.are.equal(0, #filled)
         end)
     end)
+
+    describe("the taken event", function()
+        it("fires once with the amount when the player takes the money of a mail", function()
+            local taken = {}
+            bus:Subscribe(ns.LedgerMail.EVENT_TAKEN, "spec", function(_, amount)
+                taken[#taken + 1] = amount
+            end)
+            inbox[1] = { sender = "Bob", subject = "Gold", money = 5000, itemCount = 0 }
+            open()
+            assert.are.equal(0, #taken)
+            inbox[1].money = 0
+            change(5000)
+            advance(2)
+            assert.are.same({ 5000 }, taken)
+        end)
+
+        it("does not fire for a money change without a mail", function()
+            local taken = {}
+            bus:Subscribe(ns.LedgerMail.EVENT_TAKEN, "spec", function(_, amount)
+                taken[#taken + 1] = amount
+            end)
+            inbox[1] = { sender = "Bob", subject = "Items", money = 0, itemCount = 1 }
+            open()
+            change(-30)
+            advance(2)
+            assert.are.equal(0, #taken)
+        end)
+    end)
 end)
