@@ -66,7 +66,7 @@ function MailTotal.Attach(deps)
         end)
     end
 
-    deps.bus:Subscribe(deps.event, OWNER, function(amount)
+    deps.bus:Subscribe(deps.event, OWNER, function(_, amount)
         if type(amount) == "number" and amount > 0 then
             total = total + amount
             count = count + 1

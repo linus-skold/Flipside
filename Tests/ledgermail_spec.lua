@@ -617,7 +617,7 @@ describe("LedgerMail", function()
     describe("the taken event", function()
         it("fires once with the amount when the player takes the money of a mail", function()
             local taken = {}
-            bus:Subscribe(ns.LedgerMail.EVENT_TAKEN, "spec", function(amount)
+            bus:Subscribe(ns.LedgerMail.EVENT_TAKEN, "spec", function(_, amount)
                 taken[#taken + 1] = amount
             end)
             inbox[1] = { sender = "Bob", subject = "Gold", money = 5000, itemCount = 0 }
@@ -631,7 +631,7 @@ describe("LedgerMail", function()
 
         it("does not fire for a money change without a mail", function()
             local taken = {}
-            bus:Subscribe(ns.LedgerMail.EVENT_TAKEN, "spec", function(amount)
+            bus:Subscribe(ns.LedgerMail.EVENT_TAKEN, "spec", function(_, amount)
                 taken[#taken + 1] = amount
             end)
             inbox[1] = { sender = "Bob", subject = "Items", money = 0, itemCount = 1 }
