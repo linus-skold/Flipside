@@ -1225,6 +1225,43 @@ local function openMailing()
     end
 end
 
+-- Attach the craft profit panel to the profession window; it needs the settings DB and the formula runner.
+local function openCrafting()
+    if not (ns.db and ns.formulaRun and ns.CraftPanel and ns.CraftClient and ns.CraftCost and ns.SellingPlan
+        and ns.Kit and ns.TooltipLines) then
+        return
+    end
+    local ok, err = pcall(function()
+        local Panel = ns.CraftPanel
+        local keys = { reagent = Panel.REAGENT_KEY, item = Panel.ITEM_KEY }
+        ns.craftPanel = Panel.Attach({
+            kit = ns.Kit,
+            client = ns.CraftClient.New(_G),
+            bus = ns.bus,
+            format = ns.TooltipLines.FormatMoney,
+            run = ns.formulaRun,
+            cut = ns.SellingPlan.Cut,
+            getFormulas = function()
+                return ns.db:Get("account", Panel.REAGENT_KEY) or Panel.DEFAULT_REAGENT_FORMULA,
+                    ns.db:Get("account", Panel.ITEM_KEY) or Panel.DEFAULT_ITEM_FORMULA
+            end,
+            setFormula = function(which, text)
+                local compiled, compileErr = ns.formulaRun:Compile(text)
+                if not compiled then
+                    return false, compileErr and compileErr.message or "The formula is not valid."
+                end
+                if not ns.db:Set("account", keys[which], text) then
+                    return false, "Settings are read-only."
+                end
+                return true
+            end,
+        })
+    end)
+    if not ok then
+        ns.ReportError("the craft profit panel is not available this session: " .. tostring(err))
+    end
+end
+
 -- Write the session marker: addon version, flavour, client build, realm and character.
 local function writeSessionMarker()
     if not ns.Log then
@@ -1272,6 +1309,7 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
         openBalance()
         openTooltip()
         openMailing()
+        openCrafting()
         openAutoRules()
         openUI()
         openMinimapButton()
