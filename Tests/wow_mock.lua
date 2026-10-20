@@ -327,6 +327,10 @@ function frameMethods:SetVertexColor(r, g, b, a)
     self.vertexColor = { r, g, b, a }
 end
 
+function frameMethods:SetTexCoord(...)
+    self.texCoord = { ... }
+end
+
 function frameMethods:SetThickness(thickness)
     self.thickness = thickness
 end

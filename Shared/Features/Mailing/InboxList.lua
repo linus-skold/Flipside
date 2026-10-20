@@ -8,12 +8,20 @@ local InboxList = {}
 ns.InboxList = InboxList
 
 local Kit = ns.Kit
--- The row height of the Ledger list (LedgerPage).
-local ROW_HEIGHT = 18
-local ICON_SIZE = 16
-local SENDER_X = 22
-local SENDER_WIDTH = 66
-local SUBJECT_X = 92
+-- The row pitch: the content height plus the gap between two rows. 21 px still fits 14 rows above Open All.
+local ROW_HEIGHT = 21
+-- The empty space at the bottom of each row. The separator line sits in it.
+local ROW_GAP = 2
+-- The square slot (border) of the icon, and the icon inside it with its padding.
+local SLOT_SIZE = 18
+local ICON_SIZE = 14
+local SLOT_X = 2
+local ICON_TEXCOORD = { 0.07, 0.93, 0.07, 0.93 }
+local SENDER_X = 24
+local SENDER_WIDTH = 64
+local SUBJECT_X = 90
+-- The text sits in the content area, above the gap.
+local TEXT_Y = ROW_GAP / 2
 local EXTRA_WIDTH = 74
 local DAYS_WIDTH = 30
 local TEXT_GAP = 4
@@ -28,6 +36,10 @@ local WHITE = { 1, 1, 1 }
 -- The look of a row with no mail: a client empty item slot and a dim bar.
 local EMPTY_SLOT_TEXTURE = "Interface\\Buttons\\UI-Slot-Background"
 local EMPTY_BAR_COLOR = { 0, 0, 0, 0.25 }
+-- The client item frame border (the quality border of item buttons), tinted dark, and the row separator line.
+local BORDER_TEXTURE = "Interface\\Common\\WhiteIconFrame"
+local BORDER_COLOR = { 0.45, 0.4, 0.32 }
+local SEPARATOR_COLOR = { 0.55, 0.45, 0.3, 0.45 }
 local EMPTY_ROW = { empty = true }
 
 local function log(level, text)
@@ -131,10 +143,21 @@ end
 local function buildRow(view, row)
     row.icon = row:CreateTexture(nil, "ARTWORK")
     row.icon:SetSize(ICON_SIZE, ICON_SIZE)
-    row.icon:SetPoint("LEFT", row, "LEFT", 2, 0)
+    row.icon:SetPoint("LEFT", row, "LEFT", SLOT_X + (SLOT_SIZE - ICON_SIZE) / 2, TEXT_Y)
+    row.icon:SetTexCoord(ICON_TEXCOORD[1], ICON_TEXCOORD[2], ICON_TEXCOORD[3], ICON_TEXCOORD[4])
+    row.border = row:CreateTexture(nil, "OVERLAY")
+    row.border:SetSize(SLOT_SIZE, SLOT_SIZE)
+    row.border:SetPoint("LEFT", row, "LEFT", SLOT_X, TEXT_Y)
+    row.border:SetTexture(BORDER_TEXTURE)
+    row.border:SetVertexColor(BORDER_COLOR[1], BORDER_COLOR[2], BORDER_COLOR[3])
+    row.separator = row:CreateTexture(nil, "BORDER")
+    row.separator:SetHeight(1)
+    row.separator:SetPoint("BOTTOMLEFT", row, "BOTTOMLEFT", 0, 0)
+    row.separator:SetPoint("BOTTOMRIGHT", row, "BOTTOMRIGHT", 0, 0)
+    row.separator:SetColorTexture(SEPARATOR_COLOR[1], SEPARATOR_COLOR[2], SEPARATOR_COLOR[3], SEPARATOR_COLOR[4])
     row.selection = Kit.SelectionTexture(row, view.deps.skin)
     row.days = Kit.Label(row, "", "small")
-    row.days:SetPoint("RIGHT", row, "RIGHT", -2, 0)
+    row.days:SetPoint("RIGHT", row, "RIGHT", -2, TEXT_Y)
     row.days:SetWidth(DAYS_WIDTH)
     row.days:SetJustifyH("RIGHT")
     row.extra = Kit.Label(row, "", "small")
@@ -142,22 +165,23 @@ local function buildRow(view, row)
     row.extra:SetWidth(EXTRA_WIDTH)
     row.extra:SetJustifyH("RIGHT")
     row.sender = Kit.Label(row, "", "small")
-    row.sender:SetPoint("LEFT", row, "LEFT", SENDER_X, 0)
+    row.sender:SetPoint("LEFT", row, "LEFT", SENDER_X, TEXT_Y)
     row.sender:SetWidth(SENDER_WIDTH)
     row.sender:SetJustifyH("LEFT")
     row.subject = Kit.Label(row, "", "small")
-    row.subject:SetPoint("LEFT", row, "LEFT", SUBJECT_X, 0)
+    row.subject:SetPoint("LEFT", row, "LEFT", SUBJECT_X, TEXT_Y)
     row.subject:SetPoint("RIGHT", row.extra, "LEFT", -TEXT_GAP, 0)
     row.subject:SetJustifyH("LEFT")
     for _, label in ipairs({ row.days, row.extra, row.sender, row.subject }) do
         setNoWrap(label)
     end
     row.slot = row:CreateTexture(nil, "ARTWORK")
-    row.slot:SetSize(ICON_SIZE, ICON_SIZE)
-    row.slot:SetPoint("LEFT", row, "LEFT", 2, 0)
+    row.slot:SetSize(SLOT_SIZE - 2, SLOT_SIZE - 2)
+    row.slot:SetPoint("LEFT", row, "LEFT", SLOT_X + 1, TEXT_Y)
     row.slot:SetTexture(EMPTY_SLOT_TEXTURE)
     row.bar = row:CreateTexture(nil, "BACKGROUND", nil, -1)
-    row.bar:SetAllPoints(row)
+    row.bar:SetPoint("TOPLEFT", row, "TOPLEFT", 0, 0)
+    row.bar:SetPoint("BOTTOMRIGHT", row, "BOTTOMRIGHT", 0, ROW_GAP)
     row.bar:SetColorTexture(EMPTY_BAR_COLOR[1], EMPTY_BAR_COLOR[2], EMPTY_BAR_COLOR[3], EMPTY_BAR_COLOR[4])
     row:SetScript("OnClick", function(self)
         if self.mail then

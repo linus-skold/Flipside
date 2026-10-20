@@ -106,13 +106,21 @@ describe("InboxList", function()
         assert.are.equal(3, #list.list:GetData())
     end)
 
-    it("uses the row height of the Ledger list", function()
-        assert.are.equal(18, rows()[1].height)
+    it("uses a compact row pitch with a gap, a separator and a padded icon slot", function()
+        local row = rows()[1]
+        assert.are.equal(21, row.height)
+        assert.is_not_nil(row.separator.colorTexture)
+        assert.are.equal(1, row.separator:GetHeight())
+        assert.are.equal(18, row.border:GetWidth())
+        assert.are.equal(18, row.border:GetHeight())
+        assert.are.equal(14, row.icon:GetWidth())
+        assert.are.equal(14, row.icon:GetHeight())
+        assert.are.same({ 0.07, 0.93, 0.07, 0.93 }, row.icon.texCoord)
     end)
 
     it("counts the rows that fit in a height", function()
-        assert.are.equal(17, ns.InboxList.VisibleRows(312))
-        assert.are.equal(14, ns.InboxList.VisibleRows(14 * 18))
+        assert.are.equal(14, ns.InboxList.VisibleRows(312))
+        assert.are.equal(14, ns.InboxList.VisibleRows(14 * 21))
         assert.are.equal(0, ns.InboxList.VisibleRows(10))
         assert.are.equal(0, ns.InboxList.VisibleRows(0))
     end)
@@ -132,7 +140,7 @@ describe("InboxList", function()
         end
 
         before_each(function()
-            list.frame.height = ROWS * 18 + 2 * 4
+            list.frame.height = ROWS * 21 + 2 * 4
         end)
 
         it("fills the rows below the last mail with empty slots", function()
