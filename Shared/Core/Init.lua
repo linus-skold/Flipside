@@ -92,6 +92,18 @@ end
 -- Open the settings DB; leave ns.db nil and print one line if that is not possible.
 -- Version 2: the saved post durations of an operation use the hours of the flavour (TBC: 2, 8, 24 became 12, 24, 48).
 -- A flavour without legacyDurations needs no change.
+-- Account defaults: the ledger defaults and ui.sounds (client sounds, default on).
+local function accountDefaults()
+    local defaults = ns.LedgerRecord and ns.LedgerRecord.Defaults() or {}
+    defaults["ui.sounds"] = true
+    return defaults
+end
+
+-- Setting ui.sounds (account scope, default on). Sounds stay on if settings are missing.
+local function uiSoundsEnabled()
+    return ns.db == nil or ns.db:Get("account", "ui.sounds") ~= false
+end
+
 local function migrateDurations(data)
     local old, new = ns.Flavour.legacyDurations, ns.Flavour.durations
     if not (old and new) then
@@ -129,7 +141,7 @@ local function openSettingsDB()
         character = character,
         schemaVersion = 2,
         migrations = { [2] = migrateDurations },
-        defaults = { account = ns.LedgerRecord and ns.LedgerRecord.Defaults() or nil },
+        defaults = { account = accountDefaults() },
         onWarning = ns.ReportError,
     })
     if not ok then
@@ -137,6 +149,9 @@ local function openSettingsDB()
         return
     end
     ns.db = result
+    if ns.Kit and ns.Kit.SetSoundGate then
+        ns.Kit.SetSoundGate(uiSoundsEnabled)
+    end
     ns.bus:Emit("Flipside.DBReady")
 end
 
@@ -488,6 +503,11 @@ local function openScan()
         end
     end)
     startRollUp()
+end
+
+-- Turn Flipside client sounds on or off. Return false if settings are read-only or missing.
+function ns.SetUISounds(on)
+    return ns.db ~= nil and ns.db:Set("account", "ui.sounds", on and true or false) and true or false
 end
 
 -- Setting sync.guildEnabled (account scope, default off): share scan prices with the guild (SPEC 3.5).
@@ -1595,6 +1615,7 @@ local function withMainWindow(action)
             getVersionLine = ns.VersionLine,
             openLog = ns.OpenLogWindow,
             guildSync = ns.guildSync and { isEnabled = guildSyncEnabled, setEnabled = ns.SetGuildSync } or nil,
+            sounds = { isEnabled = uiSoundsEnabled, setEnabled = ns.SetUISounds },
         })
         action(window)
     end)

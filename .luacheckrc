@@ -10,6 +10,8 @@ read_globals = {
     "GetCursorPosition",
     "AuctionHouseFrame",
     "hooksecurefunc",
+    "PlaySound",
+    "SOUNDKIT",
     "Minimap",
     "ChatEdit_InsertLink",
     "CANCEL",

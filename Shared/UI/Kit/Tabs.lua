@@ -128,6 +128,7 @@ function Kit.CreatePageTabs(window, pages, options)
             tab:SetPoint("TOPLEFT", self.buttons[index - 1], "TOPRIGHT", TAB_GAP, 0)
         end
         tab:SetScript("OnClick", function()
+            Kit.PlaySound("tab")
             self:Select(page.key)
         end)
         -- Run after the client OnShow resize.
@@ -213,6 +214,7 @@ function Kit.CreateTopTabs(parent, tabs, options)
             tab:SetPoint("TOPLEFT", self.buttons[index - 1], "TOPRIGHT", TAB_GAP, 0)
         end
         tab:SetScript("OnClick", function()
+            Kit.PlaySound("tab")
             self:Select(key)
         end)
         self.buttons[index] = tab

@@ -11,7 +11,7 @@ local GLOBAL_NAMES = {
     "SLASH_SCANTEST1", "ScanTestDB", "SlashCmdList",
     "StaticPopupDialogs", "StaticPopup_Show", "UnitName", "WOW_PROJECT_ID", "date", "debugprofilestop", "time",
     "UISpecialFrames", "UIParent", "GameTooltip", "GetMoneyString", "GetMoney", "issecretvalue",
-    "PanelTemplates_SetNumTabs",
+    "PanelTemplates_SetNumTabs", "PlaySound", "SOUNDKIT",
     "PanelTemplates_SetTab", "PanelTemplates_TabResize", "InCombatLockdown", "ScrollUtil", "CreateDataProvider",
     "CreateScrollBoxListLinearView", "CreateTreeDataProvider", "CreateScrollBoxListTreeListView", "MenuUtil",
     "Enum", "TooltipDataProcessor", "IsAltKeyDown", "GetInboxNumItems", "GetInboxItemLink", "GetInboxItem",
@@ -563,6 +563,11 @@ function M.reset(options)
 
     M.missingTemplates = {} -- template names that CreateFrame rejects
     M.inCombat = false -- result of InCombatLockdown()
+    M.sounds = {} -- keys that PlaySound was called with
+    _G.SOUNDKIT = { IG_CHARACTER_INFO_TAB = 841, IG_CHARACTER_INFO_OPEN = 839, IG_CHARACTER_INFO_CLOSE = 840 }
+    _G.PlaySound = function(key)
+        M.sounds[#M.sounds + 1] = key
+    end
     M.tabCalls = {} -- PanelTemplates_SetNumTabs and PanelTemplates_SetTab calls
     M.tooltip = { shown = false, title = nil, lines = {} }
     M.scrollInit = nil -- last ScrollUtil.InitScrollBoxListWithScrollBar call
