@@ -779,7 +779,8 @@ local function buildInventoryApi()
     }
     if type(GetInboxNumItems) == "function" and type(GetInboxItemLink) == "function"
         and type(GetInboxItem) == "function" then
-        api.mail = { numItems = GetInboxNumItems, itemLink = GetInboxItemLink, itemInfo = GetInboxItem }
+        api.mail = { numItems = GetInboxNumItems, itemLink = GetInboxItemLink, itemInfo = GetInboxItem,
+            header = type(GetInboxHeaderInfo) == "function" and GetInboxHeaderInfo or nil }
     end
     if ns.AuctionClient.CanReadOwned() then
         api.auctions = { owned = ns.AuctionClient.OwnedAuctions }

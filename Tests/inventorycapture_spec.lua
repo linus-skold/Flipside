@@ -1,6 +1,6 @@
 local manifest = require("Tests.manifest")
 describe("InventoryCapture", function()
-    local ns, bus, saved, timers, reports, bags, bankSlots, mail, owned, failBags
+    local ns, bus, saved, timers, reports, bags, bankSlots, mail, owned, failBags, attachmentReads
 
     local function link(id)
         return "|cff1eff00|Hitem:" .. id .. "::::::::60:::::|h[x]|h|r"
@@ -30,7 +30,14 @@ describe("InventoryCapture", function()
                 },
                 mail = {
                     numItems = function() return #mail end,
-                    itemLink = function(i, a) return mail[i][a] and mail[i][a].link end,
+                    header = function(i)
+                        local m = mail[i]
+                        return "pkg", "stat", "Sender" .. i, "Subject" .. i, m.money or 0, 0, 3, #m
+                    end,
+                    itemLink = function(i, a)
+                        attachmentReads = attachmentReads + 1
+                        return mail[i][a] and mail[i][a].link
+                    end,
                     itemInfo = function(i, a) return "n", 0, "t", mail[i][a].count end,
                 },
                 auctions = { owned = function() return owned end },
@@ -62,7 +69,7 @@ describe("InventoryCapture", function()
             assert(loadfile(manifest.path(name)))("Flipside", ns)
         end
         bus = ns.EventBus.New({})
-        saved, timers, reports, failBags = {}, {}, {}, false
+        saved, timers, reports, failBags, attachmentReads = {}, {}, {}, false, 0
         bags = { [0] = { { itemID = 10, hyperlink = link(10), stackCount = 4 } } }
         bankSlots = { [6] = { { itemID = 20, hyperlink = link(20), stackCount = 2 } } }
         mail = { { { link = link(30), count = 5 } } }
@@ -114,6 +121,43 @@ describe("InventoryCapture", function()
         run()
         assert.are.equal(5, last("mail")["30"])
         assert.are.equal(7, last("auctions")["40"])
+    end)
+
+    it("skips the attachment read and the save when the inbox headers do not change", function()
+        bus:Emit("MAIL_INBOX_UPDATE")
+        run()
+        local reads = attachmentReads
+        assert.is_true(reads > 0)
+        saved = {}
+        bus:Emit("MAIL_INBOX_UPDATE")
+        run()
+        assert.are.equal(reads, attachmentReads, "no attachment read")
+        assert.is_nil(last("mail"), "no SetLocation call")
+        mail[1].money = 50
+        bus:Emit("MAIL_INBOX_UPDATE")
+        run()
+        assert.are.equal(5, last("mail")["30"], "a changed header makes a new read")
+        saved = {}
+        mail[2] = { { link = link(31), count = 2 } }
+        bus:Emit("MAIL_INBOX_UPDATE")
+        run()
+        assert.are.equal(2, last("mail")["31"], "a new mail makes a new read")
+    end)
+
+    it("reads the mail again after a read with errors", function()
+        local info = ns.HoldingsRead.Mail
+        local calls = 0
+        ns.HoldingsRead.Mail = function(...)
+            calls = calls + 1
+            local items = info(...)
+            return items, { errors = 1 }
+        end
+        bus:Emit("MAIL_INBOX_UPDATE")
+        run()
+        bus:Emit("MAIL_INBOX_UPDATE")
+        run()
+        ns.HoldingsRead.Mail = info
+        assert.are.equal(2, calls)
     end)
 
     it("reports a failing read once", function()
