@@ -9,8 +9,9 @@ local LEFT_WIDTH = 300
 local RIGHT_X = 312
 local RIGHT_WIDTH = 460
 local GRID_COLUMNS, GRID_ROWS = 3, 4
-local GRID_COLUMN_WIDTH = math.floor(RIGHT_WIDTH / GRID_COLUMNS)
-local GRID_ROW_HEIGHT = 24
+local GRID_BASE_WIDTH = math.floor(RIGHT_WIDTH / GRID_COLUMNS)
+local GRID_ROW_HEIGHT, GRID_WRAP_ROW_HEIGHT = 24, 32
+local GRID_BOX, GRID_GAP, GRID_PAD = 26, 4, 8
 local GRID_BOTTOM = 32
 local REMOVE_DIALOG = "FLIPSIDE_REMOVE_TOOLTIP_LINE"
 local RESET_DIALOG = "FLIPSIDE_RESET_TOOLTIP"
@@ -383,18 +384,47 @@ function TooltipPage.Build(content, deps)
 
     -- One grid of check boxes: 3 columns of equal width, filled row by row, same row height.
     local grid = CreateFrame("Frame", nil, content)
-    grid:SetSize(GRID_COLUMNS * GRID_COLUMN_WIDTH, GRID_ROWS * GRID_ROW_HEIGHT)
     grid:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", RIGHT_X, GRID_BOTTOM)
     page.grid = grid
     page.gridChecks = {}
 
     local function gridCheck(text, onChange)
-        local index = #page.gridChecks + 1
-        local column, row = (index - 1) % GRID_COLUMNS, math.floor((index - 1) / GRID_COLUMNS)
         local check = Kit.Check(grid, text, onChange)
-        check:SetPoint("TOPLEFT", grid, "TOPLEFT", column * GRID_COLUMN_WIDTH, -row * GRID_ROW_HEIGHT)
-        page.gridChecks[index] = check
+        page.gridChecks[#page.gridChecks + 1] = check
         return check
+    end
+
+    -- Sizes the columns from the widest label and places the boxes. If 3 wide columns do not fit in
+    -- the right side, the columns keep the base width and long labels wrap to 2 lines.
+    local function layoutGrid()
+        local widest = 0
+        for _, check in ipairs(page.gridChecks) do
+            if check.Text and check.Text.GetStringWidth then
+                widest = math.max(widest, check.Text:GetStringWidth())
+            end
+        end
+        local needed = GRID_BOX + GRID_GAP + widest + GRID_PAD
+        local columnWidth, rowHeight = GRID_BASE_WIDTH, GRID_ROW_HEIGHT
+        if needed * GRID_COLUMNS <= RIGHT_WIDTH then
+            columnWidth = math.max(needed, GRID_BASE_WIDTH)
+        elseif needed > columnWidth then
+            rowHeight = GRID_WRAP_ROW_HEIGHT
+        end
+        page.gridColumnWidth, page.gridRowHeight = columnWidth, rowHeight
+        grid:SetSize(GRID_COLUMNS * columnWidth, GRID_ROWS * rowHeight)
+        for index, check in ipairs(page.gridChecks) do
+            local column, row = (index - 1) % GRID_COLUMNS, math.floor((index - 1) / GRID_COLUMNS)
+            if check.Text and check.Text.SetWidth then
+                check.Text:SetWidth(columnWidth - GRID_BOX - GRID_GAP)
+                if check.Text.SetJustifyH then
+                    check.Text:SetJustifyH("LEFT")
+                end
+                if check.Text.SetWordWrap then
+                    check.Text:SetWordWrap(rowHeight == GRID_WRAP_ROW_HEIGHT)
+                end
+            end
+            check:SetPoint("TOPLEFT", grid, "TOPLEFT", column * columnWidth, -row * rowHeight)
+        end
     end
 
     -- Calls apply(name, checked) for each name whose box differs from the stored set.
