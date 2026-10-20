@@ -35,6 +35,44 @@ local function setEnabled(widget, enabled)
     end
 end
 
+local DEFAULT_COLOR = { 1, 1, 1 }
+
+-- Opens the client colour picker. Forever has ColorPickerFrame:SetupColorPickerAndShow(info); an older client
+-- (TBC) takes the func and cancelFunc fields. onChange(r, g, b) runs on each change; onCancel(r, g, b) gives
+-- the old colour back. Returns false if the client has no picker.
+local function showColorPicker(color, onChange, onCancel)
+    local picker = _G.ColorPickerFrame
+    if type(picker) ~= "table" then
+        return false
+    end
+    local function cancel(previous)
+        previous = type(previous) == "table" and previous or {}
+        onCancel(previous.r or previous[1] or color[1], previous.g or previous[2] or color[2],
+            previous.b or previous[3] or color[3])
+    end
+    if type(picker.SetupColorPickerAndShow) == "function" then
+        picker:SetupColorPickerAndShow({
+            r = color[1], g = color[2], b = color[3],
+            swatchFunc = function()
+                onChange(picker:GetColorRGB())
+            end,
+            cancelFunc = cancel,
+        })
+        return true
+    end
+    picker.func = function()
+        onChange(picker:GetColorRGB())
+    end
+    picker.cancelFunc = cancel
+    picker.hasOpacity = false
+    picker.opacityFunc = nil
+    picker.previousValues = { color[1], color[2], color[3] }
+    picker:SetColorRGB(color[1], color[2], color[3])
+    picker:Hide()
+    picker:Show()
+    return true
+end
+
 local function findLine(data, id)
     for _, line in ipairs(data.lines) do
         if line.id == id then
@@ -173,8 +211,8 @@ function TooltipPage.Build(content, deps)
     end
 
     -- Saves one field. On a refusal the message shows and the box gets the stored value back.
-    local function save(key, value, message)
-        local id = selected
+    local function save(key, value, message, lineID)
+        local id = lineID or selected
         if not id then
             return
         end
@@ -199,6 +237,36 @@ function TooltipPage.Build(content, deps)
     page.labelInput:SetScript("OnEditFocusLost", function(self)
         saveLabel(self:GetText())
     end)
+
+    -- The colour swatch opens the client colour picker. The old colour comes back on Cancel.
+    page.colorSwatch = CreateFrame("Button", nil, right)
+    page.colorSwatch:SetSize(22, 22)
+    page.colorSwatch:SetPoint("TOPLEFT", right, "TOPLEFT", 256, -46)
+    page.colorBorder = page.colorSwatch:CreateTexture(nil, "BACKGROUND")
+    page.colorBorder:SetAllPoints(page.colorSwatch)
+    page.colorBorder:SetColorTexture(0.8, 0.8, 0.8, 1)
+    page.colorTexture = page.colorSwatch:CreateTexture(nil, "ARTWORK")
+    page.colorTexture:SetPoint("TOPLEFT", page.colorSwatch, "TOPLEFT", 2, -2)
+    page.colorTexture:SetPoint("BOTTOMRIGHT", page.colorSwatch, "BOTTOMRIGHT", -2, 2)
+    page.colorTexture:SetColorTexture(DEFAULT_COLOR[1], DEFAULT_COLOR[2], DEFAULT_COLOR[3], 1)
+    page.colorSwatch:SetScript("OnClick", function()
+        local id = selected
+        local line = lineOf(id)
+        if not line or line.kind == "table" or tc:IsReadOnly() then
+            return
+        end
+        local old = line.color
+        local show = deps.showColorPicker or showColorPicker
+        show(old or DEFAULT_COLOR, function(r, g, b)
+            save("color", { r, g, b }, page.status, id)
+        end, function()
+            save("color", old or false, page.status, id)
+        end)
+    end)
+    page.colorReset = Kit.Button(right, "Default colour", 110, function()
+        save("color", false, page.status)
+    end)
+    page.colorReset:SetPoint("LEFT", page.colorSwatch, "RIGHT", 8, 0)
 
     page.formulaMessage = field("Formula", -78)
     page.formulaInput = Kit.Input(right, 380, nil, nil)
@@ -501,6 +569,8 @@ function TooltipPage.Build(content, deps)
         page.ageCheck:SetChecked(line and line.showAge)
         page.samplesCheck:SetChecked(line and line.showSamples)
         page.altCheck:SetChecked(line and line.altStack ~= false)
+        local color = line and line.color or DEFAULT_COLOR
+        page.colorTexture:SetColorTexture(color[1], color[2], color[3], 1)
         if page.tableView then
             page.tableView:Clear()
         end
@@ -513,6 +583,8 @@ function TooltipPage.Build(content, deps)
             setEnabled(widget, active)
         end
         setEnabled(page.altCheck, line ~= nil and not ro)
+        setEnabled(page.colorSwatch, active)
+        setEnabled(page.colorReset, active and line.color ~= nil)
         setEnabled(page.addButton, not ro)
         setEnabled(page.upButton, moveable)
         setEnabled(page.downButton, moveable)

@@ -290,6 +290,32 @@ describe("TooltipLines", function()
             assert.are.equal("62g", rows[2].right)
         end)
 
+        it("gives the saved colour of a line to its row and keeps the default without one", function()
+            local c = ctx()
+            c.config.lines[1].color = { 0.1, 0.2, 0.3 }
+            c.config.lines[2] = { label = "Plain", formula = "scanmarket", enabled = true }
+            local rows = TL.Build(c)
+            assert.are.same({ 0.1, 0.2, 0.3 }, rows[1].rgb)
+            assert.is_nil(rows[2].rgb)
+        end)
+
+        it("ignores a malformed colour and gives no colour to an invalid price", function()
+            local c = ctx()
+            c.config.lines[1].color = { 5, 0, 0 }
+            assert.is_nil(TL.Build(c)[1].rgb)
+            c.config.lines[1].color = { 0.1, 0.2, 0.3 }
+            c.formulaRun = { Evaluate = function() return nil, { kind = "invalid", missing = {} } end }
+            assert.is_nil(TL.Build(c)[1].rgb)
+        end)
+
+        it("keeps the colour in stack mode", function()
+            local c = ctx({ stackMode = true, stackCount = 5 })
+            c.config.lines[1].color = { 0, 1, 0 }
+            local row = TL.Build(c)[1]
+            assert.are.equal("Market x5", row.left)
+            assert.are.same({ 0, 1, 0 }, row.rgb)
+        end)
+
         it("skips disabled lines", function()
             local c = ctx()
             c.config.lines[2] = { label = "Off", formula = "scanmarket", enabled = false }

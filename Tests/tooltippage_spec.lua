@@ -186,6 +186,137 @@ describe("TooltipPage", function()
         end)
     end)
 
+    describe("line colour", function()
+        local opened
+
+        before_each(function()
+            opened = nil
+            extra = {
+                showColorPicker = function(color, onChange, onCancel)
+                    opened = { color = color, onChange = onChange, onCancel = onCancel }
+                    return true
+                end,
+            }
+            build()
+        end)
+
+        local function swatch()
+            return page.colorTexture.colorTexture
+        end
+
+        it("shows white and no saved colour by default", function()
+            assert.are.same({ 1, 1, 1, 1 }, swatch())
+            assert.is_nil(stored().lines[1].color)
+            assert.is_false(page.colorReset:IsEnabled())
+        end)
+
+        it("opens the picker with the current colour and saves each change", function()
+            click(page.colorSwatch)
+            assert.are.same({ 1, 1, 1 }, opened.color)
+            opened.onChange(0.2, 0.4, 0.6)
+            assert.are.same({ 0.2, 0.4, 0.6 }, stored().lines[1].color)
+            assert.are.same({ 0.2, 0.4, 0.6, 1 }, swatch())
+            assert.is_true(page.colorReset:IsEnabled())
+            assert.is_nil(stored().lines[2].color)
+        end)
+
+        it("gives the default colour back on Cancel", function()
+            click(page.colorSwatch)
+            opened.onChange(0.2, 0.4, 0.6)
+            opened.onCancel(1, 1, 1)
+            assert.is_nil(stored().lines[1].color)
+            assert.are.same({ 1, 1, 1, 1 }, swatch())
+        end)
+
+        it("gives the old saved colour back on Cancel", function()
+            tc:UpdateLine(1, { color = { 0.9, 0.1, 0.1 } })
+            page.Refresh()
+            click(page.colorSwatch)
+            assert.are.same({ 0.9, 0.1, 0.1 }, opened.color)
+            opened.onChange(0, 1, 0)
+            opened.onCancel()
+            assert.are.same({ 0.9, 0.1, 0.1 }, stored().lines[1].color)
+        end)
+
+        it("saves a change for the line that was open, also after another selection", function()
+            click(page.colorSwatch)
+            selectLine(2)
+            opened.onChange(0, 1, 0)
+            assert.are.same({ 0, 1, 0 }, stored().lines[1].color)
+            assert.is_nil(stored().lines[2].color)
+        end)
+
+        it("removes the colour with the Default colour button", function()
+            tc:UpdateLine(1, { color = { 0.9, 0.1, 0.1 } })
+            page.Refresh()
+            click(page.colorReset)
+            assert.is_nil(stored().lines[1].color)
+        end)
+
+        it("is off for the price table", function()
+            tc:ResetDefaults()
+            page.Refresh()
+            assert.is_false(page.colorSwatch:IsEnabled())
+            click(page.colorSwatch)
+            assert.is_nil(opened)
+        end)
+
+        describe("client picker", function()
+            local picker
+
+            local function fakePicker(modern)
+                picker = { rgb = { 0.5, 0.5, 0.5 }, shown = 0 }
+                function picker:GetColorRGB() return unpack(self.rgb) end
+                function picker:SetColorRGB(r, g, b) self.rgb = { r, g, b } end
+                function picker:Hide() end
+                function picker:Show() self.shown = self.shown + 1 end
+                if modern then
+                    function picker:SetupColorPickerAndShow(info) self.info = info end
+                end
+                _G.ColorPickerFrame = picker
+            end
+
+            before_each(function()
+                extra = nil
+                build()
+            end)
+
+            after_each(function()
+                _G.ColorPickerFrame = nil
+            end)
+
+            it("uses SetupColorPickerAndShow where the client has it", function()
+                fakePicker(true)
+                tc:UpdateLine(1, { color = { 0.9, 0.1, 0.1 } })
+                page.Refresh()
+                click(page.colorSwatch)
+                assert.are.same({ 0.9, 0.1, 0.1 }, { picker.info.r, picker.info.g, picker.info.b })
+                picker.rgb = { 0, 0, 1 }
+                picker.info.swatchFunc()
+                assert.are.same({ 0, 0, 1 }, stored().lines[1].color)
+                picker.info.cancelFunc({ r = 0.9, g = 0.1, b = 0.1 })
+                assert.are.same({ 0.9, 0.1, 0.1 }, stored().lines[1].color)
+            end)
+
+            it("uses the func and cancelFunc fields on an older client", function()
+                fakePicker(false)
+                click(page.colorSwatch)
+                assert.are.same({ 1, 1, 1 }, picker.rgb)
+                assert.are.equal(1, picker.shown)
+                picker.rgb = { 0, 1, 0 }
+                picker.func()
+                assert.are.same({ 0, 1, 0 }, stored().lines[1].color)
+                picker.cancelFunc({ 1, 1, 1 })
+                assert.is_nil(stored().lines[1].color)
+            end)
+
+            it("does nothing if the client has no picker", function()
+                assert.has_no.errors(function() click(page.colorSwatch) end)
+                assert.is_nil(stored().lines[1].color)
+            end)
+        end)
+    end)
+
     describe("line list", function()
         it("shows the default lines with formula and enabled box", function()
             assert.are.same({ "Market", "Min", "Max" }, labels())

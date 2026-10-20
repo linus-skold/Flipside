@@ -135,7 +135,8 @@ function H:Count(key)
         map, lookup = index.base, string.format("%d", parsed.itemID)
     end
     for character, counts in pairs(map[lookup] or {}) do
-        local entry = { name = character, class = index.class[character], total = 0, bags = 0, bank = 0, mail = 0, auctions = 0, seen = {} }
+        local entry = { name = character, class = index.class[character], total = 0, bags = 0, bank = 0, mail = 0,
+            auctions = 0, seen = {} }
         for _, location in ipairs(LOCATIONS) do
             local n = counts[location] or 0
             entry[location] = n
