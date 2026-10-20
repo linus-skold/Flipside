@@ -6,7 +6,8 @@ local _, ns = ...
 -- CanReadOwned, OwnedEvent, OpenEvent, CloseEvent, CanScan, CanLiveSearch, LiveSearch, LiveResultEvents, LiveRows,
 -- IsReady, ReadyEvent, RefreshOwned, CanBuy, StartCommodityPurchase, ConfirmCommodityPurchase, CancelCommodityPurchase,
 -- QuoteSecondsLeft, BuyItemAuction, BuyEvents, CanPost, PostItem, PostCommodity, ConfirmPostItem, ConfirmPostCommodity,
--- Deposit, AvailablePostCount, IsSellItemValid, PostedEvent, AuctionInfo, HookBid. A backend leaves out what its client
+-- Deposit, AvailablePostCount, IsSellItemValid, PostedEvent, MultisellEvent, CanSendPost, ThrottleEvents, AuctionInfo,
+-- HookBid. A backend leaves out what its client
 -- cannot do.
 local AuctionClient = {}
 ns.AuctionClient = AuctionClient
@@ -140,6 +141,11 @@ query("PostedEvent")
 -- MultisellEvent() gives the event name of a multi-stack post (legacy client only). The event carries "start",
 -- "update" or "failure", the number of stacks created, the total, and for a failure a text.
 query("MultisellEvent")
+-- CanSendPost() tells if the client takes a post now (the throttle gate); it is true without a backend function.
+-- ThrottleEvents() gives the list of events after which the gate can change; nil means the client has none, so the
+-- caller polls CanSendPost.
+query("CanSendPost", true)
+query("ThrottleEvents")
 
 -- Search capture: nil means capture is off.
 -- AuctionInfo(auctionID) gives a table with itemLink, buyoutAmount and maybe quantity, or nil.

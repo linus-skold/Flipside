@@ -746,6 +746,16 @@ function Backend.MultisellEvent()
     return MULTISELL_EVENT
 end
 
+-- True when the client takes a post now. The post uses the same throttle as a list query (CanSendAuctionQuery).
+function Backend.CanSendPost()
+    return not has("CanSendAuctionQuery") or _G.CanSendAuctionQuery("list") == true
+end
+
+-- The legacy client has no event for the end of the throttle, so this gives no list: the caller polls CanSendPost.
+function Backend.ThrottleEvents()
+    return nil
+end
+
 -- The legacy client sends no event with an ID for a post. This code reads the "Auction created." system text for 20
 -- seconds after the call and emits its own event.
 function Backend.PostedEvent()

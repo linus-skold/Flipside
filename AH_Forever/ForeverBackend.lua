@@ -442,4 +442,49 @@ function Backend.PostedEvent()
     return "AUCTION_HOUSE_AUCTION_CREATED"
 end
 
+-- True when the client takes a throttled message now (doc 809-816). Blizzard's sell frame gates its post the same way.
+function Backend.CanSendPost()
+    return not has("IsThrottledMessageSystemReady") or call("IsThrottledMessageSystemReady") == true
+end
+
+-- The events after which the gate can change. The sell frame of Blizzard reads the first two; the other two end a
+-- message too.
+function Backend.ThrottleEvents()
+    return { "AUCTION_HOUSE_THROTTLED_SYSTEM_READY", "AUCTION_HOUSE_THROTTLED_MESSAGE_SENT",
+        "AUCTION_HOUSE_THROTTLED_MESSAGE_RESPONSE_RECEIVED", "AUCTION_HOUSE_THROTTLED_MESSAGE_DROPPED" }
+end
+
+local FAILURE_EVENT = "Flipside.ForeverPostFailure"
+local FAILURE_OWNER = "Flipside.ForeverBackend.post"
+local failureSubscribed = false
+
+-- The text of an AuctionHouseError value (doc AuctionHouseEnumsDocumentation DatabaseError = 10).
+local function errorText(code)
+    local enum = type(_G.Enum) == "table" and _G.Enum.AuctionHouseError or nil
+    if enum and code == enum.DatabaseError and type(_G.ERR_AUCTION_DATABASE_ERROR) == "string" then
+        return _G.ERR_AUCTION_DATABASE_ERROR
+    end
+    return "the Auction House refused the post (error " .. tostring(code) .. ")"
+end
+
+local function onShowError(_, code)
+    ns.bus:Emit(FAILURE_EVENT, "failure", 0, 1, errorText(code))
+end
+
+local function onPostError()
+    ns.bus:Emit(FAILURE_EVENT, "failure", 0, 1, "the Auction House refused the post")
+end
+
+-- The event of a post error. It carries "failure", 0, 1 and a text, as the legacy multisell event does. The sender
+-- of the post ignores it when no post waits. It comes from AUCTION_HOUSE_SHOW_ERROR (error: AuctionHouseError,
+-- doc 1236-1244) and AUCTION_HOUSE_POST_ERROR (doc 1186-1195).
+function Backend.MultisellEvent()
+    if not failureSubscribed and ns.bus then
+        failureSubscribed = true
+        ns.bus:Subscribe("AUCTION_HOUSE_SHOW_ERROR", FAILURE_OWNER, onShowError)
+        ns.bus:Subscribe("AUCTION_HOUSE_POST_ERROR", FAILURE_OWNER, onPostError)
+    end
+    return FAILURE_EVENT
+end
+
 ns.AuctionClient.Use(Backend)

@@ -129,4 +129,72 @@ describe("AuctionClient post functions", function()
     it("gives the created event", function()
         assert.are.equal("AUCTION_HOUSE_AUCTION_CREATED", ns.AuctionClient.PostedEvent())
     end)
+
+    describe("the throttle gate", function()
+        it("follows IsThrottledMessageSystemReady", function()
+            mock.throttleReady = true
+            assert.is_true(ns.AuctionClient.CanSendPost())
+            mock.throttleReady = false
+            assert.is_false(ns.AuctionClient.CanSendPost())
+        end)
+
+        it("is open on a client with no gate call and open without a backend", function()
+            _G.C_AuctionHouse.IsThrottledMessageSystemReady = nil
+            assert.is_true(ns.AuctionClient.CanSendPost())
+            local bare = {}
+            assert(loadfile(manifest.path("AuctionClient")))("Flipside", bare)
+            assert.is_true(bare.AuctionClient.CanSendPost())
+            assert.is_nil(bare.AuctionClient.ThrottleEvents())
+        end)
+
+        it("gives the events that change the gate", function()
+            local list = {}
+            for _, event in ipairs(ns.AuctionClient.ThrottleEvents()) do
+                list[event] = true
+            end
+            assert.is_true(list.AUCTION_HOUSE_THROTTLED_SYSTEM_READY)
+            assert.is_true(list.AUCTION_HOUSE_THROTTLED_MESSAGE_SENT)
+        end)
+    end)
+
+    describe("the post error event", function()
+        local failures
+
+        before_each(function()
+            assert(loadfile(manifest.path("EventBus")))("Flipside", ns)
+            ns.bus = ns.EventBus.New({})
+            failures = {}
+            ns.bus:Subscribe(ns.AuctionClient.MultisellEvent(), "spec", function(_, ...)
+                failures[#failures + 1] = { ... }
+            end)
+            _G.Enum = { AuctionHouseError = { DatabaseError = 10 } }
+            _G.ERR_AUCTION_DATABASE_ERROR = "Internal auction house error."
+        end)
+
+        after_each(function()
+            _G.Enum, _G.ERR_AUCTION_DATABASE_ERROR = nil, nil
+        end)
+
+        it("sends a failure with the database error text for AUCTION_HOUSE_SHOW_ERROR", function()
+            ns.bus:Emit("AUCTION_HOUSE_SHOW_ERROR", 10)
+            assert.are.same({ { "failure", 0, 1, "Internal auction house error." } }, failures)
+        end)
+
+        it("sends a failure with the code for another error", function()
+            ns.bus:Emit("AUCTION_HOUSE_SHOW_ERROR", 3)
+            assert.are.equal("failure", failures[1][1])
+            assert.is_truthy(failures[1][4]:find("error 3", 1, true))
+        end)
+
+        it("sends a failure for AUCTION_HOUSE_POST_ERROR", function()
+            ns.bus:Emit("AUCTION_HOUSE_POST_ERROR")
+            assert.are.equal("failure", failures[1][1])
+        end)
+
+        it("subscribes once", function()
+            ns.AuctionClient.MultisellEvent()
+            ns.bus:Emit("AUCTION_HOUSE_POST_ERROR")
+            assert.are.equal(1, #failures)
+        end)
+    end)
 end)
