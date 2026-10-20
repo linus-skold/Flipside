@@ -398,6 +398,13 @@ end
 
 -- Item data arrived for an item that the list asked for: draw the list again.
 function Tab:_OnItemLoaded(itemID)
+    if self.linkWait == itemID then
+        self.linkWait = nil
+        local name = self.deps.itemInfo(itemID)
+        if name and not name:match("^item %d+$") and self.active and self.ui then
+            self:_SearchLinkName(name)
+        end
+    end
     if self.requested[itemID] == true then
         self.requested[itemID] = false
         if self.active and self.ui then
@@ -577,6 +584,52 @@ function Tab:SearchName(text)
         show(items)
     end, { exact = query.exact, settle = NAME_SETTLE_SECONDS, onItems = show })
     return true
+end
+
+-- True if a chat edit box is open. Chat then gets a shift-clicked link.
+local function chatEditActive()
+    local util = _G.ChatFrameUtil
+    local getActive = type(util) == "table" and util.GetActiveWindow or _G.ChatEdit_GetActiveWindow
+    return type(getActive) == "function" and getActive() ~= nil
+end
+
+-- Put the exact name of a shift-clicked item in the name search box and run the search.
+-- It acts only while this tab is shown, the Auction House is open and no chat edit box is open.
+-- An item that the client has not loaded waits for ITEM_DATA_LOAD_RESULT. Returns true if it took the link.
+function Tab:SearchLink(link)
+    local ItemString = ns.ItemString
+    if not (self.active and self.ui and self.content and self.content:IsShown()) then
+        return false
+    end
+    if not self.deps.isAuctionHouseOpen() or chatEditActive() or not ItemString.IsItemLink(link) then
+        return false
+    end
+    local fields = ItemString.ParseLink(link)
+    local itemID = fields and fields.itemID
+    local name = link:match("|h%[(.-)%]|h")
+    if not name or name == "" then
+        name = itemID and self.deps.itemInfo(itemID) or nil
+        if not name or name:match("^item %d+$") then
+            if not itemID then
+                return false
+            end
+            -- No name yet: ask the client once; _OnItemLoaded runs the search when the data comes.
+            self.linkWait = itemID
+            log("debug", "link search waits for item %s", itemID)
+            pcall(self.deps.requestItem, itemID)
+            return true
+        end
+    end
+    self:_SearchLinkName(name)
+    return true
+end
+
+-- Run the exact name search for a linked item.
+function Tab:_SearchLinkName(name)
+    self.linkWait = nil
+    self.ui.searchInput:SetText('"' .. name .. '"')
+    log("info", "link search for %s", name)
+    self:SearchName(self.ui.searchInput:GetText())
 end
 
 -- Show the items of a name search in the list. keep is true for a later update of the same search.
@@ -2259,14 +2312,26 @@ function Tab:Mount(parent, api)
         self.events[#self.events + 1] = "Flipside.SearchListsChanged"
     end
     -- A shift-click on an item link puts the link into the item box while it has focus.
-    if hooksecurefunc and ChatEdit_InsertLink and not self.linkHooked then
+    -- With no box in focus, the link becomes the name search (Tab:SearchLink).
+    local function onLink(text)
+        local ui = self.ui
+        if ui and ui.itemInput and ui.itemInput:HasFocus() and type(text) == "string" then
+            ui.itemInput:Insert(text)
+        elseif type(text) == "string" then
+            self:SearchLink(text)
+        end
+    end
+    if hooksecurefunc and not self.linkHooked then
         self.linkHooked = true
-        hooksecurefunc("ChatEdit_InsertLink", function(text)
-            local ui = self.ui
-            if ui and ui.itemInput and ui.itemInput:HasFocus() and type(text) == "string" then
-                ui.itemInput:Insert(text)
-            end
-        end)
+        -- WoW: Forever calls ChatFrameUtil.InsertLink from HandleModifiedItemClick. ChatEdit_InsertLink is only an
+        -- alias that was copied at load time, so each name needs its own hook. TBC has the global only.
+        local frameUtil = _G.ChatFrameUtil
+        if type(frameUtil) == "table" and type(frameUtil.InsertLink) == "function" then
+            hooksecurefunc(frameUtil, "InsertLink", onLink)
+        end
+        if type(_G.ChatEdit_InsertLink) == "function" then
+            hooksecurefunc("ChatEdit_InsertLink", onLink)
+        end
     end
     local closeEvent = client.CloseEvent()
     if closeEvent then
