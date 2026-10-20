@@ -19,17 +19,23 @@ function TooltipHook.LinkOf(tooltip)
     return type(link) == "string" and link or nil
 end
 
--- Returns the stack count of a ContainerFrame item button that owns the tooltip, or nil.
+-- Returns the stack count of a ContainerFrame or main bank item button that owns the tooltip, or nil.
 -- The TBC button has no GetBagID: the bag ID is the ID of the parent ContainerFrame.
 function TooltipHook.StackCountOf(tooltip, containerItemInfo)
     if not (containerItemInfo and tooltip.GetOwner) then
         return nil
     end
     local owner = tooltip:GetOwner()
-    if type(owner) ~= "table" or not (owner.GetParent and owner.GetID) then
+    if type(owner) ~= "table" or not owner.GetID then
         return nil
     end
-    local parent = owner:GetParent()
+    local ownerName = owner.GetName and owner:GetName()
+    if type(ownerName) == "string" and ownerName:match("^BankFrameItem%d+$") then
+        -- A slot of the main bank: the bank container has the ID -1.
+        local info = containerItemInfo(type(BANK_CONTAINER) == "number" and BANK_CONTAINER or -1, owner:GetID())
+        return type(info) == "table" and type(info.stackCount) == "number" and info.stackCount or nil
+    end
+    local parent = owner.GetParent and owner:GetParent()
     local name = type(parent) == "table" and parent.GetName and parent:GetName()
     if type(name) ~= "string" or not name:match("^ContainerFrame%d+$") then
         return nil

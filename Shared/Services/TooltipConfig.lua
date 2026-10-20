@@ -14,7 +14,9 @@ local FLAGS = { showGroup = true, showOperation = true, showCounts = true }
 local SETTABLE_FLAGS = { showGroup = true, showOperation = true, showCounts = true, showVendor = true }
 local PERIODS = { "1d", "14d", "30d", "60d" }
 local STATS = { "min", "avg", "max", "market" }
-local FIELDS = { label = true, formula = true, showAge = true, showSamples = true, enabled = true, altStack = true }
+local FIELDS = {
+    label = true, formula = true, showAge = true, showSamples = true, enabled = true, altStack = true, color = true,
+}
 local BOOL_FIELDS = { showAge = true, showSamples = true, enabled = true, altStack = true }
 
 local Config = {}
@@ -159,6 +161,19 @@ local function Validate(data, version)
     return true
 end
 
+-- Returns true if value is a colour { r, g, b } with parts from 0 to 1.
+local function IsColor(value)
+    if type(value) ~= "table" then
+        return false
+    end
+    for i = 1, 3 do
+        if type(value[i]) ~= "number" or value[i] ~= value[i] or value[i] < 0 or value[i] > 1 then
+            return false
+        end
+    end
+    return true
+end
+
 local function CheckFormula(compile, formula)
     if type(formula) ~= "string" or formula:match("^%s*$") then
         return nil, "Enter a formula."
@@ -178,6 +193,7 @@ local function CheckFormula(compile, formula)
 end
 
 -- A stored line without altStack gets the default true. Missing or malformed new settings get the defaults.
+-- A malformed line colour is dropped.
 local function FillAltStack(data)
     if type(data.showVendor) ~= "boolean" then
         data.showVendor = true
@@ -195,6 +211,9 @@ local function FillAltStack(data)
     for _, line in ipairs(data.lines) do
         if line.altStack == nil then
             line.altStack = true
+        end
+        if line.color ~= nil and not IsColor(line.color) then
+            line.color = nil
         end
     end
 end
@@ -311,6 +330,15 @@ function Config:UpdateLine(id, fields)
                     return nil, field .. " must be true or false"
                 end
                 line[field] = value
+            elseif field == "color" then
+                -- nil or false removes the colour: the line has the default colour again.
+                if not value then
+                    line.color = nil
+                elseif IsColor(value) then
+                    line.color = { value[1], value[2], value[3] }
+                else
+                    return nil, "color must be { r, g, b } with parts from 0 to 1"
+                end
             elseif field == "label" then
                 local clean, message = CleanLabel(value)
                 if not clean then

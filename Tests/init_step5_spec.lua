@@ -85,6 +85,15 @@ describe("Init step 5", function()
         assert.are.equal(Enum.TooltipDataType.Item, mock.postCalls[1].type)
     end)
 
+    it("saves the class of the character at login", function()
+        mock.advance(0.5)
+        assert.are.equal("MAGE", ns.holdings:Count("2589").characters[1].class)
+    end)
+
+    it("shows the tooltip again when Alt changes over an item", function()
+        assert.is_true(ns.bus:HasSubscribers("MODIFIER_STATE_CHANGED"))
+    end)
+
     it("writes the bags after the login delay and after a bag update", function()
         assert.are.equal(0, ns.holdings:Count("2589").total)
         mock.advance(0.5)

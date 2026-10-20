@@ -111,6 +111,51 @@ describe("TooltipConfig", function()
         assert.is_nil((tc:UpdateLine(1, { enabled = "yes" })))
     end)
 
+    describe("line colour", function()
+        it("has no colour by default", function()
+            assert.is_nil(tc:Get().lines[1].color)
+            assert.is_nil(ns.TooltipConfig.New(open({})):Get().lines[1].color)
+        end)
+
+        it("saves a colour for one line", function()
+            assert.is_true(tc:UpdateLine(2, { color = { 0.1, 0.5, 1 } }))
+            assert.are.same({ 0.1, 0.5, 1 }, tc:Get().lines[2].color)
+            assert.are.same({ 0.1, 0.5, 1 }, saved["p/Default/tooltip"].lines[2].color)
+            assert.is_nil(tc:Get().lines[1].color)
+        end)
+
+        it("copies the colour table", function()
+            local color = { 0.1, 0.5, 1 }
+            tc:UpdateLine(2, { color = color })
+            color[1] = 0
+            assert.are.equal(0.1, tc:Get().lines[2].color[1])
+        end)
+
+        it("restores the old colour or removes the colour with false", function()
+            tc:UpdateLine(2, { color = { 0.1, 0.5, 1 } })
+            tc:UpdateLine(2, { color = { 1, 0, 0 } })
+            tc:UpdateLine(2, { color = { 0.1, 0.5, 1 } })
+            assert.are.same({ 0.1, 0.5, 1 }, tc:Get().lines[2].color)
+            assert.is_true(tc:UpdateLine(2, { color = false }))
+            assert.is_nil(tc:Get().lines[2].color)
+        end)
+
+        it("refuses a colour that is not valid", function()
+            assert.is_nil((tc:UpdateLine(2, { color = { 2, 0, 0 } })))
+            assert.is_nil((tc:UpdateLine(2, { color = { 1, 0 } })))
+            assert.is_nil((tc:UpdateLine(2, { color = "red" })))
+            assert.is_nil(tc:Get().lines[2].color)
+        end)
+
+        it("keeps the colour over a reload and drops a malformed stored colour", function()
+            tc:UpdateLine(2, { color = { 0.2, 0.3, 0.4 } })
+            saved["p/Default/tooltip"].lines[3].color = "red"
+            make()
+            assert.are.same({ 0.2, 0.3, 0.4 }, tc:Get().lines[2].color)
+            assert.is_nil(tc:Get().lines[3].color)
+        end)
+    end)
+
     it("removes a line", function()
         assert.is_true(tc:RemoveLine(2))
         local data = tc:Get()

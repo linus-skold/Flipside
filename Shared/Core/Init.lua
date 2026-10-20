@@ -815,6 +815,8 @@ local function openInventory()
     end
     local ok, err = pcall(function()
         ns.holdings = ns.Holdings.New(ns.db, { character = characterKey(), clock = GetServerTime })
+        -- Save the class file of this character for the class colours in the tooltip counts.
+        ns.holdings:SetClass((select(2, UnitClass("player"))))
         ns.inventoryCapture = ns.InventoryCapture.Attach({
             bus = ns.bus,
             holdings = ns.holdings,
@@ -1194,6 +1196,9 @@ local function openTooltip()
             now = GetServerTime,
             isAltDown = IsAltKeyDown,
             containerItemInfo = C_Container.GetContainerItemInfo,
+            bus = ns.bus,
+            currentRealmOnly = ns.Flavour.countsCurrentRealmOnly == true,
+            realm = GetNormalizedRealmName,
             clock = debugprofilestop,
             report = ns.ReportError,
         }

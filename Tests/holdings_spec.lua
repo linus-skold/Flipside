@@ -130,6 +130,51 @@ describe("Holdings", function()
         assert.are.equal(0, h:Count("10").total)
     end)
 
+    describe("class", function()
+        it("gives no class for old data", function()
+            local _, h = Open({})
+            h:SetLocation("bags", { ["10"] = 1 })
+            assert.is_nil(h:Count("10").characters[1].class)
+        end)
+
+        it("stores the class and keeps it when a location changes", function()
+            local saved = {}
+            local _, h = Open(saved)
+            assert.is_true(h:SetClass("MAGE"))
+            h:SetLocation("bags", { ["10"] = 1 })
+            assert.are.equal("MAGE", saved["c/Alice-Realm/holdings"].class)
+            assert.are.equal("MAGE", h:Count("10").characters[1].class)
+            assert.are.equal(1, saved["c/Alice-Realm/holdings"].version)
+        end)
+
+        it("keeps the locations when it saves the class", function()
+            local _, h = Open({})
+            h:SetLocation("bags", { ["10"] = 3 })
+            h:SetClass("ROGUE")
+            assert.are.equal(3, h:Count("10").total)
+        end)
+
+        it("refuses a class that is not a class file", function()
+            local saved = {}
+            local _, h = Open(saved)
+            assert.is_false(h:SetClass("mage"))
+            assert.is_false(h:SetClass(nil))
+            assert.is_nil(saved["c/Alice-Realm/holdings"])
+        end)
+
+        it("ignores a malformed stored class", function()
+            local saved = { ["c/Alice-Realm/holdings"] = { version = 1, class = 5,
+                locations = { bags = { seen = 1, items = { ["10"] = 1 } } } } }
+            local _, h = Open(saved)
+            assert.is_nil(h:Count("10").characters[1].class)
+        end)
+
+        it("does not save when the DB is read-only", function()
+            local _, h = Open({ _schema = 9 })
+            assert.is_false(h:SetClass("MAGE"))
+        end)
+    end)
+
     it("validates the constructor arguments", function()
         local db = Open({})
         assert.has_error(function() ns.Holdings.New(db, { clock = Clock }) end)

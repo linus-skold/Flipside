@@ -18,7 +18,10 @@ local STATS = {
     { key = "max", name = "Max" },
     { key = "market", name = "Market" },
 }
-local VENDOR_LABEL = "Vendor sell price"
+local VENDOR_LABEL = "Vendor:"
+-- The vendor row is blue (the code |cff4fa3ff as red, green and blue parts of 0 to 1).
+TooltipLines.VENDOR_COLOR = { 79 / 255, 163 / 255, 1 }
+local DEFAULT_NAME_COLOR = "ffffff"
 local NO_VALUE = "-"
 local NO_PRICES = "Prices"
 local SEP = " \194\183 "
@@ -76,6 +79,26 @@ function TooltipLines.FormatAge(hours)
     return string.format("%d h", math.floor(hours + 0.5))
 end
 
+-- Returns the label with the stack count, for example "Min x20" or "Vendor x4:" (a final colon stays last).
+local function stackLabel(label, stack)
+    local text, colon = label:match("^(.-)(:?)$")
+    return text .. " x" .. stack .. colon
+end
+
+-- Returns a copy of the saved colour { r, g, b } if it is valid, or nil.
+local function lineColor(line)
+    local c = line.color
+    if type(c) ~= "table" then
+        return nil
+    end
+    for i = 1, 3 do
+        if type(c[i]) ~= "number" or c[i] < 0 or c[i] > 1 then
+            return nil
+        end
+    end
+    return { c[1], c[2], c[3] }
+end
+
 local function dataRow(line, ctx, state)
     if line.kind == "table" then
         return ctx.tableRow(line)
@@ -90,7 +113,7 @@ local function dataRow(line, ctx, state)
     if copper then
         if ctx.stackMode and line.altStack ~= false and stack and stack > 1 then
             copper = copper * stack
-            label = label .. " (stack of " .. stack .. ")"
+            label = stackLabel(label, stack)
         end
         right = TooltipLines.FormatMoney(copper)
         if line.showAge or line.showSamples then
@@ -107,7 +130,9 @@ local function dataRow(line, ctx, state)
     else
         right = INVALID
     end
-    return { left = label, right = right, color = copper and "normal" or "dim" }
+    return {
+        left = label, right = right, color = copper and "normal" or "dim", rgb = copper and lineColor(line) or nil,
+    }
 end
 
 -- Returns one entry per server day: { day, min, market, low, high }. min and market are the daily values.
@@ -255,10 +280,11 @@ local function vendorRow(ctx)
     local stack = ctx.stackCount
     if ctx.stackMode and stack and stack > 1 then
         price = price * stack
-        label = label .. " (stack of " .. stack .. ")"
+        label = stackLabel(label, stack)
     end
-    return { left = label, right = TooltipLines.FormatMoney(price), color = "normal" }
+    return { left = label, right = TooltipLines.FormatMoney(price), color = "normal", rgb = TooltipLines.VENDOR_COLOR }
 end
+
 local function groupRows(ctx, rows, key, config)
     local rules = ctx.rules
     if not rules or not key then
@@ -291,6 +317,35 @@ local function groupRows(ctx, rows, key, config)
     end
 end
 
+-- Splits "Name-Realm" into the name and the realm. A key with no realm gives the key and nil.
+local function splitCharacter(full)
+    local name, realm = full:match("^([^-]+)-(.+)$")
+    return name or full, realm
+end
+
+-- Returns the characters to show: with ctx.currentRealmOnly, only those of ctx.realm. A shown character
+-- has a display name: the name, or Name-Realm if another shown character has the same name.
+local function shownCharacters(ctx, characters)
+    local list, names = {}, {}
+    for _, char in ipairs(characters) do
+        local name, realm = splitCharacter(char.name)
+        if not (ctx.currentRealmOnly and ctx.realm and realm ~= ctx.realm) then
+            list[#list + 1] = { char = char, name = name }
+            names[name] = (names[name] or 0) + 1
+        end
+    end
+    for _, item in ipairs(list) do
+        item.display = names[item.name] > 1 and item.char.name or item.name
+    end
+    return list
+end
+
+-- Returns the name with the colour of its class. A class that is not known gives white.
+local function coloredName(ctx, display, class)
+    local hex = class and ctx.classColor and ctx.classColor(class) or DEFAULT_NAME_COLOR
+    return "|cff" .. hex .. display .. "|r"
+end
+
 local function countRows(ctx, rows, key)
     local holdings = ctx.holdings
     if not holdings or not key then
@@ -300,22 +355,30 @@ local function countRows(ctx, rows, key)
     if not count then
         return
     end
-    rows[#rows + 1] = { left = "Total: " .. (count.total or 0), color = "normal" }
-    for _, char in ipairs(count.characters or {}) do
+    local shown = shownCharacters(ctx, count.characters or {})
+    local total = count.total or 0
+    if ctx.currentRealmOnly and ctx.realm then
+        total = 0
+        for _, item in ipairs(shown) do
+            total = total + (item.char.total or 0)
+        end
+    end
+    rows[#rows + 1] = { left = "Total: " .. total, color = "normal" }
+    for _, item in ipairs(shown) do
+        local char = item.char
         local places = {}
         for _, place in ipairs({ "bags", "bank", "mail", "auctions" }) do
             if (char[place] or 0) > 0 then
                 places[#places + 1] = place .. " " .. char[place]
             end
         end
-        local text = char.name .. ": " .. (char.total or 0)
+        local text = coloredName(ctx, item.display, char.class) .. ": " .. (char.total or 0)
         if #places > 0 then
             text = text .. " (" .. table.concat(places, ", ") .. ")"
         end
         rows[#rows + 1] = { left = text, color = "dim" }
     end
 end
-
 -- Returns an array of { left, right, color } rows. A price table row is { kind = "table", header, columns, rows }.
 function TooltipLines.Build(ctx)
     local rows = {}
