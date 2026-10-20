@@ -586,7 +586,7 @@ describe("TooltipLines", function()
             return r
         end
 
-        local function build(settings)
+        local function build(settings, extra)
             local config = { lines = { TABLE } }
             for k, v in pairs(settings or {}) do
                 config[k] = v
@@ -597,6 +597,9 @@ describe("TooltipLines", function()
                     return record()
                 end,
             })
+            for k, v in pairs(extra or {}) do
+                c[k] = v
+            end
             return TL.Build(c)
         end
 
@@ -674,7 +677,7 @@ describe("TooltipLines", function()
         end)
 
         it("multiplies the compact value by the stack", function()
-            local rows = build({ stats = only("market"), stackMode = true, stackCount = 2 })
+            local rows = build({ stats = only("market") }, { stackMode = true, stackCount = 2 })
             assert.are.equal("80s", rows[1].right)
         end)
     end)end)
