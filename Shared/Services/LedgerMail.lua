@@ -300,7 +300,19 @@ function Mail._Match(old, list)
     end
     for _, entry in ipairs(list) do
         local bucket = byKey[entry.sender .. "\31" .. entry.subject]
+        -- An old mail with the same money is the best match; else the first one with no less money. This keeps
+        -- the match right when a mail left the inbox between two reads.
+        local found
         for _, position in ipairs(bucket or {}) do
+            if not taken[position] and old[position].money == entry.money then
+                found = position
+                break
+            end
+        end
+        for _, position in ipairs(bucket or {}) do
+            if found then
+                position = found
+            end
             local previous = old[position]
             if not taken[position] and previous.money >= entry.money then
                 taken[position] = true
