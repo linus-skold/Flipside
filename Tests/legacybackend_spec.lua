@@ -43,6 +43,20 @@ describe("LegacyBackend", function()
 
     local A = function() return ns.AuctionClient end
 
+    describe("post throttle gate", function()
+        it("follows CanSendAuctionQuery and has no gate events", function()
+            assert.is_true(A().CanSendPost())
+            canQuery = false
+            assert.is_false(A().CanSendPost())
+            assert.is_nil(A().PostGateEvents())
+        end)
+
+        it("is open when the client has no CanSendAuctionQuery", function()
+            _G.CanSendAuctionQuery = nil
+            assert.is_true(A().CanSendPost())
+        end)
+    end)
+
     it("loads the Selling tab after the Buying tab and before the host in the TBC TOC", function()
         local files = manifest.files(TOC)
         local buying = manifest.indexOf(files, "BuyingTab")

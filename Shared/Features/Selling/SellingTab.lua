@@ -14,6 +14,8 @@ local MULTI_TIMEOUT = 15
 local MULTI_TIMEOUT_PER_STACK = 3
 local SECONDS_PER_HOUR = 3600
 local POST_TIMEOUT = 5 -- seconds after which the post lock ends, with or without a result
+local BUSY_TEXT = "The auction house is busy. Wait a moment."
+local GATE_POLL_SECONDS =0.25 -- seconds between two checks of the throttle gate while it is closed
 local NAME_REFRESH_DELAY = 0.2 -- seconds that item name events wait before one redraw
 
 -- Write a line to the log. The logger can be missing.
@@ -1768,6 +1770,11 @@ function Tab:_PostStep()
     if self.lock then
         return false, "wait for the last post to end"
     end
+    if not self:_GateOpen() then
+        log("warn", "post refused: the Auction House is busy")
+        self:_ShowBusy(BUSY_TEXT)
+        return false, BUSY_TEXT
+    end
     if self.awaiting then
         self:_ShowConfirm()
         return true
@@ -2428,20 +2435,57 @@ function Tab:_UpdateDetails()
     end
 end
 
+-- Show a refusal text in the warning line of the details pane. The next redraw of the pane replaces it.
+function Tab:_ShowBusy(text)
+    local d = self.ui and self.ui.details
+    if d and d.warn then
+        d.warn:SetText(text)
+        paint(d.warn, ORANGE)
+    end
+end
+
+-- True when the client takes a post now (the throttle gate). A client with no gate is always open.
+function Tab:_GateOpen()
+    local gate = self.deps.client.CanSendPost
+    return gate == nil or gate() == true
+end
+
+-- Set the Post button from all gates: capability, post state, scan lock, post lock, throttle and an item to post.
+-- With a closed gate and a client with no gate events, a short timer on this tab checks the gate again. The timer
+-- changes the button only. It never posts (D26).
+function Tab:_RefreshPost()
+    local ui = self.ui
+    if not ui then
+        return
+    end
+    local open = self:_GateOpen()
+    ui.postNext:SetEnabled(self.deps.client.CanPost() and self.multi == nil and self.lock == nil
+        and not self:_Scanning() and open and (self.awaiting ~= nil or self:_Focus() ~= nil))
+    local events = self.deps.client.PostGateEvents
+    if open or not self.active or self.gateWatch or (events and events()) then
+        return
+    end
+    self.gateWatch = true
+    self.deps.after(GATE_POLL_SECONDS, function()
+        self.gateWatch = false
+        if self.active then
+            self:_RefreshPost()
+        end
+    end)
+end
+
 function Tab:_Update()
     local ui = self.ui
     if not ui then
         return
     end
-    local client = self.deps.client
     self:_CheckHeld()
     ui.stop:SetShown(self.queue ~= nil)
     self:_Layout()
     ui.tree:Refresh()
     ui.postNext:SetText(self:PostLabel())
     local busy = self.multi ~= nil
-    ui.postNext:SetEnabled(client.CanPost() and not busy and self.lock == nil and not self:_Scanning()
-        and (self.awaiting ~= nil or self:_Focus() ~= nil))
+    self:_RefreshPost()
 
     ui.skip:SetEnabled(not busy and (self.awaiting ~= nil or self:_Focus() ~= nil))
     ui.progress:SetText(self:ProgressText())
@@ -2698,6 +2742,14 @@ function Tab:Mount(parent, api)
             self:_OnMultisell(kind, created, total, text)
         end)
         self.events[#self.events + 1] = multisell
+    end
+    -- The throttle gate can change after these events: set the Post button again. This starts no post.
+    local gateEvents = client.PostGateEvents and client.PostGateEvents()
+    for _, event in ipairs(gateEvents or {}) do
+        bus:Subscribe(event, OWNER, function()
+            self:_RefreshPost()
+        end)
+        self.events[#self.events + 1] = event
     end
     -- The AH closes: the client gives the sale slot item back; the tab drops its hold and asks for the release too.
     local closeEvent = client.CloseEvent and client.CloseEvent()

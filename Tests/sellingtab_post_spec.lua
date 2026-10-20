@@ -2081,4 +2081,118 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
             assert.is_true(ui.postNext.enabled)
         end)
     end)
+
+    describe("the throttle gate", function()
+        local gate
+
+        local function pollTimers()
+            local list = {}
+            for _, wait in ipairs(delays) do
+                if wait.seconds == 0.25 and not wait.done then
+                    list[#list + 1] = wait
+                end
+            end
+            return list
+        end
+
+        -- Mount with a gate that the spec opens and closes. events is the PostGateEvents list, or nil.
+        local function remount(events)
+            gate = false
+            client.CanSendPost = function() return gate end
+            client.PostGateEvents = events and function() return events end or nil
+            client.MultisellEvent = function() return "MULTI" end
+            autoCreate = false
+            tab = mount()
+            ui = tab.ui
+            selectCloth()
+            pick("i10")
+        end
+
+        it("TBC: keeps Post off while the query throttle is closed and polls the gate", function()
+            remount()
+            assert.is_false(ui.postNext.enabled)
+            local timers = pollTimers()
+            assert.are.equal(1, #timers)
+            timers[1].done = true
+            timers[1].fn()
+            assert.is_false(ui.postNext.enabled)
+            assert.are.equal(1, #pollTimers())
+            gate = true
+            local again = pollTimers()[1]
+            again.done = true
+            again.fn()
+            assert.is_true(ui.postNext.enabled)
+            assert.are.equal(0, #pollTimers())
+            assert.are.equal(0, #client.posts)
+        end)
+
+        it("TBC: starts no poll while the gate is open or the tab is hidden", function()
+            remount()
+            gate = true
+            tab:_Update()
+            assert.is_true(ui.postNext.enabled)
+            gate = false
+            tab:Deselect()
+            for _, wait in ipairs(pollTimers()) do
+                wait.done = true
+                wait.fn()
+            end
+            assert.are.equal(0, #pollTimers())
+        end)
+
+        it("TBC: refuses the click with a text and makes no post call", function()
+            remount()
+            local ok, text = tab:PostNext()
+            assert.is_false(ok)
+            assert.are.equal("The auction house is busy. Wait a moment.", text)
+            assert.are.equal(text, ui.details.warn.text)
+            click(ui.postNext)
+            assert.are.equal(0, #client.posts)
+            gate = true
+            click(ui.postNext)
+            assert.are.equal(1, #client.posts)
+        end)
+
+        it("Forever: keeps Post off while not ready and turns it on at the ready event", function()
+            remount({ "GATE_READY", "GATE_SENT" })
+            assert.is_false(ui.postNext.enabled)
+            assert.are.equal(0, #pollTimers())
+            gate = true
+            fire("GATE_READY")
+            assert.is_true(ui.postNext.enabled)
+            gate = false
+            fire("GATE_SENT")
+            assert.is_false(ui.postNext.enabled)
+            assert.are.equal(0, #client.posts)
+        end)
+
+        it("Forever: refuses the click and makes no post call while not ready", function()
+            remount({ "GATE_READY" })
+            local ok, text = tab:PostNext()
+            assert.is_false(ok)
+            assert.are.equal("The auction house is busy. Wait a moment.", text)
+            click(ui.postNext)
+            assert.are.equal(0, #client.posts)
+        end)
+
+        it("Forever: a post error ends the post at once and turns Post on again", function()
+            remount({ "GATE_READY" })
+            gate = true
+            tab:_Update()
+            click(ui.postNext)
+            assert.are.equal(1, #client.posts)
+            assert.is_not_nil(tab.multi)
+            fire("MULTI", "failure", 0, 1, "Auction House database error.")
+            assert.is_nil(tab.multi)
+            assert.are.equal("failed", entryOf("10").status)
+            assert.is_truthy(entryOf("10").note:find("database error", 1, true))
+            assert.is_nil(tab.lock)
+            pick("i10")
+            assert.is_true(ui.postNext.enabled)
+            gate = false
+            fire("GATE_READY")
+            assert.is_false(ui.postNext.enabled)
+            assert.are.equal(1, #client.posts)
+        end)
+    end)
 end)
