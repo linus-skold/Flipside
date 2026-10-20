@@ -14,6 +14,9 @@ local EXTRA_WIDTH = 380
 local VIEW_GAP = { top = 2, right = 2, bottom = 0 }
 local VIEW_LEVEL = 5
 local OPEN_MAIL_X = 46
+-- Delays in seconds: the inbox list refreshes on the next frame, the plan of the view after a burst of bag events.
+local INBOX_DELAY = 0
+local VIEW_DELAY = 0.2
 
 -- Keep a child frame at its old width: a frame anchored at two corners of MailFrame would stretch with it.
 -- Returns the old points, or nil if the frame does not stretch.
@@ -145,6 +148,7 @@ function MailHost.Attach(deps)
     local host = { view = nil, inbox = nil }
     local layout = MailHost.LAYOUTS[deps.mode or "wide"](deps, host)
     local open
+    local inboxDirty, inboxScheduled, viewDirty, viewScheduled = false, false, false, false
 
     local function show(retry)
         local mailFrame = deps.frame()
@@ -161,10 +165,13 @@ function MailHost.Attach(deps)
         open = mailFrame
         watchTabs(deps, host)
         host.view:Refresh()
+        viewDirty = false
         if deps.createInbox then
             host.inbox = host.inbox or deps.createInbox(mailFrame)
             if host.inbox then
                 host.inbox:Show()
+                -- Show reads the inbox, so an update that came before it needs no second read.
+                inboxDirty = false
             end
         end
     end
@@ -181,17 +188,44 @@ function MailHost.Attach(deps)
             open = nil
         end
     end)
+    -- Many MAIL_INBOX_UPDATE events come in one take. They mark the list dirty, and one timer on the next frame
+    -- refreshes it once.
     deps.bus:Subscribe("MAIL_INBOX_UPDATE", OWNER, function()
-        if open and host.inbox and host.inbox.frame:IsShown() then
-            host.inbox:Refresh()
+        if not (open and host.inbox and host.inbox.frame:IsShown()) then
+            return
         end
+        inboxDirty = true
+        if inboxScheduled then
+            return
+        end
+        inboxScheduled = true
+        deps.after(INBOX_DELAY, function()
+            inboxScheduled = false
+            if inboxDirty and open and host.inbox and host.inbox.frame:IsShown() then
+                inboxDirty = false
+                host.inbox:Refresh()
+            end
+        end)
     end)
-    -- The bags changed: read the plan again, but not while a run changes the bags.
+    -- The bags changed: read the plan again after a short delay, but not while a run changes the bags.
+    -- A hidden view stays dirty until it shows again (show() refreshes it).
     deps.bus:Subscribe("BAG_UPDATE_DELAYED", OWNER, function()
-        local view = host.view
-        if open and view and view.frame:IsShown() and not view.run:IsRunning() then
-            view:Refresh()
+        viewDirty = true
+        if viewScheduled then
+            return
         end
+        viewScheduled = true
+        deps.after(VIEW_DELAY, function()
+            viewScheduled = false
+            local view = host.view
+            if not (viewDirty and open and view and view.frame:IsShown()) then
+                return
+            end
+            viewDirty = false
+            if not view.run:IsRunning() then
+                view:Refresh()
+            end
+        end)
     end)
 
     function host.View()

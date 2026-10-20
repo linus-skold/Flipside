@@ -2,7 +2,7 @@ local manifest = require("Tests.manifest")
 local mock = require("Tests.wow_mock")
 
 describe("MailHost", function()
-    local ns, bus, mailFrame, created, timers, refreshes, running, inbox, send, openMail, lists
+    local ns, bus, mailFrame, created, timers, delays, refreshes, running, inbox, send, openMail, lists
 
     local function makeView(parent, size)
         local view = { frame = CreateFrame("Frame", nil, parent), size = size, run = { IsRunning = function()
@@ -38,7 +38,7 @@ describe("MailHost", function()
         assert(loadfile(manifest.path("EventBus")))("Flipside", ns)
         assert(loadfile(manifest.path("MailHost")))("Flipside", ns)
         bus = ns.EventBus.New()
-        created, timers, refreshes, running, lists = {}, {}, 0, false, {}
+        created, timers, delays, refreshes, running, lists = {}, {}, {}, 0, false, {}
         mailFrame = CreateFrame("Frame", "MailFrame", UIParent)
         mailFrame:SetSize(384, 512)
         inbox, send = stretched("InboxFrame"), stretched("SendMailFrame")
@@ -71,11 +71,21 @@ describe("MailHost", function()
                 lists[#lists + 1] = list
                 return list
             end,
-            after = function(_, fn)
+            after = function(seconds, fn)
                 timers[#timers + 1] = fn
+                delays[#delays + 1] = seconds
             end,
         })
     end)
+
+    -- Runs the timers that are due now; a timer that a timer makes waits for the next call.
+    local function runTimers()
+        local due = timers
+        timers, delays = {}, {}
+        for _, fn in ipairs(due) do
+            fn()
+        end
+    end
 
     after_each(function()
         mock.teardown()
@@ -139,9 +149,39 @@ describe("MailHost", function()
     it("reads the plan again on a bag update, but not while a run is active", function()
         bus:Emit("MAIL_SHOW")
         bus:Emit("BAG_UPDATE_DELAYED")
+        runTimers()
         assert.are.equal(2, refreshes)
         running = true
         bus:Emit("BAG_UPDATE_DELAYED")
+        runTimers()
+        assert.are.equal(2, refreshes)
+    end)
+
+    it("makes one view refresh for many bag updates within 0.2 seconds", function()
+        bus:Emit("MAIL_SHOW")
+        for _ = 1, 5 do
+            bus:Emit("BAG_UPDATE_DELAYED")
+        end
+        assert.are.equal(1, refreshes, "no refresh before the delay")
+        assert.are.equal(1, #timers)
+        assert.are.equal(0.2, delays[1])
+        runTimers()
+        assert.are.equal(2, refreshes)
+        runTimers()
+        assert.are.equal(2, refreshes)
+    end)
+
+    it("does not refresh the hidden view on bag updates, and refreshes it when it shows again", function()
+        bus:Emit("MAIL_SHOW")
+        created[1].frame:Hide()
+        bus:Emit("BAG_UPDATE_DELAYED")
+        runTimers()
+        assert.are.equal(1, refreshes)
+        created[1].frame:Show()
+        runTimers()
+        assert.are.equal(1, refreshes, "the old timer does not refresh again")
+        bus:Emit("MAIL_CLOSED")
+        bus:Emit("MAIL_SHOW")
         assert.are.equal(2, refreshes)
     end)
 
@@ -160,10 +200,27 @@ describe("MailHost", function()
         bus:Emit("MAIL_INBOX_UPDATE")
         bus:Emit("MAIL_SHOW")
         bus:Emit("MAIL_INBOX_UPDATE")
+        runTimers()
         assert.are.equal(1, lists[1].refreshes)
         bus:Emit("MAIL_CLOSED")
         bus:Emit("MAIL_INBOX_UPDATE")
+        runTimers()
         assert.are.equal(1, lists[1].refreshes)
+    end)
+
+    it("makes one inbox list refresh for many MAIL_INBOX_UPDATE events in one frame", function()
+        bus:Emit("MAIL_SHOW")
+        for _ = 1, 6 do
+            bus:Emit("MAIL_INBOX_UPDATE")
+        end
+        assert.are.equal(0, lists[1].refreshes)
+        assert.are.equal(1, #timers)
+        assert.are.equal(0, delays[1])
+        runTimers()
+        assert.are.equal(1, lists[1].refreshes)
+        bus:Emit("MAIL_INBOX_UPDATE")
+        runTimers()
+        assert.are.equal(2, lists[1].refreshes, "a later event makes a new refresh")
     end)
 
     it("tries again once when the mail frame does not exist yet", function()
