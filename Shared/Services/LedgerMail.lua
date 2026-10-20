@@ -11,7 +11,7 @@ ns.LedgerMail = LedgerMail
 local OWNER = "Flipside.LedgerMail"
 
 -- The wait before the inbox is read again after an event (seconds). Many events come together.
-LedgerMail.DEBOUNCE_SECONDS = 0.1
+LedgerMail.DEBOUNCE_SECONDS = 0.3
 -- A mail whose money went down waits this long for its money change (seconds). Then a sale invoice counts alone.
 LedgerMail.PENDING_SECONDS = 10
 -- The days that a fingerprint stays saved.
@@ -121,6 +121,32 @@ function Mail:_SubjectKind(subject)
     return nil
 end
 
+-- Returns a cheap text of the header fields of all mails (no text read, no invoice read), or nil if the inbox
+-- cannot be read or a field is a secret value. Two equal texts mean that the inbox did not change.
+function Mail:_Signature()
+    local api = self._api
+    local total = api.numItems()
+    if self:_Secret(total) or type(total) ~= "number" then
+        return nil
+    end
+    local parts = { tostring(total) }
+    for index = 1, math.min(total, LedgerMail.MAX_MAILS) do
+        local header = api.header(index)
+        if type(header) ~= "table" then
+            parts[#parts + 1] = "-"
+        else
+            if self:_AnySecret(header) then
+                return nil
+            end
+            parts[#parts + 1] = table.concat({
+                tostring(header.sender), tostring(header.subject), tostring(header.money), tostring(header.itemCount),
+                tostring(header.itemQuantity), tostring(header.itemLink),
+            }, "\30")
+        end
+    end
+    return table.concat(parts, "\31")
+end
+
 -- Read the inbox. Returns the list of entries, or nil if the read is not possible.
 function Mail:_Read()
     local api = self._api
@@ -129,6 +155,7 @@ function Mail:_Read()
         self._stats.skipped = self._stats.skipped + 1
         return nil
     end
+    self._stats.reads = self._stats.reads + 1
     local list = {}
     for index = 1, math.min(total, LedgerMail.MAX_MAILS) do
         local header = api.header(index)
@@ -138,8 +165,13 @@ function Mail:_Read()
             if self._invoices and invoice == nil and api.text and not self:_AnySecret(header)
                 and ((count(header.money) and header.money > 0) or self:_SubjectKind(header.subject) == "won") then
                 -- The client gives the invoice only after the mail text is read (this marks the mail as read).
-                api.text(index)
-                invoice = api.invoice(index)
+                -- One read for each mail is enough, so the result is cached by the identity of the mail.
+                local identity = index .. "\31" .. tostring(header.sender) .. "\31" .. tostring(header.subject)
+                if not self._textRead[identity] then
+                    self._textRead[identity] = true
+                    api.text(index)
+                    invoice = api.invoice(index)
+                end
             end
             if self:_AnySecret(header) or self:_AnySecret(invoice) then
                 self._stats.skipped = self._stats.skipped + 1
@@ -255,10 +287,34 @@ end
 function Mail._Match(old, list)
     local drops = {}
     local taken = {}
+    -- The old mails by sender and subject, in order, so a new mail looks only at mails with the same key.
+    local byKey = {}
+    for position, previous in ipairs(old) do
+        local key = previous.sender .. "\31" .. previous.subject
+        local bucket = byKey[key]
+        if not bucket then
+            bucket = {}
+            byKey[key] = bucket
+        end
+        bucket[#bucket + 1] = position
+    end
     for _, entry in ipairs(list) do
-        for position, previous in ipairs(old) do
-            if not taken[position] and previous.sender == entry.sender and previous.subject == entry.subject
-                and previous.money >= entry.money then
+        local bucket = byKey[entry.sender .. "\31" .. entry.subject]
+        -- An old mail with the same money is the best match; else the first one with no less money. This keeps
+        -- the match right when a mail left the inbox between two reads.
+        local found
+        for _, position in ipairs(bucket or {}) do
+            if not taken[position] and old[position].money == entry.money then
+                found = position
+                break
+            end
+        end
+        for _, position in ipairs(bucket or {}) do
+            if found then
+                position = found
+            end
+            local previous = old[position]
+            if not taken[position] and previous.money >= entry.money then
                 taken[position] = true
                 entry.fp = previous.fp
                 entry.invoice = entry.invoice or previous.invoice
@@ -473,11 +529,22 @@ end
 function Mail:Refresh(reset)
     if reset then
         self._snapshot = nil
+        self._signature = nil
+        self._textRead = {}
+    end
+    -- The header signature is cheap. If it is the same as at the last full read, the inbox did not change.
+    local signature = self._snapshot and self:_Signature() or nil
+    if signature and signature == self._signature then
+        self._stats.unchanged = self._stats.unchanged + 1
+        self:_Settle()
+        return
     end
     local list = self:_Read()
     if not list then
+        self._signature = nil
         return
     end
+    self._signature = signature or self:_Signature()
     local drops = self._snapshot and self._Match(self._snapshot, list) or {}
     for _, entry in ipairs(list) do
         self:_Classify(entry)
@@ -510,10 +577,14 @@ function Mail:Refresh(reset)
     self:_Settle()
 end
 
--- The money tracker calls this for a gain in the mail context. Returns true if the records are written.
+-- The money tracker calls this for a gain in the mail context. It does not read the inbox: the read is the
+-- debounced one, so a burst of money takes gives one read. If no known drop matches, it returns false. The tracker
+-- then holds the gain, and the scheduled read settles it. Returns true if the records are written.
 function Mail:_OnGain(amount)
-    self:Refresh()
     local drops = self:_TakePending(amount)
+    if not drops then
+        self:_Schedule()
+    end
     if not drops then
         return false
     end
@@ -535,8 +606,43 @@ function Mail:_Schedule()
     self._scheduled = true
     self._after(LedgerMail.DEBOUNCE_SECONDS, function()
         self._scheduled = false
-        self:Refresh()
+        -- After the close the inbox reads empty, and the close handler has done the last read.
+        if not self._closed then
+            self:Refresh()
+        end
     end)
+end
+
+-- The mailbox closed. If a read was still scheduled, do it now when the client still gives the inbox. Else the
+-- client emptied it: the last snapshot pairs the held gains with the mails whose money has the same amount.
+-- Drops that no held gain claims are not pending (the mails were not taken). Then the snapshot ends.
+function Mail:_Close()
+    local snapshot = self._snapshot
+    if self._scheduled and snapshot then
+        local total = self._api.numItems()
+        if type(total) == "number" and total > 0 and not self:_Secret(total) then
+            self:Refresh()
+        elseif #self._tracker:HeldMail() > 0 then
+            local drops = self._Match(snapshot, {})
+            local first = #self._pending + 1
+            local now = self._now()
+            for _, drop in ipairs(drops) do
+                drop.time = now
+                if not drop.entry.kind then
+                    self:_Classify(drop.entry)
+                end
+                self._pending[#self._pending + 1] = drop
+            end
+            self:_Settle()
+            for position = #self._pending, first, -1 do
+                table.remove(self._pending, position)
+            end
+        end
+    end
+    self._snapshot = nil
+    self._signature = nil
+    self._textRead = {}
+    self._closed = true
 end
 
 -- Remove the fingerprints that are older than FINGERPRINT_DAYS.
@@ -584,21 +690,23 @@ function LedgerMail.Attach(deps)
         _invoices = deps.invoices ~= false,
         _patterns = patterns,
         _pending = {},
+        _textRead = {},
         _stats = {
             sales = 0, sellers = 0, expired = 0, cancelled = 0, refunds = 0, mailMoney = 0, duplicates = 0, skipped = 0,
-            rejected = 0, noInvoice = 0, unknownInvoice = 0, late = 0,
+            rejected = 0, noInvoice = 0, unknownInvoice = 0, late = 0, unchanged = 0, reads = 0,
         },
     }, Mail)
     mail:_Prune()
 
     local bus = deps.bus
     bus:Subscribe("MAIL_SHOW", OWNER, function()
+        mail._closed = false
         mail:Refresh(true)
         mail:_Schedule()
     end)
     bus:Subscribe("MAIL_CLOSED", OWNER, function()
         -- The inbox reads empty after the close, so the snapshot ends here.
-        mail._snapshot = nil
+        mail:_Close()
     end)
     bus:Subscribe("MAIL_INBOX_UPDATE", OWNER, function()
         mail:_Schedule()
