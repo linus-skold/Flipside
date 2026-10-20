@@ -83,6 +83,9 @@ local function buildTab(entry, frame)
         button:SetPoint("TOPLEFT", last, "TOPRIGHT", 3, 0)
     end
     button:SetScript("OnClick", function()
+        if ns.Kit and ns.Kit.PlaySound then
+            ns.Kit.PlaySound("tab")
+        end
         entry.core:Select()
     end)
     PanelTemplates_SetNumTabs(frame, #tabs)

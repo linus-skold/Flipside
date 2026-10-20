@@ -16,6 +16,7 @@ end
 
 local ABOUT_TEXT = "Groups sort items into trees. Operations hold the rules. Formulas check and save price formulas."
 
+local SOUNDS_TEXT = "Play interface sounds"
 local SHARE_TEXT = "Share prices with my guild"
 local SHARE_HINT = "Off by default. Guild members share scan prices. Your own scans always win over shared prices."
 
@@ -40,6 +41,19 @@ local function buildAbout(content, deps)
     end)
     logButton:SetPoint("TOPLEFT", note, "BOTTOMLEFT", 0, -Kit.Theme.gap * 2)
     local about = { title = title, version = version, note = note, logButton = logButton }
+    local anchor = logButton
+    local sounds = deps.sounds
+    if sounds then
+        local soundCheck = Kit.Check(content, SOUNDS_TEXT, function(checked)
+            if not sounds.setEnabled(checked) then
+                about.soundCheck:SetChecked(sounds.isEnabled())
+            end
+        end)
+        soundCheck:SetPoint("TOPLEFT", logButton, "BOTTOMLEFT", 0, -Kit.Theme.gap * 2)
+        soundCheck:SetChecked(sounds.isEnabled())
+        about.soundCheck = soundCheck
+        anchor = soundCheck
+    end
     local sync = deps.guildSync
     if sync then
         local check = Kit.Check(content, SHARE_TEXT, function(checked)
@@ -47,7 +61,7 @@ local function buildAbout(content, deps)
                 about.shareCheck:SetChecked(sync.isEnabled())
             end
         end)
-        check:SetPoint("TOPLEFT", logButton, "BOTTOMLEFT", 0, -Kit.Theme.gap * 2)
+        check:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 0, -Kit.Theme.gap * 2)
         check:SetChecked(sync.isEnabled())
         about.shareCheck = check
         local hint = Kit.Label(content, SHARE_HINT, "highlight")

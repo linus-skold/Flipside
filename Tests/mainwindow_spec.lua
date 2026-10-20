@@ -141,6 +141,33 @@ describe("MainWindow", function()
         assert.are.equal(1, opened)
     end)
 
+    it("shows the sounds check on the About page and saves a click", function()
+        local on = true
+        deps.sounds = {
+            isEnabled = function()
+                return on
+            end,
+            setEnabled = function(value)
+                on = value
+                return true
+            end,
+        }
+        local win = ns.MainWindow.Create(deps)
+        win:SelectPage("about")
+        local check
+        for _, object in ipairs(mock.objects) do
+            local text = object.kind == "CheckButton" and object.Text and object.Text:GetText()
+            if text == "Play interface sounds" then
+                check = object
+            end
+        end
+        assert.is_not_nil(check)
+        assert.is_true(check:GetChecked())
+        check:SetChecked(false)
+        check.scripts.OnClick(check)
+        assert.is_false(on)
+    end)
+
     describe("guild sharing check on the About page", function()
         local enabled, changes
 
