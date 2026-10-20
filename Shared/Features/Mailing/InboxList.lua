@@ -8,18 +8,19 @@ local InboxList = {}
 ns.InboxList = InboxList
 
 local Kit = ns.Kit
--- The row pitch: the content height plus the gap between two rows. 21 px still fits 14 rows above Open All.
-local ROW_HEIGHT = 21
+-- The row pitch: the content height plus the gap between two rows. 22 px still fits 14 rows above Open All.
+local ROW_HEIGHT = 22
 -- The empty space at the bottom of each row. The separator line sits in it.
 local ROW_GAP = 2
--- The square slot (border) of the icon, and the icon inside it with its padding.
-local SLOT_SIZE = 18
-local ICON_SIZE = 14
-local SLOT_X = 2
+-- The square brown slot of the icon (it fills the content height), and the icon inside it.
+local SLOT_SIZE = 20
+local ICON_SIZE = 18
+-- The same space left of the slot and between the slot and the sender.
+local SLOT_X = 3
 local ICON_TEXCOORD = { 0.07, 0.93, 0.07, 0.93 }
-local SENDER_X = 24
+local SENDER_X = SLOT_X + SLOT_SIZE + 3
 local SENDER_WIDTH = 64
-local SUBJECT_X = 90
+local SUBJECT_X = SENDER_X + SENDER_WIDTH + 2
 -- The text sits in the content area, above the gap.
 local TEXT_Y = ROW_GAP / 2
 local EXTRA_WIDTH = 74
@@ -42,12 +43,13 @@ local HOVER_ALPHA = 0.2
 -- Time left and COD on parchment: dark green and dark red.
 local DAYS_GOOD = "|cff1a6e1a"
 local DAYS_BAD = "|cffa01010"
--- The look of a row with no mail: a client empty item slot and a dim bar.
-local EMPTY_SLOT_TEXTURE = "Interface\\Buttons\\UI-Slot-Background"
+-- The brown client item slot background (as the Send Mail attachment slot), behind each icon and in empty rows.
+-- Its art fills the top left 0.640625 of the file.
+local SLOT_TEXTURE = "Interface\\Buttons\\UI-Slot-Background"
+local SLOT_TEXCOORD = { 0, 0.640625, 0, 0.640625 }
+-- The dim bar of a row with no mail.
 local EMPTY_BAR_COLOR = { 0.3, 0.2, 0.05, 0.15 }
--- The client item frame border (the quality border of item buttons), tinted dark, and the row separator line.
-local BORDER_TEXTURE = "Interface\\Common\\WhiteIconFrame"
-local BORDER_COLOR = { 0.3, 0.22, 0.12 }
+-- The row separator line.
 local SEPARATOR_COLOR = { 0.35, 0.22, 0.1, 0.65 }
 local EMPTY_ROW = { empty = true }
 
@@ -150,15 +152,15 @@ end
 
 -- Builds the fields of a row once.
 local function buildRow(view, row)
+    row.border = row:CreateTexture(nil, "ARTWORK", nil, -1)
+    row.border:SetSize(SLOT_SIZE, SLOT_SIZE)
+    row.border:SetPoint("LEFT", row, "LEFT", SLOT_X, TEXT_Y)
+    row.border:SetTexture(SLOT_TEXTURE)
+    row.border:SetTexCoord(SLOT_TEXCOORD[1], SLOT_TEXCOORD[2], SLOT_TEXCOORD[3], SLOT_TEXCOORD[4])
     row.icon = row:CreateTexture(nil, "ARTWORK")
     row.icon:SetSize(ICON_SIZE, ICON_SIZE)
     row.icon:SetPoint("LEFT", row, "LEFT", SLOT_X + (SLOT_SIZE - ICON_SIZE) / 2, TEXT_Y)
     row.icon:SetTexCoord(ICON_TEXCOORD[1], ICON_TEXCOORD[2], ICON_TEXCOORD[3], ICON_TEXCOORD[4])
-    row.border = row:CreateTexture(nil, "OVERLAY")
-    row.border:SetSize(SLOT_SIZE, SLOT_SIZE)
-    row.border:SetPoint("LEFT", row, "LEFT", SLOT_X, TEXT_Y)
-    row.border:SetTexture(BORDER_TEXTURE)
-    row.border:SetVertexColor(BORDER_COLOR[1], BORDER_COLOR[2], BORDER_COLOR[3])
     row.separator = row:CreateTexture(nil, "BORDER")
     row.separator:SetHeight(1)
     row.separator:SetPoint("BOTTOMLEFT", row, "BOTTOMLEFT", 0, 0)
@@ -193,9 +195,10 @@ local function buildRow(view, row)
         setNoWrap(label)
     end
     row.slot = row:CreateTexture(nil, "ARTWORK")
-    row.slot:SetSize(SLOT_SIZE - 2, SLOT_SIZE - 2)
-    row.slot:SetPoint("LEFT", row, "LEFT", SLOT_X + 1, TEXT_Y)
-    row.slot:SetTexture(EMPTY_SLOT_TEXTURE)
+    row.slot:SetSize(SLOT_SIZE, SLOT_SIZE)
+    row.slot:SetPoint("LEFT", row, "LEFT", SLOT_X, TEXT_Y)
+    row.slot:SetTexture(SLOT_TEXTURE)
+    row.slot:SetTexCoord(SLOT_TEXCOORD[1], SLOT_TEXCOORD[2], SLOT_TEXCOORD[3], SLOT_TEXCOORD[4])
     row.bar = row:CreateTexture(nil, "BACKGROUND", nil, -1)
     row.bar:SetPoint("TOPLEFT", row, "TOPLEFT", 0, 0)
     row.bar:SetPoint("BOTTOMRIGHT", row, "BOTTOMRIGHT", 0, ROW_GAP)
@@ -223,6 +226,7 @@ local function initEmptyRow(row)
     row.slot:Show()
     row.bar:Show()
     row.icon:Hide()
+    row.border:Hide()
     row.selection:Hide()
     row.hover:Hide()
     for _, label in ipairs({ row.days, row.extra, row.sender, row.subject }) do
@@ -242,6 +246,7 @@ local function initRow(view, row, mail)
     row:EnableMouse(true)
     row.slot:Hide()
     row.bar:Hide()
+    row.border:Show()
     row.icon:Show()
     row.mail = mail
     row.icon:SetTexture(mail.icon)
