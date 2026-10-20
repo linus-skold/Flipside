@@ -366,6 +366,21 @@ describe("BuyingPlan", function()
             assert.is_false(levels[2].own)
         end)
 
+        it("gives one level for each row with group = false, sorted by price, then stack size", function()
+            local levels = BP.PriceLevels({
+                { unitPrice = 100, quantity = 5, auctionID = 4 },
+                { unitPrice = 100, quantity = 1, auctionID = 3 },
+                { unitPrice = 100, quantity = 1, auctionID = 2, ownerItem = true },
+                { unitPrice = 50, quantity = 1, auctionID = 9 },
+            }, { group = false })
+            assert.are.equal(4, #levels)
+            assert.are.same({ 9, 2, 3, 4 }, { levels[1].id, levels[2].id, levels[3].id, levels[4].id })
+            assert.are.equal(5, levels[4].quantity)
+            assert.are.equal(1, levels[2].listings)
+            assert.is_true(levels[2].own)
+            assert.is_false(levels[3].own)
+        end)
+
         it("gives no level for no rows", function()
             assert.are.same({}, BP.PriceLevels(nil))
             assert.are.same({}, BP.PriceLevels({}))

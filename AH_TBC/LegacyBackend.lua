@@ -439,10 +439,14 @@ local function byPrice(a, b)
     if a.unitPrice ~= b.unitPrice then
         return a.unitPrice < b.unitPrice
     end
+    if a.quantity ~= b.quantity then
+        return a.quantity < b.quantity
+    end
     return a.auctionID < b.auctionID
 end
 
--- Rows of the item in the list, cheapest unit price first. auctionID is the list index. A row with no buyout is
+-- Rows of the item in the list, cheapest unit price first, then the smaller stack. owner is the seller and timeLeft
+-- is the client code 1 to 4 (nil if the client has no answer). auctionID is the list index. A row with no buyout is
 -- skipped. Each row is an item auction: the unit price is the buyout of the stack divided by the count.
 function Backend.LiveRows(itemID)
     local rows, prints = {}, {}
@@ -456,6 +460,8 @@ function Backend.LiveRows(itemID)
                 auctionID = i, unitPrice = buyout / count, quantity = count, buyout = buyout, isCommodity = false,
                 ownerItem = me ~= nil and owner == me, itemLink = has("GetAuctionItemLink")
                     and _G.GetAuctionItemLink("list", i) or nil,
+                owner = type(owner) == "string" and owner ~= "" and owner or nil,
+                timeLeft = has("GetAuctionItemTimeLeft") and _G.GetAuctionItemTimeLeft("list", i) or nil,
             }
         end
     end

@@ -151,9 +151,31 @@ end
 
 -- Group live rows by unit price. rows: { auctionID, unitPrice, quantity, isCommodity, ownerItem }.
 -- Returns levels, cheapest first: { unitPrice, quantity, listings, own, rows }. own is true if one row is yours.
+-- opts.group = false gives one level for each row (an auction): { id = row.auctionID, unitPrice, quantity, listings =
+-- 1, own, rows = { row } }, sorted by unit price, then by stack size, then by auctionID.
 function BuyingPlan.PriceLevels(rows, opts)
     opts = opts or {}
     local byPrice, levels = {}, {}
+    if opts.group == false then
+        for _, row in ipairs(rows or {}) do
+            if type(row.unitPrice) == "number" then
+                levels[#levels + 1] = {
+                    id = row.auctionID, unitPrice = row.unitPrice, quantity = row.quantity or 1, listings = 1,
+                    own = IsOwn(row, opts), rows = { row },
+                }
+            end
+        end
+        table.sort(levels, function(a, b)
+            if a.unitPrice ~= b.unitPrice then
+                return a.unitPrice < b.unitPrice
+            end
+            if a.quantity ~= b.quantity then
+                return a.quantity < b.quantity
+            end
+            return (a.id or 0) < (b.id or 0)
+        end)
+        return levels
+    end
     for _, row in ipairs(rows or {}) do
         if type(row.unitPrice) == "number" then
             local level = byPrice[row.unitPrice]
