@@ -237,4 +237,18 @@ describe("Tooltip", function()
         assert.are.equal(4, ns.Tooltip.stats.total)
         assert.are.equal(2, ns.Tooltip.stats.max)
     end)
-end)
+
+    it("gives the vendor sell price to the line builder", function()
+        callbackDeps.itemInfo = function()
+            return "n", "l", 1, 1, 1, "t", "s", 1, "", 1, 777
+        end
+        ns.Tooltip.Attach(callbackDeps)
+        registered[1].fn(newTooltip(), "item:5")
+        assert.are.equal(777, built[1].sellPrice)
+    end)
+
+    it("gives no vendor sell price when the item info is not known", function()
+        ns.Tooltip.Attach(callbackDeps)
+        registered[1].fn(newTooltip(), "item:5")
+        assert.is_nil(built[1].sellPrice)
+    end)end)

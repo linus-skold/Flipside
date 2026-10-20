@@ -502,4 +502,43 @@ describe("TooltipPage", function()
             assert.is_false(page.tableView.frame:IsShown())
         end)
     end)
-end)
+
+    describe("vendor, period and stat settings", function()
+        local function check(grid, position)
+            local box = grid.checks[position]
+            box:SetChecked(not box:GetChecked())
+            box.scripts.OnClick(box)
+        end
+
+        it("shows the defaults for a config without the new keys", function()
+            assert.is_true(page.vendor:GetChecked())
+            for i = 1, 4 do
+                assert.is_true(page.periods.checks[i]:GetChecked())
+                assert.is_true(page.stats.checks[i]:GetChecked())
+            end
+        end)
+
+        it("writes the vendor flag", function()
+            page.vendor:SetChecked(false)
+            click(page.vendor)
+            assert.is_false(stored().showVendor)
+        end)
+
+        it("writes a period", function()
+            check(page.periods, 3)
+            assert.is_false(stored().periods["30d"])
+            assert.is_true(stored().periods["14d"])
+        end)
+
+        it("writes a stat", function()
+            check(page.stats, 2)
+            assert.is_false(stored().stats.avg)
+            assert.is_true(stored().stats.market)
+        end)
+
+        it("keeps a stat off after a redraw", function()
+            check(page.stats, 4)
+            page.Refresh()
+            assert.is_false(page.stats.checks[4]:GetChecked())
+        end)
+    end)end)

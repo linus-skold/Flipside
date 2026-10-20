@@ -913,6 +913,13 @@ Operations and formulas (§4.2–4.3), tooltips and inventory tracking (referenc
     - The table is a line of the Tooltip tab ("Price table"). The player can turn it off or move it. It cannot be removed or edited. Formula lines of the player show below or above it as ordered. It is not a formula line, so it does not use the formula language.
     - Drawing: `GameTooltip` lines have only a left and a right text. Flipside reserves one blank tooltip line per table row (the header row and four windows), draws the five columns in its own frame over them, and sets `SetMinimumWidth` so that the table fits. The frame hides on `OnTooltipCleared` and `OnHide`. Both clients have `GetLeftLine`, `NumLines` and `SetMinimumWidth` (checked in the Forever source and the TBC Anniversary source).
     - Migration: a stored version 1 tooltip setting with the untouched Market, Min and Max lines gets the price table in their place, at the top. Changed, turned-off and custom lines stay below it.
+16. **Vendor price, periods and stats (decided 2026-10-20).**
+    - **Vendor sell price.** A row "Vendor sell price" shows the unit sell price (11th return of `C_Item.GetItemInfo`). It is on by default. The check box "Vendor sell price" on the Tooltip tab turns it off. With Alt and a stack, the row shows the stack total ("Vendor sell price (stack of 4)"), as the other rows do. The row is hidden when the price is 0 or not known. The client item tooltip also has its own "Sell Price" line (`GameTooltip_OnTooltipAddMoney`, Forever and TBC Anniversary source), so the player sees two vendor lines. The player can turn off the Flipside row.
+    - **Periods.** The check boxes 1d, 14d, 30d and 60d of the Tooltip tab turn each window on or off. All are on by default. If no window is on, the price rows do not show.
+    - **Stats.** The check boxes Min, Avg, Max and Market turn each column on or off. All are on by default. The columns keep the order of the table. If no stat is on, the price rows do not show.
+    - **Layout.** With two or more stats, the price table shows only the selected columns. With one stat, the table is replaced by one row for each window, such as "14d market  1g 2s", under the same title line.
+    - **Storage.** The tooltip settings keep `showVendor`, `periods` (by window label) and `stats` (`min`, `avg`, `max`, `market`). A stored setting without these keys gets the defaults (all on).
+    - In-game check: see the Tooltip tab list in the checklist of §5 (vendor row, each window, each stat subset).
 ### 5.11 Great Deals (new)
 
 Right after each full scan, before raw listings are discarded, every listing is compared with the item's `ScanMarket` from *before* this scan, so a flood of cheap listings can't lower its own benchmark.

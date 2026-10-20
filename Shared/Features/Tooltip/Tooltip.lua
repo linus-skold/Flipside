@@ -163,7 +163,7 @@ local function addRows(tooltip, rows)
     end
     local title = "Flipside"
     for _, row in ipairs(rows) do
-        if row.kind == "table" then
+        if row.header then
             title = row.header
             break
         end
@@ -181,9 +181,20 @@ local function addRows(tooltip, rows)
         end
     end
 end
+-- Returns the vendor sell price (11th return of GetItemInfo) of the item, or nil.
+local function sellPriceOf(deps, link)
+    local getInfo = deps.itemInfo or (C_Item and C_Item.GetItemInfo)
+    if not getInfo or not link then
+        return nil
+    end
+    local price = select(11, getInfo(link))
+    return type(price) == "number" and price or nil
+end
+
 -- Returns the rows of one item with the current settings, or with the given config.
 function Tooltip.Rows(deps, input, stackMode, stackCount, config)
     return ns.TooltipLines.Build({
+        sellPrice = sellPriceOf(deps, input),
         config = config or deps.tooltipConfig:Get(),
         input = input,
         stackCount = stackCount,
