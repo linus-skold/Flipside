@@ -72,7 +72,7 @@ local function sameAuction(a, b)
         and (a.itemLink == nil or b.itemLink == nil or a.itemLink == b.itemLink)
 end
 
--- The time left codes of the legacy client (GetAuctionItemTimeLeft).
+-- The time left codes 1 to 4 of the legacy client list rows.
 local TIME_LEFT = { "Short", "Medium", "Long", "Very long" }
 
 -- The stack size of a price level, or nil if the level has no stack. With a commodity market, a commodity

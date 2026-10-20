@@ -24,7 +24,10 @@ describe("BuyingTab with one row for each auction", function()
         c.ReadyEvent = function() return "READY" end
         c.CloseEvent = function() return "CLOSE" end
         c.BuyEvents = function()
-            return { itemCompleted = "ITEMBOUGHT", itemError = "ITEMERR" }
+            return {
+                priceUpdated = "QUOTE", priceUnavailable = "NOQUOTE", commoditySucceeded = "BOUGHT",
+                commodityFailed = "NOTBOUGHT", itemCompleted = "ITEMBOUGHT", itemError = "ITEMERR",
+            }
         end
         c.CanBuy = function() return true end
         c.BuyItemAuction = function(...)
