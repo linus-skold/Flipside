@@ -130,7 +130,9 @@ local function dataRow(line, ctx, state)
     else
         right = INVALID
     end
-    return {`n        left = label, right = right, color = copper and "normal" or "dim", rgb = copper and lineColor(line) or nil,`n    }
+    return {
+        left = label, right = right, color = copper and "normal" or "dim", rgb = copper and lineColor(line) or nil,
+    }
 end
 
 -- Returns one entry per server day: { day, min, market, low, high }. min and market are the daily values.

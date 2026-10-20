@@ -268,7 +268,7 @@ describe("TooltipPage", function()
                 picker = { rgb = { 0.5, 0.5, 0.5 }, shown = 0 }
                 function picker:GetColorRGB() return unpack(self.rgb) end
                 function picker:SetColorRGB(r, g, b) self.rgb = { r, g, b } end
-                function picker:Hide() end
+                picker.Hide = function() end
                 function picker:Show() self.shown = self.shown + 1 end
                 if modern then
                     function picker:SetupColorPickerAndShow(info) self.info = info end

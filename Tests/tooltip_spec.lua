@@ -7,7 +7,7 @@ describe("Tooltip", function()
         function t:AddLine(text, r) self.lines[#self.lines + 1] = { text = text, r = r } end
         function t:AddDoubleLine(l, r, lr) self.lines[#self.lines + 1] = { left = l, right = r, lr = lr } end
         function t:GetOwner() return self.owner end
-        function t:IsShown() return true end
+        t.IsShown = function() return true end
         return t
     end
 
