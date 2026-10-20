@@ -117,6 +117,73 @@ describe("InboxList", function()
         assert.are.equal(0, ns.InboxList.VisibleRows(0))
     end)
 
+    describe("empty slots", function()
+        local ROWS = 8
+
+        -- The rows that show the empty state.
+        local function emptyRows()
+            local out = {}
+            for _, row in ipairs(rows()) do
+                if row.mail == nil then
+                    out[#out + 1] = row
+                end
+            end
+            return out
+        end
+
+        before_each(function()
+            list.frame.height = ROWS * 18 + 2 * 4
+        end)
+
+        it("fills the rows below the last mail with empty slots", function()
+            list:Refresh()
+            assert.are.equal(ROWS, #rows())
+            assert.are.equal(ROWS - 3, #emptyRows())
+            assert.is_not_nil(rows()[3].mail)
+            assert.is_nil(rows()[4].mail)
+            assert.is_true(rows()[4].slot:IsShown())
+            assert.is_true(rows()[4].bar:IsShown())
+            assert.is_false(rows()[1].slot:IsShown())
+            assert.are.equal(3, #list.mails, "the empty rows are not mails")
+        end)
+
+        it("shows all rows as empty slots with no mail", function()
+            mails = {}
+            list:Refresh()
+            assert.are.equal(ROWS, #emptyRows())
+        end)
+
+        it("does nothing on a click, a hover or a Shift-click of an empty row", function()
+            shift = true
+            list:Refresh()
+            for _, row in ipairs(emptyRows()) do
+                row.scripts.OnClick(row)
+                row.scripts.OnEnter(row)
+                assert.is_false(row.mouse)
+                assert.is_false(row.selection:IsShown())
+                assert.are.equal("", row.sender:GetText())
+            end
+            assert.are.same({}, opened)
+            assert.are.same({}, looted)
+            assert.is_nil(mock.tooltip.title)
+        end)
+
+        it("adds no empty row when the mails fill the list", function()
+            for index = 4, 20 do
+                mails[index] = { stationery = "m", sender = "S", subject = "x", money = 0, cod = 0, days = 5,
+                    items = 0, read = true }
+            end
+            list:Refresh()
+            assert.are.equal(20, #list.list:GetData())
+            assert.are.equal(0, #emptyRows())
+        end)
+
+        it("draws again when the list height changes", function()
+            list.frame.scripts.OnSizeChanged(list.frame)
+            assert.are.equal(ROWS - 3, #emptyRows())
+        end)
+    end)
+
     describe("Anchor", function()
         local inbox, first, openAll, frame
 
