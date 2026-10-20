@@ -244,7 +244,8 @@ function Sync:_TakeUnsent()
     return nil
 end
 
--- Build the data set of the newest known prices (own scans and shared data) and queue it. Return true if the work started.
+-- Build the data set of the newest known prices (own scans and shared data) and queue it.
+-- Return true if the work started.
 -- The job yields between items, so the reading is not inside a pcall (Lua 5.1 cannot yield there).
 function Sync:SendSet(why)
     local blocked = self:_Blocked()
