@@ -140,6 +140,37 @@ describe("TooltipPage", function()
             assert.are.equal("Item name, link or id", page.exampleInput.placeholder:GetText())
         end)
 
+        it("lays the 12 check boxes out in 3 even columns, row by row", function()
+            local checks = page.gridChecks
+            assert.are.equal(12, #checks)
+            local texts = {}
+            for i, box in ipairs(checks) do
+                texts[i] = box.Text:GetText()
+            end
+            assert.are.same({ "Min", "Avg", "Max", "Market", "1d", "14d", "30d", "60d", "Show group",
+                "Show operations", "Show counts per character", "Vendor sell price" }, texts)
+            local function at(i)
+                local _, _, _, x, y = checks[i]:GetPoint()
+                return x, y
+            end
+            local x1, y1 = at(1)
+            local x2 = at(2)
+            local x3 = at(3)
+            local _, y4 = at(4)
+            local width, height = x2 - x1, y1 - y4
+            assert.is_true(width > 0 and height > 0)
+            assert.are.equal(width, x3 - x2)
+            for i = 1, 12 do
+                local x, y = at(i)
+                assert.are.equal(x1 + ((i - 1) % 3) * width, x)
+                assert.are.equal(y1 - math.floor((i - 1) / 3) * height, y)
+                assert.are.equal(page.grid, checks[i]:GetParent())
+            end
+            assert.are.equal(page.grid, page.group:GetParent())
+            assert.are.equal(checks[9], page.group)
+            assert.are.equal(checks[12], page.vendor)
+        end)
+
         it("shows the Alt hint", function()
             assert.are.equal("Hold Alt over an item to see the value of the whole stack.", page.hint:GetText())
         end)

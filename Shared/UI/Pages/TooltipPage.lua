@@ -8,6 +8,10 @@ ns.TooltipPage = TooltipPage
 local LEFT_WIDTH = 300
 local RIGHT_X = 312
 local RIGHT_WIDTH = 460
+local GRID_COLUMNS, GRID_ROWS = 3, 4
+local GRID_COLUMN_WIDTH = math.floor(RIGHT_WIDTH / GRID_COLUMNS)
+local GRID_ROW_HEIGHT = 24
+local GRID_BOTTOM = 32
 local REMOVE_DIALOG = "FLIPSIDE_REMOVE_TOOLTIP_LINE"
 local RESET_DIALOG = "FLIPSIDE_RESET_TOOLTIP"
 local EDITOR_DIALOG = "FlipsideFormulaEditor"
@@ -377,50 +381,73 @@ function TooltipPage.Build(content, deps)
 
     -- Bottom.
 
-    local function flagCheck(text, flag, y)
-        local check = Kit.Check(content, text, function(checked)
-            change(tc.SetFlag, flag, checked)
-        end)
-        check:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", RIGHT_X, y)
+    -- One grid of check boxes: 3 columns of equal width, filled row by row, same row height.
+    local grid = CreateFrame("Frame", nil, content)
+    grid:SetSize(GRID_COLUMNS * GRID_COLUMN_WIDTH, GRID_ROWS * GRID_ROW_HEIGHT)
+    grid:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", RIGHT_X, GRID_BOTTOM)
+    page.grid = grid
+    page.gridChecks = {}
+
+    local function gridCheck(text, onChange)
+        local index = #page.gridChecks + 1
+        local column, row = (index - 1) % GRID_COLUMNS, math.floor((index - 1) / GRID_COLUMNS)
+        local check = Kit.Check(grid, text, onChange)
+        check:SetPoint("TOPLEFT", grid, "TOPLEFT", column * GRID_COLUMN_WIDTH, -row * GRID_ROW_HEIGHT)
+        page.gridChecks[index] = check
         return check
     end
-    page.counts = flagCheck("Show counts per character", "showCounts", 28)
-    page.operation = flagCheck("Show operations", "showOperation", 52)
-    page.group = flagCheck("Show group", "showGroup", 76)
-    page.vendor = flagCheck("Vendor sell price", "showVendor", 28)
-    page.vendor:ClearAllPoints()
-    page.vendor:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", RIGHT_X + 230, 28)
 
     -- Calls apply(name, checked) for each name whose box differs from the stored set.
-    local function choiceGrid(items, columnWidth, y, stored, apply)
-        local grid = Kit.CheckGrid(content, {
-            items = items,
-            columns = #items,
-            columnWidth = columnWidth,
-            onChange = function(set)
+    local function choiceGroup(items, stored, apply)
+        local group = { checks = {} }
+        local values = {}
+        for position, item in ipairs(items) do
+            group.checks[position] = gridCheck(item.text, function(checked)
+                values[item.value] = checked or nil
                 local current = stored()
-                for _, item in ipairs(items) do
-                    local on = set[item.value] == true
-                    if on ~= current[item.value] then
-                        change(apply, item.value, on)
+                for _, other in ipairs(items) do
+                    local on = values[other.value] == true
+                    if on ~= current[other.value] then
+                        change(apply, other.value, on)
                     end
                 end
-            end,
-        })
-        grid:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", RIGHT_X, y)
-        return grid
+            end)
+        end
+        function group.SetValues(_, set)
+            values = {}
+            for position, item in ipairs(items) do
+                values[item.value] = (set or {})[item.value] and true or nil
+                group.checks[position]:SetChecked(values[item.value] == true)
+            end
+        end
+        function group.SetEnabled(_, enabled)
+            for _, check in ipairs(group.checks) do
+                check:SetEnabled(enabled)
+            end
+        end
+        return group
     end
-    page.periods = choiceGrid({ { value = "1d", text = "1d" }, { value = "14d", text = "14d" },
-        { value = "30d", text = "30d" }, { value = "60d", text = "60d" } }, 70, 100,
-    function()
-        return tc:Get().periods
-    end, tc.SetPeriod)
-    page.stats = choiceGrid({ { value = "min", text = "Min" }, { value = "avg", text = "Avg" },
-        { value = "max", text = "Max" }, { value = "market", text = "Market" } }, 90, 124,
+
+    local function flagCheck(text, flag)
+        return gridCheck(text, function(checked)
+            change(tc.SetFlag, flag, checked)
+        end)
+    end
+
+    page.stats = choiceGroup({ { value = "min", text = "Min" }, { value = "avg", text = "Avg" },
+        { value = "max", text = "Max" }, { value = "market", text = "Market" } },
     function()
         return tc:Get().stats
     end, tc.SetStat)
-    page.hint = Kit.Label(content, ALT_HINT, "small")
+    page.periods = choiceGroup({ { value = "1d", text = "1d" }, { value = "14d", text = "14d" },
+        { value = "30d", text = "30d" }, { value = "60d", text = "60d" } },
+    function()
+        return tc:Get().periods
+    end, tc.SetPeriod)
+    page.group = flagCheck("Show group", "showGroup")
+    page.operation = flagCheck("Show operations", "showOperation")
+    page.counts = flagCheck("Show counts per character", "showCounts")
+    page.vendor = flagCheck("Vendor sell price", "showVendor")    page.hint = Kit.Label(content, ALT_HINT, "small")
     page.hint:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", RIGHT_X, 6)
     page.hint:SetWidth(RIGHT_WIDTH)
     page.hint:SetJustifyH("LEFT")
