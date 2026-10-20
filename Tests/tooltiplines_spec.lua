@@ -269,7 +269,7 @@ describe("TooltipLines", function()
 
         it("multiplies by the stack count in stack mode", function()
             local rows = TL.Build(ctx({ stackMode = true, stackCount = 5 }))
-            assert.are.equal("Market (stack of 5)", rows[1].left)
+            assert.are.equal("Market x5", rows[1].left)
             assert.are.equal("62g", rows[1].right)
         end)
 
@@ -286,7 +286,7 @@ describe("TooltipLines", function()
             local rows = TL.Build(c)
             assert.are.equal("Market", rows[1].left)
             assert.are.equal("12g 40s", rows[1].right)
-            assert.are.equal("Stack (stack of 5)", rows[2].left)
+            assert.are.equal("Stack x5", rows[2].left)
             assert.are.equal("62g", rows[2].right)
         end)
 
@@ -546,8 +546,13 @@ describe("TooltipLines", function()
         it("shows the unit price by default", function()
             local rows = rowsOf({ sellPrice = 250 })
             assert.are.equal(1, #rows)
-            assert.are.equal("Vendor sell price", rows[1].left)
+            assert.are.equal("Vendor:", rows[1].left)
             assert.are.equal("2s 50c", rows[1].right)
+        end)
+
+        it("colours the row blue", function()
+            local rgb = rowsOf({ sellPrice = 250 })[1].rgb
+            assert.are.same({ 79 / 255, 163 / 255, 1 }, rgb)
         end)
 
         it("hides the row for a price of 0 or nil", function()
@@ -557,7 +562,7 @@ describe("TooltipLines", function()
 
         it("shows the stack total with Alt and a stack", function()
             local rows = rowsOf({ sellPrice = 250, stackMode = true, stackCount = 4 })
-            assert.are.equal("Vendor sell price (stack of 4)", rows[1].left)
+            assert.are.equal("Vendor x4:", rows[1].left)
             assert.are.equal("10s", rows[1].right)
         end)
 

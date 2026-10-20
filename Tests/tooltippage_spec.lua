@@ -148,7 +148,7 @@ describe("TooltipPage", function()
                 texts[i] = box.Text:GetText()
             end
             assert.are.same({ "Min", "Avg", "Max", "Market", "1d", "14d", "30d", "60d", "Show group",
-                "Show operations", "Show counts per character", "Vendor sell price" }, texts)
+                "Show operations", "Show counts per character", "Vendor" }, texts)
             local function at(i)
                 local _, _, _, x, y = checks[i]:GetPoint()
                 return x, y

@@ -477,7 +477,7 @@ function TooltipPage.Build(content, deps)
     page.group = flagCheck("Show group", "showGroup")
     page.operation = flagCheck("Show operations", "showOperation")
     page.counts = flagCheck("Show counts per character", "showCounts")
-    page.vendor = flagCheck("Vendor sell price", "showVendor")
+    page.vendor = flagCheck("Vendor", "showVendor")
     layoutGrid()
 
     page.hint =Kit.Label(content, ALT_HINT, "small")

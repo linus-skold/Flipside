@@ -18,7 +18,10 @@ local STATS = {
     { key = "max", name = "Max" },
     { key = "market", name = "Market" },
 }
-local VENDOR_LABEL = "Vendor sell price"
+local VENDOR_LABEL = "Vendor:"
+-- The vendor row is blue (the code |cff4fa3ff as red, green and blue parts of 0 to 1).
+TooltipLines.VENDOR_COLOR = { 79 / 255, 163 / 255, 1 }
+local DEFAULT_NAME_COLOR = "ffffff"
 local NO_VALUE = "-"
 local NO_PRICES = "Prices"
 local SEP = " \194\183 "
@@ -76,6 +79,26 @@ function TooltipLines.FormatAge(hours)
     return string.format("%d h", math.floor(hours + 0.5))
 end
 
+-- Returns the label with the stack count, for example "Min x20" or "Vendor x4:" (a final colon stays last).
+local function stackLabel(label, stack)
+    local text, colon = label:match("^(.-)(:?)$")
+    return text .. " x" .. stack .. colon
+end
+
+-- Returns a copy of the saved colour { r, g, b } if it is valid, or nil.
+local function lineColor(line)
+    local c = line.color
+    if type(c) ~= "table" then
+        return nil
+    end
+    for i = 1, 3 do
+        if type(c[i]) ~= "number" or c[i] < 0 or c[i] > 1 then
+            return nil
+        end
+    end
+    return { c[1], c[2], c[3] }
+end
+
 local function dataRow(line, ctx, state)
     if line.kind == "table" then
         return ctx.tableRow(line)
@@ -90,7 +113,7 @@ local function dataRow(line, ctx, state)
     if copper then
         if ctx.stackMode and line.altStack ~= false and stack and stack > 1 then
             copper = copper * stack
-            label = label .. " (stack of " .. stack .. ")"
+            label = stackLabel(label, stack)
         end
         right = TooltipLines.FormatMoney(copper)
         if line.showAge or line.showSamples then
@@ -107,7 +130,7 @@ local function dataRow(line, ctx, state)
     else
         right = INVALID
     end
-    return { left = label, right = right, color = copper and "normal" or "dim" }
+    return { left = label, right = right, color = copper and "normal" or "dim", rgb = copper and lineColor(line) or nil }
 end
 
 -- Returns one entry per server day: { day, min, market, low, high }. min and market are the daily values.
@@ -255,10 +278,11 @@ local function vendorRow(ctx)
     local stack = ctx.stackCount
     if ctx.stackMode and stack and stack > 1 then
         price = price * stack
-        label = label .. " (stack of " .. stack .. ")"
+        label = stackLabel(label, stack)
     end
-    return { left = label, right = TooltipLines.FormatMoney(price), color = "normal" }
+    return { left = label, right = TooltipLines.FormatMoney(price), color = "normal", rgb = TooltipLines.VENDOR_COLOR }
 end
+
 local function groupRows(ctx, rows, key, config)
     local rules = ctx.rules
     if not rules or not key then
