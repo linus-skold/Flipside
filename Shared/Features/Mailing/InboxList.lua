@@ -25,6 +25,10 @@ local COVER_COLOR = { 0.04, 0.03, 0.02, 0.92 }
 local GREY = { 0.75, 0.75, 0.75 }
 local GOLD = { 1, 0.82, 0 }
 local WHITE = { 1, 1, 1 }
+-- The look of a row with no mail: a client empty item slot and a dim bar.
+local EMPTY_SLOT_TEXTURE = "Interface\\Buttons\\UI-Slot-Background"
+local EMPTY_BAR_COLOR = { 0, 0, 0, 0.25 }
+local EMPTY_ROW = { empty = true }
 
 local function log(level, text)
     if ns.Log and ns.Log.Write then
@@ -148,21 +152,53 @@ local function buildRow(view, row)
     for _, label in ipairs({ row.days, row.extra, row.sender, row.subject }) do
         setNoWrap(label)
     end
+    row.slot = row:CreateTexture(nil, "ARTWORK")
+    row.slot:SetSize(ICON_SIZE, ICON_SIZE)
+    row.slot:SetPoint("LEFT", row, "LEFT", 2, 0)
+    row.slot:SetTexture(EMPTY_SLOT_TEXTURE)
+    row.bar = row:CreateTexture(nil, "BACKGROUND", nil, -1)
+    row.bar:SetAllPoints(row)
+    row.bar:SetColorTexture(EMPTY_BAR_COLOR[1], EMPTY_BAR_COLOR[2], EMPTY_BAR_COLOR[3], EMPTY_BAR_COLOR[4])
     row:SetScript("OnClick", function(self)
-        view:Click(self.mail.index)
+        if self.mail then
+            view:Click(self.mail.index)
+        end
     end)
     row:SetScript("OnEnter", function(self)
-        showTooltip(self, self.mail, view.deps.formatMoney)
+        if self.mail then
+            showTooltip(self, self.mail, view.deps.formatMoney)
+        end
     end)
     row:SetScript("OnLeave", function()
         GameTooltip:Hide()
     end)
 end
 
+-- Shows a row with no mail: only the empty slot and the dim bar. The row takes no mouse input.
+local function initEmptyRow(row)
+    row.mail = nil
+    row.slot:Show()
+    row.bar:Show()
+    row.icon:Hide()
+    row.selection:Hide()
+    for _, label in ipairs({ row.days, row.extra, row.sender, row.subject }) do
+        label:SetText("")
+    end
+    row:EnableMouse(false)
+end
+
 local function initRow(view, row, mail)
     if not row.icon then
         buildRow(view, row)
     end
+    if mail.empty then
+        initEmptyRow(row)
+        return
+    end
+    row:EnableMouse(true)
+    row.slot:Hide()
+    row.bar:Hide()
+    row.icon:Show()
     row.mail = mail
     row.icon:SetTexture(mail.icon)
     if row.icon.SetDesaturated then
@@ -199,6 +235,12 @@ function InboxList.Create(parent, deps)
         end,
     })
     view.frame = view.list.frame
+    -- The list fills empty rows to its height: draw again when the height changes.
+    view.frame:SetScript("OnSizeChanged", function()
+        if view.frame:IsShown() and view.mails then
+            view:Refresh()
+        end
+    end)
     view.frame:SetFrameLevel(parent:GetFrameLevel() + COVER_LEVEL)
     view.cover = view.frame:CreateTexture(nil, "BACKGROUND", nil, -8)
     view.cover:SetAllPoints(view.frame)
@@ -218,7 +260,24 @@ function InboxList:Refresh()
     end
     self.mails = mails
     self.openID = api.openID() or 0
-    self.list:SetData(mails)
+    local data = mails
+    local empty = self:VisibleRowCount() - #mails
+    if empty > 0 then
+        data = {}
+        for index, mail in ipairs(mails) do
+            data[index] = mail
+        end
+        for index = #mails + 1, #mails + empty do
+            data[index] = EMPTY_ROW
+        end
+    end
+    self.list:SetData(data)
+end
+
+-- The number of rows that fit in the list now. It is 0 while the frame has no size.
+function InboxList:VisibleRowCount()
+    local pad = Kit.Theme.insetPadding
+    return InboxList.VisibleRows((self.frame:GetHeight() or 0) - 2 * (pad or 0))
 end
 
 -- Takes all money and attachments of a mail with the client function AutoLootMailItem, as the client does on a

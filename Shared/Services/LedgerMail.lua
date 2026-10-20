@@ -157,6 +157,7 @@ function Mail:_Read()
     end
     self._stats.reads = self._stats.reads + 1
     local list = {}
+    local seen = {}
     for index = 1, math.min(total, LedgerMail.MAX_MAILS) do
         local header = api.header(index)
         if type(header) == "table" then
@@ -166,8 +167,19 @@ function Mail:_Read()
                 and ((count(header.money) and header.money > 0) or self:_SubjectKind(header.subject) == "won") then
                 -- The client gives the invoice only after the mail text is read (this marks the mail as read).
                 -- One read for each mail is enough, so the result is cached by the identity of the mail.
-                local identity = index .. "\31" .. tostring(header.sender) .. "\31" .. tostring(header.subject)
+                -- The identity has no index: the indexes shift when the client takes and deletes mails, and a
+                -- second text read of the same mail during a take can give "Internal mail database error".
+                local identity = table.concat({ tostring(header.sender), tostring(header.subject),
+                    tostring(header.money), tostring(header.itemCount) }, "\31")
+                seen[identity] = (seen[identity] or 0) + 1
+                identity = identity .. "\31" .. seen[identity]
                 if not self._textRead[identity] then
+                    if self._busy and self._busy() then
+                        -- A client mail command is in flight (for example Open All). Read again after it.
+                        self._stats.deferred = self._stats.deferred + 1
+                        self._deferred = true
+                        return nil
+                    end
                     self._textRead[identity] = true
                     api.text(index)
                     invoice = api.invoice(index)
@@ -539,9 +551,13 @@ function Mail:Refresh(reset)
         self:_Settle()
         return
     end
+    self._deferred = false
     local list = self:_Read()
     if not list then
         self._signature = nil
+        if self._deferred then
+            self:_Schedule()
+        end
         return
     end
     self._signature = signature or self:_Signature()
@@ -661,7 +677,8 @@ end
 -- reads the mail text so that the invoice becomes available), now (seconds),
 -- serverTime, character (function), after, itemKey(link), fingerprints (a saved table of fingerprint -> time) and
 -- saveFingerprints(table). Optional: isSecret, strings(name) -> client global string, itemKeyByName(name),
--- invoices (false turns the invoice read off), report, fillSeller(item, qty, seller) -> true when it set the seller
+-- invoices (false turns the invoice read off), busy() (true while a client mail command is in flight: the text
+-- read waits), report, fillSeller(item, qty, seller) -> true when it set the seller
 -- on a purchase record that had none.
 function LedgerMail.Attach(deps)
     local patterns = {}
@@ -687,13 +704,14 @@ function LedgerMail.Attach(deps)
         _fps = deps.fingerprints or {},
         _fpSet = deps.saveFingerprints,
         _fill = deps.fillSeller,
+        _busy = deps.busy,
         _invoices = deps.invoices ~= false,
         _patterns = patterns,
         _pending = {},
         _textRead = {},
         _stats = {
             sales = 0, sellers = 0, expired = 0, cancelled = 0, refunds = 0, mailMoney = 0, duplicates = 0, skipped = 0,
-            rejected = 0, noInvoice = 0, unknownInvoice = 0, late = 0, unchanged = 0, reads = 0,
+            rejected = 0, noInvoice = 0, unknownInvoice = 0, late = 0, unchanged = 0, reads = 0, deferred = 0,
         },
     }, Mail)
     mail:_Prune()
