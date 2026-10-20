@@ -48,7 +48,7 @@ describe("LegacyBackend", function()
             assert.is_true(A().CanSendPost())
             canQuery = false
             assert.is_false(A().CanSendPost())
-            assert.is_nil(A().PostGateEvents())
+            assert.is_nil(A().ThrottleEvents())
         end)
 
         it("is open when the client has no CanSendAuctionQuery", function()

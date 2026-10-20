@@ -449,7 +449,7 @@ end
 
 -- The events after which the gate can change. The sell frame of Blizzard reads the first two; the other two end a
 -- message too.
-function Backend.PostGateEvents()
+function Backend.ThrottleEvents()
     return { "AUCTION_HOUSE_THROTTLED_SYSTEM_READY", "AUCTION_HOUSE_THROTTLED_MESSAGE_SENT",
         "AUCTION_HOUSE_THROTTLED_MESSAGE_RESPONSE_RECEIVED", "AUCTION_HOUSE_THROTTLED_MESSAGE_DROPPED" }
 end

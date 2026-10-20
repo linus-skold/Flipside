@@ -752,7 +752,7 @@ function Backend.CanSendPost()
 end
 
 -- The legacy client has no event for the end of the throttle, so this gives no list: the caller polls CanSendPost.
-function Backend.PostGateEvents()
+function Backend.ThrottleEvents()
     return nil
 end
 

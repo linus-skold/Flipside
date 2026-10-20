@@ -2461,7 +2461,7 @@ function Tab:_RefreshPost()
     local open = self:_GateOpen()
     ui.postNext:SetEnabled(self.deps.client.CanPost() and self.multi == nil and self.lock == nil
         and not self:_Scanning() and open and (self.awaiting ~= nil or self:_Focus() ~= nil))
-    local events = self.deps.client.PostGateEvents
+    local events = self.deps.client.ThrottleEvents
     if open or not self.active or self.gateWatch or (events and events()) then
         return
     end
@@ -2744,7 +2744,7 @@ function Tab:Mount(parent, api)
         self.events[#self.events + 1] = multisell
     end
     -- The throttle gate can change after these events: set the Post button again. This starts no post.
-    local gateEvents = client.PostGateEvents and client.PostGateEvents()
+    local gateEvents = client.ThrottleEvents and client.ThrottleEvents()
     for _, event in ipairs(gateEvents or {}) do
         bus:Subscribe(event, OWNER, function()
             self:_RefreshPost()

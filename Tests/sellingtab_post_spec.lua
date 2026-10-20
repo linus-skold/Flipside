@@ -2095,11 +2095,11 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
             return list
         end
 
-        -- Mount with a gate that the spec opens and closes. events is the PostGateEvents list, or nil.
+        -- Mount with a gate that the spec opens and closes. events is the ThrottleEvents list, or nil.
         local function remount(events)
             gate = false
             client.CanSendPost = function() return gate end
-            client.PostGateEvents = events and function() return events end or nil
+            client.ThrottleEvents = events and function() return events end or nil
             client.MultisellEvent = function() return "MULTI" end
             autoCreate = false
             tab = mount()

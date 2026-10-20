@@ -144,12 +144,12 @@ describe("AuctionClient post functions", function()
             local bare = {}
             assert(loadfile(manifest.path("AuctionClient")))("Flipside", bare)
             assert.is_true(bare.AuctionClient.CanSendPost())
-            assert.is_nil(bare.AuctionClient.PostGateEvents())
+            assert.is_nil(bare.AuctionClient.ThrottleEvents())
         end)
 
         it("gives the events that change the gate", function()
             local list = {}
-            for _, event in ipairs(ns.AuctionClient.PostGateEvents()) do
+            for _, event in ipairs(ns.AuctionClient.ThrottleEvents()) do
                 list[event] = true
             end
             assert.is_true(list.AUCTION_HOUSE_THROTTLED_SYSTEM_READY)
