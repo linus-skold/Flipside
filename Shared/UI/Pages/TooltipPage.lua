@@ -412,8 +412,8 @@ function TooltipPage.Build(content, deps)
         end
         page.gridColumnWidth, page.gridRowHeight = columnWidth, rowHeight
         grid:SetSize(GRID_COLUMNS * columnWidth, GRID_ROWS * rowHeight)
-        for index, check in ipairs(page.gridChecks) do
-            local column, row = (index - 1) % GRID_COLUMNS, math.floor((index - 1) / GRID_COLUMNS)
+        for position, check in ipairs(page.gridChecks) do
+            local column, row = (position - 1) % GRID_COLUMNS, math.floor((position - 1) / GRID_COLUMNS)
             if check.Text and check.Text.SetWidth then
                 check.Text:SetWidth(columnWidth - GRID_BOX - GRID_GAP)
                 if check.Text.SetJustifyH then
@@ -477,7 +477,10 @@ function TooltipPage.Build(content, deps)
     page.group = flagCheck("Show group", "showGroup")
     page.operation = flagCheck("Show operations", "showOperation")
     page.counts = flagCheck("Show counts per character", "showCounts")
-    page.vendor = flagCheck("Vendor sell price", "showVendor")    page.hint = Kit.Label(content, ALT_HINT, "small")
+    page.vendor = flagCheck("Vendor sell price", "showVendor")
+    layoutGrid()
+
+    page.hint =Kit.Label(content, ALT_HINT, "small")
     page.hint:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", RIGHT_X, 6)
     page.hint:SetWidth(RIGHT_WIDTH)
     page.hint:SetJustifyH("LEFT")
