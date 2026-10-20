@@ -336,7 +336,7 @@ end
 -- Write the record for money that left a mail. amount is the copper that arrived.
 function Mail:_Pay(drop)
     local entry, amount = drop.entry, drop.amount
-    -- One event for each mail whose money the player took (MailTotal adds them up).
+    -- One event for each mail whose money the player took (no code uses it now; kept for later use).
     self._bus:Emit(LedgerMail.EVENT_TAKEN, amount)
     if entry.kind == "sale" then
         local invoice = entry.invoice

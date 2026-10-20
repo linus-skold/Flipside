@@ -105,6 +105,21 @@ describe("Init feedback", function()
         assert.are.same({}, mock.messages)
     end)
 
+    it("attaches the mail money line without the mail reader of the ledger", function()
+        ns.ledgerMail = nil
+        mock.messages = {}
+        mock.money = 1000
+        mock.fire("MAIL_SHOW")
+        mock.money = 11000
+        mock.fire("MAIL_CLOSED")
+        mock.advance(1)
+        local found = false
+        for _, line in ipairs(mock.messages) do
+            found = found or tostring(line):find("You collected", 1, true) ~= nil
+        end
+        assert.is_true(found)
+    end)
+
     it("gives the window and the Groups page the new deps", function()
         assert.are.equal(ns.ahNameSearch, deps.ahNameSearch)
         assert.are.equal(ns.customSources, deps.customSources)

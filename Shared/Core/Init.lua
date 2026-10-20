@@ -912,16 +912,26 @@ local function openLedgerMail()
                 ns.db:Set("account", KEY, value)
             end,
         })
-        -- The key mail.totalLine has no page yet. A false value turns the chat line off.
+    end)
+    if not ok then
+        ns.ledgerMail = nil
+        ns.ReportError("the mail reader of the ledger is not available this session: " .. tostring(err))
+    end
+end
+
+-- Print the money gain at the mailbox close. It does not need the ledger. It adds no hook.
+-- The key mail.totalLine has no page yet. A false value turns the chat line off.
+local function openMailTotal()
+    if not (ns.db and ns.MailTotal and ns.TooltipLines and type(GetMoney) == "function") then
+        return
+    end
+    local ok, err = pcall(function()
         ns.MailTotal.Attach({
             bus = ns.bus,
-            event = ns.LedgerMail.EVENT_TAKEN,
+            money = GetMoney,
             print = printLine,
             format = ns.TooltipLines.FormatMoney,
             after = C_Timer.After,
-            pending = function()
-                return ns.ledgerMail ~= nil and ns.ledgerMail:HasPending()
-            end,
             enabled = function()
                 return ns.db:Get("account", "mail.totalLine") ~= false
             end,
@@ -931,11 +941,9 @@ local function openLedgerMail()
         })
     end)
     if not ok then
-        ns.ledgerMail = nil
-        ns.ReportError("the mail reader of the ledger is not available this session: " .. tostring(err))
+        ns.ReportError("the mail money line is not available this session: " .. tostring(err))
     end
 end
-
 -- Install the four read-only post-hooks of the ledger (SPEC 5.8). The send hook is the only writer of sent mail,
 -- for the Blizzard Send tab and for the Flipside mailing run.
 local function openLedgerHooks()
@@ -1312,6 +1320,7 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
         openLedger()
         openLedgerMoney()
         openLedgerMail()
+        openMailTotal()
         openLedgerHooks()
         openBalance()
         openTooltip()
