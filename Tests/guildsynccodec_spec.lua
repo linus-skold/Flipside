@@ -1,17 +1,16 @@
 local manifest = require("Tests.manifest")
 
 describe("GuildSyncCodec", function()
-    local Codec, now, drops
+    local Codec, now, drops, SCOPE
 
     before_each(function()
         local ns = {}
         assert(loadfile(manifest.path("GuildSyncCodec")))("Flipside", ns)
         Codec = ns.GuildSyncCodec
+        SCOPE = Codec.ScopeKey("EU", nil, "standard")
         now = 1000
         drops = {}
     end)
-
-    local SCOPE = Codec.ScopeKey("EU", nil, "standard")
 
     local function entries(count, base)
         local list = {}

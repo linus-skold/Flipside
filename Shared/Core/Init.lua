@@ -497,6 +497,7 @@ end
 
 -- Create the guild price sharing; it needs the scan store and the settings DB.
 local function openGuildSync()
+    ns.guildSync, ns.priceReader, ns.IsGuildPrice = nil, nil, nil
     if not (ns.GuildSync and ns.GuildSyncCodec and ns.GuildSyncQueue and ns.GuildPriceStore and ns.scanStore
         and ns.db and C_ChatInfo) then
         return
