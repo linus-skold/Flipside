@@ -976,6 +976,11 @@ local function openLedgerMail()
                 end or nil,
             },
             invoices = ns.Flavour.hasMailInvoices == true and type(GetInboxInvoiceInfo) == "function",
+            -- The text read waits while a take (for example Open All) is in flight.
+            busy = function()
+                return C_Mail ~= nil and type(C_Mail.IsCommandPending) == "function"
+                    and C_Mail.IsCommandPending() == true
+            end,
             now = GetTime,
             serverTime = GetServerTime,
             character = characterKey,
