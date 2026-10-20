@@ -8,12 +8,20 @@ local InboxList = {}
 ns.InboxList = InboxList
 
 local Kit = ns.Kit
--- The row height of the Ledger list (LedgerPage).
-local ROW_HEIGHT = 18
-local ICON_SIZE = 16
-local SENDER_X = 22
-local SENDER_WIDTH = 66
-local SUBJECT_X = 92
+-- The row pitch: the content height plus the gap between two rows. 21 px still fits 14 rows above Open All.
+local ROW_HEIGHT = 21
+-- The empty space at the bottom of each row. The separator line sits in it.
+local ROW_GAP = 2
+-- The square slot (border) of the icon, and the icon inside it with its padding.
+local SLOT_SIZE = 18
+local ICON_SIZE = 14
+local SLOT_X = 2
+local ICON_TEXCOORD = { 0.07, 0.93, 0.07, 0.93 }
+local SENDER_X = 24
+local SENDER_WIDTH = 64
+local SUBJECT_X = 90
+-- The text sits in the content area, above the gap.
+local TEXT_Y = ROW_GAP / 2
 local EXTRA_WIDTH = 74
 local DAYS_WIDTH = 30
 local TEXT_GAP = 4
@@ -21,13 +29,26 @@ local TEXT_GAP = 4
 local OPEN_ALL_GAP = 4
 -- The list frame is above the client buttons (children of the Inbox frame) so that they never show through.
 local COVER_LEVEL = 10
-local COVER_COLOR = { 0.04, 0.03, 0.02, 0.92 }
-local GREY = { 0.75, 0.75, 0.75 }
-local GOLD = { 1, 0.82, 0 }
-local WHITE = { 1, 1, 1 }
+-- The parchment background: a solid warm tan, so that the art of the client inbox never shows through.
+local COVER_COLOR = { 0.82, 0.72, 0.52, 1 }
+-- Dark text for parchment: the sender is brown, the subject is near black, a read mail is lighter.
+local SENDER_COLOR = { 0.35, 0.18, 0.02 }
+local SUBJECT_COLOR = { 0.1, 0.06, 0.02 }
+local READ_COLOR = { 0.45, 0.38, 0.28 }
+-- The selection and the hover tint the parchment (normal blend; an additive blend does not show on light colour).
+local SELECT_COLOR = { 0.55, 0.35, 0.1 }
+local SELECT_ALPHA = 0.45
+local HOVER_ALPHA = 0.2
+-- Time left and COD on parchment: dark green and dark red.
+local DAYS_GOOD = "|cff1a6e1a"
+local DAYS_BAD = "|cffa01010"
 -- The look of a row with no mail: a client empty item slot and a dim bar.
 local EMPTY_SLOT_TEXTURE = "Interface\\Buttons\\UI-Slot-Background"
-local EMPTY_BAR_COLOR = { 0, 0, 0, 0.25 }
+local EMPTY_BAR_COLOR = { 0.3, 0.2, 0.05, 0.15 }
+-- The client item frame border (the quality border of item buttons), tinted dark, and the row separator line.
+local BORDER_TEXTURE = "Interface\\Common\\WhiteIconFrame"
+local BORDER_COLOR = { 0.3, 0.22, 0.12 }
+local SEPARATOR_COLOR = { 0.35, 0.22, 0.1, 0.65 }
 local EMPTY_ROW = { empty = true }
 
 local function log(level, text)
@@ -68,9 +89,9 @@ end
 -- The time left as short coloured text: whole days, or hours when under one day.
 function InboxList.DaysText(days)
     if days >= 1 then
-        return string.format("|cff40ff40%dd|r", math.floor(days))
+        return string.format(DAYS_GOOD .. "%dd|r", math.floor(days))
     end
-    return string.format("|cffff4040%dh|r", math.max(1, math.floor(days * 24)))
+    return string.format(DAYS_BAD .. "%dh|r", math.max(1, math.floor(days * 24)))
 end
 
 -- Reads one mail. api.header(index) is GetInboxHeaderInfo; the first nine results have the same meaning on both
@@ -98,7 +119,7 @@ function InboxList.ExtraText(mail, formatMoney)
         parts[#parts + 1] = "x" .. mail.items
     end
     if mail.cod > 0 then
-        parts[#parts + 1] = "|cffff4040COD " .. formatMoney(mail.cod) .. "|r"
+        parts[#parts + 1] = DAYS_BAD .. "COD " .. formatMoney(mail.cod) .. "|r"
     elseif mail.money > 0 then
         parts[#parts + 1] = formatMoney(mail.money)
     end
@@ -131,10 +152,29 @@ end
 local function buildRow(view, row)
     row.icon = row:CreateTexture(nil, "ARTWORK")
     row.icon:SetSize(ICON_SIZE, ICON_SIZE)
-    row.icon:SetPoint("LEFT", row, "LEFT", 2, 0)
+    row.icon:SetPoint("LEFT", row, "LEFT", SLOT_X + (SLOT_SIZE - ICON_SIZE) / 2, TEXT_Y)
+    row.icon:SetTexCoord(ICON_TEXCOORD[1], ICON_TEXCOORD[2], ICON_TEXCOORD[3], ICON_TEXCOORD[4])
+    row.border = row:CreateTexture(nil, "OVERLAY")
+    row.border:SetSize(SLOT_SIZE, SLOT_SIZE)
+    row.border:SetPoint("LEFT", row, "LEFT", SLOT_X, TEXT_Y)
+    row.border:SetTexture(BORDER_TEXTURE)
+    row.border:SetVertexColor(BORDER_COLOR[1], BORDER_COLOR[2], BORDER_COLOR[3])
+    row.separator = row:CreateTexture(nil, "BORDER")
+    row.separator:SetHeight(1)
+    row.separator:SetPoint("BOTTOMLEFT", row, "BOTTOMLEFT", 0, 0)
+    row.separator:SetPoint("BOTTOMRIGHT", row, "BOTTOMRIGHT", 0, 0)
+    row.separator:SetColorTexture(SEPARATOR_COLOR[1], SEPARATOR_COLOR[2], SEPARATOR_COLOR[3], SEPARATOR_COLOR[4])
     row.selection = Kit.SelectionTexture(row, view.deps.skin)
+    row.selection:SetBlendMode("BLEND")
+    row.selection:SetVertexColor(SELECT_COLOR[1], SELECT_COLOR[2], SELECT_COLOR[3])
+    row.selection:SetAlpha(SELECT_ALPHA)
+    row.hover = row:CreateTexture(nil, "BACKGROUND")
+    row.hover:SetPoint("TOPLEFT", row, "TOPLEFT", 0, 0)
+    row.hover:SetPoint("BOTTOMRIGHT", row, "BOTTOMRIGHT", 0, ROW_GAP)
+    row.hover:SetColorTexture(SELECT_COLOR[1], SELECT_COLOR[2], SELECT_COLOR[3], HOVER_ALPHA)
+    row.hover:Hide()
     row.days = Kit.Label(row, "", "small")
-    row.days:SetPoint("RIGHT", row, "RIGHT", -2, 0)
+    row.days:SetPoint("RIGHT", row, "RIGHT", -2, TEXT_Y)
     row.days:SetWidth(DAYS_WIDTH)
     row.days:SetJustifyH("RIGHT")
     row.extra = Kit.Label(row, "", "small")
@@ -142,22 +182,23 @@ local function buildRow(view, row)
     row.extra:SetWidth(EXTRA_WIDTH)
     row.extra:SetJustifyH("RIGHT")
     row.sender = Kit.Label(row, "", "small")
-    row.sender:SetPoint("LEFT", row, "LEFT", SENDER_X, 0)
+    row.sender:SetPoint("LEFT", row, "LEFT", SENDER_X, TEXT_Y)
     row.sender:SetWidth(SENDER_WIDTH)
     row.sender:SetJustifyH("LEFT")
     row.subject = Kit.Label(row, "", "small")
-    row.subject:SetPoint("LEFT", row, "LEFT", SUBJECT_X, 0)
+    row.subject:SetPoint("LEFT", row, "LEFT", SUBJECT_X, TEXT_Y)
     row.subject:SetPoint("RIGHT", row.extra, "LEFT", -TEXT_GAP, 0)
     row.subject:SetJustifyH("LEFT")
     for _, label in ipairs({ row.days, row.extra, row.sender, row.subject }) do
         setNoWrap(label)
     end
     row.slot = row:CreateTexture(nil, "ARTWORK")
-    row.slot:SetSize(ICON_SIZE, ICON_SIZE)
-    row.slot:SetPoint("LEFT", row, "LEFT", 2, 0)
+    row.slot:SetSize(SLOT_SIZE - 2, SLOT_SIZE - 2)
+    row.slot:SetPoint("LEFT", row, "LEFT", SLOT_X + 1, TEXT_Y)
     row.slot:SetTexture(EMPTY_SLOT_TEXTURE)
     row.bar = row:CreateTexture(nil, "BACKGROUND", nil, -1)
-    row.bar:SetAllPoints(row)
+    row.bar:SetPoint("TOPLEFT", row, "TOPLEFT", 0, 0)
+    row.bar:SetPoint("BOTTOMRIGHT", row, "BOTTOMRIGHT", 0, ROW_GAP)
     row.bar:SetColorTexture(EMPTY_BAR_COLOR[1], EMPTY_BAR_COLOR[2], EMPTY_BAR_COLOR[3], EMPTY_BAR_COLOR[4])
     row:SetScript("OnClick", function(self)
         if self.mail then
@@ -166,10 +207,12 @@ local function buildRow(view, row)
     end)
     row:SetScript("OnEnter", function(self)
         if self.mail then
+            self.hover:Show()
             showTooltip(self, self.mail, view.deps.formatMoney)
         end
     end)
-    row:SetScript("OnLeave", function()
+    row:SetScript("OnLeave", function(self)
+        self.hover:Hide()
         GameTooltip:Hide()
     end)
 end
@@ -181,6 +224,7 @@ local function initEmptyRow(row)
     row.bar:Show()
     row.icon:Hide()
     row.selection:Hide()
+    row.hover:Hide()
     for _, label in ipairs({ row.days, row.extra, row.sender, row.subject }) do
         label:SetText("")
     end
@@ -205,9 +249,9 @@ local function initRow(view, row, mail)
         row.icon:SetDesaturated(mail.read)
     end
     row.selection:SetShown(view.openID == mail.index)
-    local senderColor, subjectColor = GOLD, WHITE
+    local senderColor, subjectColor = SENDER_COLOR, SUBJECT_COLOR
     if mail.read then
-        senderColor, subjectColor = GREY, GREY
+        senderColor, subjectColor = READ_COLOR, READ_COLOR
     end
     row.sender:SetText(mail.sender)
     row.sender:SetTextColor(senderColor[1], senderColor[2], senderColor[3])
