@@ -151,11 +151,41 @@ describe("GuildPriceStore", function()
             assert.is_false(reader:IsGuild("9"))
         end)
 
-        it("lets the local record win", function()
-            localData["1"] = { latest = { market = 111 } }
+        it("lets a newer local record win", function()
+            localData["1"] = { latest = { market = 111, time = now + 1 } }
             assert.are.equal(111, reader:Get("1").latest.market)
             assert.is_false(reader:IsGuild("1"))
             assert.are.equal(600, reader:Get("2").latest.market)
+        end)
+
+        it("lets a newer shared record beat an older local record", function()
+            localData["1"] = { latest = { market = 111, time = now - 1 } }
+            assert.are.equal(500, reader:Get("1").latest.market)
+            assert.is_true(reader:IsGuild("1"))
+        end)
+
+        it("keeps the local record on equal times", function()
+            localData["1"] = { latest = { market = 111, time = now } }
+            assert.are.equal(111, reader:Get("1").latest.market)
+            assert.is_false(reader:IsGuild("1"))
+        end)
+
+        it("uses the local record when there is no shared record", function()
+            localData["9"] = { latest = { market = 111, time = now } }
+            assert.are.equal(111, reader:Get("9").latest.market)
+            assert.is_false(reader:IsGuild("9"))
+        end)
+
+        it("gives the local record when sharing is off, even if the shared one is newer", function()
+            localData["1"] = { latest = { market = 111, time = now - 1000 } }
+            enabled = false
+            assert.are.equal(111, reader:Get("1").latest.market)
+        end)
+
+        it("lists the keys of the store", function()
+            local keys = store:Keys()
+            table.sort(keys)
+            assert.same({ "1", "2" }, keys)
         end)
 
         it("gives no shared data when sharing is off", function()

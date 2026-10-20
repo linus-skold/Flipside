@@ -121,12 +121,16 @@ describe("Init guild sharing", function()
             scope = ns.guildSync.deps.scope
         end)
 
-        it("fill a gap in the price sources, and the local record wins", function()
-            ns.SetGuildSync(true)
+        local function putLocal(key, age, min)
             local record = ns.ScanRecord.New()
-            record.latest = { time = GetServerTime() - 100, min = 111, market = 222, qty = 1, auctions = 1,
+            record.latest = { time = GetServerTime() - age, min = min, market = min + 1, qty = 1, auctions = 1,
                 partial = false }
-            ns.scanStore:Put("3002", record)
+            ns.scanStore:Put(key, record)
+        end
+
+        it("fill a gap in the price sources, and a newer local record wins", function()
+            ns.SetGuildSync(true)
+            putLocal("3002", 1, 111)
             for _, text in ipairs(remoteSet(scope, { "3001", "3002" }, 5000)) do
                 receive(text)
             end
@@ -135,6 +139,25 @@ describe("Init guild sharing", function()
             assert.are.equal(111, ns.formulaRun:Evaluate("scanmin", "3002"))
             assert.is_true(ns.IsGuildPrice("3001"))
             assert.is_false(ns.IsGuildPrice("3002"))
+        end)
+
+        it("win over an older local record", function()
+            ns.SetGuildSync(true)
+            putLocal("3002", 100, 111)
+            for _, text in ipairs(remoteSet(scope, { "3002" }, 5000)) do
+                receive(text)
+            end
+            assert.are.equal(4990, ns.formulaRun:Evaluate("scanmin", "3002"))
+            assert.is_true(ns.IsGuildPrice("3002"))
+        end)
+
+        it("show in /flip price with a guild mark", function()
+            ns.SetGuildSync(true)
+            for _, text in ipairs(remoteSet(scope, { "3001" }, 5000)) do
+                receive(text)
+            end
+            slash("price 3001")
+            assert.is_true(mock.messages[1]:find("key 3001 (guild): ScanMin 4990", 1, true) ~= nil)
         end)
 
         it("are ignored while the setting is off", function()

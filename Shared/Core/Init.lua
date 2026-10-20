@@ -1910,7 +1910,7 @@ local function findRecord(argument)
         end
     end
     for _, key in ipairs(keys) do
-        local record = ns.scanStore:Get(key)
+        local record = (ns.priceReader or ns.scanStore):Get(key)
         if record then
             return record, key, keys
         end
@@ -1920,7 +1920,8 @@ end
 
 local function printPrice(record, key)
     local values = ns.ScanSources.Compute(record, GetServerTime())
-    printLine("key " .. key .. ": " .. priceText("ScanMin", values.scanMin) .. ", "
+    local guild = ns.IsGuildPrice and ns.IsGuildPrice(key) and " (guild)" or ""
+    printLine("key " .. key .. guild .. ": " .. priceText("ScanMin", values.scanMin) .. ", "
         .. priceText("ScanRecent", values.scanRecent))
     printLine(priceText("ScanMarket", values.scanMarket) .. ", "
         .. priceText("ScanHistorical", values.scanHistorical))
@@ -1955,7 +1956,7 @@ local function refreshPrice(itemID, name)
         end
         if ns.ItemString.KeyToBaseKey(key) == string.format("%d", pending.itemID) then
             printLine("fresh price from the Auction House:")
-            printPrice(ns.scanStore:Get(key), key)
+            printPrice((ns.priceReader or ns.scanStore):Get(key), key)
         end
     end)
 end
@@ -1971,7 +1972,7 @@ local function priceByName(argument)
     if #matches == 0 then
         printLine('no item named "' .. argument .. '" in the scan data')
     elseif #matches == 1 then
-        printPrice(ns.scanStore:Get(matches[1].key), matches[1].key)
+        printPrice((ns.priceReader or ns.scanStore):Get(matches[1].key), matches[1].key)
         refreshPrice(matches[1].itemID, matches[1].name)
     else
         for position, match in ipairs(matches) do
