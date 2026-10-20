@@ -61,9 +61,11 @@ local function attach(overrides)
         tracker = tracker,
         api = {
             numItems = function()
+                calls.numItems = calls.numItems + 1
                 return #inbox
             end,
             header = function(index)
+                calls.header = calls.header + 1
                 return inbox[index]
             end,
             invoice = function(index)
@@ -144,7 +146,7 @@ end
 
 local function open()
     bus:Emit("MAIL_SHOW")
-    advance(0.2)
+    advance(0.4)
 end
 
 describe("LedgerMail", function()
@@ -156,7 +158,7 @@ describe("LedgerMail", function()
             end,
         })
         clock, money, records, timers, secrets, inbox, fps = 100, 100000, {}, {}, {}, {}, {}
-        calls = { invoice = 0 }
+        calls = { invoice = 0, numItems = 0, header = 0 }
         tracker = newTracker()
         mail = attach()
     end)
@@ -229,7 +231,7 @@ describe("LedgerMail", function()
             bus:Emit("MAIL_SHOW")
             inbox[1].money = 0
             bus:Emit("MAIL_INBOX_UPDATE")
-            advance(0.2)
+            advance(0.4)
             change(9050)
             advance(2)
             assert.are.equal(1, #records)
@@ -255,18 +257,19 @@ describe("LedgerMail", function()
             assert.are.equal(0, #records)
             inbox[1].money = 0
             bus:Emit("MAIL_INBOX_UPDATE")
-            advance(0.2)
+            advance(0.4)
             advance(2)
             assert.are.equal(1, #records)
             assert.are.equal("ahSale", records[1].source)
             assert.are.equal(9050, records[1].money)
         end)
 
-        it("matches the update that is read at the money change", function()
+        it("matches the update that is read after the money change", function()
             inbox[1] = saleMail("Rich", 9500, 100, 550)
             open()
             inbox[1].money = 0
             change(9050)
+            advance(0.4)
             assert.are.equal(1, #records)
             assert.are.equal("ahSale", records[1].source)
             advance(3)
@@ -315,6 +318,7 @@ describe("LedgerMail", function()
             open()
             inbox[1].money = 0
             change(800)
+            advance(0.4)
             assert.are.equal(1, #records)
             assert.are.equal("ahSale", records[1].source)
             assert.are.equal(800, records[1].money)
@@ -329,6 +333,7 @@ describe("LedgerMail", function()
             open()
             inbox[1].money = 0
             change(105)
+            advance(0.4)
             assert.are.equal("Strange Thing", records[1].itemName)
             assert.is_nil(records[1].item)
         end)
@@ -338,7 +343,7 @@ describe("LedgerMail", function()
             open()
             inbox[1].money = 0
             bus:Emit("MAIL_INBOX_UPDATE")
-            advance(0.2)
+            advance(0.4)
             advance(11)
             assert.are.equal(1, #bySource("ahSale"))
             bus:Emit("MAIL_SHOW")
@@ -358,10 +363,10 @@ describe("LedgerMail", function()
             change(9050)
             table.remove(inbox, 1)
             bus:Emit("MAIL_INBOX_UPDATE")
-            advance(0.2)
+            advance(0.4)
             advance(2)
             bus:Emit("MAIL_INBOX_UPDATE")
-            advance(0.2)
+            advance(0.4)
             assert.are.equal(1, #records)
         end)
 
@@ -383,6 +388,7 @@ describe("LedgerMail", function()
             open()
             inbox[1].money = 0
             change(9050)
+            advance(0.4)
             bus = ns.EventBus.New()
             tracker = newTracker()
             mail = attach()
@@ -408,7 +414,7 @@ describe("LedgerMail", function()
                 itemLink = "linen" }
             open()
             bus:Emit("MAIL_INBOX_UPDATE")
-            advance(0.2)
+            advance(0.4)
             assert.are.equal(1, #records)
             assert.are.equal("expired", records[1].type)
             assert.are.equal("ahExpired", records[1].source)
@@ -432,7 +438,7 @@ describe("LedgerMail", function()
             open()
             table.remove(inbox, 1)
             bus:Emit("MAIL_INBOX_UPDATE")
-            advance(0.2)
+            advance(0.4)
             advance(3)
             assert.are.equal(0, #records)
         end)
@@ -450,6 +456,7 @@ describe("LedgerMail", function()
             open()
             inbox[1].money = 0
             change(700)
+            advance(0.4)
             assert.are.equal(1, #records)
             assert.are.equal("ahOutbidRefund", records[1].source)
             assert.are.equal("income", records[1].type)
@@ -533,6 +540,7 @@ describe("LedgerMail", function()
             open()
             inbox[1].money = 0
             change(9050)
+            advance(0.4)
             assert.are.equal(0, calls.invoice)
             assert.are.equal("ahSale", records[1].source)
         end)
@@ -540,6 +548,119 @@ describe("LedgerMail", function()
         it("makes the pattern from a client format text", function()
             assert.are.equal("Axe (x)", ("Won: Axe (x)"):match(ns.LedgerMail.FormatToPattern("Won: %s")))
             assert.is_nil(ns.LedgerMail.FormatToPattern(nil))
+        end)
+    end)
+
+    describe("the cost of a read", function()
+        local function fiveSales()
+            for index = 1, 5 do
+                inbox[index] = saleMail("Buyer" .. index, 1000 * index, 10, 5)
+                inbox[index].subject = "Sold: Item " .. index
+                inbox[index].invoice.itemName = "Item " .. index
+            end
+            open()
+        end
+
+        it("does not read the inbox at PLAYER_MONEY", function()
+            fiveSales()
+            inbox[1].money = 0
+            local reads, headers, numItems = mail:Stats().reads, calls.header, calls.numItems
+            change(1005)
+            assert.are.equal(reads, mail:Stats().reads)
+            assert.are.equal(headers, calls.header)
+            assert.are.equal(numItems, calls.numItems)
+            assert.are.equal(0, #records)
+            advance(0.4)
+            assert.are.equal(reads + 1, mail:Stats().reads)
+            assert.are.equal(1, #bySource("ahSale"))
+            assert.are.equal("Buyer1", records[1].counterparty)
+        end)
+
+        it("gives one full read for a burst of money takes and the right record for each", function()
+            fiveSales()
+            local reads = mail:Stats().reads
+            for index = 1, 5 do
+                inbox[index].money = 0
+                bus:Emit("MAIL_INBOX_UPDATE")
+                change(1000 * index + 5)
+                advance(0.01)
+            end
+            advance(0.4)
+            advance(2)
+            assert.are.equal(reads + 1, mail:Stats().reads)
+            assert.are.equal(5, #bySource("ahSale"))
+            assert.are.equal(0, #bySource("mailMoney"))
+            for _, record in ipairs(bySource("ahSale")) do
+                assert.is_truthy(record.counterparty:match("^Buyer%d$"))
+            end
+        end)
+
+        it("makes no full read when the header signature is the same", function()
+            fiveSales()
+            local reads, invoices = mail:Stats().reads, calls.invoice
+            bus:Emit("MAIL_INBOX_UPDATE")
+            advance(0.4)
+            bus:Emit("MAIL_INBOX_UPDATE")
+            advance(0.4)
+            assert.are.equal(reads, mail:Stats().reads)
+            assert.are.equal(invoices, calls.invoice)
+            assert.is_true(mail:Stats().unchanged >= 2)
+            inbox[2].money = 0
+            bus:Emit("MAIL_INBOX_UPDATE")
+            advance(0.4)
+            assert.are.equal(reads + 1, mail:Stats().reads)
+        end)
+
+        it("writes the sale when the mailbox closes before the scheduled read", function()
+            fiveSales()
+            inbox[3].money = 0
+            change(3005)
+            inbox = {}
+            bus:Emit("MAIL_CLOSED")
+            advance(0.4)
+            advance(2)
+            assert.are.equal(1, #bySource("ahSale"))
+            assert.are.equal("Buyer3", bySource("ahSale")[1].counterparty)
+            assert.are.equal(0, #bySource("mailMoney"))
+        end)
+
+        it("writes no sale for a mail that stays when the mailbox closes", function()
+            fiveSales()
+            inbox[3].money = 0
+            change(3005)
+            inbox = {}
+            bus:Emit("MAIL_CLOSED")
+            advance(15)
+            assert.are.equal(1, #bySource("ahSale"))
+            assert.are.equal(1, #records)
+        end)
+
+        it("reads the text of a mail once", function()
+            local textCalls = 0
+            inbox[1] = { sender = "AH", subject = "Mystery", money = 9050, itemCount = 0 }
+            inbox[2] = { sender = "Bob", subject = "Gift", money = 300, itemCount = 0 }
+            mail = attach({
+                api = {
+                    numItems = function()
+                        return #inbox
+                    end,
+                    header = function(index)
+                        return inbox[index]
+                    end,
+                    invoice = function(index)
+                        return inbox[index].invoice
+                    end,
+                    text = function()
+                        textCalls = textCalls + 1
+                    end,
+                },
+            })
+            open()
+            assert.are.equal(2, textCalls)
+            inbox[2].money = 0
+            bus:Emit("MAIL_INBOX_UPDATE")
+            advance(0.4)
+            assert.are.equal(2, textCalls)
         end)
     end)
 
