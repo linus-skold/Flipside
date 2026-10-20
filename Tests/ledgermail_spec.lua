@@ -216,6 +216,67 @@ describe("LedgerMail", function()
             assert.are.equal(1, #bySource("mailMoney"))
         end)
 
+        it("does not read the text while a client mail command is in flight, then reads it", function()
+            local busy = true
+            hiddenMail({ type = "seller", itemName = "Linen Cloth", player = "Rich", bid = 9500, buyout = 9500,
+                deposit = 100, consignment = 550, count = 20 })
+            mail = attach({
+                busy = function()
+                    return busy
+                end,
+                api = {
+                    numItems = function()
+                        return #inbox
+                    end,
+                    header = function(index)
+                        return inbox[index]
+                    end,
+                    invoice = function(index)
+                        return inbox[index].invoice
+                    end,
+                    text = function(index)
+                        textCalls = textCalls + 1
+                        inbox[index].invoice = inbox[index].hidden
+                    end,
+                },
+            })
+            open()
+            assert.are.equal(0, textCalls)
+            advance(0.4)
+            assert.are.equal(0, textCalls, "it still waits while the command is in flight")
+            busy = false
+            advance(0.4)
+            assert.are.equal(1, textCalls)
+        end)
+
+        it("does not read the text again when an index shifts", function()
+            local reads = 0
+            inbox[1] = { sender = "A", subject = "One", money = 100, itemCount = 0 }
+            inbox[2] = { sender = "B", subject = "Two", money = 200, itemCount = 0 }
+            mail = attach({
+                api = {
+                    numItems = function()
+                        return #inbox
+                    end,
+                    header = function(index)
+                        return inbox[index]
+                    end,
+                    invoice = function(index)
+                        return inbox[index].invoice
+                    end,
+                    text = function()
+                        reads = reads + 1
+                    end,
+                },
+            })
+            open()
+            assert.are.equal(2, reads)
+            table.remove(inbox, 1)
+            bus:Emit("MAIL_INBOX_UPDATE")
+            advance(0.4)
+            assert.are.equal(2, reads)
+        end)
+
         it("does not read the text of a mail without money", function()
             hiddenMail({ type = "seller", itemName = "Linen Cloth", player = "Rich" })
             inbox[1].money = 0
