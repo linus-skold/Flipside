@@ -677,7 +677,8 @@ end
 -- reads the mail text so that the invoice becomes available), now (seconds),
 -- serverTime, character (function), after, itemKey(link), fingerprints (a saved table of fingerprint -> time) and
 -- saveFingerprints(table). Optional: isSecret, strings(name) -> client global string, itemKeyByName(name),
--- invoices (false turns the invoice read off), busy() (true while a client mail command is in flight: the text\n-- read waits), report, fillSeller(item, qty, seller) -> true when it set the seller
+-- invoices (false turns the invoice read off), busy() (true while a client mail command is in flight: the text
+-- read waits), report, fillSeller(item, qty, seller) -> true when it set the seller
 -- on a purchase record that had none.
 function LedgerMail.Attach(deps)
     local patterns = {}

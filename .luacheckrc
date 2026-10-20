@@ -20,6 +20,7 @@ read_globals = {
     "C_Container",
     "C_GameRules",
     "C_Item",
+    "C_Mail",
     "C_Timer",
     "C_Texture",
     "C_TradeSkillUI",
