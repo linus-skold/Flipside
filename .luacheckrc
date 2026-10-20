@@ -15,6 +15,8 @@ read_globals = {
     "CANCEL",
     "C_AddOns",
     "C_AuctionHouse",
+    "C_ChatInfo",
+    "IsInGuild",
     "C_Container",
     "C_GameRules",
     "C_Item",

@@ -29,6 +29,10 @@ Shared\Services\ScanItemLoad.lua
 Shared\Services\ScanSources.lua
 Shared\Services\ScanEngine.lua
 Shared\Services\ScanCapture.lua
+Shared\Services\GuildSyncCodec.lua
+Shared\Services\GuildPriceStore.lua
+Shared\Services\GuildSyncQueue.lua
+Shared\Services\GuildSync.lua
 Shared\Services\FormulaParse.lua
 Shared\Services\FormulaFunctions.lua
 Shared\Services\FormulaSources.lua

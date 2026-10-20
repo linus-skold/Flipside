@@ -16,7 +16,7 @@ local GLOBAL_NAMES = {
     "CreateScrollBoxListLinearView", "CreateTreeDataProvider", "CreateScrollBoxListTreeListView", "MenuUtil",
     "Enum", "TooltipDataProcessor", "IsAltKeyDown", "GetInboxNumItems", "GetInboxItemLink", "GetInboxItem",
     "FlipsideDB_TBC", "FlipsideScanDB_TBC", "FlipsideLedgerDB", "FlipsideLedgerDB_TBC", "C_AddOns", "LoadAddOn",
-    "FlipsideLogDB", "NUM_BAG_SLOTS", "NUM_BANKBAGSLOTS", "BANK_CONTAINER",
+    "C_ChatInfo", "IsInGuild", "FlipsideLogDB", "NUM_BAG_SLOTS", "NUM_BANKBAGSLOTS", "BANK_CONTAINER",
     "GetInboxHeaderInfo", "GetInboxInvoiceInfo", "GetInboxText", "hooksecurefunc",
     "AUCTION_SOLD_MAIL_SUBJECT", "AUCTION_EXPIRED_MAIL_SUBJECT", "AUCTION_REMOVED_MAIL_SUBJECT",
     "AUCTION_OUTBID_MAIL_SUBJECT", "AUCTION_WON_MAIL_SUBJECT",
@@ -499,6 +499,10 @@ function M.reset(options)
     M.inboxTextCalls = 0 -- number of GetInboxText calls (the real call marks the mail as read)
     M.ownedAuctions = {} -- rows that GetOwnedAuctions gives
     M.bags = {} -- bag index -> array of slot tables (as GetContainerItemInfo gives); a missing bag has no slots
+    M.inGuild = false -- result of IsInGuild()
+    M.addonPrefixes = {} -- prefixes passed to C_ChatInfo.RegisterAddonMessagePrefix
+    M.addonSent = {} -- calls of C_ChatInfo.SendAddonMessage: { prefix, text, chatType, target }
+    M.addonResult = 0 -- result of C_ChatInfo.SendAddonMessage (0 is Success, 3 is AddonMessageThrottle)
 
     _G.ACCEPT = "Accept"
     _G.CANCEL = "Cancel"
@@ -742,6 +746,19 @@ function M.reset(options)
         end,
     }
 
+    _G.IsInGuild = function()
+        return M.inGuild
+    end
+    _G.C_ChatInfo = {
+        RegisterAddonMessagePrefix = function(prefix)
+            table.insert(M.addonPrefixes, prefix)
+            return 0
+        end,
+        SendAddonMessage = function(prefix, text, chatType, target)
+            table.insert(M.addonSent, { prefix = prefix, text = text, chatType = chatType, target = target })
+            return M.addonResult
+        end,
+    }
     _G.UnitName = function()
         return M.playerName, nil
     end

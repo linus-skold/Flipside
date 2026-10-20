@@ -490,6 +490,100 @@ local function openScan()
     startRollUp()
 end
 
+-- Setting sync.guildEnabled (account scope, default off): share scan prices with the guild (SPEC 3.5).
+local function guildSyncEnabled()
+    return ns.db ~= nil and ns.db:Get("account", "sync.guildEnabled") == true
+end
+
+-- Create the guild price sharing; it needs the scan store and the settings DB.
+local function openGuildSync()
+    ns.guildSync, ns.priceReader, ns.IsGuildPrice = nil, nil, nil
+    if not (ns.GuildSync and ns.GuildSyncCodec and ns.GuildSyncQueue and ns.GuildPriceStore and ns.scanStore
+        and ns.db and C_ChatInfo) then
+        return
+    end
+    local ok, err = pcall(function()
+        local scan = ns.scanStore
+        local scope = ns.GuildSyncCodec.ScopeKey(scan:GetRegion(), scan:GetRealm(), scan:GetRuleset())
+        local saved = ns.db:Get("account", "sync.guild")
+        if type(saved) ~= "table" then
+            saved = {}
+            ns.db:Set("account", "sync.guild", saved)
+        end
+        local guildStore = ns.GuildPriceStore.New(saved, { scope = scope, now = GetServerTime })
+        local queue = ns.GuildSyncQueue.New({
+            send = function(text)
+                return C_ChatInfo.SendAddonMessage(ns.GuildSyncCodec.PREFIX, text, "GUILD")
+            end,
+            after = C_Timer.After,
+            clock = GetTime,
+            onSent = function(text)
+                log("sync", "info", "sent a message of %d bytes", #text)
+            end,
+            onDrop = function(text, reason, result)
+                log("sync", "warn", "message of %d bytes dropped: %s %s", #text, reason, tostring(result))
+            end,
+        })
+        ns.guildSync = ns.GuildSync.New({
+            isEnabled = guildSyncEnabled,
+            isInGuild = IsInGuild,
+            selfName = function()
+                return tostring(UnitName("player")) .. "-" .. tostring(GetNormalizedRealmName())
+            end,
+            realm = GetNormalizedRealmName,
+            scope = scope,
+            localStore = scan,
+            guildStore = guildStore,
+            queue = queue,
+            clock = GetServerTime,
+            after = C_Timer.After,
+            random = math.random,
+            registerPrefix = C_ChatInfo.RegisterAddonMessagePrefix,
+            runJob = ns.StartJob,
+            lastScan = function()
+                return ns.scanCooldown and ns.scanCooldown:GetLastSuccess() or nil
+            end,
+            log = function(level, fmt, ...)
+                log("sync", level, fmt, ...)
+            end,
+        })
+        ns.priceReader = ns.GuildPriceStore.NewReader({
+            localStore = scan,
+            guildStore = guildStore,
+            isEnabled = guildSyncEnabled,
+        })
+        ns.IsGuildPrice = function(key)
+            local reader = ns.priceReader
+            local base = ns.ItemString.ToBaseKey(key)
+            return reader:IsGuild(key) or (base ~= nil and reader:IsGuild(base))
+        end
+        local sync = ns.guildSync
+        ns.bus:Subscribe("CHAT_MSG_ADDON", "Flipside.GuildSync", function(...)
+            sync:OnAddon(...)
+        end)
+        ns.bus:Subscribe("Flipside.ScanFinished", "Flipside.GuildSync", function(...)
+            sync:OnScanFinished(...)
+        end)
+        sync:EnsureRegistered()
+        C_Timer.After(30, function()
+            sync:SendRequest()
+        end)
+    end)
+    if not ok then
+        ns.guildSync, ns.priceReader = nil, nil
+        ns.ReportError("guild sharing is not available this session: " .. tostring(err))
+    end
+end
+
+-- Turn guild sharing on or off. Return false if settings are read-only or the feature is missing.
+function ns.SetGuildSync(on)
+    if not (ns.guildSync and ns.db) or not ns.db:Set("account", "sync.guildEnabled", on and true or false) then
+        return false
+    end
+    ns.guildSync:OnSettingChanged()
+    return true
+end
+
 -- Create the formula sources and the formula runner; the store can be nil.
 local function openFormula()
     if not (ns.FormulaSources and ns.FormulaRun and ns.ScanSources) then
@@ -498,7 +592,7 @@ local function openFormula()
     local ok, result = pcall(function()
         ns.formulaSources = ns.FormulaSources.New({ itemCache = ns.itemCache })
         ns.formulaRun = ns.FormulaRun.New({
-            store = ns.scanStore,
+            store = ns.priceReader or ns.scanStore,
             sources = ns.formulaSources,
             serverTime = GetServerTime,
         })
@@ -1065,7 +1159,11 @@ local function openTooltip()
             rules = ns.rules,
             holdings = ns.holdings,
             getRecord = function(key)
-                return ns.scanStore and ns.scanStore:Get(key) or nil
+                local source = ns.priceReader or ns.scanStore
+                return source and source:Get(key) or nil
+            end,
+            isGuild = function(key)
+                return ns.IsGuildPrice ~= nil and ns.IsGuildPrice(key) or false
             end,
             now = GetServerTime,
             isAltDown = IsAltKeyDown,
@@ -1311,6 +1409,7 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
         if ns.db then
             openScan()
         end
+        openGuildSync()
         openNames()
         openAHSearch()
         openFormula()
@@ -1475,7 +1574,8 @@ local function withMainWindow(action)
             tooltipConfig = ns.tooltipConfig,
             holdings = ns.holdings,
             getRecord = function(key)
-                return ns.scanStore and ns.scanStore:Get(key) or nil
+                local source = ns.priceReader or ns.scanStore
+                return source and source:Get(key) or nil
             end,
             buildPreview = ns.BuildTooltipPreview,
             ledgerLoader = ns.ledgerLoader,
@@ -1488,6 +1588,7 @@ local function withMainWindow(action)
             after = C_Timer.After,
             getVersionLine = ns.VersionLine,
             openLog = ns.OpenLogWindow,
+            guildSync = ns.guildSync and { isEnabled = guildSyncEnabled, setEnabled = ns.SetGuildSync } or nil,
         })
         action(window)
     end)
@@ -1695,7 +1796,8 @@ openUI = function()
             keyFor = ns.keyFor,
             isAuctionHouseOpen = ns.IsAuctionHouseOpen,
             getRecord = function(key)
-                return ns.scanStore and ns.scanStore:Get(key) or nil
+                local source = ns.priceReader or ns.scanStore
+                return source and source:Get(key) or nil
             end,
             now = GetServerTime,
         })
@@ -2041,7 +2143,25 @@ local function forgetCommand(character)
     end
 end
 
+-- Print the state of the guild price sharing, or send a request with "request".
+local function syncCommand(argument)
+    local sync = ns.guildSync
+    if not sync then
+        printLine("guild sharing is not available this session")
+        return
+    end
+    if argument == "request" then
+        local sent, reason = sync:SendRequest(true)
+        printLine(sent and "request sent to the guild" or ("request not sent: " .. tostring(reason)))
+        return
+    end
+    for _, line in ipairs(ns.GuildSync.StatusLines(sync:Status(), GetServerTime())) do
+        printLine(line)
+    end
+end
+
 -- Handle the text after /flipside or /flip.
+
 function ns.HandleSlash(msg)
     local text = tostring(msg or "")
     log("core", "info", "slash command: /flip %s", text)
@@ -2064,6 +2184,9 @@ function ns.HandleSlash(msg)
         return
     elseif command == "forget" then
         forgetCommand(rest)
+        return
+    elseif command == "sync" then
+        syncCommand(rest:lower())
         return
     elseif command == "ledgerdebug" then
         ledgerDebugCommand()
