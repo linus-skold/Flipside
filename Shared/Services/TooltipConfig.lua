@@ -10,6 +10,10 @@ local MAX_LINES = 12
 local TABLE_LABEL = "Price table"
 local VERSION = 2
 local FLAGS = { showGroup = true, showOperation = true, showCounts = true }
+-- showVendor is new: a stored config without it gets true, so it is not checked on load.
+local SETTABLE_FLAGS = { showGroup = true, showOperation = true, showCounts = true, showVendor = true }
+local PERIODS = { "1d", "14d", "30d", "60d" }
+local STATS = { "min", "avg", "max", "market" }
 local FIELDS = { label = true, formula = true, showAge = true, showSamples = true, enabled = true, altStack = true }
 local BOOL_FIELDS = { showAge = true, showSamples = true, enabled = true, altStack = true }
 
@@ -52,6 +56,9 @@ local function NewDefaults()
         showGroup = true,
         showOperation = true,
         showCounts = true,
+        showVendor = true,
+        periods = { ["1d"] = true, ["14d"] = true, ["30d"] = true, ["60d"] = true },
+        stats = { min = true, avg = true, max = true, market = true },
         lines = { NewTableLine(1) },
     }
 end
@@ -170,8 +177,21 @@ local function CheckFormula(compile, formula)
     return true
 end
 
--- A stored line without altStack gets the default true.
+-- A stored line without altStack gets the default true. Missing or malformed new settings get the defaults.
 local function FillAltStack(data)
+    if type(data.showVendor) ~= "boolean" then
+        data.showVendor = true
+    end
+    for field, names in pairs({ periods = PERIODS, stats = STATS }) do
+        if type(data[field]) ~= "table" then
+            data[field] = {}
+        end
+        for _, name in ipairs(names) do
+            if type(data[field][name]) ~= "boolean" then
+                data[field][name] = true
+            end
+        end
+    end
     for _, line in ipairs(data.lines) do
         if line.altStack == nil then
             line.altStack = true
@@ -342,13 +362,40 @@ end
 
 function Config:SetFlag(name, value)
     return self:_Change(function(data)
-        if not FLAGS[name] then
+        if not SETTABLE_FLAGS[name] then
             return nil, "unknown flag"
         end
         if type(value) ~= "boolean" then
             return nil, "value must be true or false"
         end
         data[name] = value
+        return true
+    end)
+end
+
+-- Turns one price window ("1d", "14d", "30d", "60d") on or off.
+function Config:SetPeriod(label, value)
+    return self:_SetChoice("periods", PERIODS, label, value)
+end
+
+-- Turns one price stat ("min", "avg", "max", "market") on or off.
+function Config:SetStat(name, value)
+    return self:_SetChoice("stats", STATS, name, value)
+end
+
+function Config:_SetChoice(field, names, name, value)
+    return self:_Change(function(data)
+        local known = false
+        for _, one in ipairs(names) do
+            known = known or one == name
+        end
+        if not known then
+            return nil, "unknown " .. field .. " name"
+        end
+        if type(value) ~= "boolean" then
+            return nil, "value must be true or false"
+        end
+        data[field][name] = value
         return true
     end)
 end

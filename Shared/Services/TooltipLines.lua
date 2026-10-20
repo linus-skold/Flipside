@@ -12,7 +12,13 @@ local WINDOWS = {
     { days = 30, label = "30d" },
     { days = 60, label = "60d" },
 }
-local COLUMNS = { "Min", "Avg", "Max", "Market" }
+local STATS = {
+    { key = "min", name = "Min" },
+    { key = "avg", name = "Avg" },
+    { key = "max", name = "Max" },
+    { key = "market", name = "Market" },
+}
+local VENDOR_LABEL = "Vendor sell price"
 local NO_VALUE = "-"
 local NO_PRICES = "Prices"
 local SEP = " \194\183 "
@@ -165,24 +171,50 @@ function TooltipLines.Windows(record, now)
     return out
 end
 
-local function tableModel(ctx, key, line)
-    local record = key and ctx.getRecord and ctx.getRecord(key)
-    if type(record) ~= "table" then
-        return { left = NO_PRICES, right = INVALID, color = "dim" }
+-- Returns the selected stats as { key, name } pairs. A stat is on unless the config turns it off.
+local function selectedStats(config)
+    local list = {}
+    for _, stat in ipairs(STATS) do
+        if not config.stats or config.stats[stat.key] ~= false then
+            list[#list + 1] = stat
+        end
     end
-    local windows = TooltipLines.Windows(record, ctx.now)
+    return list
+end
+
+-- Returns a text cell of the window: the stat value times the stack, or NO_VALUE.
+local function cellOf(window, key, stack)
+    if window[key] then
+        return TooltipLines.FormatMoney(window[key] * stack), true
+    end
+    return NO_VALUE, false
+end
+
+-- Returns the price rows. Many stats give one table model. One stat gives compact rows such as "14d market".
+-- No selected period or no selected stat gives nil.
+local function tableModel(ctx, key, line)
+    local config = ctx.config
+    local stats = selectedStats(config)
+    local record = key and ctx.getRecord and ctx.getRecord(key)
+    local windows = type(record) == "table" and TooltipLines.Windows(record, ctx.now) or {}
+    local shown = {}
+    for _, w in ipairs(windows) do
+        if not config.periods or config.periods[w.label] ~= false then
+            shown[#shown + 1] = w
+        end
+    end
+    if #stats == 0 or (#shown == 0 and #windows > 0) then
+        return nil
+    end
     local useAlt = ctx.stackMode and line.altStack ~= false
     local stack = useAlt and ctx.stackCount and ctx.stackCount > 1 and ctx.stackCount or 1
     local rows, any = {}, false
-    for i, w in ipairs(windows) do
+    for i, w in ipairs(shown) do
         local cells = {}
-        for j, field in ipairs({ "min", "avg", "max", "market" }) do
-            if w[field] then
-                any = true
-                cells[j] = TooltipLines.FormatMoney(w[field] * stack)
-            else
-                cells[j] = NO_VALUE
-            end
+        for j, stat in ipairs(stats) do
+            local text, has = cellOf(w, stat.key, stack)
+            cells[j] = text
+            any = any or has
         end
         rows[i] = { label = w.label, cells = cells }
     end
@@ -198,9 +230,35 @@ local function tableModel(ctx, key, line)
         parts[#parts + 1] = "stack of " .. stack
     end
     local header = "Flipside" .. (#parts > 0 and (" (" .. table.concat(parts, ", ") .. ")") or "")
-    return { kind = "table", header = header, columns = COLUMNS, rows = rows }
+    if #stats > 1 then
+        local columns = {}
+        for j, stat in ipairs(stats) do
+            columns[j] = stat.name
+        end
+        return { kind = "table", header = header, columns = columns, rows = rows }
+    end
+    local compact = {}
+    for i, row in ipairs(rows) do
+        compact[i] = { left = row.label .. " " .. stats[1].name:lower(), right = row.cells[1], color = "normal" }
+    end
+    compact[1].header = header
+    return { multi = compact }
 end
 
+-- Returns the vendor sell price row, or nil. The price is the unit price; Alt with a stack gives the stack total.
+local function vendorRow(ctx)
+    local price = ctx.sellPrice
+    if type(price) ~= "number" or price <= 0 then
+        return nil
+    end
+    local label = VENDOR_LABEL
+    local stack = ctx.stackCount
+    if ctx.stackMode and stack and stack > 1 then
+        price = price * stack
+        label = label .. " (stack of " .. stack .. ")"
+    end
+    return { left = label, right = TooltipLines.FormatMoney(price), color = "normal" }
+end
 local function groupRows(ctx, rows, key, config)
     local rules = ctx.rules
     if not rules or not key then
@@ -286,10 +344,19 @@ function TooltipLines.Build(ctx)
     }, { __index = ctx })
     for _, line in ipairs(config.lines or {}) do
         if line.enabled ~= false then
-            rows[#rows + 1] = dataRow(line, tableCtx, state)
+            local row = dataRow(line, tableCtx, state)
+            if row and row.multi then
+                for _, one in ipairs(row.multi) do
+                    rows[#rows + 1] = one
+                end
+            elseif row then
+                rows[#rows + 1] = row
+            end
         end
     end
-
+    if config.showVendor ~= false then
+        rows[#rows + 1] = vendorRow(ctx)
+    end
     groupRows(ctx, rows, key, config)
     if config.showCounts then
         countRows(ctx, rows, key)

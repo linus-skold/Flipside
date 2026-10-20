@@ -347,7 +347,9 @@ function TooltipPage.Build(content, deps)
             one[k] = v
         end
         one.enabled = true
-        local config = { lines = { one }, showGroup = false, showOperation = false, showCounts = false }
+        local data = tc:Get()
+        local config = { lines = { one }, showGroup = false, showOperation = false, showCounts = false,
+            showVendor = false, periods = data.periods, stats = data.stats }
         local rows
         if deps.buildPreview then
             rows = deps.buildPreview(example, config)
@@ -385,6 +387,39 @@ function TooltipPage.Build(content, deps)
     page.counts = flagCheck("Show counts per character", "showCounts", 28)
     page.operation = flagCheck("Show operations", "showOperation", 52)
     page.group = flagCheck("Show group", "showGroup", 76)
+    page.vendor = flagCheck("Vendor sell price", "showVendor", 28)
+    page.vendor:ClearAllPoints()
+    page.vendor:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", RIGHT_X + 230, 28)
+
+    -- Calls apply(name, checked) for each name whose box differs from the stored set.
+    local function choiceGrid(items, columnWidth, y, stored, apply)
+        local grid = Kit.CheckGrid(content, {
+            items = items,
+            columns = #items,
+            columnWidth = columnWidth,
+            onChange = function(set)
+                local current = stored()
+                for _, item in ipairs(items) do
+                    local on = set[item.value] == true
+                    if on ~= current[item.value] then
+                        change(apply, item.value, on)
+                    end
+                end
+            end,
+        })
+        grid:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", RIGHT_X, y)
+        return grid
+    end
+    page.periods = choiceGrid({ { value = "1d", text = "1d" }, { value = "14d", text = "14d" },
+        { value = "30d", text = "30d" }, { value = "60d", text = "60d" } }, 70, 100,
+    function()
+        return tc:Get().periods
+    end, tc.SetPeriod)
+    page.stats = choiceGrid({ { value = "min", text = "Min" }, { value = "avg", text = "Avg" },
+        { value = "max", text = "Max" }, { value = "market", text = "Market" } }, 90, 124,
+    function()
+        return tc:Get().stats
+    end, tc.SetStat)
     page.hint = Kit.Label(content, ALT_HINT, "small")
     page.hint:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", RIGHT_X, 6)
     page.hint:SetWidth(RIGHT_WIDTH)
@@ -425,7 +460,10 @@ function TooltipPage.Build(content, deps)
         page.group:SetChecked(data.showGroup)
         page.operation:SetChecked(data.showOperation)
         page.counts:SetChecked(data.showCounts)
-        for _, widget in ipairs({ page.group, page.operation, page.counts }) do
+        page.vendor:SetChecked(data.showVendor)
+        page.periods:SetValues(data.periods)
+        page.stats:SetValues(data.stats)
+        for _, widget in ipairs({ page.group, page.operation, page.counts, page.vendor, page.periods, page.stats }) do
             setEnabled(widget, not ro)
         end
     end

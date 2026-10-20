@@ -535,4 +535,146 @@ describe("TooltipLines", function()
             assert.is_nil(row.header:find("days", 1, true))
         end)
     end)
-end)
+
+    describe("vendor sell price", function()
+        local function rowsOf(extra, config)
+            local c = ctx(extra)
+            c.config = config or { lines = {} }
+            return TL.Build(c)
+        end
+
+        it("shows the unit price by default", function()
+            local rows = rowsOf({ sellPrice = 250 })
+            assert.are.equal(1, #rows)
+            assert.are.equal("Vendor sell price", rows[1].left)
+            assert.are.equal("2s 50c", rows[1].right)
+        end)
+
+        it("hides the row for a price of 0 or nil", function()
+            assert.are.equal(0, #rowsOf({ sellPrice = 0 }))
+            assert.are.equal(0, #rowsOf({}))
+        end)
+
+        it("shows the stack total with Alt and a stack", function()
+            local rows = rowsOf({ sellPrice = 250, stackMode = true, stackCount = 4 })
+            assert.are.equal("Vendor sell price (stack of 4)", rows[1].left)
+            assert.are.equal("10s", rows[1].right)
+        end)
+
+        it("shows the unit price for a stack when Alt is up", function()
+            local rows = rowsOf({ sellPrice = 250, stackCount = 4 })
+            assert.are.equal("2s 50c", rows[1].right)
+        end)
+
+        it("hides the row when the setting is off", function()
+            assert.are.equal(0, #rowsOf({ sellPrice = 250 }, { lines = {}, showVendor = false }))
+        end)
+    end)
+
+    describe("period and stat settings", function()
+        local TABLE = { id = 1, kind = "table", label = "Price table", formula = "", enabled = true }
+
+        local function record()
+            local r = ns.ScanRecord.New()
+            r.days = {
+                { day = TODAY - 20, min = 100, market = 1000, qty = 1, scans = 1 },
+                { day = TODAY - 1, min = 300, market = 3000, qty = 1, scans = 1 },
+            }
+            local snap = { time = NOW - 3600, min = 400, market = 4000, qty = 1, auctions = 1 }
+            r.today = { day = TODAY, snaps = { snap } }
+            r.latest = { time = NOW - 7200, min = 400, market = 4000, qty = 1, auctions = 1, partial = false }
+            return r
+        end
+
+        local function build(settings)
+            local config = { lines = { TABLE } }
+            for k, v in pairs(settings or {}) do
+                config[k] = v
+            end
+            local c = ctx({
+                config = config,
+                getRecord = function()
+                    return record()
+                end,
+            })
+            return TL.Build(c)
+        end
+
+        local function labels(model)
+            local out = {}
+            for i, row in ipairs(model.rows) do
+                out[i] = row.label
+            end
+            return out
+        end
+
+        it("shows every period and stat by default", function()
+            local model = build()[1]
+            assert.are.same({ "1d", "14d", "30d", "60d" }, labels(model))
+            assert.are.same({ "Min", "Avg", "Max", "Market" }, model.columns)
+        end)
+
+        for _, label in ipairs({ "1d", "14d", "30d", "60d" }) do
+            it("hides the period " .. label, function()
+                local periods = { ["1d"] = true, ["14d"] = true, ["30d"] = true, ["60d"] = true }
+                periods[label] = false
+                local model = build({ periods = periods })[1]
+                assert.are.equal(3, #model.rows)
+                for _, shown in ipairs(labels(model)) do
+                    assert.are_not.equal(label, shown)
+                end
+            end)
+        end
+
+        it("shows no price rows when no period is on", function()
+            local rows = build({ periods = { ["1d"] = false, ["14d"] = false, ["30d"] = false, ["60d"] = false } })
+            assert.are.equal(0, #rows)
+        end)
+
+        it("shows no price rows when no stat is on", function()
+            local rows = build({ stats = { min = false, avg = false, max = false, market = false } })
+            assert.are.equal(0, #rows)
+        end)
+
+        local function only(name)
+            local stats = { min = false, avg = false, max = false, market = false }
+            stats[name] = true
+            return stats
+        end
+
+        for _, name in ipairs({ "market", "min", "max", "avg" }) do
+            it("shows compact rows for only " .. name, function()
+                local rows = build({ stats = only(name) })
+                assert.are.equal(4, #rows)
+                assert.are.equal("1d " .. name, rows[1].left)
+                assert.are.equal("60d " .. name, rows[4].left)
+                assert.is_nil(rows[1].kind)
+                assert.is_truthy(rows[1].header)
+                assert.is_nil(rows[2].header)
+            end)
+        end
+
+        it("shows the right value in a compact row", function()
+            local rows = build({ stats = only("market") })
+            assert.are.equal("1d market", rows[1].left)
+            assert.are.equal("40s", rows[1].right)
+        end)
+
+        it("shows Min and Market as two columns in the fixed order", function()
+            local model = build({ stats = { min = true, avg = false, max = false, market = true } })[1]
+            assert.are.same({ "Min", "Market" }, model.columns)
+            assert.are.equal(2, #model.rows[1].cells)
+            assert.are.equal("4s", model.rows[1].cells[1])
+            assert.are.equal("40s", model.rows[1].cells[2])
+        end)
+
+        it("shows all four stats as four columns", function()
+            local model = build({ stats = { min = true, avg = true, max = true, market = true } })[1]
+            assert.are.equal(4, #model.columns)
+        end)
+
+        it("multiplies the compact value by the stack", function()
+            local rows = build({ stats = only("market"), stackMode = true, stackCount = 2 })
+            assert.are.equal("80s", rows[1].right)
+        end)
+    end)end)
