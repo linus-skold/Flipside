@@ -166,6 +166,16 @@ describe("TooltipPage", function()
                 assert.are.equal(y1 - math.floor((i - 1) / 3) * height, y)
                 assert.are.equal(page.grid, checks[i]:GetParent())
             end
+            assert.are.equal(page.gridColumnWidth, width)
+            assert.are.equal(page.gridRowHeight, height)
+            assert.is_true(3 * width <= 460)
+            for _, box in ipairs(checks) do
+                local room = width - 26 - 4
+                assert.are.equal(room, box.Text.width)
+                -- A label wider than its room wraps, and the row has height for those lines.
+                local lines = math.ceil(box.Text:GetStringWidth() / room)
+                assert.is_true(lines * 12 <= height)
+            end
             assert.are.equal(page.grid, page.group:GetParent())
             assert.are.equal(checks[9], page.group)
             assert.are.equal(checks[12], page.vendor)
