@@ -2,7 +2,7 @@ local _, ns = ...
 
 -- Prices that guild members shared (SPEC 3.5). The data is separate from the local scan store.
 -- The saved table holds, for each scope, items[key] = "min,market,qty,time". Keep the newest entry for each item.
--- A reader gives local scan records first and fills the gaps from this data.
+-- A reader gives the newer of the local scan record and the shared record (a tie goes to the local record).
 
 local GuildPriceStore = {}
 ns.GuildPriceStore = GuildPriceStore
@@ -91,6 +91,15 @@ function Store:Record(key)
     }
     self._records[key] = record
     return record
+end
+
+-- Return a list of the item keys in the store.
+function Store:Keys()
+    local keys = {}
+    for key in pairs(self._slot.items) do
+        keys[#keys + 1] = key
+    end
+    return keys
 end
 
 function Store:Count()
@@ -182,7 +191,8 @@ local Reader = {}
 Reader.__index = Reader
 
 -- Return a reader. options: localStore (needs Get and GetVersion), guildStore, isEnabled().
--- Local scan data always wins. The shared data fills the gaps, and only while sharing is on.
+-- The newest scan time wins, no matter who scanned. On equal times the local record wins.
+-- Shared data counts only while sharing is on.
 function GuildPriceStore.NewReader(options)
     return setmetatable({
         localStore = options.localStore,
@@ -191,21 +201,40 @@ function GuildPriceStore.NewReader(options)
     }, Reader)
 end
 
-function Reader:Get(key)
+-- Return the local record, the shared entry and true if the shared entry is newer than the local record.
+-- On equal times the local record wins.
+local function choose(self, key)
     local record = self.localStore:Get(key)
-    if record then
-        return record
-    end
     if not self.isEnabled() then
-        return nil
+        return record, nil, false
     end
-    return self.guildStore:Record(key)
+    local entry = self.guildStore:Get(key)
+    if not entry then
+        return record, nil, false
+    end
+    if not record then
+        return nil, entry, true
+    end
+    local latest = record.latest
+    local localTime = type(latest) == "table" and tonumber(latest.time) or 0
+    return record, entry, entry.time > localTime
 end
 
--- Return true if the price of the item comes from shared data only.
+function Reader:Get(key)
+    local record, _, useGuild = choose(self, key)
+    if useGuild then
+        return self.guildStore:Record(key)
+    end
+    return record
+end
+
+-- Return true if the price of the item comes from shared data (it is newer than the local record).
 function Reader:IsGuild(key)
-    return type(key) == "string" and self.isEnabled() and self.localStore:Get(key) == nil
-        and self.guildStore:Get(key) ~= nil
+    if type(key) ~= "string" then
+        return false
+    end
+    local _, _, useGuild = choose(self, key)
+    return useGuild
 end
 
 -- Return a number that changes when the local data, the shared data or the setting changes.

@@ -67,6 +67,7 @@ function Sync:OnSettingChanged()
         self:_Log("info", "guild sharing on")
     else
         self.deps.queue:Clear()
+        self.lastSet = nil
         self:_Log("info", "guild sharing off")
     end
 end
@@ -160,21 +161,49 @@ function Sync:_OnRequest(sender, request)
 end
 
 -- Return the entries to share, newest first, at most MAX_ITEMS. job can be nil.
-function Sync:_Collect(job)
+-- For each item the newest record wins, from the local scans, the shared data or the carried entries
+-- (a list of entries that an earlier set did not send). A tie keeps the first one found: local, shared, carried.
+-- Each entry keeps its original scan time.
+function Sync:_Collect(job, carry)
     local codec = ns.GuildSyncCodec
-    local now, entries = self.deps.clock(), {}
-    local store = self.deps.localStore
+    local now, byKey = self.deps.clock(), {}
+    local store, guildStore = self.deps.localStore, self.deps.guildStore
+    local function offer(key, min, market, qty, time)
+        if type(key) == "string" and string.match(key, "^[%d:]+$") and type(time) == "number" and min and market
+            and min > 0 and market > 0 and now - time <= GuildSync.MAX_AGE then
+            local old = byKey[key]
+            if not old or time > old.time then
+                byKey[key] = { key = key, min = min, market = market, qty = qty or 0, time = time }
+            end
+        end
+    end
     for _, key in ipairs(store:Keys()) do
         local record = store:Get(key)
         local latest = record and record.latest
-        if latest and latest.min > 0 and latest.market > 0 and now - latest.time <= GuildSync.MAX_AGE
-            and string.match(key, "^[%d:]+$") then
-            entries[#entries + 1] = { key = key, min = latest.min, market = latest.market, qty = latest.qty,
-                time = latest.time }
+        if latest then
+            offer(key, latest.min, latest.market, latest.qty, latest.time)
         end
         if job then
             job:Checkpoint(1)
         end
+    end
+    if guildStore.Keys then
+        for _, key in ipairs(guildStore:Keys()) do
+            local entry = guildStore:Get(key)
+            if entry then
+                offer(key, entry.min, entry.market, entry.qty, entry.time)
+            end
+            if job then
+                job:Checkpoint(1)
+            end
+        end
+    end
+    for _, entry in ipairs(carry or {}) do
+        offer(entry.key, entry.min, entry.market, entry.qty, entry.time)
+    end
+    local entries = {}
+    for _, entry in pairs(byKey) do
+        entries[#entries + 1] = entry
     end
     table.sort(entries, function(a, b)
         if a.time ~= b.time then
@@ -198,7 +227,25 @@ function Sync:_Blocked()
     end
 end
 
--- Build the data set of the local scan data and queue it. Return true if the work started.
+-- Remove the messages of the last set that still wait in the queue. Return the entries of that set, or nil
+-- if all its messages are gone. Messages of requests stay in the queue.
+function Sync:_TakeUnsent()
+    local last = self.lastSet
+    self.lastSet = nil
+    if not last then
+        return nil
+    end
+    local removed = self.deps.queue:RemoveIf(function(text)
+        return last.texts[text] == true
+    end)
+    if removed > 0 then
+        return last.entries
+    end
+    return nil
+end
+
+-- Build the data set of the newest known prices (own scans and shared data) and queue it.
+-- Return true if the work started.
 -- The job yields between items, so the reading is not inside a pcall (Lua 5.1 cannot yield there).
 function Sync:SendSet(why)
     local blocked = self:_Blocked()
@@ -213,7 +260,9 @@ function Sync:SendSet(why)
     self.building = now
     self:EnsureRegistered()
     self.deps.runJob("guild-sync-build", function(job)
-        local entries = self:_Collect(job)
+        -- Remove the unsent messages of the earlier set. Its items go into the new set, so nothing is lost.
+        local carry = self:_TakeUnsent()
+        local entries = self:_Collect(job, carry)
         self.building = nil
         local messages, problem = ns.GuildSyncCodec.BuildSet(self.deps.scope, self.deps.clock(), entries)
         if not messages then
@@ -224,10 +273,12 @@ function Sync:SendSet(why)
             self:_Log("info", "send %s: no data to share", tostring(why))
             return
         end
-        self.deps.queue:Clear()
+        local texts = {}
         for _, text in ipairs(messages) do
+            texts[text] = true
             self.deps.queue:Push(text)
         end
+        self.lastSet = { entries = entries, texts = texts }
         self.stats.lastSend = self.deps.clock()
         self.stats.sent = self.stats.sent + #entries
         self:_Log("info", "send %s: %d items in %d messages", tostring(why), #entries, #messages)
@@ -254,9 +305,10 @@ function Sync:SendRequest(force)
     return true
 end
 
--- Handle Flipside.ScanFinished. Share the data after a scan that ended well, except a page scan.
+-- Handle Flipside.ScanFinished. Share the data after a scan that ended well or in part, except a page scan.
 function Sync:OnScanFinished(_, summary)
-    if type(summary) == "table" and summary.result == "ok" and summary.mode ~= "page" then
+    if type(summary) == "table" and (summary.result == "ok" or summary.result == "partial")
+        and summary.mode ~= "page" then
         self:SendSet("scan")
     end
 end

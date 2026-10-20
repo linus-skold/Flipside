@@ -130,6 +130,28 @@ describe("GuildSync", function()
         end
     end
 
+    -- Return a table key -> { market, time } of all items in the data messages that went out.
+    local function wireItems()
+        local items = {}
+        for _, text in ipairs(wire) do
+            local chunk = assert(Codec.Parse(text))
+            if chunk.kind == "D" then
+                for _, entry in ipairs(Codec.ParseItems(chunk.items, chunk.time)) do
+                    items[entry.key] = { market = entry.market, time = entry.time }
+                end
+            end
+        end
+        return items
+    end
+
+    local function countWire()
+        local count = 0
+        for _ in pairs(wireItems()) do
+            count = count + 1
+        end
+        return count
+    end
+
     describe("receive", function()
         it("stores the items of a full set from another member", function()
             for _, text in ipairs(remoteSet(30)) do
@@ -295,6 +317,83 @@ describe("GuildSync", function()
             assert.is_true(waiting > 0)
             sync:SendSet("third")
             assert.are.equal(waiting, deps.queue:Pending())
+        end)
+
+        it("shares the scanned items after a partial scan", function()
+            addLocal(4)
+            sync:OnScanFinished("Flipside.ScanFinished", { result = "partial" })
+            assert.are.equal(4, countWire())
+        end)
+
+        it("keeps the unsent items of an earlier set when a new set starts", function()
+            addLocal(3)
+            sendResult = 3
+            sync:SendSet("first")
+            localData["9001"] = { latest = { time = NOW - 1, min = 5, market = 6, qty = 1, auctions = 1,
+                partial = false }, days = {} }
+            sync:SendSet("second")
+            sendResult = 0
+            clock = clock + 100
+            runTimers()
+            local items = wireItems()
+            assert.is_not_nil(items["2001"])
+            assert.is_not_nil(items["9001"])
+            assert.are.equal(4, countWire())
+        end)
+
+        it("keeps a queued request when a set starts", function()
+            addLocal(3)
+            sendResult = 3
+            sync:SendRequest(true)
+            sync:SendSet("test")
+            sendResult = 0
+            clock = clock + 100
+            runTimers()
+            local requests = 0
+            for _, text in ipairs(wire) do
+                if assert(Codec.Parse(text)).kind == "Q" then
+                    requests = requests + 1
+                end
+            end
+            assert.is_true(requests >= 1)
+        end)
+
+        it("shares the newest record of each item from own and shared data, with the original time", function()
+            localData["2001"] = { latest = { time = NOW - 500, min = 10, market = 20, qty = 1, auctions = 1,
+                partial = false }, days = {} }
+            localData["2002"] = { latest = { time = NOW - 50, min = 11, market = 21, qty = 1, auctions = 1,
+                partial = false }, days = {} }
+            deps.guildStore:Merge({
+                { key = "2001", min = 30, market = 40, qty = 2, time = NOW - 100 },
+                { key = "2002", min = 31, market = 41, qty = 2, time = NOW - 400 },
+                { key = "2003", min = 32, market = 42, qty = 2, time = NOW - 300 },
+            })
+            sync:SendSet("test")
+            local items = wireItems()
+            assert.are.equal(40, items["2001"].market)
+            assert.are.equal(NOW - 100, items["2001"].time)
+            assert.are.equal(21, items["2002"].market)
+            assert.are.equal(NOW - 50, items["2002"].time)
+            assert.are.equal(42, items["2003"].market)
+            assert.are.equal(NOW - 300, items["2003"].time)
+        end)
+
+        it("shares the own record on equal times", function()
+            localData["2001"] = { latest = { time = NOW - 100, min = 10, market = 20, qty = 1, auctions = 1,
+                partial = false }, days = {} }
+            deps.guildStore:Merge({ { key = "2001", min = 30, market = 40, qty = 2, time = NOW - 100 } })
+            sync:SendSet("test")
+            assert.are.equal(20, wireItems()["2001"].market)
+        end)
+
+        it("does not send anything when it receives a set", function()
+            addLocal(3)
+            for _, text in ipairs(remoteSet(5)) do
+                receive(text)
+            end
+            runTimers()
+            assert.are.equal(0, #wire)
+            assert.are.equal(0, #timers)
         end)
 
         it("retries later when the client refuses a message", function()

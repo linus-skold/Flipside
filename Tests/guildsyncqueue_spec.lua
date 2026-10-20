@@ -43,6 +43,19 @@ describe("GuildSyncQueue", function()
         end
     end
 
+    it("removes waiting messages with RemoveIf and keeps the others", function()
+        for i = 1, 6 do
+            queue:Push("m" .. i)
+        end
+        local removed = queue:RemoveIf(function(text)
+            return text == "m4" or text == "m6"
+        end)
+        assert.are.equal(2, removed)
+        assert.are.equal(1, queue:Pending())
+        advance(5)
+        assert.are.same({ "m1", "m2", "m3", "m5" }, sent)
+    end)
+
     it("sends a burst at once, then one message each second", function()
         for i = 1, 6 do
             queue:Push("m" .. i)

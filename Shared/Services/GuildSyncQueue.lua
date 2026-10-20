@@ -63,6 +63,23 @@ function Q:Clear()
     self.scheduled = false
 end
 
+-- Remove the waiting messages for which test(text) is true. Return the number removed.
+function Q:RemoveIf(test)
+    local kept, removed = {}, 0
+    for index, text in ipairs(self.items) do
+        if test(text) then
+            removed = removed + 1
+            if index == 1 then
+                self.tries = 0
+            end
+        else
+            kept[#kept + 1] = text
+        end
+    end
+    self.items = kept
+    return removed
+end
+
 -- Add a message to the end of the queue. Return false when the queue is full.
 function Q:Push(text)
     if #self.items >= Queue.MAX_LENGTH then
