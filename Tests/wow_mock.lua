@@ -9,7 +9,7 @@ local GLOBAL_NAMES = {
     "GetServerTime", "GetTime", "GetCurrentRegion", "IsTestBuild", "IsBetaBuild", "IsPublicTestClient",
     "SLASH_FLIPSIDE1", "SLASH_FLIPSIDE2",
     "SLASH_SCANTEST1", "ScanTestDB", "SlashCmdList",
-    "StaticPopupDialogs", "StaticPopup_Show", "UnitName", "WOW_PROJECT_ID", "date", "debugprofilestop", "time",
+    "StaticPopupDialogs", "StaticPopup_Show", "UnitName", "UnitClass", "WOW_PROJECT_ID", "date", "debugprofilestop", "time",
     "UISpecialFrames", "UIParent", "GameTooltip", "GetMoneyString", "GetMoney", "issecretvalue",
     "PanelTemplates_SetNumTabs", "PlaySound", "SOUNDKIT",
     "PanelTemplates_SetTab", "PanelTemplates_TabResize", "InCombatLockdown", "ScrollUtil", "CreateDataProvider",
@@ -484,6 +484,7 @@ function M.reset(options)
     M.commodity = {} -- itemID -> isCommodity from GetItemKeyInfo; a missing id gives no info
     M.stackSizes = {} -- itemID -> max stack size
     M.playerName = nil -- result of UnitName("player")
+    M.playerClass = "MAGE" -- class file that UnitClass("player") gives as its second result
     M.money = 0 -- result of GetMoney()
     M.noLines = false -- true removes CreateLine from the frames that are made after it
     M.realmName = nil -- result of GetNormalizedRealmName()
@@ -773,6 +774,9 @@ function M.reset(options)
     end
     _G.GetNormalizedRealmName = function()
         return M.realmName
+    end
+    _G.UnitClass = function()
+        return "Mage", M.playerClass
     end
 
     _G.C_Item = {

@@ -31,6 +31,7 @@ ns.Flavour = {
     ruleset = "tbc-anniversary",
     scopeIncludesRealm = true, -- D24
     captureEnabled = true,
+    countsCurrentRealmOnly = true, -- the tooltip counts show only the characters of the current realm
     hasCommodityMarket = false, -- every listing is a stack with a stack buyout
     buyGroupAuctions = false, -- the Buying tab shows each auction on its own row; Buy and Next buy one auction
     multisell = true, -- PostAuction posts several stacks in one click; the operation has the Max stacks field

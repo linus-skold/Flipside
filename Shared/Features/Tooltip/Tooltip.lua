@@ -104,10 +104,23 @@ local function stackCountOf(deps, tooltip)
         return nil
     end
     local owner = tooltip:GetOwner()
-    if type(owner) ~= "table" or not owner.GetBagID then
+    if type(owner) ~= "table" then
         return nil
     end
-    local info = deps.containerItemInfo(owner:GetBagID(), owner:GetID())
+    local bag, slot
+    if owner.GetBagID then
+        bag, slot = owner:GetBagID(), owner:GetID()
+    elseif owner.GetItemLocation then
+        -- Forever bank buttons have no bag ID; their item location gives the bag and the slot.
+        local location = owner:GetItemLocation()
+        if type(location) == "table" and location.GetBagAndSlot then
+            bag, slot = location:GetBagAndSlot()
+        end
+    end
+    if not bag then
+        return nil
+    end
+    local info = deps.containerItemInfo(bag, slot)
     return type(info) == "table" and type(info.stackCount) == "number" and info.stackCount or nil
 end
 
@@ -157,6 +170,24 @@ local function addTable(tooltip, model)
     end
 end
 
+-- Returns the colour of a class file as 6 hex digits, or nil. TBC has no C_ClassColor, Forever has both.
+local function classColorHex(class)
+    local colors = _G.RAID_CLASS_COLORS
+    local c = type(colors) == "table" and colors[class]
+    if type(c) ~= "table" then
+        return nil
+    end
+    if type(c.colorStr) == "string" and #c.colorStr >= 6 then
+        return c.colorStr:sub(-6)
+    end
+    if type(c.r) == "number" and type(c.g) == "number" and type(c.b) == "number" then
+        return string.format("%02x%02x%02x", math.floor(c.r * 255 + 0.5), math.floor(c.g * 255 + 0.5),
+            math.floor(c.b * 255 + 0.5))
+    end
+    return nil
+end
+Tooltip.ClassColorHex = classColorHex
+
 local function addRows(tooltip, rows)
     if #rows == 0 then
         return
@@ -173,6 +204,9 @@ local function addRows(tooltip, rows)
     for _, row in ipairs(rows) do
         if row.kind == "table" then
             addTable(tooltip, row)
+        elseif row.rgb then
+            local c = row.rgb
+            tooltip:AddDoubleLine(row.left or "", row.right or "", c[1], c[2], c[3], c[1], c[2], c[3])
         elseif row.color == "dim" then
             tooltip:AddDoubleLine(row.left or "", row.right or "", DIM_COLOR[1], DIM_COLOR[2], DIM_COLOR[3],
                 DIM_COLOR[1], DIM_COLOR[2], DIM_COLOR[3])
@@ -204,6 +238,9 @@ function Tooltip.Rows(deps, input, stackMode, stackCount, config)
         holdings = deps.holdings,
         getRecord = deps.getRecord,
         isGuild = deps.isGuild,
+        currentRealmOnly = deps.currentRealmOnly or false,
+        realm = deps.realm and deps.realm() or nil,
+        classColor = deps.classColor or classColorHex,
         now = deps.now and deps.now() or 0,
     })
 end
@@ -211,12 +248,14 @@ end
 -- deps: itemInfoInstant (optional, default C_Item.GetItemInfoInstant), itemInfo (optional, default C_Item.GetItemInfo),
 -- isBound (default C_Item.IsBound), itemLocation (default ItemLocation),
 -- tooltipConfig, formulaRun, rules, holdings, getRecord, isGuild(key) (optional), now, isAltDown, containerItemInfo,
--- clock, report.
+-- clock, report, bus (optional; with it, Alt up or down shows the tooltip again), currentRealmOnly, realm(),
+-- classColor(classFile) (default: RAID_CLASS_COLORS).
 -- deps.hook (default ns.TooltipHook) has Install(onItem, opts); it calls onItem(tooltip, link) for each item tooltip.
 function Tooltip.Attach(deps)
     local stats = { count = 0, total = 0, max = 0 }
     Tooltip.stats = stats
     local reported = false
+    local shown -- the item tooltip that holds our rows: { tooltip, alt }
 
     local function report(message)
         if reported or not deps.report then
@@ -227,6 +266,9 @@ function Tooltip.Attach(deps)
     end
 
     local function build(tooltip, link, stackCount)
+        if shown and shown.tooltip == tooltip then
+            shown = nil
+        end
         if ns.TooltipTable then
             ns.TooltipTable.Release(tooltip)
         end
@@ -239,6 +281,7 @@ function Tooltip.Attach(deps)
             stackCount = stackCountOf(deps, tooltip)
         end
         addRows(tooltip, Tooltip.Rows(deps, link, stackMode, stackMode and stackCount or nil))
+        shown = { tooltip = tooltip, alt = stackMode }
     end
 
     local function onItem(tooltip, link, stackCount)
@@ -261,6 +304,33 @@ function Tooltip.Attach(deps)
     end
     Tooltip.handler = onItem
 
+    -- Alt went up or down over a tooltip with our rows: ask the owner to show the tooltip again.
+    -- The owner OnEnter script is the one that the client runs on hover, so the hook builds the rows again.
+    local function onModifier(_, key)
+        if not shown or type(key) ~= "string" or not key:find("ALT", 1, true) then
+            return
+        end
+        local tooltip = shown.tooltip
+        if not (tooltip.IsShown and tooltip:IsShown()) then
+            shown = nil
+            return
+        end
+        if (deps.isAltDown and deps.isAltDown() or false) == shown.alt then
+            return
+        end
+        local owner = tooltip.GetOwner and tooltip:GetOwner()
+        local onEnter = type(owner) == "table" and owner.GetScript and owner:GetScript("OnEnter")
+        if type(onEnter) == "function" then
+            local ok, err = pcall(onEnter, owner)
+            if not ok then
+                report("tooltip refresh failed: " .. tostring(err))
+            end
+        end
+    end
+    if deps.bus then
+        deps.bus:Subscribe("MODIFIER_STATE_CHANGED", "Flipside.Tooltip", onModifier)
+    end
+
     local hook = deps.hook or ns.TooltipHook
     if type(hook) ~= "table" or type(hook.Install) ~= "function" then
         report("tooltip hook not available")
@@ -269,7 +339,7 @@ function Tooltip.Attach(deps)
     if not hook.Install(onItem, { report = report }) then
         return nil
     end
-    return { OnItem = onItem, stats = stats }
+    return { OnItem = onItem, OnModifier = onModifier, stats = stats }
 end
 
 -- Entry point for a flavour hook: add the Flipside lines to one item tooltip.

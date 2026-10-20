@@ -41,14 +41,21 @@ local function Add(map, key, character, location, count)
     counts[location] = (counts[location] or 0) + count
 end
 
+-- Returns the class file of a stored value (for example MAGE), or nil for old data.
+local function ClassOf(stored)
+    local class = stored.class
+    return type(class) == "string" and class:match("^%u+$") and class or nil
+end
+
 -- Builds the exact and base count maps once; changes clear them.
 function H:_Index()
     if self._index then
         return self._index
     end
-    local index = { exact = {}, base = {}, seen = {} }
+    local index = { exact = {}, base = {}, seen = {}, class = {} }
     for _, character in ipairs(self._db:ListCharacters()) do
         local seen = {}
+        index.class[character] = ClassOf(self:_Read(character))
         for _, location in ipairs(LOCATIONS) do
             local data = self:_Read(character).locations[location]
             if type(data) == "table" and type(data.items) == "table" then
@@ -105,6 +112,7 @@ function H:SetLocation(location, items)
     for name, data in pairs(current.locations) do
         copy.locations[name] = data
     end
+    copy.class = current.class
     copy.locations[location] = { seen = self._clock(), items = clean }
     local ok = self._db:SetFor(self._character, STORE_KEY, copy)
     self._index = nil
@@ -127,7 +135,7 @@ function H:Count(key)
         map, lookup = index.base, string.format("%d", parsed.itemID)
     end
     for character, counts in pairs(map[lookup] or {}) do
-        local entry = { name = character, total = 0, bags = 0, bank = 0, mail = 0, auctions = 0, seen = {} }
+        local entry = { name = character, class = index.class[character], total = 0, bags = 0, bank = 0, mail = 0, auctions = 0, seen = {} }
         for _, location in ipairs(LOCATIONS) do
             local n = counts[location] or 0
             entry[location] = n
@@ -158,6 +166,24 @@ function H:CountInBags(key)
     end
     local counts = (map[lookup] or {})[self._character]
     return counts and counts.bags or 0
+end
+
+-- Saves the class file of the current character (from UnitClass). Returns false if it is not valid or not saved.
+function H:SetClass(class)
+    if type(class) ~= "string" or not class:match("^%u+$") then
+        return false
+    end
+    local current = self:_Read(self._character)
+    if current.class == class then
+        return true
+    end
+    local copy = { version = VERSION, class = class, locations = {} }
+    for name, data in pairs(current.locations) do
+        copy.locations[name] = data
+    end
+    local ok = self._db:SetFor(self._character, STORE_KEY, copy)
+    self._index = nil
+    return ok
 end
 
 -- Removes the holdings of one character; keeps its other keys.

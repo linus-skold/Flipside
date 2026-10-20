@@ -329,8 +329,71 @@ describe("TooltipLines", function()
             c.config.showCounts = true
             local rows = TL.Build(c)
             assert.are.equal("Total: 42", rows[2].left)
-            assert.are.equal("Ann-Realm: 20 (bags 15, bank 5)", rows[3].left)
-            assert.are.equal("Bob-Realm: 22 (auctions 22)", rows[4].left)
+            assert.are.equal("|cffffffffAnn|r: 20 (bags 15, bank 5)", rows[3].left)
+            assert.are.equal("|cffffffffBob|r: 22 (auctions 22)", rows[4].left)
+        end)
+
+        describe("count characters", function()
+            local function withHoldings(characters, extra)
+                local c = ctx(extra)
+                c.holdings = { Count = function() return { total = 99, characters = characters } end }
+                c.config.showCounts = true
+                return TL.Build(c)
+            end
+            local mixed = {
+                { name = "Ann-Home", total = 20, bags = 20, class = "MAGE" },
+                { name = "Bob-Other", total = 5, bank = 5 },
+                { name = "Cy-Home", total = 3, mail = 3, class = "ROGUE" },
+            }
+            local function colors(class)
+                return ({ MAGE = "3fc7eb", ROGUE = "fff468" })[class]
+            end
+
+            it("shows every realm when the flavour does not limit it", function()
+                local rows = withHoldings(mixed, { classColor = colors, realm = "Home" })
+                assert.are.equal("Total: 99", rows[2].left)
+                assert.are.equal(5, #rows)
+            end)
+
+            it("shows and counts only the current realm on a limited flavour", function()
+                local rows = withHoldings(mixed, { currentRealmOnly = true, realm = "Home", classColor = colors })
+                assert.are.equal("Total: 23", rows[2].left)
+                assert.are.equal("|cff3fc7ebAnn|r: 20 (bags 20)", rows[3].left)
+                assert.are.equal("|cfffff468Cy|r: 3 (mail 3)", rows[4].left)
+                assert.are.equal(4, #rows)
+            end)
+
+            it("shows all characters if the realm is not known", function()
+                local rows = withHoldings(mixed, { currentRealmOnly = true })
+                assert.are.equal(5, #rows)
+            end)
+
+            it("never shows the realm after a name", function()
+                local rows = withHoldings(mixed, {})
+                for i = 3, #rows do
+                    assert.is_nil(rows[i].left:find("-", 1, true))
+                end
+            end)
+
+            it("adds the realm only to names that are the same on two realms", function()
+                local rows = withHoldings({
+                    { name = "Ann-Home", total = 4, bags = 4 },
+                    { name = "Ann-Other", total = 3, bags = 3 },
+                    { name = "Bob-Home", total = 2, bags = 2 },
+                }, {})
+                assert.are.equal("|cffffffffAnn-Home|r: 4 (bags 4)", rows[3].left)
+                assert.are.equal("|cffffffffAnn-Other|r: 3 (bags 3)", rows[4].left)
+                assert.are.equal("|cffffffffBob|r: 2 (bags 2)", rows[5].left)
+            end)
+
+            it("uses white when the class is missing or has no colour", function()
+                local rows = withHoldings({
+                    { name = "Ann-Home", total = 1, bags = 1, class = "UNKNOWN" },
+                    { name = "Bob-Home", total = 1, bags = 1 },
+                }, { classColor = colors })
+                assert.are.equal("|cffffffffAnn|r: 1 (bags 1)", rows[3].left)
+                assert.are.equal("|cffffffffBob|r: 1 (bags 1)", rows[4].left)
+            end)
         end)
 
         it("skips missing services without errors", function()

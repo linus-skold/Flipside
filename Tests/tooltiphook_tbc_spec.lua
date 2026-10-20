@@ -54,6 +54,16 @@ describe("TooltipHook on TBC", function()
         assert.are.equal(manifest.indexOf(files, "Tooltip") + 1, manifest.indexOf(files, "TooltipHook"))
     end)
 
+    it("gives the stack of a main bank slot with Alt", function()
+        local bank = { GetName = function() return "BankFrameItem5" end, GetID = function() return 5 end }
+        frames.GameTooltip.owner = bank
+        install()
+        alt = true
+        frames.GameTooltip.scripts.OnTooltipSetItem(frames.GameTooltip)
+        assert.are.same({ { -1, 5 } }, infoCalls)
+        assert.are.equal(7, calls[1].stack)
+    end)
+
     it("hooks OnTooltipSetItem on all four frames", function()
         assert.is_table(install())
         for name, f in pairs(frames) do
