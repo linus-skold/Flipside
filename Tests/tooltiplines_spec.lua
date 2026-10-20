@@ -680,4 +680,31 @@ describe("TooltipLines", function()
             local rows = build({ stats = only("market") }, { stackMode = true, stackCount = 2 })
             assert.are.equal("80s", rows[1].right)
         end)
-    end)end)
+    end)
+
+    describe("guild marker", function()
+        local function leftTexts(rows)
+            local texts = {}
+            for _, row in ipairs(rows) do
+                texts[#texts + 1] = row.left
+            end
+            return texts
+        end
+
+        it("adds a note when the price comes from guild data", function()
+            local rows = TL.Build(ctx({ isGuild = function(key)
+                return key == "123"
+            end }))
+            assert.is_truthy(table.concat(leftTexts(rows), "\n"):find("(guild) prices from guild members", 1, true))
+        end)
+
+        it("adds no note for a local price or when the hook is missing", function()
+            local none = TL.Build(ctx({ isGuild = function()
+                return false
+            end }))
+            assert.is_nil(table.concat(leftTexts(none), "\n"):find("(guild)", 1, true))
+            local missing = TL.Build(ctx())
+            assert.is_nil(table.concat(leftTexts(missing), "\n"):find("(guild)", 1, true))
+        end)
+    end)
+end)

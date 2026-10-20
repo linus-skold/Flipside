@@ -16,6 +16,9 @@ end
 
 local ABOUT_TEXT = "Groups sort items into trees. Operations hold the rules. Formulas check and save price formulas."
 
+local SHARE_TEXT = "Share prices with my guild"
+local SHARE_HINT = "Off by default. Guild members share scan prices. Your own scans always win over shared prices."
+
 -- A page that says why it cannot open.
 local function buildUnavailable(content)
     local label = ns.Kit.Label(content, "Settings are not available this session.", "bad")
@@ -36,11 +39,27 @@ local function buildAbout(content, deps)
         end
     end)
     logButton:SetPoint("TOPLEFT", note, "BOTTOMLEFT", 0, -Kit.Theme.gap * 2)
-    return { title = title, version = version, note = note, logButton = logButton }
+    local about = { title = title, version = version, note = note, logButton = logButton }
+    local sync = deps.guildSync
+    if sync then
+        local check = Kit.Check(content, SHARE_TEXT, function(checked)
+            if not sync.setEnabled(checked) then
+                about.shareCheck:SetChecked(sync.isEnabled())
+            end
+        end)
+        check:SetPoint("TOPLEFT", logButton, "BOTTOMLEFT", 0, -Kit.Theme.gap * 2)
+        check:SetChecked(sync.isEnabled())
+        about.shareCheck = check
+        local hint = Kit.Label(content, SHARE_HINT, "highlight")
+        hint:SetPoint("TOPLEFT", check, "BOTTOMLEFT", 4, -Kit.Theme.gap)
+        about.shareHint = hint
+    end
+    return about
 end
 
 -- Create the window once. deps: rules, customSources, readBags, keyFor, subscribe, formulaRun, formulaSources,
--- itemCache, itemNameIndex, getVersionLine, windowPosition and windowSize ({ get, set } for the saved place and size).
+-- itemCache, itemNameIndex, getVersionLine, guildSync ({ isEnabled, setEnabled }), windowPosition and windowSize
+-- ({ get, set } for the saved place and size).
 function MainWindow.Create(deps)
     if instance then
         return instance

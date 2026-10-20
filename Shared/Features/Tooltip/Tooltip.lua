@@ -203,13 +203,15 @@ function Tooltip.Rows(deps, input, stackMode, stackCount, config)
         rules = deps.rules,
         holdings = deps.holdings,
         getRecord = deps.getRecord,
+        isGuild = deps.isGuild,
         now = deps.now and deps.now() or 0,
     })
 end
 
 -- deps: itemInfoInstant (optional, default C_Item.GetItemInfoInstant), itemInfo (optional, default C_Item.GetItemInfo),
 -- isBound (default C_Item.IsBound), itemLocation (default ItemLocation),
--- tooltipConfig, formulaRun, rules, holdings, getRecord, now, isAltDown, containerItemInfo, clock, report.
+-- tooltipConfig, formulaRun, rules, holdings, getRecord, isGuild(key) (optional), now, isAltDown, containerItemInfo,
+-- clock, report.
 -- deps.hook (default ns.TooltipHook) has Install(onItem, opts); it calls onItem(tooltip, link) for each item tooltip.
 function Tooltip.Attach(deps)
     local stats = { count = 0, total = 0, max = 0 }

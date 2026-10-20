@@ -141,6 +141,65 @@ describe("MainWindow", function()
         assert.are.equal(1, opened)
     end)
 
+    describe("guild sharing check on the About page", function()
+        local enabled, changes
+
+        local function findCheck()
+            for _, object in ipairs(mock.objects) do
+                local text = object.kind == "CheckButton" and object.Text and object.Text:GetText()
+                if text == "Share prices with my guild" then
+                    return object
+                end
+            end
+        end
+
+        before_each(function()
+            enabled, changes = false, 0
+            deps.guildSync = {
+                isEnabled = function()
+                    return enabled
+                end,
+                setEnabled = function(on)
+                    changes = changes + 1
+                    enabled = on
+                    return true
+                end,
+            }
+        end)
+
+        it("shows the saved setting and saves a click", function()
+            enabled = true
+            local win = ns.MainWindow.Create(deps)
+            win:SelectPage("about")
+            local check = findCheck()
+            assert.is_not_nil(check)
+            assert.is_true(check:GetChecked())
+            check:SetChecked(false)
+            check.scripts.OnClick(check)
+            assert.are.equal(1, changes)
+            assert.is_false(enabled)
+        end)
+
+        it("goes back to the saved value when the setting cannot change", function()
+            deps.guildSync.setEnabled = function()
+                return false
+            end
+            local win = ns.MainWindow.Create(deps)
+            win:SelectPage("about")
+            local check = findCheck()
+            check:SetChecked(true)
+            check.scripts.OnClick(check)
+            assert.is_false(check:GetChecked())
+        end)
+
+        it("is not there when guild sharing is not available", function()
+            deps.guildSync = nil
+            local win = ns.MainWindow.Create(deps)
+            win:SelectPage("about")
+            assert.is_nil(findCheck())
+        end)
+    end)
+
     describe("resize", function()
         local function screen(width, height)
             local parent = _G.UIParent

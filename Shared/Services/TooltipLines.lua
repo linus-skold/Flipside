@@ -354,6 +354,9 @@ function TooltipLines.Build(ctx)
             end
         end
     end
+    if key and ctx.isGuild and ctx.isGuild(key) then
+        rows[#rows + 1] = { left = "(guild) prices from guild members", color = "dim" }
+    end
     if config.showVendor ~= false then
         rows[#rows + 1] = vendorRow(ctx)
     end
