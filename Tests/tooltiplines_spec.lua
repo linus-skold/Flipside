@@ -785,20 +785,11 @@ describe("TooltipLines", function()
             return texts
         end
 
-        it("adds a note when the price comes from guild data", function()
+        it("adds no guild row when the price comes from guild data", function()
             local rows = TL.Build(ctx({ isGuild = function(key)
                 return key == "123"
             end }))
-            assert.is_truthy(table.concat(leftTexts(rows), "\n"):find("(guild) prices from guild members", 1, true))
-        end)
-
-        it("adds no note for a local price or when the hook is missing", function()
-            local none = TL.Build(ctx({ isGuild = function()
-                return false
-            end }))
-            assert.is_nil(table.concat(leftTexts(none), "\n"):find("(guild)", 1, true))
-            local missing = TL.Build(ctx())
-            assert.is_nil(table.concat(leftTexts(missing), "\n"):find("(guild)", 1, true))
+            assert.is_nil(table.concat(leftTexts(rows), "\n"):find("(guild)", 1, true))
         end)
     end)
 end)
