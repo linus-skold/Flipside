@@ -19,38 +19,44 @@ local ICON_SIZE = 18
 local SLOT_X = 3
 local ICON_TEXCOORD = { 0.07, 0.93, 0.07, 0.93 }
 local SENDER_X = SLOT_X + SLOT_SIZE + 3
-local SENDER_WIDTH = 64
-local SUBJECT_X = SENDER_X + SENDER_WIDTH + 2
+-- The sender takes its text width up to this width. A longer sender is cut at the end.
+local SENDER_MAX_WIDTH = 130
+-- The subject always keeps at least this width, so the sender is cut first in a narrow frame.
+local SUBJECT_MIN_WIDTH = 40
 -- The text sits in the content area, above the gap.
 local TEXT_Y = ROW_GAP / 2
-local EXTRA_WIDTH = 74
-local DAYS_WIDTH = 30
+local EXTRA_WIDTH = 60
+local DAYS_WIDTH = 40
 local TEXT_GAP = 4
+local DAYS_RIGHT = 2
 -- The gap between the bottom of the list and the Open All button of the client.
 local OPEN_ALL_GAP = 4
 -- The list frame is above the client buttons (children of the Inbox frame) so that they never show through.
 local COVER_LEVEL = 10
--- The parchment background: a solid warm tan, so that the art of the client inbox never shows through.
-local COVER_COLOR = { 0.82, 0.72, 0.52, 1 }
--- Dark text for parchment: the sender is brown, the subject is near black, a read mail is lighter.
-local SENDER_COLOR = { 0.35, 0.18, 0.02 }
-local SUBJECT_COLOR = { 0.1, 0.06, 0.02 }
-local READ_COLOR = { 0.45, 0.38, 0.28 }
--- The selection and the hover tint the parchment (normal blend; an additive blend does not show on light colour).
-local SELECT_COLOR = { 0.55, 0.35, 0.1 }
-local SELECT_ALPHA = 0.45
-local HOVER_ALPHA = 0.2
--- Time left and COD on parchment: dark green and dark red.
-local DAYS_GOOD = "|cff1a6e1a"
-local DAYS_BAD = "|cffa01010"
+-- The dark brown row background: solid, so that the art of the client inbox never shows through.
+local COVER_COLOR = { 0.12, 0.08, 0.04, 1 }
+-- Fonts as in the client mail item (MailItemTemplate), in the small size for the one-line row.
+local SENDER_FONT = "GameFontNormalSmall"
+local TEXT_FONT = "GameFontHighlightSmall"
+-- Colours as InboxFrame_Update sets them. The globals are read when used; these are the values if one is missing.
+local NORMAL_FALLBACK = { r = 1, g = 0.82, b = 0 }
+local HIGHLIGHT_FALLBACK = { r = 1, g = 1, b = 1 }
+-- A read mail: the client sets this grey itself, with no global.
+local READ_COLOR = { 0.75, 0.75, 0.75 }
+local GREEN_CODE_FALLBACK = "|cff20ff20"
+local RED_CODE_FALLBACK = "|cffff2020"
+-- The selection and the hover are a gold glow (additive blend, it shows on a dark background).
+local SELECT_COLOR = { 1, 0.82, 0 }
+local SELECT_ALPHA = 0.2
+local HOVER_ALPHA = 0.12
 -- The brown client item slot background (as the Send Mail attachment slot), behind each icon and in empty rows.
 -- Its art fills the top left 0.640625 of the file.
 local SLOT_TEXTURE = "Interface\\Buttons\\UI-Slot-Background"
 local SLOT_TEXCOORD = { 0, 0.640625, 0, 0.640625 }
 -- The dim bar of a row with no mail.
-local EMPTY_BAR_COLOR = { 0.3, 0.2, 0.05, 0.15 }
--- The row separator line.
-local SEPARATOR_COLOR = { 0.35, 0.22, 0.1, 0.65 }
+local EMPTY_BAR_COLOR = { 1, 1, 1, 0.04 }
+-- The row separator line: a lighter brown, so that it shows on the dark background.
+local SEPARATOR_COLOR = { 0.45, 0.3, 0.15, 0.7 }
 local EMPTY_ROW = { empty = true }
 
 local function log(level, text)
@@ -88,12 +94,41 @@ function InboxList.Anchor(frame, inbox, first, openAll, lastItem)
     end
 end
 
--- The time left as short coloured text: whole days, or hours when under one day.
+local function greenCode()
+    return _G.GREEN_FONT_COLOR_CODE or GREEN_CODE_FALLBACK
+end
+
+local function redCode()
+    return _G.RED_FONT_COLOR_CODE or RED_CODE_FALLBACK
+end
+
+local function closeCode()
+    return _G.FONT_COLOR_CODE_CLOSE or "|r"
+end
+
+-- Returns r, g, b of a client colour global, or of the fallback.
+local function colorOf(name, fallback)
+    local color = _G[name] or fallback
+    return color.r, color.g, color.b
+end
+
+-- The sender width for a sender text of the given width in a row of the given width: the text width, up to the
+-- maximum, and never so wide that the subject falls under its minimum width.
+function InboxList.SenderWidth(textWidth, rowWidth)
+    local room = SENDER_MAX_WIDTH
+    if rowWidth > 0 then
+        room = rowWidth - SENDER_X - 3 * TEXT_GAP - EXTRA_WIDTH - DAYS_WIDTH - DAYS_RIGHT - SUBJECT_MIN_WIDTH
+    end
+    return math.max(0, math.min(math.ceil(textWidth) + 1, SENDER_MAX_WIDTH, room))
+end
+
+-- The time left as short coloured text, as the client does: green whole days ("29 Days"), red hours when under
+-- one day. The format strings and the colour codes are the client globals.
 function InboxList.DaysText(days)
     if days >= 1 then
-        return string.format(DAYS_GOOD .. "%dd|r", math.floor(days))
+        return string.format(greenCode() .. (_G.DAYS_ABBR or "%d Days") .. closeCode(), math.floor(days))
     end
-    return string.format(DAYS_BAD .. "%dh|r", math.max(1, math.floor(days * 24)))
+    return string.format(redCode() .. (_G.HOURS_ABBR or "%d Hr") .. closeCode(), math.max(1, math.floor(days * 24)))
 end
 
 -- Reads one mail. api.header(index) is GetInboxHeaderInfo; the first nine results have the same meaning on both
@@ -121,7 +156,7 @@ function InboxList.ExtraText(mail, formatMoney)
         parts[#parts + 1] = "x" .. mail.items
     end
     if mail.cod > 0 then
-        parts[#parts + 1] = DAYS_BAD .. "COD " .. formatMoney(mail.cod) .. "|r"
+        parts[#parts + 1] = redCode() .. "COD " .. formatMoney(mail.cod) .. closeCode()
     elseif mail.money > 0 then
         parts[#parts + 1] = formatMoney(mail.money)
     end
@@ -167,28 +202,32 @@ local function buildRow(view, row)
     row.separator:SetPoint("BOTTOMRIGHT", row, "BOTTOMRIGHT", 0, 0)
     row.separator:SetColorTexture(SEPARATOR_COLOR[1], SEPARATOR_COLOR[2], SEPARATOR_COLOR[3], SEPARATOR_COLOR[4])
     row.selection = Kit.SelectionTexture(row, view.deps.skin)
-    row.selection:SetBlendMode("BLEND")
+    row.selection:SetBlendMode("ADD")
     row.selection:SetVertexColor(SELECT_COLOR[1], SELECT_COLOR[2], SELECT_COLOR[3])
     row.selection:SetAlpha(SELECT_ALPHA)
     row.hover = row:CreateTexture(nil, "BACKGROUND")
     row.hover:SetPoint("TOPLEFT", row, "TOPLEFT", 0, 0)
     row.hover:SetPoint("BOTTOMRIGHT", row, "BOTTOMRIGHT", 0, ROW_GAP)
     row.hover:SetColorTexture(SELECT_COLOR[1], SELECT_COLOR[2], SELECT_COLOR[3], HOVER_ALPHA)
+    if row.hover.SetBlendMode then
+        row.hover:SetBlendMode("ADD")
+    end
     row.hover:Hide()
-    row.days = Kit.Label(row, "", "small")
-    row.days:SetPoint("RIGHT", row, "RIGHT", -2, TEXT_Y)
+    row.days = row:CreateFontString(nil, "ARTWORK", TEXT_FONT)
+    row.days:SetPoint("RIGHT", row, "RIGHT", -DAYS_RIGHT, TEXT_Y)
     row.days:SetWidth(DAYS_WIDTH)
     row.days:SetJustifyH("RIGHT")
-    row.extra = Kit.Label(row, "", "small")
+    row.extra = row:CreateFontString(nil, "ARTWORK", TEXT_FONT)
     row.extra:SetPoint("RIGHT", row.days, "LEFT", -TEXT_GAP, 0)
     row.extra:SetWidth(EXTRA_WIDTH)
     row.extra:SetJustifyH("RIGHT")
-    row.sender = Kit.Label(row, "", "small")
+    row.sender = row:CreateFontString(nil, "ARTWORK", SENDER_FONT)
     row.sender:SetPoint("LEFT", row, "LEFT", SENDER_X, TEXT_Y)
-    row.sender:SetWidth(SENDER_WIDTH)
+    row.sender:SetWidth(SENDER_MAX_WIDTH)
     row.sender:SetJustifyH("LEFT")
-    row.subject = Kit.Label(row, "", "small")
-    row.subject:SetPoint("LEFT", row, "LEFT", SUBJECT_X, TEXT_Y)
+    -- The subject starts after the sender and fills the space up to the money. The client cuts it with "...".
+    row.subject = row:CreateFontString(nil, "ARTWORK", TEXT_FONT)
+    row.subject:SetPoint("LEFT", row.sender, "RIGHT", TEXT_GAP, 0)
     row.subject:SetPoint("RIGHT", row.extra, "LEFT", -TEXT_GAP, 0)
     row.subject:SetJustifyH("LEFT")
     for _, label in ipairs({ row.days, row.extra, row.sender, row.subject }) do
@@ -254,14 +293,24 @@ local function initRow(view, row, mail)
         row.icon:SetDesaturated(mail.read)
     end
     row.selection:SetShown(view.openID == mail.index)
-    local senderColor, subjectColor = SENDER_COLOR, SUBJECT_COLOR
+    local sr, sg, sb = colorOf("NORMAL_FONT_COLOR", NORMAL_FALLBACK)
+    local jr, jg, jb = colorOf("HIGHLIGHT_FONT_COLOR", HIGHLIGHT_FALLBACK)
     if mail.read then
-        senderColor, subjectColor = READ_COLOR, READ_COLOR
+        sr, sg, sb = READ_COLOR[1], READ_COLOR[2], READ_COLOR[3]
+        jr, jg, jb = sr, sg, sb
     end
+    -- Measure the sender at the maximum width, then fit the width to the text (the client cuts a long one).
+    row.sender:SetWidth(SENDER_MAX_WIDTH)
     row.sender:SetText(mail.sender)
-    row.sender:SetTextColor(senderColor[1], senderColor[2], senderColor[3])
+    local measure = row.sender.GetUnboundedStringWidth or row.sender.GetStringWidth
+    local rowWidth = row:GetWidth()
+    if not rowWidth or rowWidth <= 0 then
+        rowWidth = view.frame:GetWidth() or 0
+    end
+    row.sender:SetWidth(InboxList.SenderWidth(measure(row.sender), rowWidth))
+    row.sender:SetTextColor(sr, sg, sb)
     row.subject:SetText(mail.subject)
-    row.subject:SetTextColor(subjectColor[1], subjectColor[2], subjectColor[3])
+    row.subject:SetTextColor(jr, jg, jb)
     row.extra:SetText(InboxList.ExtraText(mail, view.deps.formatMoney))
     row.days:SetText(InboxList.DaysText(mail.days))
 end
