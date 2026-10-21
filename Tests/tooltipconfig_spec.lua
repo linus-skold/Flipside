@@ -102,7 +102,7 @@ describe("TooltipConfig", function()
         local line = tc:Get().lines[1]
         assert.are.equal("Mkt", line.label)
         assert.are.equal("scanlow", line.formula)
-        assert.is_false(line.showAgeLine)
+        assert.is_false(line.showAge)
         assert.is_false(line.enabled)
         local ok, msg = tc:UpdateLine(99, { label = "X" })
         assert.is_nil(ok)

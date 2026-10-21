@@ -116,7 +116,7 @@ describe("Init on TBC", function()
             end
         end)
 
-        it("installs the tooltip hook and adds Flipside lines to an item tooltip", function()
+        it("installs the tooltip hook and adds a price line to an item tooltip", function()
             login()
             assert.are.equal(0, count("tooltip hook not available"))
             local linen = "|cff1eff00|Hitem:2589::::::::60:::::|h[Linen Cloth]|h|r"
@@ -125,7 +125,7 @@ describe("Init on TBC", function()
             tip.scripts.OnTooltipSetItem(tip)
             local found
             for _, line in ipairs(mock.tooltip.lines) do
-                if line == "Flipside" then
+                if type(line) == "table" and line[1] == "Prices" then
                     found = true
                 end
             end

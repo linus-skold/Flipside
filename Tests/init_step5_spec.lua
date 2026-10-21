@@ -134,13 +134,15 @@ describe("Init step 5", function()
             mock.advance(0.5)
         end)
 
-        it("adds the header and one invalid price row for an item without scan data", function()
+        it("adds one invalid price row and no header for an item without scan data", function()
             local tip = newTooltip()
             mock.postCalls[1].fn(tip, { hyperlink = LINEN })
             assert.are.equal(" ", tip.lines[1].text)
-            assert.are.equal("Flipside", tip.lines[2].text)
-            assert.are.equal("Prices", tip.lines[3].left)
-            assert.are.equal("invalid price", tip.lines[3].right)
+            assert.are.equal("Prices", tip.lines[2].left)
+            assert.are.equal("invalid price", tip.lines[2].right)
+            for _, line in ipairs(tip.lines) do
+                assert.is_nil(tostring(line.text):find("Flipside", 1, true))
+            end
             local found
             for _, line in ipairs(tip.lines) do
                 if line.left == "Total: 5" then found = true end
@@ -148,9 +150,8 @@ describe("Init step 5", function()
             assert.is_true(found)
         end)
 
-        it("shows the stack count in the header while Alt is held", function()
-            mock.commodityResults[2589] = { { unitPrice = 100, quantity = 20 } }
-            mock.fire("COMMODITY_SEARCH_RESULTS_UPDATED", 2589)
+        it("shows the stack count in the price label while Alt is held", function()
+            assert.is_true(ns.tooltipConfig:AddLine("Mine", "123"))
             local owner = { GetBagID = function() return 0 end, GetID = function() return 1 end }
             local function run()
                 local tip = newTooltip()
@@ -160,7 +161,7 @@ describe("Init step 5", function()
             end
             local function hasStack(tip)
                 for _, line in ipairs(tip.lines) do
-                    if line.text and line.text:find("stack of 5", 1, true) then return true end
+                    if line.left == "Mine x5" then return true end
                 end
                 return false
             end
