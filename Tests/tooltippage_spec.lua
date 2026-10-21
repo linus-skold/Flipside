@@ -631,7 +631,7 @@ describe("TooltipPage", function()
             extra = {
                 buildPreview = function(_, config)
                     local rows = config.lines[1].kind == "table" and { model } or { { left = "Mine", right = "1g" } }
-                    if config.showAge then
+                    if config.showAgeLine then
                         rows[#rows + 1] = { left = "Updated 2 h ago", color = "dim", age = true }
                     end
                     return rows
@@ -715,7 +715,7 @@ describe("TooltipPage", function()
             assert.is_false(page.age:GetChecked())
             page.age:SetChecked(true)
             click(page.age)
-            assert.is_true(stored().showAge)
+            assert.is_true(stored().showAgeLine)
         end)
 
         it("writes a period", function()

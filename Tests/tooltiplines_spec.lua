@@ -639,15 +639,15 @@ describe("TooltipLines", function()
         end)
 
         it("adds a dim line after the price lines when on", function()
-            local rows = rowsFor(record(NOW - 7200), { lines = {}, showAge = true })
+            local rows = rowsFor(record(NOW - 7200), { lines = {}, showAgeLine = true })
             assert.are.equal(1, #rows)
             assert.are.equal("Updated 2 h ago", rows[1].left)
             assert.are.equal("dim", rows[1].color)
         end)
 
         it("adds no line without a record time", function()
-            assert.are.equal(0, #rowsFor(ns.ScanRecord.New(), { lines = {}, showAge = true }))
-            assert.are.equal(0, #rowsFor(nil, { lines = {}, showAge = true }))
+            assert.are.equal(0, #rowsFor(ns.ScanRecord.New(), { lines = {}, showAgeLine = true }))
+            assert.are.equal(0, #rowsFor(nil, { lines = {}, showAgeLine = true }))
         end)
     end)
 

@@ -425,7 +425,7 @@ function TooltipPage.Build(content, deps)
         one.enabled = true
         local data = tc:Get()
         local config = { lines = { one }, showGroup = false, showOperation = false, showCounts = false,
-            showVendor = false, showAge = data.showAge, periods = data.periods, stats = data.stats }
+            showVendor = false, showAgeLine = data.showAgeLine, periods = data.periods, stats = data.stats }
         local rows
         if deps.buildPreview then
             rows = deps.buildPreview(example, config)
@@ -553,7 +553,7 @@ function TooltipPage.Build(content, deps)
     page.operation = flagCheck("Show operations", "showOperation")
     page.counts = flagCheck("Show counts per character", "showCounts")
     page.vendor = flagCheck("Vendor", "showVendor")
-    page.age = flagCheck("Data age", "showAge")
+    page.age = flagCheck("Data age", "showAgeLine")
     layoutGrid()
 
     page.hint =Kit.Label(content, ALT_HINT, "small")
@@ -602,7 +602,7 @@ function TooltipPage.Build(content, deps)
         page.operation:SetChecked(data.showOperation)
         page.counts:SetChecked(data.showCounts)
         page.vendor:SetChecked(data.showVendor)
-        page.age:SetChecked(data.showAge)
+        page.age:SetChecked(data.showAgeLine)
         page.periods:SetValues(data.periods)
         page.stats:SetValues(data.stats)
         for _, widget in ipairs({ page.group, page.operation, page.counts, page.vendor, page.age, page.periods,

@@ -421,7 +421,7 @@ function TooltipLines.Build(ctx)
     if config.showVendor ~= false then
         rows[#rows + 1] = vendorRow(ctx)
     end
-    if config.showAge then
+    if config.showAgeLine then
         rows[#rows + 1] = ageRow(ctx, key)
     end
     groupRows(ctx, rows, key, config)
