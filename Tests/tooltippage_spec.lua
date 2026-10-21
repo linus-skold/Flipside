@@ -613,7 +613,6 @@ describe("TooltipPage", function()
     describe("price table", function()
         local model = {
             kind = "table",
-            header = "Flipside (updated 2 h ago)",
             columns = { "Min", "Avg", "Max", "Market" },
             rows = {
                 { label = "1d", cells = { "1g", "2g", "3g", "4g" } },
@@ -653,9 +652,9 @@ describe("TooltipPage", function()
             assert.is_false(page.tableView.frame:IsShown())
         end)
 
-        it("draws the model with the header over five rows", function()
+        it("draws the model over five rows with no header text", function()
             enter(page.exampleInput, "1")
-            assert.are.equal("Flipside (updated 2 h ago)", page.preview:GetText())
+            assert.are.equal("", page.preview:GetText())
             assert.is_true(page.tableView.frame:IsShown())
             local rows = page.tableView.rows
             assert.are.equal("", rows[1].label:GetText())

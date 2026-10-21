@@ -377,7 +377,7 @@ function TooltipPage.Build(content, deps)
 
     local function rowText(row)
         if row.kind == "table" then
-            local texts = { row.header, "  " .. table.concat(row.columns, "  ") }
+            local texts = { table.concat(row.columns, "  ") }
             for _, tableRow in ipairs(row.rows) do
                 texts[#texts + 1] = "  " .. tableRow.label .. "  " .. table.concat(tableRow.cells, "  ")
             end
@@ -397,9 +397,9 @@ function TooltipPage.Build(content, deps)
         end
         page.tableView:Set(model)
         page.tableView:Place(function(row)
-            return page.preview, -18 - (row - 1) * TABLE_ROW_HEIGHT
+            return page.preview, -(row - 1) * TABLE_ROW_HEIGHT
         end)
-        return model.header
+        return true
     end
 
     -- Returns the preview text of the selected line.
@@ -437,9 +437,8 @@ function TooltipPage.Build(content, deps)
                 now = (_G.GetServerTime or _G.time)(),
             })
         end
-        local header = drawTable(rows)
-        if header then
-            return header
+        if drawTable(rows) then
+            return ""
         end
         local texts = {}
         for _, row in ipairs(rows or {}) do

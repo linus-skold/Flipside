@@ -550,12 +550,12 @@ describe("TooltipLines", function()
             assert.is_nil(w[1].min)
         end)
 
-        it("builds the table model with the header and the age", function()
+        it("builds the table model with no header", function()
             local rows = build(full())
             assert.are.equal(1, #rows)
             local model = rows[1]
             assert.are.equal("table", model.kind)
-            assert.are.equal("Flipside (updated 2 h ago)", model.header)
+            assert.is_nil(model.header)
             assert.are.same({ "Min", "Avg", "Max", "Market" }, model.columns)
             assert.are.equal(4, #model.rows)
             assert.are.equal("1d", model.rows[1].label)
@@ -573,7 +573,6 @@ describe("TooltipLines", function()
             assert.are.same({ "-", "-", "-", "-" }, model.rows[1].cells)
             assert.are.same({ "-", "-", "-", "-" }, model.rows[2].cells)
             assert.are.same({ "1s", "1s", "1s", "10s" }, model.rows[3].cells)
-            assert.are.equal("Flipside (updated 30 h ago)", model.header)
         end)
 
         it("gives one invalid price row without any data", function()
@@ -585,23 +584,20 @@ describe("TooltipLines", function()
 
         it("multiplies the cells by the stack count in Alt mode", function()
             local model = build(full(), { stackMode = true, stackCount = 5 })[1]
-            assert.are.equal("Flipside (updated 2 h ago, stack of 5)", model.header)
             assert.are.same({ "20s", "25s", "30s", "2g 50s" }, model.rows[1].cells)
             model = build(full(), { stackMode = false, stackCount = 5 })[1]
             assert.are.same({ "4s", "5s", "6s", "50s" }, model.rows[1].cells)
             model = build(full(), { stackMode = true, stackCount = 1 })[1]
-            assert.are.equal("Flipside (updated 2 h ago)", model.header)
         end)
 
-        it("shows the per-item cells and no stack header when the table altStack is off", function()
+        it("shows the per-item cells and the per-item cells when the table altStack is off", function()
             local line =
                 { id = 1, kind = "table", label = "Price table", formula = "", enabled = true, altStack = false }
             local model = build(full(), { stackMode = true, stackCount = 5, config = { lines = { line } } })[1]
-            assert.are.equal("Flipside (updated 2 h ago)", model.header)
             assert.are.same({ "4s", "5s", "6s", "50s" }, model.rows[1].cells)
             line.altStack = true
             model = build(full(), { stackMode = true, stackCount = 5, config = { lines = { line } } })[1]
-            assert.are.equal("Flipside (updated 2 h ago, stack of 5)", model.header)
+            assert.are.same({ "20s", "25s", "30s", "2g 50s" }, model.rows[1].cells)
         end)
 
         it("omits the table when its line is off and keeps formula lines below it", function()
@@ -621,7 +617,7 @@ describe("TooltipLines", function()
         it("does not add the age to the data lines of the default table", function()
             local row = build(full())[1]
             assert.is_nil(row.right)
-            assert.is_nil(row.header:find("days", 1, true))
+            assert.is_nil(row.header)
         end)
     end)
 
@@ -746,7 +742,7 @@ describe("TooltipLines", function()
                 assert.are.equal("1d " .. name, rows[1].left)
                 assert.are.equal("60d " .. name, rows[4].left)
                 assert.is_nil(rows[1].kind)
-                assert.is_truthy(rows[1].header)
+                assert.is_nil(rows[1].header)
                 assert.is_nil(rows[2].header)
             end)
         end
