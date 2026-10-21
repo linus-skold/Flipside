@@ -1201,9 +1201,6 @@ local function openTooltip()
                 local source = ns.priceReader or ns.scanStore
                 return source and source:Get(key) or nil
             end,
-            isGuild = function(key)
-                return ns.IsGuildPrice ~= nil and ns.IsGuildPrice(key) or false
-            end,
             now = GetServerTime,
             isAltDown = IsAltKeyDown,
             containerItemInfo = C_Container.GetContainerItemInfo,

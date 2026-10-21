@@ -237,7 +237,6 @@ function Tooltip.Rows(deps, input, stackMode, stackCount, config)
         rules = deps.rules,
         holdings = deps.holdings,
         getRecord = deps.getRecord,
-        isGuild = deps.isGuild,
         currentRealmOnly = deps.currentRealmOnly or false,
         realm = deps.realm and deps.realm() or nil,
         classColor = deps.classColor or classColorHex,
@@ -247,7 +246,7 @@ end
 
 -- deps: itemInfoInstant (optional, default C_Item.GetItemInfoInstant), itemInfo (optional, default C_Item.GetItemInfo),
 -- isBound (default C_Item.IsBound), itemLocation (default ItemLocation),
--- tooltipConfig, formulaRun, rules, holdings, getRecord, isGuild(key) (optional), now, isAltDown, containerItemInfo,
+-- tooltipConfig, formulaRun, rules, holdings, getRecord, now, isAltDown, containerItemInfo,
 -- clock, report, bus (optional; with it, Alt up or down shows the tooltip again), currentRealmOnly, realm(),
 -- classColor(classFile) (default: RAID_CLASS_COLORS).
 -- deps.hook (default ns.TooltipHook) has Install(onItem, opts); it calls onItem(tooltip, link) for each item tooltip.
