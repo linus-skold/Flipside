@@ -16,8 +16,9 @@ Codec.VERSION = 1
 Codec.PREFIX = "Flipside"
 -- The client limit for the text of one addon message is 255 bytes. This value leaves room for the prefix.
 Codec.MAX_BYTES = 240
-Codec.MAX_ITEMS = 500
 Codec.MAX_CHUNKS = 100
+-- A receiver drops a set when no new chunk arrives for this many seconds. It covers the longest throttle wait.
+Codec.IDLE_SECONDS = 180
 
 local MAX_DIGITS = 12
 local MAX_KEY = 60
@@ -162,13 +163,14 @@ end
 local Assembler = {}
 Assembler.__index = Assembler
 
--- Collect the chunks of the data sets of each sender. options: clock (seconds), idleSeconds (60),
--- maxSenders (40), onDrop(sender, reason).
+-- Collect the chunks of the data sets of each sender. options: clock (seconds), idleSeconds (IDLE_SECONDS),
+-- maxSenders (40), onDrop(sender, reason). A sender sends a long share as many small sets, one after the other.
+-- A new set of a sender replaces its open set, so each set is accepted on its own.
 function Codec.NewAssembler(options)
     options = options or {}
     return setmetatable({
         clock = options.clock,
-        idle = options.idleSeconds or 60,
+        idle = options.idleSeconds or Codec.IDLE_SECONDS,
         maxSenders = options.maxSenders or 40,
         onDrop = options.onDrop,
         sets = {},

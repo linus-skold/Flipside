@@ -15,6 +15,12 @@ GuildSync.REPLY_COOLDOWN = 600
 GuildSync.REQUEST_COOLDOWN = 300
 -- Items older than this are not shared.
 GuildSync.MAX_AGE = 7 * 86400
+-- A share goes out as small sets, one after the other. A set holds this many items (about 4 messages).
+GuildSync.SET_ITEMS = 30
+-- The sender adds a set to the queue only while fewer messages than this wait there.
+GuildSync.QUEUE_TARGET = 10
+-- After a message is dropped for throttle retries, the share waits this many seconds.
+GuildSync.THROTTLE_PAUSE = 60
 -- A build that did not end after this many seconds does not block a new one.
 local BUILD_TIMEOUT = 300
 
@@ -24,7 +30,8 @@ Sync.__index = Sync
 -- deps: isEnabled(), isInGuild(), selfName() (full Name-Realm of the player), realm(), scope (text),
 -- localStore (scan store), guildStore (GuildPriceStore), queue (GuildSyncQueue), clock() (server time),
 -- after(seconds, fn), random(low, high), registerPrefix(prefix), runJob(name, fn) (fn gets the job or nil),
--- lastScan() (server time of the last full scan, or nil), log(level, format, ...) (optional).
+-- lastScan() (server time of the last full scan, or nil), log(level, format, ...) (optional),
+-- marker (optional saved table { time, done } of the last own share).
 function GuildSync.New(deps)
     local self = setmetatable({ deps = deps }, Sync)
     self.stats = { lastSend = nil, lastReceive = nil, lastRequest = nil, lastReply = nil, sent = 0, received = 0 }
@@ -33,6 +40,20 @@ function GuildSync.New(deps)
     self.replyPending = false
     self.building = nil
     self.registered = false
+    self.share = nil
+    self.setId = 0
+    self.marker = deps.marker or {}
+    -- The queue asks for more messages when it has room, and tells about a message that it drops.
+    local queue, previousDrop = deps.queue, deps.queue.onDrop
+    queue.onSpace = function()
+        self:_Feed()
+    end
+    queue.onDrop = function(text, reason, result)
+        if previousDrop then
+            previousDrop(text, reason, result)
+        end
+        self:OnQueueDrop(text, reason)
+    end
     self.assembler = ns.GuildSyncCodec.NewAssembler({
         clock = deps.clock,
         onDrop = function(sender, reason)
@@ -67,7 +88,7 @@ function Sync:OnSettingChanged()
         self:_Log("info", "guild sharing on")
     else
         self.deps.queue:Clear()
-        self.lastSet = nil
+        self.share = nil
         self:_Log("info", "guild sharing off")
     end
 end
@@ -160,12 +181,19 @@ function Sync:_OnRequest(sender, request)
     end)
 end
 
--- Return the entries to share, newest first, at most MAX_ITEMS. job can be nil.
--- For each item the newest record wins, from the local scans, the shared data or the carried entries
--- (a list of entries that an earlier set did not send). A tie keeps the first one found: local, shared, carried.
--- Each entry keeps its original scan time.
-function Sync:_Collect(job, carry)
-    local codec = ns.GuildSyncCodec
+local function sortEntries(entries)
+    table.sort(entries, function(a, b)
+        if a.time ~= b.time then
+            return a.time > b.time
+        end
+        return a.key < b.key
+    end)
+end
+
+-- Return all entries to share, newest first. There is no limit on the number. job can be nil.
+-- For each item the newest record wins, from the local scans or the shared data. A tie keeps the first one
+-- found: local, then shared. Each entry keeps its original scan time.
+function Sync:_Collect(job)
     local now, byKey = self.deps.clock(), {}
     local store, guildStore = self.deps.localStore, self.deps.guildStore
     local function offer(key, min, market, qty, time)
@@ -198,22 +226,11 @@ function Sync:_Collect(job, carry)
             end
         end
     end
-    for _, entry in ipairs(carry or {}) do
-        offer(entry.key, entry.min, entry.market, entry.qty, entry.time)
-    end
     local entries = {}
     for _, entry in pairs(byKey) do
         entries[#entries + 1] = entry
     end
-    table.sort(entries, function(a, b)
-        if a.time ~= b.time then
-            return a.time > b.time
-        end
-        return a.key < b.key
-    end)
-    for i = #entries, codec.MAX_ITEMS + 1, -1 do
-        entries[i] = nil
-    end
+    sortEntries(entries)
     return entries
 end
 
@@ -227,24 +244,202 @@ function Sync:_Blocked()
     end
 end
 
--- Remove the messages of the last set that still wait in the queue. Return the entries of that set, or nil
--- if all its messages are gone. Messages of requests stay in the queue.
-function Sync:_TakeUnsent()
-    local last = self.lastSet
-    self.lastSet = nil
-    if not last then
-        return nil
-    end
-    local removed = self.deps.queue:RemoveIf(function(text)
-        return last.texts[text] == true
-    end)
-    if removed > 0 then
-        return last.entries
-    end
-    return nil
+-- Count the items in the text of a data message.
+local function countItems(text)
+    local _, slashes = string.gsub(text, "/", "")
+    return slashes + 1
 end
 
--- Build the data set of the newest known prices (own scans and shared data) and queue it.
+-- Remove from the share the messages that left the queue, and count their items as sent.
+-- The messages leave the queue in order, so the sent ones are always at the start of share.out.
+function Sync:_Prune(share)
+    local queue = self.deps.queue
+    while share.out[1] and not queue:Has(share.out[1].text) do
+        local message = table.remove(share.out, 1)
+        share.sentItems = share.sentItems + message.n
+        message.set.sent = message.set.sent + message.n
+    end
+end
+
+-- Build the next set of the share and add its messages to the queue.
+function Sync:_PushNextSet(share)
+    local from = share.pos
+    local last = math.min(#share.entries, from + GuildSync.SET_ITEMS - 1)
+    local slice = {}
+    for i = from, last do
+        slice[#slice + 1] = share.entries[i]
+    end
+    share.pos = last + 1
+    self.setId = math.max(self.setId + 1, self.deps.clock())
+    local messages, problem = ns.GuildSyncCodec.BuildSet(self.deps.scope, self.setId, slice)
+    if not messages then
+        self:_Log("warn", "share set skipped: %s", tostring(problem))
+        share.sentItems = share.sentItems + #slice
+        return
+    end
+    local set = { from = from, sent = 0 }
+    local texts = {}
+    for _, text in ipairs(messages) do
+        share.out[#share.out + 1] = { text = text, n = countItems(text), set = set }
+        texts[#texts + 1] = text
+    end
+    for _, text in ipairs(texts) do
+        self.deps.queue:Push(text)
+    end
+end
+
+-- Add sets of the share to the queue while the queue has room. The queue calls this before each step.
+-- A throttle wait or a pause stops the share: the cursor stays where it is, and no item is dropped.
+function Sync:_Feed()
+    local share = self.share
+    if not share or self.feeding or share.paused or self:_Blocked() then
+        return
+    end
+    local queue = self.deps.queue
+    self.feeding = true
+    while share.pos <= #share.entries and queue:Pending() < GuildSync.QUEUE_TARGET and not queue:Waiting() do
+        self:_PushNextSet(share)
+    end
+    self.feeding = false
+    if share.pos > #share.entries then
+        self:_Prune(share)
+        if #share.out == 0 and self.share == share then
+            self:_FinishShare(share)
+        end
+    end
+end
+
+function Sync:_FinishShare(share)
+    self.share = nil
+    self.marker.done = true
+    self:_Log("info", "share finished: %d items", share.total)
+end
+
+-- The queue dropped a message. After throttle retries, go back to the start of its set, remove the queued
+-- messages of the share, and wait. The sender builds those sets again, so no item is lost.
+function Sync:OnQueueDrop(text, reason)
+    local share = self.share
+    if not share or reason ~= "retries" then
+        return
+    end
+    local at
+    for index, message in ipairs(share.out) do
+        if message.text == text then
+            at = index
+            break
+        end
+    end
+    if not at then
+        return
+    end
+    local texts = {}
+    for index, message in ipairs(share.out) do
+        if index < at then
+            share.sentItems = share.sentItems + message.n
+            message.set.sent = message.set.sent + message.n
+        else
+            texts[message.text] = true
+        end
+    end
+    local set = share.out[at].set
+    self.deps.queue:RemoveIf(function(queued)
+        return texts[queued] == true
+    end)
+    share.sentItems = share.sentItems - set.sent
+    set.sent = 0
+    share.out = {}
+    share.pos = set.from
+    share.paused = true
+    self:_Log("warn", "share paused for %d s: the guild channel throttles", GuildSync.THROTTLE_PAUSE)
+    self.deps.after(GuildSync.THROTTLE_PAUSE, function()
+        if self.share == share then
+            share.paused = false
+            self:_Feed()
+        end
+    end)
+end
+
+-- Return entries (newest first) and the number of items that the share skips, for a new collection of
+-- entries while the share runs. Sent items that did not change are skipped. The unsent items stay, and an
+-- item in both lists gets the newest record. The messages of the old share leave the queue.
+function Sync:_MergeShare(old, entries)
+    self:_Prune(old)
+    local pos = old.pos
+    if old.out[1] then
+        local texts = {}
+        for _, message in ipairs(old.out) do
+            texts[message.text] = true
+        end
+        self.deps.queue:RemoveIf(function(queued)
+            return texts[queued] == true
+        end)
+        pos = old.out[1].set.from
+    end
+    local sent = {}
+    for i = 1, pos - 1 do
+        sent[old.entries[i].key] = old.entries[i]
+    end
+    local merged, index, skipped = {}, {}, 0
+    for _, entry in ipairs(entries) do
+        local was = sent[entry.key]
+        if was and was.time == entry.time and was.min == entry.min and was.market == entry.market
+            and was.qty == entry.qty then
+            skipped = skipped + 1
+        else
+            merged[#merged + 1] = entry
+            index[entry.key] = #merged
+        end
+    end
+    for i = pos, #old.entries do
+        local entry = old.entries[i]
+        local at = index[entry.key]
+        if not at then
+            merged[#merged + 1] = entry
+            index[entry.key] = #merged
+        elseif entry.time > merged[at].time then
+            merged[at] = entry
+        end
+    end
+    sortEntries(merged)
+    return merged, skipped
+end
+
+-- Start (or merge into the running) share of the newest known prices.
+function Sync:_StartShare(why, entries)
+    local old, skipped = self.share, 0
+    if old then
+        entries, skipped = self:_MergeShare(old, entries)
+    end
+    if #entries == 0 then
+        self.share = nil
+        if old then
+            self.marker.done = true
+        end
+        self:_Log("info", "send %s: no data to share", tostring(why))
+        return
+    end
+    local now = self.deps.clock()
+    self.share = { entries = entries, pos = 1, out = {}, sentItems = skipped, total = #entries + skipped,
+        paused = false }
+    self.marker.time, self.marker.done = now, false
+    self.stats.lastSend = now
+    self.stats.sent = self.stats.sent + #entries
+    self:_Log("info", "send %s: %d items to share, %d already sent", tostring(why), #entries, skipped)
+    self:_Feed()
+end
+
+-- Start the share again if the last own share did not finish before the player logged out. Return true if
+-- the work started.
+function Sync:ResumeShare()
+    if self.marker.done ~= false or self.share then
+        return false, "nothing to resume"
+    end
+    self:_Log("info", "resume the share that did not finish (started %s)", tostring(self.marker.time))
+    return self:SendSet("resume")
+end
+
+-- Build the share of the newest known prices (own scans and shared data). The sender adds the messages to
+-- the queue in small sets when the queue has room. A running share takes the new items in (see _MergeShare).
 -- Return true if the work started.
 -- The job yields between items, so the reading is not inside a pcall (Lua 5.1 cannot yield there).
 function Sync:SendSet(why)
@@ -260,31 +455,19 @@ function Sync:SendSet(why)
     self.building = now
     self:EnsureRegistered()
     self.deps.runJob("guild-sync-build", function(job)
-        -- Remove the unsent messages of the earlier set. Its items go into the new set, so nothing is lost.
-        local carry = self:_TakeUnsent()
-        local entries = self:_Collect(job, carry)
+        local entries = self:_Collect(job)
         self.building = nil
-        local messages, problem = ns.GuildSyncCodec.BuildSet(self.deps.scope, self.deps.clock(), entries)
-        if not messages then
-            self:_Log("warn", "send %s failed: %s", tostring(why), tostring(problem))
+        -- The next lines do not yield, so the old share cannot change before the merge.
+        local blocked2 = self:_Blocked()
+        if blocked2 then
+            self:_Log("info", "send %s skipped: %s", tostring(why), blocked2)
             return
         end
-        if #messages == 0 then
-            self:_Log("info", "send %s: no data to share", tostring(why))
-            return
-        end
-        local texts = {}
-        for _, text in ipairs(messages) do
-            texts[text] = true
-            self.deps.queue:Push(text)
-        end
-        self.lastSet = { entries = entries, texts = texts }
-        self.stats.lastSend = self.deps.clock()
-        self.stats.sent = self.stats.sent + #entries
-        self:_Log("info", "send %s: %d items in %d messages", tostring(why), #entries, #messages)
+        self:_StartShare(why, entries)
     end)
     return true
 end
+
 -- Send a request for newer data. Without force, a recent request blocks a new one.
 function Sync:SendRequest(force)
     local blocked = self:_Blocked()
@@ -300,7 +483,8 @@ function Sync:SendRequest(force)
     local last = self.deps.lastScan and self.deps.lastScan() or 0
     local newest = math.max(last or 0, self.deps.guildStore:Newest())
     self.stats.lastRequest = now
-    self.deps.queue:Push(ns.GuildSyncCodec.BuildRequest(self.deps.scope, newest))
+    -- A request goes before the queued items of a long share.
+    self.deps.queue:Push(ns.GuildSyncCodec.BuildRequest(self.deps.scope, newest), true)
     self:_Log("info", "request sent: newest %d", newest)
     return true
 end
@@ -319,7 +503,14 @@ function Sync:Status()
     for _ in pairs(self.senders) do
         count = count + 1
     end
+    local share = self.share
+    if share then
+        self:_Prune(share)
+    end
     return {
+        shareSent = share and share.sentItems or nil,
+        shareTotal = share and share.total or nil,
+        sharePaused = share and share.paused or false,
         enabled = self:IsEnabled(),
         inGuild = self.deps.isInGuild() == true,
         lastSend = self.stats.lastSend,
@@ -347,7 +538,7 @@ end
 
 -- Return the lines that /flip sync prints for a status table.
 function GuildSync.StatusLines(status, now)
-    return {
+    local lines = {
         string.format("guild sharing: %s, %s", status.enabled and "on" or "off",
             status.inGuild and "in a guild" or "not in a guild"),
         string.format("last send %s, last receive %s, last request %s", ago(status.lastSend, now),
@@ -355,4 +546,9 @@ function GuildSync.StatusLines(status, now)
         string.format("senders this session %d, shared items %d, queued messages %d, incoming sets %d",
             status.senders, status.items, status.queued, status.incoming),
     }
+    if status.shareTotal then
+        lines[#lines + 1] = string.format("share running: %d of %d items sent%s", status.shareSent, status.shareTotal,
+            status.sharePaused and " (paused, the guild channel throttles)" or "")
+    end
+    return lines
 end

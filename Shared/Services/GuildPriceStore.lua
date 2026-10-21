@@ -3,6 +3,7 @@ local _, ns = ...
 -- Prices that guild members shared (SPEC 3.5). The data is separate from the local scan store.
 -- The saved table holds, for each scope, items[key] = "min,market,qty,time". Keep the newest entry for each item.
 -- A reader gives the newer of the local scan record and the shared record (a tie goes to the local record).
+-- A part that the newer record lacks (for example the day data of a partial scan) comes from the other record.
 
 local GuildPriceStore = {}
 ns.GuildPriceStore = GuildPriceStore
@@ -198,43 +199,93 @@ function GuildPriceStore.NewReader(options)
         localStore = options.localStore,
         guildStore = options.guildStore,
         isEnabled = options.isEnabled,
+        _cache = {},
     }, Reader)
 end
 
--- Return the local record, the shared entry and true if the shared entry is newer than the local record.
--- On equal times the local record wins.
-local function choose(self, key)
+-- True if the record has daily data (days or snapshots of today). Only then the scan sources ScanMarket,
+-- ScanLow, ScanHigh, ScanHistorical and ScanSamples have a value. A partial scan gives a record without it.
+local function hasDays(record)
+    if type(record) ~= "table" then
+        return false
+    end
+    local today = record.today
+    return (type(record.days) == "table" and #record.days > 0)
+        or (type(today) == "table" and type(today.snaps) == "table" and #today.snaps > 0)
+end
+
+-- Join the winner (the newer record) and the other record. A part that the winner lacks comes from the other
+-- record: the latest value (ScanMin, ScanRecent, ScanQty, ScanAge) and the day data (the other sources).
+-- Return the record and true if a part came from the other record. The winner stays unchanged.
+local function fillGaps(winner, other)
+    local latest, today, days, filled = winner.latest, winner.today, winner.days, false
+    if not latest and other.latest then
+        latest, filled = other.latest, true
+    end
+    if not hasDays(winner) and hasDays(other) then
+        today, days, filled = other.today, other.days, true
+    end
+    if not filled then
+        return winner, false
+    end
+    return { latest = latest, today = today, days = days }, true
+end
+
+-- Return the merged record of an item and true if any part of it comes from shared data.
+-- The record with the newer latest scan time wins. On equal times the local record wins.
+-- Each part that the winner lacks comes from the other record.
+local function resolve(self, key)
     local record = self.localStore:Get(key)
     if not self.isEnabled() then
-        return record, nil, false
+        return record, false
     end
     local entry = self.guildStore:Get(key)
     if not entry then
-        return record, nil, false
+        return record, false
     end
+    local shared = self.guildStore:Record(key)
     if not record then
-        return nil, entry, true
+        return shared, true
     end
     local latest = record.latest
     local localTime = type(latest) == "table" and tonumber(latest.time) or 0
-    return record, entry, entry.time > localTime
+    if entry.time > localTime then
+        local merged = fillGaps(shared, record)
+        return merged, true
+    end
+    return fillGaps(record, shared)
 end
 
+-- Return the merged record of an item, or nil. Records are cached until the data or the setting changes.
 function Reader:Get(key)
-    local record, _, useGuild = choose(self, key)
-    if useGuild then
-        return self.guildStore:Record(key)
+    if type(key) ~= "string" then
+        return self.localStore:Get(key)
     end
+    local version = self:GetVersion()
+    if self._cacheVersion ~= version then
+        self._cacheVersion, self._cache = version, {}
+    end
+    local hit = self._cache[key]
+    local localRecord = self.localStore:Get(key)
+    local latest = type(localRecord) == "table" and localRecord.latest or nil
+    local localTime = type(latest) == "table" and latest.time or nil
+    if hit and hit.localRecord == localRecord and hit.localTime == localTime then
+        return hit.record
+    end
+    local record, guild = resolve(self, key)
+    self._cache[key] = { localRecord = localRecord, localTime = localTime, record = record, guild = guild }
     return record
 end
 
--- Return true if the price of the item comes from shared data (it is newer than the local record).
+-- Return true if any part of the price of the item comes from shared data. That is the case when the shared
+-- record is newer than the local one, and when the shared record fills a gap in a newer local record.
 function Reader:IsGuild(key)
     if type(key) ~= "string" then
         return false
     end
-    local _, _, useGuild = choose(self, key)
-    return useGuild
+    self:Get(key)
+    local hit = self._cache[key]
+    return hit ~= nil and hit.guild == true
 end
 
 -- Return a number that changes when the local data, the shared data or the setting changes.
