@@ -415,8 +415,9 @@ local function pollReady(tries)
     end)
 end
 
--- One exact-name query for an item, page 0. Gives true, or false and a text.
-function Backend.LiveSearch(itemID)
+-- One exact-name query for an item. page is 0-based (default 0; a page holds 50 rows). Gives true, or false and a
+-- text.
+function Backend.LiveSearch(itemID, page)
     if not Backend.IsReady() then
         return false, "the Auction House is busy, try again in a moment"
     end
@@ -425,9 +426,19 @@ function Backend.LiveSearch(itemID)
         return false, "the item name is not loaded yet, try again in a moment"
     end
     live.rows = {}
-    ownQuery("lookup", name, nil, nil, 0, false, 0, false, true, nil)
+    ownQuery("lookup", name, nil, nil, page or 0, false, 0, false, true, nil)
     pollReady(1)
     return true
+end
+
+-- The number of result pages of the last query: the total of the list divided by the page size. Nil if the client
+-- gives no total.
+function Backend.LivePageCount()
+    local _, total = call("GetNumAuctionItems", "list")
+    if type(total) ~= "number" then
+        return nil
+    end
+    return math.max(1, math.ceil(total / PAGE_ROWS))
 end
 
 -- The legacy list has no commodity result. The item result is the list update.

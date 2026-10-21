@@ -4,9 +4,10 @@ local _, ns = ...
 -- Backend functions: StartScan, ScanDoneEvent, RowCount, ReadRow, RowLink, RowIsPet, ItemIsCommodity,
 -- HasCommodityCheck, NameSearch, TargetedSearch, NameResultEvent, NameResults, NameItemKeyInfo, Capture, OwnedAuctions,
 -- CanReadOwned, OwnedEvent, OpenEvent, CloseEvent, CanScan, CanLiveSearch, LiveSearch, LiveResultEvents, LiveRows,
--- IsReady, ReadyEvent, RefreshOwned, CanBuy, StartCommodityPurchase, ConfirmCommodityPurchase, CancelCommodityPurchase,
--- QuoteSecondsLeft, BuyItemAuction, BuyEvents, CanPost, PostItem, PostCommodity, ConfirmPostItem, ConfirmPostCommodity,
--- Deposit, AvailablePostCount, IsSellItemValid, PostedEvent, MultisellEvent, CanSendPost, ThrottleEvents, AuctionInfo,
+-- LivePageCount, IsReady, ReadyEvent, RefreshOwned, CanBuy, StartCommodityPurchase, ConfirmCommodityPurchase,
+-- CancelCommodityPurchase, QuoteSecondsLeft, BuyItemAuction, BuyEvents, CanPost, PostItem, PostCommodity,
+-- ConfirmPostItem, ConfirmPostCommodity, Deposit, AvailablePostCount, IsSellItemValid, PostedEvent,
+-- MultisellEvent, CanSendPost, ThrottleEvents, AuctionInfo,
 -- HookBid. A backend leaves out what its client
 -- cannot do.
 local AuctionClient = {}
@@ -90,7 +91,11 @@ query("ScanTotal")
 -- LiveResultEvents() gives the commodity and the item result event names. LiveRows(itemID) gives rows
 -- { auctionID, unitPrice, quantity, isCommodity, ownerItem, timeLeft, itemLink } with the cheapest first.
 -- IsReady() tells if a throttled call is allowed. RefreshOwned() asks for a fresh owned list.
+-- LiveSearch(itemID, page) takes an optional 0-based page (the legacy client only; Forever ignores it).
+-- LivePageCount() gives the number of result pages of the last search, or nil if the client has no pages. LiveRows
+-- then reads the page that the last search asked for.
 query("LiveSearch", false)
+query("LivePageCount")
 query("LiveResultEvents")
 query("LiveRows", {})
 query("IsReady", true)

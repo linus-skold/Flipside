@@ -33,7 +33,6 @@ ns.Flavour = {
     captureEnabled = true,
     countsCurrentRealmOnly = true, -- the tooltip counts show only the characters of the current realm
     hasCommodityMarket = false, -- every listing is a stack with a stack buyout
-    buyGroupAuctions = false, -- the Buying tab shows each auction on its own row; Buy and Next buy one auction
     multisell = true, -- PostAuction posts several stacks in one click; the operation has the Max stacks field
     hasMailInvoices = true, -- GetInboxInvoiceInfo has the Forever field order (classic_anniversary MailFrame.lua 514)
     ledgerRealmFilter = true, -- the Ledger page has a server and character filter (mail does not cross servers)

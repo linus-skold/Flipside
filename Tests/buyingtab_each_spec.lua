@@ -2,7 +2,7 @@ local manifest = require("Tests.manifest")
 local mock = require("Tests.wow_mock")
 
 local function loadModules()
-    local ns = { ReportError = function() end, Flavour = { hasCommodityMarket = true, buyGroupAuctions = true } }
+    local ns = { ReportError = function() end, Flavour = { hasCommodityMarket = false } }
     for _, name in ipairs({ "EventBus", "ItemString", "BuyingPlan", "Theme", "Widgets", "Window", "List", "Tree",
         "Tabs", "Columns", "AuctionTabs", "BuyingTab" }) do
         assert(loadfile(manifest.path(name)))("Flipside", ns)
@@ -10,16 +10,38 @@ local function loadModules()
     return ns
 end
 
--- TBC: each auction has its own row. Buy and Next buy one auction for each click.
-describe("BuyingTab with one row for each auction", function()
+-- Item auctions of the same seller, price and stack size are one row. Buy and Buy next buy one stack for each click.
+describe("BuyingTab with stack groups", function()
     local ns, bus, client, tab, ui
 
+    -- A fake client. c.rows[itemID] is one page of rows. c.pages[itemID] is a list of pages (a paged client).
     local function makeClient()
-        local c = { rows = {}, calls = {}, violations = {} }
+        local c = { rows = {}, pages = {}, calls = {}, searches = {}, violations = {}, ready = true, page = 0 }
         c.CanLiveSearch = function() return true end
-        c.IsReady = function() return true end
-        c.LiveSearch = function() return true end
-        c.LiveRows = function(itemID) return c.rows[itemID] or {} end
+        c.IsReady = function() return c.ready end
+        c.LiveSearch = function(itemID, page)
+            c.searches[#c.searches + 1] = { itemID, page or 0 }
+            c.item, c.page = itemID, page or 0
+            return true
+        end
+        c.LiveRows = function(itemID)
+            if not c.pages[itemID] then
+                return c.rows[itemID] or {}
+            end
+            local out = {}
+            for index, row in ipairs(c.pages[itemID][c.page + 1] or {}) do
+                local copy = {}
+                for key, value in pairs(row) do
+                    copy[key] = value
+                end
+                copy.auctionID = index
+                out[index] = copy
+            end
+            return out
+        end
+        c.LivePageCount = function()
+            return c.item and c.pages[c.item] and #c.pages[c.item] or nil
+        end
         c.LiveResultEvents = function() return "COMMODITY_RESULTS", "ITEM_RESULTS" end
         c.ReadyEvent = function() return "READY" end
         c.CloseEvent = function() return "CLOSE" end
@@ -79,6 +101,18 @@ describe("BuyingTab with one row for each auction", function()
         end
     end
 
+    local function levels()
+        return tab:_Levels(tab.results["10"].rows)
+    end
+
+    local function levelOf(owner)
+        for _, level in ipairs(levels()) do
+            if level.owner == owner then
+                return level
+            end
+        end
+    end
+
     local function search(rows)
         client.rows[10] = rows
         tab:Select_("10")
@@ -93,7 +127,7 @@ describe("BuyingTab with one row for each auction", function()
         return box()
     end
 
-    -- The first auction is bought: the success text and the fresh rows come.
+    -- The first stack is bought: the success text and the fresh rows come.
     local function bought(freshRows, id)
         bus:Emit("ITEMBOUGHT", id or 1)
         client.rows[10] = freshRows
@@ -105,8 +139,6 @@ describe("BuyingTab with one row for each auction", function()
         _G.ScrollUtil = nil
         getmetatable(CreateFrame("Frame")).__index.SetJustifyH = function() end
         ns = loadModules()
-        ns.Flavour.hasCommodityMarket = false
-        ns.Flavour.buyGroupAuctions = false
         bus = ns.EventBus.New({})
         client = makeClient()
         ns.BuyingPlan.Log:Clear()
@@ -125,41 +157,104 @@ describe("BuyingTab with one row for each auction", function()
     end)
 
     describe("the list", function()
-        it("gives four rows for four stacks of one from one seller", function()
-            search(fourSingles())
-            for index = 1, 4 do
-                assert.are.equal("x1", ui.rowsList.rows[index].cells.quantity.text)
-                assert.are.equal("Seller", ui.rowsList.rows[index].cells.owner.text)
-                assert.are.equal("Long", ui.rowsList.rows[index].cells.timeLeft.text)
-            end
-            assert.is_nil(ui.rowsList.rows[5])
+        it("puts three stacks of one from one seller in one row", function()
+            search({ auction(1, 30), auction(2, 30), auction(3, 30) })
+            assert.are.equal(1, #ui.rowsList.rows)
+            local cells = ui.rowsList.rows[1].cells
+            assert.are.equal("3 stacks of 1", cells.quantity.text)
+            assert.are.equal("Seller", cells.owner.text)
+            assert.are.equal("Long", cells.timeLeft.text)
+            assert.are.equal("Available", ui.levelHeader.labels.quantity.text)
             assert.is_true(ui.levelHeader.labels.owner.shown)
         end)
 
+        it("says 1 stack of 20 for one auction", function()
+            search({ auction(1, 100, 20) })
+            assert.are.equal("1 stack of 20", ui.rowsList.rows[1].cells.quantity.text)
+        end)
+
+        it("keeps two sellers in two rows", function()
+            search({ auction(1, 30, 1, "Anna"), auction(2, 30, 1, "Ben"), auction(3, 30, 1, "Anna") })
+            assert.are.equal(2, #ui.rowsList.rows)
+            assert.are.equal("2 stacks of 1", ui.rowsList.rows[1].cells.quantity.text)
+            assert.are.equal("Anna", ui.rowsList.rows[1].cells.owner.text)
+            assert.are.equal("1 stack of 1", ui.rowsList.rows[2].cells.quantity.text)
+            assert.are.equal("Ben", ui.rowsList.rows[2].cells.owner.text)
+        end)
+
+        it("keeps a different price or stack size in its own row", function()
+            search({ auction(1, 30), auction(2, 31), auction(3, 60, 2), auction(4, 30) })
+            local texts = {}
+            for index = 1, 3 do
+                texts[index] = ui.rowsList.rows[index].cells.unitPrice.text
+                    .. " " .. ui.rowsList.rows[index].cells.quantity.text
+            end
+            assert.is_nil(ui.rowsList.rows[4])
+            assert.are.same({ "30c 2 stacks of 1", "30c 1 stack of 2", "31c 1 stack of 1" }, texts)
+        end)
+
         it("sorts by unit price, then by stack size", function()
-            search({ auction(1, 50, 5), auction(2, 10, 1), auction(3, 10, 2), auction(4, 5, 1) })
+            search({ auction(1, 50, 5), auction(2, 10, 1), auction(3, 20, 2), auction(4, 5, 1) })
             local texts = {}
             for index = 1, 4 do
                 texts[index] = ui.rowsList.rows[index].cells.unitPrice.text
                     .. " " .. ui.rowsList.rows[index].cells.quantity.text
             end
-            assert.are.same({ "5c x1", "5c x2", "10c x1", "10c x5" }, texts)
+            assert.are.same({ "5c 1 stack of 1", "10c 1 stack of 1", "10c 1 stack of 2", "10c 1 stack of 5" },
+                texts)
         end)
 
-        it("still groups by unit price when the flavour groups", function()
-            ns.Flavour.buyGroupAuctions = true
-            search(fourSingles())
-            assert.are.equal("x4", ui.rowsList.rows[1].cells.quantity.text)
-            assert.is_nil(ui.rowsList.rows[2])
-            assert.is_false(ui.levelHeader.labels.owner.shown)
+        it("totals the items of all stacks that you can buy", function()
+            search({ auction(1, 30), auction(2, 30, 1, "Ben"), auction(3, 90, 3) })
+            assert.are.equal("x5", ui.totalCells.quantity.text)
+        end)
+    end)
+
+    describe("your own auctions", function()
+        local function mine()
+            local row = auction(1, 30, 1, "Me")
+            row.ownerItem = true
+            return row
+        end
+
+        it("show as You and have Buy off", function()
+            search({ mine(), auction(2, 40, 1, "Ben") })
+            assert.are.equal("You", ui.rowsList.rows[1].cells.owner.text)
+            tab:SelectLevel(levels()[1].id)
+            assert.is_false(ui.buyNext.enabled)
+            assert.are.equal("own listing", ui.message.text)
+            assert.is_false((tab:BuyNext()))
+            assert.are.same({}, client.calls)
+        end)
+
+        it("are not bought when Buy has no selection", function()
+            search({ mine(), auction(2, 40, 1, "Ben") })
+            click(ui.buyNext)
+            click(box().yesButton)
+            assert.are.same({ { "bid", 2, 40 } }, client.calls)
+        end)
+
+        it("are not in the totals", function()
+            search({ mine(), auction(2, 40, 1, "Ben") })
+            assert.are.equal("x1", ui.totalCells.quantity.text)
+        end)
+
+        it("are never the target of the re-find", function()
+            local confirm = openBox({ auction(1, 30, 1, "Ben"), auction(2, 31) })
+            local own = auction(1, 30, 1, "Ben")
+            own.ownerItem = true
+            client.rows[10] = { own }
+            click(confirm.yesButton)
+            assert.are.same({}, client.calls)
         end)
     end)
 
     describe("the confirm box", function()
-        it("names one auction and its stack size, and one click makes one bid", function()
-            local confirm = openBox({ auction(1, 100, 5), auction(2, 120, 5) })
-            assert.matches("Buy one auction: 5 x", confirm.text.text)
+        it("names one stack and the stacks available, and one click makes one bid", function()
+            local confirm = openBox({ auction(1, 100, 5), auction(2, 100, 5), auction(3, 120, 5) })
+            assert.matches("Buy one stack: 5 x", confirm.text.text)
             assert.matches("Seller: Seller", confirm.text.text)
+            assert.matches("Available: 2 stacks of 5", confirm.text.text)
             assert.are.equal("Buy", confirm.yesButton.text)
             assert.are.same({}, client.calls)
             click(confirm.yesButton)
@@ -175,33 +270,37 @@ describe("BuyingTab with one row for each auction", function()
             assert.are.equal(1, #client.calls)
         end)
 
-        it("shows the next auction with Next, and Next buys that auction", function()
+        it("reads Buy next after a buy, counts down, and buys one stack for each click", function()
             local confirm = openBox()
+            assert.matches("Available: 4 stacks of 1", confirm.text.text)
             click(confirm.yesButton)
             bought({ auction(1, 30), auction(2, 30), auction(3, 30) })
             assert.is_true(confirm:IsShown())
-            assert.are.equal("Next", confirm.yesButton.text)
+            assert.are.equal("Buy next", confirm.yesButton.text)
             assert.is_true(confirm.yesButton.enabled)
+            assert.matches("Available: 3 stacks of 1", confirm.text.text)
             assert.are.equal(1, #client.calls)
             click(confirm.yesButton)
             assert.are.same({ { "bid", 1, 30 }, { "bid", 1, 30 } }, client.calls)
             bought({ auction(1, 30), auction(2, 30) })
+            assert.matches("Available: 2 stacks of 1", confirm.text.text)
             click(confirm.yesButton)
             assert.are.equal(3, #client.calls)
             assert.are.same({}, client.violations)
         end)
 
-        it("ends with no more auctions after the last one", function()
-            local confirm = openBox({ auction(1, 30), auction(2, 30) })
+        it("stays in the group and shows No more stacks when the group is empty", function()
+            local confirm = openBox({ auction(1, 30), auction(2, 30), auction(3, 31) })
             click(confirm.yesButton)
-            bought({ auction(1, 30) })
+            bought({ auction(1, 30), auction(2, 31) })
             click(confirm.yesButton)
-            bought({})
+            bought({ auction(1, 31) })
             assert.is_true(confirm:IsShown())
-            assert.matches("No more auctions", confirm.text.text)
+            assert.matches("No more stacks in this group", confirm.text.text)
             assert.is_false(confirm.yesButton.enabled)
             assert.are.equal("Close", confirm.noButton.text)
             assert.are.equal(2, #client.calls)
+            assert.are.equal("No more stacks in this group", ui.message.text)
         end)
 
         it("stops at Cancel and buys nothing more", function()
@@ -215,20 +314,20 @@ describe("BuyingTab with one row for each auction", function()
             assert.are.equal(1, #client.calls)
         end)
 
-        it("shows an error, drops the auction and offers the next one", function()
+        it("shows an error, drops the stack and offers the next one", function()
             local confirm = openBox()
             click(confirm.yesButton)
             bus:Emit("ITEMERR", "not enough money")
             bus:Emit("ITEM_RESULTS", 10)
             assert.is_true(confirm:IsShown())
             assert.matches("Error: error not enough money", confirm.text.text)
-            assert.are.equal("Next", confirm.yesButton.text)
+            assert.are.equal("Buy next", confirm.yesButton.text)
             assert.are.equal(3, #tab.results["10"].rows)
             click(confirm.yesButton)
             assert.are.equal(2, #client.calls)
         end)
 
-        it("does not drop an auction that is gone from the fresh rows", function()
+        it("does not drop a stack that is gone from the fresh rows", function()
             local confirm = openBox()
             click(confirm.yesButton)
             bus:Emit("ITEMERR", "gone")
@@ -238,43 +337,310 @@ describe("BuyingTab with one row for each auction", function()
             assert.is_true(confirm:IsShown())
         end)
 
-        it("refuses to buy when the shown auction is not in the list any more", function()
-            local confirm = openBox({ auction(1, 30, 1, "Anna"), auction(2, 31, 1, "Ben") })
-            client.rows[10] = { auction(1, 31, 1, "Ben") }
-            click(confirm.yesButton)
-            assert.are.same({}, client.calls)
-            bus:Emit("ITEM_RESULTS", 10)
-            assert.matches("Error: the auction is gone", confirm.text.text)
-            assert.matches("Seller: Ben", confirm.text.text)
-            assert.are.equal("Next", confirm.yesButton.text)
-        end)
-
-        it("buys the moved auction when the index changed", function()
+        it("buys an identical stack when the index changed", function()
             local confirm = openBox({ auction(1, 30, 1, "Anna"), auction(2, 31, 1, "Ben") })
             client.rows[10] = { auction(1, 31, 1, "Ben"), auction(2, 30, 1, "Anna") }
             click(confirm.yesButton)
             assert.are.same({ { "bid", 2, 30 } }, client.calls)
         end)
+
+        it("buys another identical stack when the shown one is gone", function()
+            local confirm = openBox({ auction(1, 30), auction(2, 30), auction(3, 30) })
+            client.rows[10] = { auction(1, 31, 1, "Ben"), auction(2, 30), auction(3, 30) }
+            click(confirm.yesButton)
+            assert.are.same({ { "bid", 2, 30 } }, client.calls)
+        end)
+
+        it("never buys another price or stack size when no identical stack is left", function()
+            local confirm = openBox({ auction(1, 30, 1, "Anna"), auction(2, 31, 1, "Ben") })
+            client.rows[10] = { auction(1, 31, 1, "Ben"), auction(2, 60, 2, "Anna"), auction(3, 30, 1, "Cara") }
+            click(confirm.yesButton)
+            assert.are.same({}, client.calls)
+            bus:Emit("ITEM_RESULTS", 10)
+            assert.matches("Error: the auction is gone", confirm.text.text)
+            assert.matches("No more stacks in this group", confirm.text.text)
+            assert.is_false(confirm.yesButton.enabled)
+            assert.are.same({}, client.calls)
+        end)
+
+        it("never buys a different price in the middle of a chain", function()
+            local confirm = openBox({ auction(1, 30), auction(2, 31, 1, "Ben") })
+            click(confirm.yesButton)
+            bought({ auction(1, 31, 1, "Ben") })
+            assert.matches("No more stacks in this group", confirm.text.text)
+            assert.are.equal(1, #client.calls)
+        end)
     end)
 
     describe("the price jump warning", function()
-        it("shows in the box before the click that buys the dearer auction", function()
-            local confirm = openBox({ auction(1, 30), auction(2, 40) })
-            assert.is_nil(confirm.text.text:match("Price jumps"))
-            click(confirm.yesButton)
-            bought({ auction(1, 40) })
-            assert.matches("Price jumps from 30c to 40c %(%+33%%%)", confirm.text.text)
-            assert.are.equal(1, #client.calls)
-            click(confirm.yesButton)
-            assert.are.equal(2, #client.calls)
+        it("shows in the box for a dearer group that you select", function()
+            search({ auction(1, 30), auction(2, 40, 1, "Ben") })
+            tab:SelectLevel(levelOf("Ben").id)
+            click(ui.buyNext)
+            assert.matches("Price jumps from 30c to 40c %(%+33%%%)", box().text.text)
+            assert.are.same({}, client.calls)
+            click(box().yesButton)
+            assert.are.same({ { "bid", 2, 40 } }, client.calls)
         end)
 
-        it("shows for the first auction when the selected row is dearer than the cheapest", function()
-            search({ auction(1, 30), auction(2, 40) })
-            tab:SelectLevel(2)
-            click(ui.buyNext)
-            assert.matches("Price jumps from 30c to 40c", box().text.text)
-            assert.are.same({}, client.calls)
+        it("shows nothing for the next stack of the same group", function()
+            local confirm = openBox({ auction(1, 30), auction(2, 30), auction(3, 40, 1, "Ben") })
+            click(confirm.yesButton)
+            bought({ auction(1, 30), auction(2, 40, 1, "Ben") })
+            assert.is_nil(confirm.text.text:match("Price jumps"))
+        end)
+    end)
+
+    describe("Forever", function()
+        before_each(function()
+            ns.Flavour.hasCommodityMarket = true
+        end)
+
+        it("groups item auctions by item, price and stack size when no seller is known", function()
+            local rows = {}
+            for index = 1, 3 do
+                local row = auction(100 + index, 30, 1, nil)
+                row.owner, row.timeLeft = nil, nil
+                rows[index] = row
+            end
+            search(rows)
+            assert.are.equal(1, #ui.rowsList.rows)
+            assert.are.equal("3 stacks of 1", ui.rowsList.rows[1].cells.quantity.text)
+            assert.is_false(ui.levelHeader.labels.owner.shown)
+            assert.is_false(ui.levelHeader.labels.timeLeft.shown)
+        end)
+
+        it("shows the seller when the client gives one, and keeps sellers apart", function()
+            search({ auction(101, 30, 1, "Anna-Realm"), auction(102, 30, 1, "Ben-Realm") })
+            assert.are.equal(2, #ui.rowsList.rows)
+            assert.is_true(ui.levelHeader.labels.owner.shown)
+            assert.is_false(ui.levelHeader.labels.timeLeft.shown)
+        end)
+
+        it("buys one item stack for each click and reads Buy next", function()
+            local rows = { auction(101, 30), auction(102, 30), auction(103, 30) }
+            local confirm = openBox(rows)
+            click(confirm.yesButton)
+            assert.are.same({ { "bid", 101, 30 } }, client.calls)
+            bought({ auction(102, 30), auction(103, 30) }, 101)
+            assert.are.equal("Buy next", confirm.yesButton.text)
+            assert.matches("Available: 2 stacks of 1", confirm.text.text)
+            click(confirm.yesButton)
+            assert.are.same({ { "bid", 101, 30 }, { "bid", 102, 30 } }, client.calls)
+        end)
+
+        it("finds an identical item auction under a new auction ID", function()
+            local confirm = openBox({ auction(101, 30), auction(102, 30) })
+            client.rows[10] = { auction(205, 30) }
+            click(confirm.yesButton)
+            assert.are.same({ { "bid", 205, 30 } }, client.calls)
+        end)
+
+        it("still groups a commodity by unit price", function()
+            local commodity = function(id, price, quantity)
+                return { auctionID = id, unitPrice = price, quantity = quantity, isCommodity = true,
+                    ownerItem = false }
+            end
+            search({ commodity(1, 30, 4), commodity(2, 30, 6), commodity(3, 40, 2) })
+            assert.are.equal(2, #ui.rowsList.rows)
+            assert.are.equal("x10", ui.rowsList.rows[1].cells.quantity.text)
+            assert.are.equal("Available", ui.levelHeader.labels.quantity.text)
+            assert.is_false(ui.levelHeader.labels.owner.shown)
+        end)
+    end)
+
+    describe("the read of all pages", function()
+        -- Three pages: Ben 29 on page 0, Anna 30 on pages 1 and 2, Cara 50 on page 2.
+        local function threePages()
+            return {
+                { auction(1, 29, 1, "Ben") },
+                { auction(1, 30, 1, "Anna"), auction(2, 30, 1, "Anna") },
+                { auction(1, 30, 1, "Anna"), auction(2, 50, 1, "Cara") },
+            }
+        end
+
+        local function startRead(pages)
+            client.pages[10] = pages or threePages()
+            tab:Select_("10")
+            tab:Search()
+        end
+
+        it("asks for each page and counts the stacks of all pages", function()
+            startRead()
+            assert.are.same({ { 10, 0 } }, client.searches)
+            bus:Emit("ITEM_RESULTS", 10)
+            assert.are.same({ { 10, 0 }, { 10, 1 } }, client.searches)
+            assert.are.equal("Reading page 2 of 3", ui.message.text)
+            assert.is_true(ui.stop:IsShown())
+            bus:Emit("ITEM_RESULTS", 10)
+            assert.are.equal("Reading page 3 of 3", ui.message.text)
+            bus:Emit("ITEM_RESULTS", 10)
+            assert.are.equal("", ui.message.text)
+            assert.are.equal(3, levelOf("Anna").stacks)
+            assert.are.equal("3 stacks of 1", ui.rowsList.rows[2].cells.quantity.text)
+        end)
+
+        it("stamps the page on each row", function()
+            startRead()
+            for _ = 1, 3 do
+                bus:Emit("ITEM_RESULTS", 10)
+            end
+            local pages = {}
+            for _, row in ipairs(levelOf("Anna").rows) do
+                pages[#pages + 1] = row.page
+            end
+            assert.are.same({ 1, 1, 2 }, pages)
+        end)
+
+        it("reads the page of the next stack again, so that the client list holds it", function()
+            startRead()
+            for _ = 1, 3 do
+                bus:Emit("ITEM_RESULTS", 10)
+            end
+            -- The last page read was 2. The cheapest stack is on page 0.
+            assert.are.same({ 10, 0 }, client.searches[4])
+            assert.is_false(ui.buyNext.enabled)
+            bus:Emit("ITEM_RESULTS", 10)
+            assert.are.equal(4, #client.searches)
+            assert.is_true(ui.buyNext.enabled)
+        end)
+
+        it("waits for the client throttle between pages", function()
+            startRead()
+            client.ready = false
+            bus:Emit("ITEM_RESULTS", 10)
+            assert.are.equal(1, #client.searches)
+            assert.are.equal("Waiting to read page 2 of 3", ui.message.text)
+            -- A late update of the page before does not count as a page.
+            bus:Emit("ITEM_RESULTS", 10)
+            assert.are.equal(1, #client.searches)
+            client.ready = true
+            bus:Emit("READY")
+            assert.are.same({ { 10, 0 }, { 10, 1 } }, client.searches)
+            assert.are.equal("Reading page 2 of 3", ui.message.text)
+        end)
+
+        it("can be stopped, and keeps the earlier result", function()
+            startRead()
+            bus:Emit("ITEM_RESULTS", 10)
+            tab:Stop()
+            assert.is_nil(tab.pending)
+            assert.are.equal("read stopped", ui.message.text)
+            assert.is_false(ui.stop:IsShown())
+            bus:Emit("ITEM_RESULTS", 10)
+            assert.are.equal(2, #client.searches)
+            assert.is_nil(tab.results["10"])
+        end)
+
+        it("stops with the Stop button", function()
+            startRead()
+            bus:Emit("ITEM_RESULTS", 10)
+            click(ui.stop)
+            assert.is_nil(tab.pending)
+        end)
+
+        it("is stopped by a new search, which starts at page 0 again", function()
+            startRead()
+            bus:Emit("ITEM_RESULTS", 10)
+            assert.is_true(tab:Search())
+            assert.are.same({ { 10, 0 }, { 10, 1 }, { 10, 0 } }, client.searches)
+            bus:Emit("ITEM_RESULTS", 10)
+            assert.are.same({ 10, 1 }, client.searches[4])
+        end)
+
+        it("gives up when a page does not come", function()
+            local timers = {}
+            tab.deps.after = function(seconds, fn)
+                timers[#timers + 1] = { seconds = seconds, fn = fn }
+            end
+            startRead()
+            bus:Emit("ITEM_RESULTS", 10)
+            timers[1].fn()
+            assert.is_not_nil(tab.pending)
+            timers[#timers].fn()
+            assert.is_nil(tab.pending)
+            assert.matches("no response", ui.message.text)
+        end)
+
+        it("makes a one page list read once", function()
+            client.pages[10] = { { auction(1, 30), auction(2, 30) } }
+            tab:Select_("10")
+            tab:Search()
+            bus:Emit("ITEM_RESULTS", 10)
+            assert.are.equal(1, #client.searches)
+            assert.are.equal("2 stacks of 1", ui.rowsList.rows[1].cells.quantity.text)
+        end)
+
+        describe("a buy", function()
+            -- Select the Anna group, so that the client list holds its page. Returns the box.
+            local function openAnna(pages)
+                startRead(pages)
+                for _ = 1, 4 do
+                    bus:Emit("ITEM_RESULTS", 10)
+                end
+                tab:SelectLevel(levelOf("Anna").id)
+                -- The group starts on page 1, the client list shows page 0.
+                assert.are.same({ 10, 1 }, client.searches[5])
+                bus:Emit("ITEM_RESULTS", 10)
+                click(ui.buyNext)
+                return box()
+            end
+
+            it("buys on the page that holds the group", function()
+                local confirm = openAnna()
+                assert.matches("Available: 3 stacks of 1", confirm.text.text)
+                click(confirm.yesButton)
+                assert.are.same({ { "bid", 1, 30 } }, client.calls)
+                assert.are.same({}, client.violations)
+            end)
+
+            it("reads again only the pages that hold the group, and counts the stacks left", function()
+                local confirm = openAnna()
+                click(confirm.yesButton)
+                client.pages[10] = {
+                    { auction(1, 29, 1, "Ben") },
+                    { auction(1, 30, 1, "Anna"), auction(2, 30, 1, "Anna") },
+                    { auction(1, 50, 1, "Cara") },
+                }
+                bus:Emit("ITEMBOUGHT", 1)
+                -- Pages 2 and 1, the last page first. Page 0 is not read.
+                assert.are.same({ 10, 2 }, client.searches[6])
+                bus:Emit("ITEM_RESULTS", 10)
+                assert.are.same({ 10, 1 }, client.searches[7])
+                bus:Emit("ITEM_RESULTS", 10)
+                assert.are.equal(7, #client.searches)
+                assert.are.equal("Buy next", confirm.yesButton.text)
+                assert.matches("Available: 2 stacks of 1", confirm.text.text)
+                click(confirm.yesButton)
+                assert.are.same({ { "bid", 1, 30 }, { "bid", 1, 30 } }, client.calls)
+            end)
+
+            it("reads the page of the next stack when it is not on the page of the client list", function()
+                local confirm = openAnna({
+                    { auction(1, 29, 1, "Ben") },
+                    { auction(1, 30, 1, "Anna"), auction(2, 31, 1, "Dan") },
+                    { auction(1, 32, 1, "Eve"), auction(2, 30, 1, "Anna") },
+                })
+                click(confirm.yesButton)
+                -- The bought stack leaves page 1. The other Anna stack moves to the top of page 2 only.
+                client.pages[10] = {
+                    { auction(1, 29, 1, "Ben") },
+                    { auction(1, 31, 1, "Dan"), auction(2, 32, 1, "Eve") },
+                    { auction(1, 30, 1, "Anna") },
+                }
+                bus:Emit("ITEMBOUGHT", 1)
+                bus:Emit("ITEM_RESULTS", 10)
+                bus:Emit("ITEM_RESULTS", 10)
+                -- The client list shows page 1 now, and the last Anna stack is on page 2.
+                assert.are.same({ 10, 2 }, client.searches[8])
+                assert.is_false(confirm.yesButton.enabled)
+                bus:Emit("ITEM_RESULTS", 10)
+                assert.is_true(confirm.yesButton.enabled)
+                assert.matches("Available: 1 stack of 1", confirm.text.text)
+                click(confirm.yesButton)
+                assert.are.same({ { "bid", 1, 30 }, { "bid", 1, 30 } }, client.calls)
+                assert.are.same({}, client.violations)
+            end)
         end)
     end)
 end)

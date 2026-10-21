@@ -366,19 +366,90 @@ describe("BuyingPlan", function()
             assert.is_false(levels[2].own)
         end)
 
-        it("gives one level for each row with group = false, sorted by price, then stack size", function()
+        -- An item auction: list index, buyout, stack size, seller.
+        local function auction(id, buyout, quantity, owner, extra)
+            quantity = quantity or 1
+            local row = { auctionID = id, unitPrice = buyout / quantity, quantity = quantity, buyout = buyout,
+                isCommodity = false, owner = owner or "Anna", ownerItem = false, timeLeft = 3 }
+            for key, value in pairs(extra or {}) do
+                row[key] = value
+            end
+            return row
+        end
+
+        it("groups item auctions of one seller, price and stack size into one level", function()
+            local levels = BP.PriceLevels({ auction(1, 30), auction(2, 30), auction(3, 30) })
+            assert.are.equal(1, #levels)
+            assert.are.equal(3, levels[1].stacks)
+            assert.are.equal(1, levels[1].stackSize)
+            assert.are.equal(3, levels[1].quantity)
+            assert.are.equal(3, #levels[1].rows)
+            assert.are.equal("Anna", levels[1].owner)
+        end)
+
+        it("keeps two sellers apart", function()
+            local levels = BP.PriceLevels({ auction(1, 30, 1, "Anna"), auction(2, 30, 1, "Ben") })
+            assert.are.equal(2, #levels)
+            assert.are.equal(1, levels[1].stacks)
+            assert.are.equal(1, levels[2].stacks)
+        end)
+
+        it("keeps a different price or stack size apart, sorted by price, then stack size", function()
             local levels = BP.PriceLevels({
-                { unitPrice = 100, quantity = 5, auctionID = 4 },
-                { unitPrice = 100, quantity = 1, auctionID = 3 },
-                { unitPrice = 100, quantity = 1, auctionID = 2, ownerItem = true },
-                { unitPrice = 50, quantity = 1, auctionID = 9 },
-            }, { group = false })
-            assert.are.equal(4, #levels)
-            assert.are.same({ 9, 2, 3, 4 }, { levels[1].id, levels[2].id, levels[3].id, levels[4].id })
-            assert.are.equal(5, levels[4].quantity)
-            assert.are.equal(1, levels[2].listings)
-            assert.is_true(levels[2].own)
-            assert.is_false(levels[3].own)
+                auction(1, 100, 5), auction(2, 30), auction(3, 31), auction(4, 60, 2), auction(5, 30),
+            })
+            local out = {}
+            for index, level in ipairs(levels) do
+                out[index] = string.format("%dx%d@%d", level.stacks, level.stackSize, level.unitPrice)
+            end
+            assert.are.same({ "1x5@20", "2x1@30", "1x2@30", "1x1@31" }, out)
+        end)
+
+        it("keeps a group of your own auctions apart and marks it", function()
+            local levels = BP.PriceLevels({ auction(1, 30, 1, "Me", { ownerItem = true }), auction(2, 30, 1, "Me") })
+            assert.are.equal(2, #levels)
+            assert.is_true(levels[1].own ~= levels[2].own)
+        end)
+
+        it("gives the lowest time left code of the group", function()
+            local levels = BP.PriceLevels({ auction(1, 30, 1, "Anna", { timeLeft = 4 }),
+                auction(2, 30, 1, "Anna", { timeLeft = 2 }) })
+            assert.are.equal(2, levels[1].timeLeft)
+        end)
+
+        it("gives the same group key for the same stack for sale only", function()
+            assert.are.equal(BP.GroupKey(auction(1, 30)), BP.GroupKey(auction(9, 30)))
+            assert.are_not.equal(BP.GroupKey(auction(1, 30)), BP.GroupKey(auction(1, 30, 1, "Ben")))
+            assert.are_not.equal(BP.GroupKey(auction(1, 30)), BP.GroupKey(auction(1, 31)))
+            assert.are_not.equal(BP.GroupKey(auction(1, 30, 1)), BP.GroupKey(auction(1, 30, 2)))
+        end)
+
+        it("writes the available text for one stack and for many", function()
+            assert.are.equal("1 stack of 20", BP.AvailableText(1, 20))
+            assert.are.equal("50 stacks of 1", BP.AvailableText(50, 1))
+        end)
+
+        it("sorts rows by price, stack size, page and index", function()
+            local rows = BP.SortRows({
+                auction(2, 30, 1, "A", { page = 1 }), auction(5, 20, 1, "A", { page = 0 }),
+                auction(1, 30, 1, "A", { page = 1 }), auction(9, 30, 1, "A", { page = 0 }),
+            })
+            assert.are.same({ 5, 9, 1, 2 }, { rows[1].auctionID, rows[2].auctionID, rows[3].auctionID,
+                rows[4].auctionID })
+        end)
+
+        it("replaces the rows of the pages in a range and drops pages past the end", function()
+            local old = {
+                auction(1, 30, 1, "A", { page = 0 }), auction(2, 30, 1, "A", { page = 1 }),
+                auction(3, 30, 1, "A", { page = 2 }), auction(4, 30, 1, "A", { page = 3 }),
+            }
+            local out = BP.MergePages(old, 1, 1, { auction(7, 30, 1, "A", { page = 1 }) }, 3)
+            local ids = {}
+            for index, row in ipairs(out) do
+                ids[index] = row.auctionID
+            end
+            assert.are.same({ 1, 7, 3 }, { ids[1], ids[2], ids[3] })
+            assert.are.equal(3, #out)
         end)
 
         it("gives no level for no rows", function()
