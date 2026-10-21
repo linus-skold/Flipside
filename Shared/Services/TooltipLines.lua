@@ -369,6 +369,17 @@ local function countRows(ctx, rows, key)
         rows[#rows + 1] = { left = text, color = "dim" }
     end
 end
+-- Returns the dim age row of the latest scan, or nil without a record time.
+local function ageRow(ctx, key)
+    local record = key and ctx.getRecord and ctx.getRecord(key)
+    local latest = type(record) == "table" and record.latest
+    if type(latest) ~= "table" or type(latest.time) ~= "number" then
+        return nil
+    end
+    local hours = ns.ScanClock.HoursBetween(latest.time, ctx.now or 0)
+    return { left = "Updated " .. TooltipLines.FormatAge(hours) .. " ago", color = "dim", age = true }
+end
+
 -- Returns an array of { left, right, color } rows. A price table row is { kind = "table", columns, rows }.
 function TooltipLines.Build(ctx)
     local rows = {}
@@ -409,6 +420,9 @@ function TooltipLines.Build(ctx)
     end
     if config.showVendor ~= false then
         rows[#rows + 1] = vendorRow(ctx)
+    end
+    if config.showAge then
+        rows[#rows + 1] = ageRow(ctx, key)
     end
     groupRows(ctx, rows, key, config)
     if config.showCounts then

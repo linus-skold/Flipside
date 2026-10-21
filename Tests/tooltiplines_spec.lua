@@ -621,6 +621,36 @@ describe("TooltipLines", function()
         end)
     end)
 
+    describe("data age line", function()
+        local function rowsFor(record, config)
+            local c = ctx({ getRecord = function() return record end })
+            c.config = config
+            return TL.Build(c)
+        end
+
+        local function record(time)
+            local r = ns.ScanRecord.New()
+            r.latest = { time = time, min = 1, market = 1, qty = 1, auctions = 1, partial = false }
+            return r
+        end
+
+        it("adds no line by default", function()
+            assert.are.equal(0, #rowsFor(record(NOW - 7200), { lines = {}, showVendor = false }))
+        end)
+
+        it("adds a dim line after the price lines when on", function()
+            local rows = rowsFor(record(NOW - 7200), { lines = {}, showAge = true })
+            assert.are.equal(1, #rows)
+            assert.are.equal("Updated 2 h ago", rows[1].left)
+            assert.are.equal("dim", rows[1].color)
+        end)
+
+        it("adds no line without a record time", function()
+            assert.are.equal(0, #rowsFor(ns.ScanRecord.New(), { lines = {}, showAge = true }))
+            assert.are.equal(0, #rowsFor(nil, { lines = {}, showAge = true }))
+        end)
+    end)
+
     describe("vendor sell price", function()
         local function rowsOf(extra, config)
             local c = ctx(extra)

@@ -8,11 +8,11 @@ ns.TooltipPage = TooltipPage
 local LEFT_WIDTH = 300
 local RIGHT_X = 312
 local RIGHT_WIDTH = 460
-local GRID_COLUMNS, GRID_ROWS = 3, 4
+local GRID_COLUMNS, GRID_ROWS = 3, 5
 local GRID_BASE_WIDTH = math.floor(RIGHT_WIDTH / GRID_COLUMNS)
 local GRID_ROW_HEIGHT, GRID_WRAP_ROW_HEIGHT = 24, 32
 local GRID_BOX, GRID_GAP, GRID_PAD = 26, 4, 8
-local GRID_BOTTOM = 32
+local GRID_BOTTOM = 22
 local REMOVE_DIALOG = "FLIPSIDE_REMOVE_TOOLTIP_LINE"
 local RESET_DIALOG = "FLIPSIDE_RESET_TOOLTIP"
 local EDITOR_DIALOG = "FlipsideFormulaEditor"
@@ -324,6 +324,9 @@ function TooltipPage.Build(content, deps)
     page.preview:SetWidth(RIGHT_WIDTH)
     page.preview:SetJustifyH("LEFT")
 
+    page.previewAge = Kit.Label(right, "", "small")
+    page.previewAge:SetPoint("TOPRIGHT", right, "TOPRIGHT", 0, -226)
+
     -- The table preview draws the same model as the tooltip, under the preview text.
     page.tableView = ns.TooltipTable and ns.TooltipTable.New(right)
     local TABLE_ROW_HEIGHT = 16
@@ -422,7 +425,7 @@ function TooltipPage.Build(content, deps)
         one.enabled = true
         local data = tc:Get()
         local config = { lines = { one }, showGroup = false, showOperation = false, showCounts = false,
-            showVendor = false, periods = data.periods, stats = data.stats }
+            showVendor = false, showAge = data.showAge, periods = data.periods, stats = data.stats }
         local rows
         if deps.buildPreview then
             rows = deps.buildPreview(example, config)
@@ -437,12 +440,17 @@ function TooltipPage.Build(content, deps)
                 now = (_G.GetServerTime or _G.time)(),
             })
         end
-        if drawTable(rows) then
-            return ""
-        end
+        local drawn = drawTable(rows)
         local texts = {}
         for _, row in ipairs(rows or {}) do
-            texts[#texts + 1] = rowText(row)
+            if not (drawn and row.kind == "table") then
+                texts[#texts + 1] = rowText(row)
+            end
+        end
+        if drawn then
+            -- The age line goes right of the table so that the table keeps its place.
+            page.previewAge:SetText(table.concat(texts, "\n"))
+            return ""
         end
         return table.concat(texts, "\n")
     end
@@ -545,6 +553,7 @@ function TooltipPage.Build(content, deps)
     page.operation = flagCheck("Show operations", "showOperation")
     page.counts = flagCheck("Show counts per character", "showCounts")
     page.vendor = flagCheck("Vendor", "showVendor")
+    page.age = flagCheck("Data age", "showAge")
     layoutGrid()
 
     page.hint =Kit.Label(content, ALT_HINT, "small")
@@ -573,6 +582,7 @@ function TooltipPage.Build(content, deps)
         if page.tableView then
             page.tableView:Clear()
         end
+        page.previewAge:SetText("")
         page.preview:SetText(line and previewText(line) or "")
         local isTable = line ~= nil and line.kind == "table"
         local active = line ~= nil and not ro and not isTable
@@ -592,9 +602,11 @@ function TooltipPage.Build(content, deps)
         page.operation:SetChecked(data.showOperation)
         page.counts:SetChecked(data.showCounts)
         page.vendor:SetChecked(data.showVendor)
+        page.age:SetChecked(data.showAge)
         page.periods:SetValues(data.periods)
         page.stats:SetValues(data.stats)
-        for _, widget in ipairs({ page.group, page.operation, page.counts, page.vendor, page.periods, page.stats }) do
+        for _, widget in ipairs({ page.group, page.operation, page.counts, page.vendor, page.age, page.periods,
+            page.stats }) do
             setEnabled(widget, not ro)
         end
     end

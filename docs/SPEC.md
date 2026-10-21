@@ -108,7 +108,7 @@ Nine features come from your list, twelve are ones TSM users rely on that are ea
 | Ledger | Record sales, purchases, fees and failures; show profit | Same as Accounting; adds documented CSV export | You | MVP |
 | Sniper | Repeat searches to catch underpriced new listings | Same as Sniper; uses local scan prices for thresholds | You | Phase 2 |
 | Operations and price formulas | Reusable rules with a formula language | Same language; new local price sources; live formula preview | Added | MVP |
-| Tooltips | Prices, counts and history on every item (the history chart is Phase 2) | Shows prices as a Min/Avg/Max/Market table by window (1d, 14d, 30d, 60d) with no header line | Added | MVP |
+| Tooltips | Prices, counts and history on every item (the history chart is Phase 2) | Shows prices as a Min/Avg/Max/Market table by window (1d, 14d, 30d, 60d) with no header line; the data age is an option | Added | MVP |
 | Inventory tracking | Counts per character, bank, mail, AH, guild (guild bank later; equipped items later) | Same | Added | MVP |
 | Decision log and dry run | Shows why each item was posted, skipped or cancelled | New | Added | MVP |
 | Crafting and queue | Profit per recipe, restock queue, craft next | Same | Added | Phase 2 |
@@ -188,7 +188,7 @@ All steps run as coroutines that yield each frame, with a progress bar. The scan
 ### 3.4 Freshness and confidence
 
 - Every price carries **age** (hours since last seen) and **samples** (days with data in the window).
-- Tooltips have no "Flipside" header line (decided 2026-10-21), and they do not show the data age. The price table shows the prices of four windows (§5, tooltip design point 15). A formula line can still show age and days with data.
+- Tooltips have no "Flipside" header line (decided 2026-10-21). They show the data age only if the setting `showAge` is on (default off): one dim line "Updated 2 h ago" after the price lines. The price table shows the prices of four windows (§5, tooltip design point 15). A formula line can still show age and days with data.
 - Operations get two safety settings: *max data age* and *min samples*. If either fails, the item is skipped with the reason "stale price" in the decision log.
 - The Flipside AH tab shows when the last full scan ran and when the next is available (a Dashboard comes in Phase 2).
 
@@ -958,7 +958,7 @@ Operations and formulas (§4.2–4.3), tooltips and inventory tracking (referenc
     - **Line colour.** A formula line has an optional colour `color = { r, g, b }` (parts 0 to 1) in the tooltip settings. The Tooltip tab has a swatch at the label box and a button "Default colour". A click on the swatch opens `ColorPickerFrame`: `SetupColorPickerAndShow(info)` with `swatchFunc` and `cancelFunc` where the client has it, else the fields `func`, `cancelFunc` and `previousValues`. Each change saves. Cancel gives the old colour back (or none). The row (label and value) uses the colour; a line with no colour looks as before. The price table has no colour.
     - **Alt.** The Alt code existed (`altStack`, hook stack count) but the tooltip did not change when Alt went up or down over an item. Now `Tooltip.Attach` subscribes to `MODIFIER_STATE_CHANGED`. If the key is an Alt key, the state differs from the last build and the tooltip is shown, it runs the `OnEnter` script of the tooltip owner. The client then builds the tooltip again and the hook runs. The stack count comes from the bag slot (Forever `GetBagID`, or the item location of a bank button; TBC the `ContainerFrame` parent or the `BankFrameItem` button). The label shows the count: "Min x20" (a final colon stays last: "Vendor x4:"). The table title keeps "stack of N". An unknown stack gives the value of one item.
     - **In-game checklist.** Forever and TBC: (a) vendor row is blue and reads "Vendor:"; the check box reads "Vendor". (b) Counts show class-coloured names with no realm. (c) TBC: a character on another realm does not show and is not in the total. (d) Forever: a second character with the same name on another realm shows "Name-Realm" for both. (e) A swatch click opens the colour picker; OK saves; Cancel restores; "Default colour" resets; the tooltip uses the colour. (f) Hover a stack in a bag and press and release Alt: the tooltip changes at once, with "x20" in the labels. (g) The same in a bank slot. (h) No Lua error and no "action blocked" message after step f.
-    - **Storage.** The tooltip settings keep `showVendor`, `periods` (by window label) and `stats` (`min`, `avg`, `max`, `market`). A stored setting without these keys gets the defaults (all on).
+    - **Storage.** The tooltip settings keep `showVendor`, `showAge` (default off; a stored setting without it reads as off), `periods` (by window label) and `stats` (`min`, `avg`, `max`, `market`). A stored setting without these keys gets the defaults (all on).
     - In-game check: see the Tooltip tab list in the checklist of §5 (vendor row, each window, each stat subset).
 ### 5.11 Great Deals (new)
 
