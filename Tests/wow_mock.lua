@@ -865,7 +865,7 @@ function M.reset(options)
     ah.GetItemSearchResultInfo = function(itemKey, index)
         local r = (M.itemResults[itemKey.itemID] or {})[index]
         return r and { itemKey = itemKey, itemLink = r.link, buyoutAmount = r.buyout, quantity = r.quantity,
-            auctionID = r.auctionID, containsOwnerItem = r.owner, timeLeft = r.timeLeft }
+            auctionID = r.auctionID, containsOwnerItem = r.owner, timeLeft = r.timeLeft, owners = r.owners }
     end
     ah.HasFullItemSearchResults = function()
         return M.searchFull

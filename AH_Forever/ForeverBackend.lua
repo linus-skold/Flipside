@@ -233,6 +233,7 @@ function Backend.LiveRows(itemID)
                     auctionID = r.auctionID, unitPrice = buyout / quantity, quantity = quantity, buyout = buyout,
                     isCommodity = false, ownerItem = r.containsOwnerItem == true,
                     timeLeft = r.timeLeftSeconds or r.timeLeft, itemLink = r.itemLink,
+                    owner = type(r.owners) == "table" and #r.owners == 1 and r.owners[1] or nil,
                 }
             end
         end

@@ -29,6 +29,9 @@ local RED = { 1, 0.2, 0.2 }
 local DEFAULT_AMOUNT = 1
 
 local AMOUNT_TEXT = "amount must be a whole number above 0"
+local OWN_TEXT = "You" -- the seller text of your own auctions
+local READ_RETRY = 0.5 -- seconds between checks while a page read waits for the client throttle
+local MAX_CHAIN_READS = 8 -- most page reads that one Buy next step makes to find the next stack
 
 local function money(copper)
     return GetMoneyString(math.floor((copper or 0) + 0.5))
@@ -51,25 +54,28 @@ local function hasCommodityMarket()
     return ns.Flavour ~= nil and ns.Flavour.hasCommodityMarket == true
 end
 
--- True if the Buying tab groups the listings of one unit price into one level (the flavour flag). TBC shows
--- each auction on its own row and Buy and Next buy one auction. A flavour with no flag groups.
-local function groupAuctions()
-    return not (ns.Flavour ~= nil and ns.Flavour.buyGroupAuctions == false)
-end
-
--- The key of a level: the auction index of an auction row, else the unit price.
+-- The key of a level: the group key of a stack group, else the unit price.
 local function levelId(level)
     return level.id or level.unitPrice
 end
 
--- The identity of an auction: stack size, buyout and seller.
 local function buyoutOf(row)
     return row.buyout or math.floor(row.unitPrice * (row.quantity or 1) + 0.5)
 end
 
+-- True if two auctions are the same stack for sale: same item, seller, buyout and stack size.
 local function sameAuction(a, b)
-    return (a.quantity or 1) == (b.quantity or 1) and buyoutOf(a) == buyoutOf(b) and a.owner == b.owner
-        and (a.itemLink == nil or b.itemLink == nil or a.itemLink == b.itemLink)
+    return ns.BuyingPlan.GroupKey(a) == ns.BuyingPlan.GroupKey(b)
+end
+
+-- The first auction of a stack group that is not yours, or nil.
+local function firstFree(level)
+    for _, row in ipairs(level.rows) do
+        if not isOwn(row) then
+            return row
+        end
+    end
+    return nil
 end
 
 -- The time left codes 1 to 4 of the legacy client list rows.
@@ -113,11 +119,11 @@ function BuyingTab.DescribeLevels(entry, levels, showAboveMax)
             state = "above"
         end
         if state then
-            local auction = level.id ~= nil and level.rows[1] or nil
             out[#out + 1] = {
                 unitPrice = level.unitPrice, quantity = level.quantity, listings = level.listings, state = state,
-                stackPrice = BuyingTab.StackPrice(level), id = level.id,
-                owner = auction and auction.owner, timeLeft = auction and auction.timeLeft,
+                stackPrice = BuyingTab.StackPrice(level), id = level.id, stacks = level.stacks,
+                stackSize = level.stackSize, owner = level.own and OWN_TEXT or level.owner,
+                timeLeft = level.timeLeft,
             }
         end
     end
@@ -786,12 +792,13 @@ end
 -- Store and log the result of reading the rows of one item.
 function Tab:_Finish(entry, rows, silent)
     local plan = self.deps.plan
+    local raw = rows
     rows = self:_DropKnown(entry, rows)
     local result = plan.Evaluate(entry, rows)
     if not entry.itemID then
         result.stop = "no item id"
     end
-    self.results[entry.key] = { rows = rows, result = result }
+    self.results[entry.key] = { rows = rows, raw = raw, result = result }
     if not silent then
         local decision, reason = BuyingTab.DescribeDecision(result)
         self.deps.log:Add(entry, decision, reason)
@@ -799,30 +806,14 @@ function Tab:_Finish(entry, rows, silent)
     self:_Update()
 end
 
--- Start the live search of one entry. silent keeps the result out of the log.
--- Returns "started", "skipped" or "wait" with a text.
-function Tab:_Start(entry, silent)
-    local client = self.deps.client
-    if not (entry.maxPrice or entry.noMax) or not entry.itemID then
-        self:_Finish(entry, {})
-        return "skipped"
-    end
-    if not client.IsReady() then
-        return "wait", "waiting for the Auction House to be ready"
-    end
-    local ok, text = client.LiveSearch(entry.itemID)
-    if not ok then
-        log("debug", "search for item %s refused: %s", entry.itemID, text)
-        return "wait", text or "the search was refused"
-    end
-    log("info", "search for item %s started", entry.itemID)
-    self.token = self.token + 1
-    local token = self.token
-    self.pending = { entry = entry, itemID = entry.itemID, token = token, silent = silent }
+-- Start the no-response timer of a search or of one page of a read. A new page restarts it.
+function Tab:_Arm(pending)
+    pending.stamp = (pending.stamp or 0) + 1
+    local stamp, entry = pending.stamp, pending.entry
     self.deps.after(SEARCH_TIMEOUT, function()
-        local pending = self.pending
-        if pending and pending.token == token then
+        if self.pending == pending and pending.stamp == stamp then
             self.pending = nil
+            self.livePage = nil
             log("warn", "search for item %s: no response", entry.itemID)
             if self.continueKey == entry.key then
                 self:_CloseConfirm()
@@ -834,16 +825,71 @@ function Tab:_Start(entry, silent)
             self:_Next()
         end
     end)
+end
+
+-- Start the live search of one entry. silent keeps the result out of the log.
+-- range = { from, to } (0-based pages) reads only these pages again, the last one first, and puts them into the
+-- rows of the earlier read. Without a range, the search reads all pages of the result.
+-- Returns "started", "skipped" or "wait" with a text.
+function Tab:_Start(entry, silent, range)
+    local client = self.deps.client
+    if not (entry.maxPrice or entry.noMax) or not entry.itemID then
+        self:_Finish(entry, {})
+        return "skipped"
+    end
+    if not client.IsReady() then
+        return "wait", "waiting for the Auction House to be ready"
+    end
+    local first = range and range.to or 0
+    local ok, text = client.LiveSearch(entry.itemID, first)
+    if not ok then
+        log("debug", "search for item %s refused: %s", entry.itemID, text)
+        return "wait", text or "the search was refused"
+    end
+    log("info", "search for item %s started (page %d)", entry.itemID, first)
+    self.token = self.token + 1
+    local pending = {
+        entry = entry, itemID = entry.itemID, token = self.token, silent = silent, at = first,
+        read = { rows = {}, queue = {}, range = range },
+    }
+    for page = (range and range.to or 0) - 1, range and range.from or 0, -1 do
+        pending.read.queue[#pending.read.queue + 1] = page
+    end
+    pending.read.multi = #pending.read.queue > 0
+    self.pending = pending
+    self:_Arm(pending)
     return "started"
 end
 
--- Search the selected item once. Returns true, or false and a text.
+-- True if a read of more than one page is on its way.
+function Tab:_Reading()
+    local pending = self.pending
+    return pending ~= nil and pending.read ~= nil and pending.read.multi == true
+end
+
+-- Stop a read of several pages and keep the earlier result. Returns true if a read was stopped.
+function Tab:_CancelRead(why)
+    if not self:_Reading() then
+        return false
+    end
+    local pending = self.pending
+    self.pending, self.livePage = nil, nil
+    log("info", "read of item %s stopped: %s", pending.itemID, why)
+    if self.continueKey == pending.entry.key then
+        self:_CloseConfirm()
+    end
+    self:_Say(why)
+    self:_Update()
+    return true
+end
+
+-- Search the selected item once. A new search stops a read of several pages. Returns true, or false and a text.
 function Tab:Search()
     local entry = self:_Selected()
     if not entry then
         return false, "pick an item first"
     end
-    if self.pending then
+    if self.pending and not self:_CancelRead("read stopped") then
         return false, "a search is running"
     end
     local status, text = self:_Start(entry)
@@ -904,11 +950,102 @@ function Tab:SearchAll()
     return true
 end
 
--- Stop the queue. A search in flight still ends with its result.
+-- Stop the queue and a read of several pages. A search of one page in flight still ends with its result.
 function Tab:Stop()
+    local reading = self:_CancelRead("read stopped")
+    local queued = self.queue ~= nil
     self.queue = nil
-    self:_Say("search all stopped")
+    if queued or not reading then
+        self:_Say("search all stopped")
+    end
     self:_Update()
+end
+
+-- The search of the item came to its end: store the rows and go on with the buy box, the held search and the queue.
+function Tab:_Complete(pending, rows)
+    self.pending = nil
+    self:_Finish(pending.entry, rows, pending.silent)
+    self:_Say("")
+    if self.continueKey and self.continueKey == pending.entry.key then
+        self:_ContinueBuy()
+    else
+        self:_EnsureLive(pending.entry)
+    end
+    self:_RunHeldSearch()
+    self:_Next()
+end
+
+-- Send the query of the next page of a read. It waits for the client throttle and tries again on the ready event.
+function Tab:_ReadNext(pending)
+    local read = pending.read
+    if self.pending ~= pending or not read.next then
+        return
+    end
+    local client = self.deps.client
+    local ok, text = false, nil
+    if client.IsReady() then
+        ok, text = client.LiveSearch(pending.itemID, read.next)
+    end
+    if not ok then
+        if not read.waiting then
+            read.waiting = true
+            self:_Arm(pending)
+        end
+        self:_Say(text or string.format("Waiting to read page %d of %d", read.next + 1, read.total))
+        if not read.retrying then
+            read.retrying = true
+            self.deps.after(READ_RETRY, function()
+                read.retrying = false
+                self:_ReadNext(pending)
+            end)
+        end
+        return
+    end
+    pending.at, read.waiting = read.next, false
+    read.next = nil
+    self:_Arm(pending)
+    self:_Say(string.format("Reading page %d of %d", pending.at + 1, read.total))
+    self:_Update()
+end
+
+-- One page of the result came. Add its rows. Ask for the next page, or finish the read.
+function Tab:_OnPage(pending)
+    local client = self.deps.client
+    local read = pending.read
+    local rows = client.LiveRows(pending.itemID)
+    local count = client.LivePageCount and client.LivePageCount() or nil
+    if not count then
+        -- The client has no pages: this is the whole result.
+        self.livePage = nil
+        self:_Complete(pending, rows)
+        return
+    end
+    for _, row in ipairs(rows) do
+        row.page = pending.at
+        read.rows[#read.rows + 1] = row
+    end
+    self.livePage = pending.at
+    read.total = count
+    if not read.range and not read.started then
+        -- The first page of a full read tells how many pages there are.
+        read.started = true
+        for page = 1, count - 1 do
+            read.queue[#read.queue + 1] = page
+        end
+        read.multi = #read.queue > 0
+    end
+    read.next = table.remove(read.queue, 1)
+    if read.next then
+        self:_ReadNext(pending)
+        return
+    end
+    if read.range then
+        local old = self.results[pending.entry.key]
+        rows = self.deps.plan.MergePages(old and old.raw or {}, read.range.from, read.range.to, read.rows, count)
+    else
+        rows = self.deps.plan.SortRows(read.rows)
+    end
+    self:_Complete(pending, rows)
 end
 
 function Tab:_OnResult(arg)
@@ -920,22 +1057,28 @@ function Tab:_OnResult(arg)
     if type(id) == "number" and id ~= pending.itemID then
         return
     end
-    self.pending = nil
-    self:_Finish(pending.entry, self.deps.client.LiveRows(pending.itemID), pending.silent)
-    self:_Say("")
-    if self.continueKey and self.continueKey == pending.entry.key then
-        self:_ContinueBuy()
+    pending.read = pending.read or { rows = {}, queue = {} }
+    if pending.read.next then
+        -- A late update of the page before: the next page is not sent yet.
+        return
     end
-    self:_RunHeldSearch()
-    self:_Next()
+    self:_OnPage(pending)
 end
 
 -- The throttle is ready again. A search result can come while the client is still not ready, so the buy controls
 -- must be drawn again here.
 function Tab:_OnReady()
+    -- A read of several pages waits for the throttle before it sends the next page.
+    if self.pending and self.pending.read and self.pending.read.next then
+        self:_ReadNext(self.pending)
+    end
     -- A refresh after a buy waits for the throttle. Start it as soon as the client is ready.
     if self.refreshEntry and not self.pending then
-        self:_Refresh(self.refreshEntry)
+        self:_Refresh(self.refreshEntry, self.refreshRange)
+    end
+    local selected = self:_Selected()
+    if selected and not self.pending then
+        self:_EnsureLive(selected)
     end
     if self.queue and not self.pending then
         self:_Next()
@@ -986,9 +1129,21 @@ local function findLevel(levels, id)
     return nil
 end
 
--- The levels of the rows: grouped by unit price, or (TBC) one for each auction.
+-- The levels of the rows: one for each unit price (a commodity), or one for each stack group (an item).
 function Tab:_Levels(rows)
-    return self.deps.plan.PriceLevels(rows, not groupAuctions() and { group = false } or nil)
+    return self.deps.plan.PriceLevels(rows)
+end
+
+-- The pages that the rows of a stack group are on, as { from, to }, or nil if the rows have no pages.
+local function pageRange(level)
+    local from, to
+    for _, row in ipairs(level.rows) do
+        if row.page then
+            from = math.min(from or row.page, row.page)
+            to = math.max(to or row.page, row.page)
+        end
+    end
+    return from and { from = from, to = to } or nil
 end
 
 -- The next auction to buy after lastPrice: the first auction of that unit price or more that is not yours.
@@ -1045,6 +1200,8 @@ function Tab:SelectLevel(price)
     self.amount, self.amountBad, self.amountEdit = DEFAULT_AMOUNT, false, false
     self:_Update()
     if self.levelSel then
+        -- A group on another page needs that page in the client list before a buy.
+        self:_EnsureLive(self:_Selected())
         local _, _, _, reason = self:_NextBuy()
         self:_Say(reason or "")
         return true, reason
@@ -1054,13 +1211,14 @@ function Tab:SelectLevel(price)
 end
 
 -- The units that one purchase covers. For a commodity, the purchase takes the cheapest units first: from the level
--- first up to the level target, and at most amount units (nil means all). For an item, it is one auction of target.
+-- first up to the level target, and at most amount units (nil means all). For an item, it is one stack of target.
 -- Returns { quantity, cost, covered = { [unitPrice] = true }, last = the highest level reached, levels = count,
 -- complete = true if the last level is taken whole, own = true if a level in the range is yours }.
 local function coverPlan(levels, first, target, amount, isItem)
     local plan = { quantity = 0, cost = 0, covered = {}, levels = 0, complete = true, own = false, isItem = isItem }
     if isItem then
-        plan.quantity, plan.cost = target.quantity, target.unitPrice * target.quantity
+        local size = target.stackSize or target.quantity
+        plan.quantity, plan.cost = size, target.unitPrice * size
         plan.covered[levelId(target)], plan.last, plan.levels = true, target, 1
         return plan
     end
@@ -1095,18 +1253,22 @@ function Tab:_NextBuy()
         return entry, nil, nil, "a buy is open"
     end
     if self.pending then
-        return entry, nil, nil, "a search is running"
+        return entry, nil, nil, self:_Reading() and "reading the pages" or "a search is running"
     end
     local plan = self.deps.plan
     local levels = self:_Levels(done.rows)
     local isItem = done.rows[1] ~= nil and done.rows[1].isCommodity == false
     local lastPrice = self.run and self.run.key == entry.key and self.run.lastPrice or nil
     local chosen = self.levelSel and findLevel(levels, self.levelSel) or nil
+    if isItem and self.chainGroup then
+        -- Buy next stays in the group of the last buy.
+        chosen = findLevel(levels, self.chainGroup)
+    end
     local nextLevel
-    if groupAuctions() then
-        nextLevel = plan.NextLevel(levels, lastPrice, isItem)
-    else
+    if isItem then
         nextLevel = nextAuction(levels, lastPrice)
+    else
+        nextLevel = plan.NextLevel(levels, lastPrice)
     end
     local level = chosen or nextLevel
     local reason
@@ -1151,8 +1313,8 @@ function Tab:BuyNext()
     local prev = run.lastPrice or cheapestBuyable(levels).unitPrice
     local percent = self:GetJumpPercent()
     local check = self.deps.plan.JumpCheck(prev, level.unitPrice, percent)
-    if check.jump and not groupAuctions() then
-        -- TBC: the warning shows in the confirm box, before the click that buys the auction.
+    if check.jump and cover.isItem then
+        -- An item: the warning shows in the confirm box, before the click that buys the stack.
         return self:_StartBuy(entry, cover, { prev = prev, percent = check.percent })
     end
     if check.jump then
@@ -1182,13 +1344,7 @@ function Tab:_StartBuy(entry, cover, jump)
     local level = cover.last
     local first = level.rows[1]
     if first.isCommodity == false then
-        local row
-        for _, candidate in ipairs(level.rows) do
-            if not isOwn(candidate) then
-                row = candidate
-                break
-            end
-        end
+        local row = firstFree(level)
         if not row then
             self:_Say("own listing")
             return false, "own listing"
@@ -1196,7 +1352,7 @@ function Tab:_StartBuy(entry, cover, jump)
         self.buy = {
             entry = entry, level = level, row = row, isItem = true, phase = "quoted", itemID = entry.itemID,
             auctionID = row.auctionID, quantity = row.quantity or 1, unit = row.unitPrice, total = buyoutOf(row),
-            jump = jump,
+            jump = jump, stacks = level.stacks,
         }
         self:_ShowConfirm()
         self:_Update()
@@ -1260,12 +1416,14 @@ local function quoteText(self, buy)
         string.format("Buy %d x %s", buy.quantity, link or self:_ItemName(buy.entry)),
         string.format("Unit price: %s   Total: %s", money(buy.unit), money(buy.total)),
     }
-    if buy.isItem and not groupAuctions() then
-        lines[1] = string.format("Buy one auction: %d x %s", buy.quantity, link or self:_ItemName(buy.entry))
-        local owner, left = buy.row.owner, TIME_LEFT[buy.row.timeLeft or 0]
+    if buy.isItem then
+        lines[1] = string.format("Buy one stack: %d x %s", buy.quantity, link or self:_ItemName(buy.entry))
+        local owner, left = buy.row.owner, ns.Flavour and ns.Flavour.hasCommodityMarket == false
+            and TIME_LEFT[buy.row.timeLeft or 0] or nil
         if owner or left then
             lines[#lines + 1] = string.format("Seller: %s   Time left: %s", owner or "?", left or "?")
         end
+        lines[#lines + 1] = "Available: " .. ns.BuyingPlan.AvailableText(buy.stacks or 1, buy.quantity)
         if self.boxNote then
             table.insert(lines, 1, self.boxNote)
         end
@@ -1310,8 +1468,8 @@ function Tab:_ShowConfirm()
         text = text .. "\nThis is an estimate. Get the quote first."
     end
     local yes = preview and "Get quote" or (over and "Buy anyway" or "Confirm")
-    if buy.isItem and not groupAuctions() then
-        yes = self.chain and "Next" or "Buy"
+    if buy.isItem then
+        yes = self.chain and "Buy next" or "Buy"
     end
     makeDialog("FlipsideBuyConfirm"):Open(preview and "Next purchase" or "Confirm purchase", text, {
         yes = yes, no = "Cancel", red = over or jumped, keep = true,
@@ -1325,7 +1483,7 @@ function Tab:_ShowConfirm()
             end
         end,
         onNo = function()
-            self.continueKey, self.chain = nil, nil
+            self.continueKey, self.chain, self.chainGroup = nil, nil, nil
             self:_CancelQuote("cancelled")
         end,
     })
@@ -1376,7 +1534,7 @@ end
 
 -- Close the confirm box and stop the move to the next row. A purchase in flight stays.
 function Tab:_CloseConfirm()
-    self.continueKey, self.chain, self.boxNote = nil, nil, nil
+    self.continueKey, self.chain, self.boxNote, self.chainGroup = nil, nil, nil, nil
     if dialogs.FlipsideBuyConfirm then
         dialogs.FlipsideBuyConfirm:Close()
     end
@@ -1389,7 +1547,7 @@ function Tab:_CancelQuote(why)
         self:_CloseConfirm()
         return
     end
-    self.continueKey, self.chain, self.boxNote = nil, nil, nil
+    self.continueKey, self.chain, self.boxNote, self.chainGroup = nil, nil, nil, nil
     self.buy = nil
     if dialogs.FlipsideBuyConfirm then
         dialogs.FlipsideBuyConfirm:Close()
@@ -1403,22 +1561,40 @@ function Tab:_CancelQuote(why)
 end
 
 -- Ask the AH for the rows of the item again, without a log line. It waits for the ready event or a retry.
-function Tab:_Refresh(entry)
-    self.refreshEntry = entry
+-- range = { from, to } reads only these pages again (see _Start).
+function Tab:_Refresh(entry, range)
+    self.refreshEntry, self.refreshRange = entry, range
     if self.pending then
         return
     end
-    local status, text = self:_Start(entry, true)
+    local status, text = self:_Start(entry, true, range)
     if status == "wait" then
         self:_Say(text)
         self.deps.after(RETRY_SECONDS, function()
             if self.refreshEntry == entry then
-                self:_Refresh(entry)
+                self:_Refresh(entry, range)
             end
         end)
         return
     end
-    self.refreshEntry = nil
+    self.refreshEntry, self.refreshRange = nil, nil
+end
+
+-- Make the page of the next stack the page that the client list shows: a buy click needs that list. The selection
+-- of a group and the end of a read call this. It reads one page and returns true, or returns false.
+function Tab:_EnsureLive(entry)
+    if self.livePage == nil or self.buy or self.pending or entry.key ~= self.selectedKey then
+        return false
+    end
+    local _, _, _, reason, cover = self:_NextBuy()
+    local ready = reason == nil or reason == "waiting for the Auction House"
+    local row = ready and cover and cover.isItem and firstFree(cover.last) or nil
+    if not (row and row.page) or row.page == self.livePage then
+        return false
+    end
+    self:_Refresh(entry, { from = row.page, to = row.page })
+    self:_Update()
+    return true
 end
 
 -- Click 2: buy at the quote. Call it only from a click.
@@ -1434,9 +1610,12 @@ function Tab:_Confirm()
     -- The box stays open after the buy and shows the next row (see _ContinueBuy).
     self.continueKey = buy.entry.key
     self.chain, self.boxNote = true, nil
+    if buy.isItem then
+        self.chainGroup, self.chainReads = buy.level.id, 0
+    end
     local ok, err
-    if buy.isItem and not groupAuctions() then
-        -- The list indexes shift after a buy. Find the auction in the list again before the call.
+    if buy.isItem then
+        -- The list indexes shift after a buy. Find an identical auction in the list again before the call.
         local index = self:_Refind(buy)
         if not index then
             self:_Fail(buy, "the auction is gone", true)
@@ -1462,12 +1641,12 @@ function Tab:_Confirm()
     self:_Update()
 end
 
--- The index in the current list of the auction of buy.row (same item, stack, buyout and seller), or nil.
--- The index of the shown auction comes first.
+-- The index in the current list of an auction like buy.row (same item, stack size, buyout and seller), or nil.
+-- It never gives your own auction or an auction of another price or stack size. The shown auction comes first.
 function Tab:_Refind(buy)
     local found
     for _, row in ipairs(self.deps.client.LiveRows(buy.itemID) or {}) do
-        if sameAuction(row, buy.row) then
+        if not isOwn(row) and sameAuction(row, buy.row) then
             if row.auctionID == buy.row.auctionID then
                 return row.auctionID
             end
@@ -1490,7 +1669,7 @@ function Tab:_Succeed(buy)
     self.deps.log:Add(buy.entry, string.format("bought %d at %s", buy.quantity, money(buy.level.unitPrice)),
         "total " .. money(buy.total))
     self:_Say("bought " .. buy.quantity .. " x " .. self:_ItemName(buy.entry))
-    self:_Refresh(buy.entry)
+    self:_Refresh(buy.entry, buy.isItem and pageRange(buy.level) or nil)
     self:_AwaitRows()
     self:_Update()
 end
@@ -1506,25 +1685,58 @@ function Tab:_AwaitRows()
     end
 end
 
--- TBC: the box shows that no auction is left. Only Close works.
+-- An item stack group: the box shows that no stack is left. Only Close works.
 function Tab:_ShowEnd(reason)
-    local text = "No more auctions"
+    local text = "No more stacks in this group"
     if reason and reason ~= "nothing left to buy" then
         text = text .. "\n" .. reason
     end
     if self.boxNote then
         text = self.boxNote .. "\n" .. text
     end
-    self.continueKey, self.boxNote = nil, nil
+    self.continueKey, self.boxNote, self.chainGroup = nil, nil, nil
     local box = makeDialog("FlipsideBuyConfirm")
     box:Open("Confirm purchase", text, {
-        yes = "Next", no = "Close",
+        yes = "Buy next", no = "Close",
         onNo = function()
             self.chain = nil
         end,
     })
     box.yesButton:SetEnabled(false)
     self:_Update()
+end
+
+-- The new rows came after an item buy. Show the next stack of the group in the open box, or the end.
+-- The next stack is an identical one: same item, seller, buyout and stack size. Its page must be the page of the
+-- client list, so the box may first read that page. This only shows the stack; the buy needs a click.
+function Tab:_ContinueItem(key)
+    local entry = self:_Selected()
+    if self.dryRun then
+        self:_CloseConfirm()
+        return
+    end
+    local done = self.results[key]
+    local level = done and findLevel(self:_Levels(done.rows), self.chainGroup)
+    local row = level and not level.own and firstFree(level) or nil
+    if not row then
+        self:_Say("No more stacks in this group")
+        self:_ShowEnd()
+        return
+    end
+    if row.page and row.page ~= self.livePage and (self.chainReads or 0) < MAX_CHAIN_READS then
+        -- Wait for the page of the next stack. The result comes back here.
+        self.chainReads = (self.chainReads or 0) + 1
+        self.continueKey = key
+        self:_Refresh(entry, { from = row.page, to = row.page })
+        return
+    end
+    self.levelSel = level.id
+    self:BuyNext()
+    -- A refusal leaves no open buy: the box shows the end with the reason.
+    if not self.buy then
+        local _, _, _, reason = self:_NextBuy()
+        self:_ShowEnd(reason)
+    end
 end
 
 -- The new rows came after a buy. Show the next row in the open confirm box, or close the box.
@@ -1537,15 +1749,13 @@ function Tab:_ContinueBuy()
         self:_CloseConfirm()
         return
     end
+    if self.chainGroup then
+        self:_ContinueItem(key)
+        return
+    end
     -- The selection moves to the row in the box.
     self.levelSel = nil
     local _, _, _, reason, cover = self:_NextBuy()
-    local each = not groupAuctions()
-    if reason and each then
-        self:_Say(reason)
-        self:_ShowEnd(reason)
-        return
-    end
     if reason or self.dryRun then
         self:_CloseConfirm()
         self:_Say(reason or "")
@@ -1556,13 +1766,9 @@ function Tab:_ContinueBuy()
     self.previewQuote = true
     self:BuyNext()
     self.previewQuote = nil
-    -- A price jump warning or a refusal leaves no open buy: close the box. On TBC the box shows the end.
+    -- A price jump warning or a refusal leaves no open buy: close the box.
     if not self.buy then
-        if each then
-            self:_ShowEnd("nothing left to buy")
-        else
-            self:_CloseConfirm()
-        end
+        self:_CloseConfirm()
     end
 end
 
@@ -1576,11 +1782,11 @@ local function countSame(rows, row)
     return count
 end
 
--- TBC: remove the auctions that failed from fresh rows. An auction that failed and is still in the list stays out
--- of it, so Next does not offer it again. A gone auction needs no removal.
+-- Items: remove the auctions that failed from fresh rows. An auction that failed and is still in the list stays out
+-- of it, so Buy next does not offer it again. A gone auction needs no removal.
 function Tab:_DropKnown(entry, rows)
     local run = self.run
-    if groupAuctions() or not (run and run.key == entry.key) then
+    if not (run and run.key == entry.key) or (rows[1] ~= nil and rows[1].isCommodity ~= false) then
         return rows
     end
     local function without(list, row, times)
@@ -1609,7 +1815,7 @@ end
 
 -- drop is true if the auction can stay in the list after the failure (TBC: it must not come up again).
 function Tab:_Fail(buy, reason, drop)
-    local each = buy.isItem and not groupAuctions() and self.continueKey ~= nil
+    local each = buy.isItem and self.continueKey ~= nil
     if not each then
         self:_CloseConfirm()
     end
@@ -1625,7 +1831,7 @@ function Tab:_Fail(buy, reason, drop)
             self:_Run(buy.entry).dropWatch = { row = buy.row, before = countSame(done.rows, buy.row) }
         end
     end
-    self:_Refresh(buy.entry)
+    self:_Refresh(buy.entry, buy.isItem and pageRange(buy.level) or nil)
     if each then
         self:_AwaitRows()
     end
@@ -1822,7 +2028,7 @@ function Tab:_OnTreeSelect(node)
     if not self.deps.client.CanLiveSearch() then
         return
     end
-    if self.pending then
+    if self.pending and not self:_CancelRead("read stopped") then
         self.nextSearchKey = node.entry.key
         self:_Say("search queued: " .. self:_ItemName(node.entry))
         return
@@ -1842,19 +2048,21 @@ end
 
 -- The columns of the price level list. The header, the totals row and the row cells use the same definition.
 -- Each column takes an equal share of the width and the text is right-aligned.
--- On Forever a price point is unique, so the quantity equals the listings. A Listings column can come back
--- later for TBC, where one price can have many listings.
+-- The Available column shows "50 stacks of 1" for a stack group (an item), and "x5" for a commodity level.
+-- The seller and the time left show only for stack groups (the time left on TBC only).
 local LEVEL_COLUMNS = {
     { key = "unitPrice", title = "Unit Price", width = { share = 1 }, number = true, format = money },
     { key = "stackPrice", title = "Stack Price", width = { share = 1 }, number = true,
         format = function(value)
             return value and money(value) or ""
         end },
-    { key = "quantity", title = "Quantity", width = { share = 1 }, number = true,
-        format = function(value)
+    { key = "quantity", title = "Available", width = { share = 1 }, number = true,
+        format = function(value, data)
+            if data and data.stacks then
+                return ns.BuyingPlan.AvailableText(data.stacks, data.stackSize)
+            end
             return "x" .. tostring(value)
         end },
-    -- The seller and the time left show only where each auction has its own row (TBC).
     { key = "owner", title = "Seller", width = { share = 1 }, hidden = true,
         format = function(value)
             return value or ""
@@ -1865,8 +2073,10 @@ local LEVEL_COLUMNS = {
         end },
 }
 local LEVEL_OPTIONS = { gap = 6 }
-local STACK_COLUMN = LEVEL_COLUMNS[2]
+local STACK_COLUMN, QUANTITY_COLUMN = LEVEL_COLUMNS[2], LEVEL_COLUMNS[3]
 local OWNER_COLUMN, TIME_COLUMN = LEVEL_COLUMNS[4], LEVEL_COLUMNS[5]
+-- The share of the Available column when it shows the text of a stack group.
+local WIDE_SHARE = 1.6
 
 local function initRowsRow(row, data)
     local Kit = ns.Kit
@@ -1875,7 +2085,8 @@ local function initRowsRow(row, data)
         cells = Kit.CreateColumnCells(row, LEVEL_COLUMNS, LEVEL_OPTIONS)
         row.cells = cells
     end
-    local hiddenNow = tostring(STACK_COLUMN.hidden) .. tostring(OWNER_COLUMN.hidden)
+    local hiddenNow = tostring(STACK_COLUMN.hidden) .. tostring(OWNER_COLUMN.hidden) .. tostring(TIME_COLUMN.hidden)
+        .. tostring(QUANTITY_COLUMN.width.share)
     if row.cellsHidden ~= hiddenNow then
         row.cellsHidden = hiddenNow
         Kit.LayoutColumnLabels(cells, row, LEVEL_COLUMNS, LEVEL_OPTIONS)
@@ -1946,7 +2157,7 @@ function Tab:_Update()
     local client = self.deps.client
     local canSearch = client.CanLiveSearch()
     local selected = self:_Selected()
-    ui.stop:SetShown(self.queue ~= nil)
+    ui.stop:SetShown(self.queue ~= nil or self:_Reading())
     if self.searchResults then
         -- The results are a flat list of items, with no group nodes.
         self.nodes = {}
@@ -1994,7 +2205,7 @@ function Tab:_Update()
     end
     local _, nextLevel, _, reason, cover = self:_NextBuy()
     local verb = "Buy"
-    -- The amount box does not apply to an item: an item buy is one auction.
+    -- The amount box does not apply to an item: an item buy is one stack.
     local isItem = done ~= nil and done.rows[1] ~= nil and done.rows[1].isCommodity == false
     ui.amount:SetEnabled(not isItem)
     self.covered = (reason == nil and cover) and cover.covered or {}
@@ -2017,19 +2228,29 @@ function Tab:_Update()
     ui.totalCells[costKey]:SetText("Total  " .. money(totals.cost))
     ui.buyNext:SetText(verb)
     ui.buyNext:SetEnabled(nextLevel ~= nil and reason == nil)
-    self:_ShowStackColumn(not (levels[1] and BuyingTab.StackSize(levels[1]) == nil))
+    self:_ShowColumns(levels)
     ui.rowsList:SetData(described)
 end
 
--- Show or hide the Stack Price column (header and cells). A commodity level has no stack price.
-function Tab:_ShowStackColumn(show)
+-- Show or hide the Stack Price column and the Seller and Time left columns (header and cells). A commodity level has
+-- no stack price. levels are the levels of the shown item.
+function Tab:_ShowColumns(levels)
     local Kit, ui = ns.Kit, self.ui
-    local hide = not show
-    local single = groupAuctions()
-    if (STACK_COLUMN.hidden or false) == hide and (OWNER_COLUMN.hidden or false) == single then
+    local hide = levels[1] ~= nil and BuyingTab.StackSize(levels[1]) == nil
+    local groups = levels[1] ~= nil and levels[1].stacks ~= nil
+    local sellers = false
+    for _, level in ipairs(levels) do
+        sellers = sellers or level.owner ~= nil or level.own
+    end
+    local hideOwner = not (groups and sellers)
+    local hideTime = not (groups and not hasCommodityMarket())
+    local share = groups and WIDE_SHARE or 1
+    if (STACK_COLUMN.hidden or false) == hide and (OWNER_COLUMN.hidden or false) == hideOwner
+        and (TIME_COLUMN.hidden or false) == hideTime and QUANTITY_COLUMN.width.share == share then
         return
     end
-    STACK_COLUMN.hidden, OWNER_COLUMN.hidden, TIME_COLUMN.hidden = hide, single, single
+    STACK_COLUMN.hidden, OWNER_COLUMN.hidden, TIME_COLUMN.hidden = hide, hideOwner, hideTime
+    QUANTITY_COLUMN.width.share = share
     local edge = ui.rowsList.contentInsets or { left = 0, right = 0 }
     local options = { gap = LEVEL_OPTIONS.gap, left = edge.left, right = edge.right }
     Kit.LayoutColumnLabels(ui.levelHeader.labels, ui.levelHeader.frame, LEVEL_COLUMNS, options)
@@ -2055,6 +2276,7 @@ end
 -- Hide the panel; the host or Blizzard's own code takes over.
 function Tab:Deselect()
     self:_CancelQuote("the tab was left")
+    self:_CancelRead("read stopped")
     self.active = false
     if self.content then
         self.content:Hide()

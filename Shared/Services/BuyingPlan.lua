@@ -149,32 +149,106 @@ function BuyingPlan.Evaluate(entry, rows, opts)
     return result
 end
 
--- Group live rows by unit price. rows: { auctionID, unitPrice, quantity, isCommodity, ownerItem }.
+-- The group key of an auction row: item, seller, buyout and stack size. Auctions with the same key are the same
+-- stack for sale, so a buy of one is as good as a buy of another.
+function BuyingPlan.GroupKey(row)
+    local link = row.itemLink
+    local item = link and (ns.ItemString and ns.ItemString.ToExactKey(link) or link) or ""
+    local buyout = row.buyout or math.floor(row.unitPrice * (row.quantity or 1) + 0.5)
+    return string.format("%s|%s|%d|%d", item, row.owner or "", buyout, row.quantity or 1)
+end
+
+-- The text of the Available column of a stack group: "50 stacks of 1", or "1 stack of 20".
+function BuyingPlan.AvailableText(stacks, stackSize)
+    return string.format("%d %s of %d", stacks, stacks == 1 and "stack" or "stacks", stackSize)
+end
+
+local function ByPageThenID(a, b)
+    if a.unitPrice ~= b.unitPrice then
+        return a.unitPrice < b.unitPrice
+    end
+    if (a.quantity or 1) ~= (b.quantity or 1) then
+        return (a.quantity or 1) < (b.quantity or 1)
+    end
+    if (a.page or 0) ~= (b.page or 0) then
+        return (a.page or 0) < (b.page or 0)
+    end
+    return (a.auctionID or 0) < (b.auctionID or 0)
+end
+
+-- Sort rows by unit price, then stack size, then page, then list index. Returns the same table.
+function BuyingPlan.SortRows(rows)
+    table.sort(rows, ByPageThenID)
+    return rows
+end
+
+-- Replace the rows of the pages first to last (0-based) by fresh rows. Rows of a page at or after pageCount are
+-- dropped, because the list has become shorter. Returns a new sorted list.
+function BuyingPlan.MergePages(rows, first, last, fresh, pageCount)
+    local out = {}
+    for _, row in ipairs(rows or {}) do
+        local page = row.page or 0
+        if (page < first or page > last) and (pageCount == nil or page < pageCount) then
+            out[#out + 1] = row
+        end
+    end
+    for _, row in ipairs(fresh or {}) do
+        out[#out + 1] = row
+    end
+    return BuyingPlan.SortRows(out)
+end
+
+-- Group item auctions (isCommodity = false) by GroupKey. One level for each group:
+-- { id = key, unitPrice, stackSize, stacks, quantity (all items), listings = stacks, own, owner, timeLeft, rows }.
+-- A group of your own auctions is apart from the others. timeLeft is the lowest code of the group.
+local function StackLevels(rows, opts)
+    local byKey, levels = {}, {}
+    for _, row in ipairs(rows) do
+        if type(row.unitPrice) == "number" then
+            local own = IsOwn(row, opts)
+            local key = BuyingPlan.GroupKey(row) .. (own and "|own" or "")
+            local level = byKey[key]
+            if not level then
+                level = {
+                    id = key, unitPrice = row.unitPrice, stackSize = row.quantity or 1, stacks = 0, quantity = 0,
+                    listings = 0, own = own, owner = row.owner, timeLeft = row.timeLeft, rows = {},
+                }
+                byKey[key] = level
+                levels[#levels + 1] = level
+            end
+            level.stacks = level.stacks + 1
+            level.listings = level.stacks
+            level.quantity = level.quantity + (row.quantity or 1)
+            level.rows[#level.rows + 1] = row
+            if row.timeLeft and (not level.timeLeft or row.timeLeft < level.timeLeft) then
+                level.timeLeft = row.timeLeft
+            end
+        end
+    end
+    table.sort(levels, function(a, b)
+        if a.unitPrice ~= b.unitPrice then
+            return a.unitPrice < b.unitPrice
+        end
+        if a.stackSize ~= b.stackSize then
+            return a.stackSize < b.stackSize
+        end
+        if (a.owner or "") ~= (b.owner or "") then
+            return (a.owner or "") < (b.owner or "")
+        end
+        return a.id < b.id
+    end)
+    return levels
+end
+
+-- Group live rows. rows: { auctionID, unitPrice, quantity, isCommodity, ownerItem, owner, buyout, itemLink }.
+-- Item auctions (isCommodity = false) form one level for each seller, price and stack size (see StackLevels).
+-- Other rows (commodities) form one level for each unit price:
 -- Returns levels, cheapest first: { unitPrice, quantity, listings, own, rows }. own is true if one row is yours.
--- opts.group = false gives one level for each row (an auction): { id = row.auctionID, unitPrice, quantity, listings =
--- 1, own, rows = { row } }, sorted by unit price, then by stack size, then by auctionID.
 function BuyingPlan.PriceLevels(rows, opts)
     opts = opts or {}
     local byPrice, levels = {}, {}
-    if opts.group == false then
-        for _, row in ipairs(rows or {}) do
-            if type(row.unitPrice) == "number" then
-                levels[#levels + 1] = {
-                    id = row.auctionID, unitPrice = row.unitPrice, quantity = row.quantity or 1, listings = 1,
-                    own = IsOwn(row, opts), rows = { row },
-                }
-            end
-        end
-        table.sort(levels, function(a, b)
-            if a.unitPrice ~= b.unitPrice then
-                return a.unitPrice < b.unitPrice
-            end
-            if a.quantity ~= b.quantity then
-                return a.quantity < b.quantity
-            end
-            return (a.id or 0) < (b.id or 0)
-        end)
-        return levels
+    if rows and rows[1] and rows[1].isCommodity == false then
+        return StackLevels(rows, opts)
     end
     for _, row in ipairs(rows or {}) do
         if type(row.unitPrice) == "number" then

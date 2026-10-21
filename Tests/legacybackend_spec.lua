@@ -270,6 +270,22 @@ describe("LegacyBackend", function()
             assert.are.same({ ADDON_NAME, nil, nil, 0, false, 0, false, true, nil, n = 9 }, queries[1])
         end)
 
+        it("sends the query of the page that the caller names", function()
+            assert.is_true(A().LiveSearch(11, 3))
+            assert.are.same({ ADDON_NAME, nil, nil, 3, false, 0, false, true, nil, n = 9 }, queries[1])
+        end)
+
+        it("gives the number of result pages from the total of the list, 50 rows for each page", function()
+            _G.GetNumAuctionItems = function() return 50, 120 end
+            assert.are.equal(3, A().LivePageCount())
+            _G.GetNumAuctionItems = function() return 50, 100 end
+            assert.are.equal(2, A().LivePageCount())
+            _G.GetNumAuctionItems = function() return 0, 0 end
+            assert.are.equal(1, A().LivePageCount())
+            _G.GetNumAuctionItems = function() return 3 end
+            assert.is_nil(A().LivePageCount())
+        end)
+
         it("refuses with a text and sends no query when the client is busy", function()
             canQuery = false
             assert.is_false(A().IsReady())

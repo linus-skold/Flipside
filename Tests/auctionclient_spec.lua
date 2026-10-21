@@ -264,6 +264,25 @@ describe("AuctionClient", function()
             assert.is_false(rows[2].isCommodity)
         end)
 
+        it("gives the seller of an item row when the result has one owner", function()
+            mock.commodity[6] = false
+            mock.itemResults[6] = {
+                { auctionID = 3, link = "L3", buyout = 900, quantity = 3, owners = { "Anna-Realm" } },
+                { auctionID = 4, link = "L4", buyout = 100, quantity = 1, owners = { "A", "B" } },
+                { auctionID = 5, link = "L5", buyout = 100, quantity = 1 },
+            }
+            local rows = ns.AuctionClient.LiveRows(6)
+            assert.is_nil(rows[1].owner)
+            assert.is_nil(rows[2].owner)
+            assert.are.equal("Anna-Realm", rows[3].owner)
+        end)
+
+        it("has no page count and ignores a page", function()
+            assert.is_nil(ns.AuctionClient.LivePageCount())
+            assert.is_true(ns.AuctionClient.LiveSearch(5, 2))
+            assert.are.equal(5, mock.searchQueries[1].itemKey.itemID)
+        end)
+
         it("reads the ready flag and asks for the owned list", function()
             assert.is_true(ns.AuctionClient.IsReady())
             mock.throttleReady = false
