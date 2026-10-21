@@ -232,11 +232,12 @@ describe("InboxList", function()
         end)
     end)
 
-    it("covers the client buttons: a higher frame level and a solid parchment background", function()
+    it("covers the client buttons: a higher frame level and a solid dark brown background", function()
         assert.is_true(list.frame:GetFrameLevel() > list.frame:GetParent():GetFrameLevel())
         assert.is_not_nil(list.cover.colorTexture)
         assert.are.equal(1, list.cover.colorTexture[4])
-        assert.is_true(list.cover.colorTexture[1] > 0.7, "the background is light")
+        assert.is_true(list.cover.colorTexture[1] < 0.25, "the background is dark")
+        assert.is_true(list.cover.colorTexture[1] > list.cover.colorTexture[3], "the background is brown")
     end)
 
     it("scrolls for more mails than rows", function()
@@ -257,26 +258,75 @@ describe("InboxList", function()
         assert.are.equal("Ann", first.sender:GetText())
         assert.are.equal("Ore for you", first.subject:GetText())
         assert.are.equal("x3", first.extra:GetText())
-        assert.are.equal("|cff1a6e1a" .. "29d|r", first.days:GetText())
+        assert.are.equal("|cff20ff20" .. "29 Days|r", first.days:GetText())
         assert.are.equal("pkg1", first.icon.texture)
         assert.are.equal("12345c", second.extra:GetText())
         assert.are.equal("mail2", second.icon.texture, "a mail with no package shows the stationery icon")
         assert.are.equal("Unknown", third.sender:GetText())
-        assert.are.equal("x1 |cffa01010COD 500c|r", third.extra:GetText())
-        assert.are.equal("|cffa01010" .. "12h|r", third.days:GetText())
+        assert.are.equal("x1 |cffff2020COD 500c|r", third.extra:GetText())
+        assert.are.equal("|cffff2020" .. "12 Hr|r", third.days:GetText())
         assert.are.equal("mail3", third.icon.texture, "a GM mail shows the stationery icon")
     end)
 
-    it("shows unread mail in dark brown and read mail in a lighter brown, for parchment", function()
-        local unread, read = rows()[1].sender.color, rows()[2].sender.color
-        assert.are.same({ 0.35, 0.18, 0.02 }, { unread[1], unread[2], unread[3] })
-        assert.are.same({ 0.45, 0.38, 0.28 }, { read[1], read[2], read[3] })
+    it("colours the text as the client inbox does, from the client colour globals", function()
+        _G.NORMAL_FONT_COLOR = { r = 0.9, g = 0.7, b = 0.1 }
+        _G.HIGHLIGHT_FONT_COLOR = { r = 0.95, g = 0.95, b = 0.9 }
+        list:Refresh()
+        local unread, subject, read = rows()[1].sender.color, rows()[1].subject.color, rows()[2].sender.color
+        assert.are.same({ 0.9, 0.7, 0.1 }, { unread[1], unread[2], unread[3] }, "an unread sender is normal")
+        assert.are.same({ 0.95, 0.95, 0.9 }, { subject[1], subject[2], subject[3] }, "an unread subject is white")
+        assert.are.same({ 0.75, 0.75, 0.75 }, { read[1], read[2], read[3] }, "a read mail is grey")
+        local readSubject = rows()[2].subject.color
+        assert.are.same({ 0.75, 0.75, 0.75 }, { readSubject[1], readSubject[2], readSubject[3] })
+        _G.NORMAL_FONT_COLOR, _G.HIGHLIGHT_FONT_COLOR = nil, nil
     end)
 
-    it("tints the selection and the hover so that they show on parchment", function()
+    it("uses the client colour codes and day formats when they exist", function()
+        _G.GREEN_FONT_COLOR_CODE, _G.RED_FONT_COLOR_CODE, _G.FONT_COLOR_CODE_CLOSE = "|cff00aa00", "|cffcc0000", "|r"
+        _G.DAYS_ABBR, _G.HOURS_ABBR = "%d Dy", "%d Hrs"
+        assert.are.equal("|cff00aa00" .. "5 Dy|r", ns.InboxList.DaysText(5.9))
+        assert.are.equal("|cffcc0000" .. "2 Hrs|r", ns.InboxList.DaysText(0.1))
+        _G.GREEN_FONT_COLOR_CODE, _G.RED_FONT_COLOR_CODE, _G.FONT_COLOR_CODE_CLOSE = nil, nil, nil
+        _G.DAYS_ABBR, _G.HOURS_ABBR = nil, nil
+    end)
+
+    it("uses the client fonts for the sender and the other text", function()
         local row = rows()[1]
-        assert.are.equal(0.45, row.selection.alpha)
-        assert.are.equal("BLEND", row.selection.blendMode)
+        assert.are.equal("GameFontNormalSmall", row.sender.fontObject or row.sender.font)
+        assert.are.equal("GameFontHighlightSmall", row.subject.fontObject or row.subject.font)
+    end)
+
+    describe("sender width", function()
+        it("fits the text, up to the maximum", function()
+            assert.are.equal(31, ns.InboxList.SenderWidth(30, 0))
+            assert.are.equal(130, ns.InboxList.SenderWidth(132, 0), "Alliance Auction House fits in the mock font")
+            assert.are.equal(130, ns.InboxList.SenderWidth(400, 0), "a long sender is cut at the maximum")
+        end)
+
+        it("shows a common sender in full at the minimum frame width", function()
+            assert.are.equal(116, ns.InboxList.SenderWidth(115, 305))
+        end)
+
+        it("leaves room for the subject in a narrow row", function()
+            local width = ns.InboxList.SenderWidth(400, 200)
+            assert.is_true(width < 130)
+            -- sender, subject, money and days must fit in the row
+            assert.is_true(26 + width + 4 + 40 + 4 + 60 + 4 + 40 + 2 <= 200)
+        end)
+
+        it("sets the sender width of a row and gives the rest to the subject", function()
+            local row = rows()[1]
+            assert.are.equal(#"Ann" * 6 + 1, row.sender:GetWidth())
+            assert.are.equal(row.sender, row.subject.points[1][2], "the subject starts after the sender")
+            assert.are.equal("RIGHT", row.subject.points[1][3])
+            assert.are.equal(row.extra, row.subject.points[2][2], "the subject ends at the money")
+        end)
+    end)
+
+    it("tints the selection and the hover with a gold glow that shows on a dark row", function()
+        local row = rows()[1]
+        assert.are.equal(0.2, row.selection.alpha)
+        assert.are.equal("ADD", row.selection.blendMode)
         assert.is_false(row.hover:IsShown())
         row.scripts.OnEnter(row)
         assert.is_true(row.hover:IsShown())
@@ -412,9 +462,11 @@ describe("InboxList", function()
         assert.is_true(clientFrames[2]:IsShown())
     end)
 
-    it("formats the days left", function()
-        assert.are.equal("|cff1a6e1a" .. "5d|r", ns.InboxList.DaysText(5.9))
-        assert.are.equal("|cffa01010" .. "1h|r", ns.InboxList.DaysText(0.01))
-        assert.are.equal("|cffa01010" .. "12h|r", ns.InboxList.DaysText(0.5))
+    it("formats the days left: green days from one day, red hours under one day", function()
+        assert.are.equal("|cff20ff20" .. "5 Days|r", ns.InboxList.DaysText(5.9))
+        assert.are.equal("|cff20ff20" .. "1 Days|r", ns.InboxList.DaysText(1))
+        assert.are.equal("|cffff2020" .. "23 Hr|r", ns.InboxList.DaysText(0.99))
+        assert.are.equal("|cffff2020" .. "1 Hr|r", ns.InboxList.DaysText(0.01))
+        assert.are.equal("|cffff2020" .. "12 Hr|r", ns.InboxList.DaysText(0.5))
     end)
 end)
