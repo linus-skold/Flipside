@@ -588,9 +588,10 @@ describe("TooltipLines", function()
             model = build(full(), { stackMode = false, stackCount = 5 })[1]
             assert.are.same({ "4s", "5s", "6s", "50s" }, model.rows[1].cells)
             model = build(full(), { stackMode = true, stackCount = 1 })[1]
+            assert.are.same({ "4s", "5s", "6s", "50s" }, model.rows[1].cells)
         end)
 
-        it("shows the per-item cells and the per-item cells when the table altStack is off", function()
+        it("shows the per-item cells when the table altStack is off", function()
             local line =
                 { id = 1, kind = "table", label = "Price table", formula = "", enabled = true, altStack = false }
             local model = build(full(), { stackMode = true, stackCount = 5, config = { lines = { line } } })[1]
