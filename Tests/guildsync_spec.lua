@@ -7,6 +7,22 @@ describe("GuildSync", function()
     local SCOPE = "EU._.standard"
     local NOW = 1760000000
 
+    local function makeQueue(burst)
+        return ns.GuildSyncQueue.New({
+            send = function(text)
+                wire[#wire + 1] = text
+                return sendResult
+            end,
+            after = function(seconds, fn)
+                timers[#timers + 1] = { at = clock + seconds, fn = fn }
+            end,
+            clock = function()
+                return clock
+            end,
+            burst = burst,
+        })
+    end
+
     before_each(function()
         ns = {}
         for _, name in ipairs({ "ScanClock", "ScanRecord", "GuildSyncCodec", "GuildPriceStore", "GuildSyncQueue",
@@ -18,19 +34,7 @@ describe("GuildSync", function()
         sendResult = 0
         localData = {}
         lastScan = NOW - 100
-        local queue = ns.GuildSyncQueue.New({
-            send = function(text)
-                wire[#wire + 1] = text
-                return sendResult
-            end,
-            after = function(seconds, fn)
-                timers[#timers + 1] = { at = clock + seconds, fn = fn }
-            end,
-            clock = function()
-                return clock
-            end,
-            burst = 1000,
-        })
+        local queue = makeQueue(1000)
         deps = {
             isEnabled = function()
                 return enabled
@@ -173,7 +177,7 @@ describe("GuildSync", function()
             end
             assert.are.equal(0, deps.guildStore:Count())
             assert.are.equal(1, sync:Status().incoming)
-            clock = clock + 120
+            clock = clock + Codec.IDLE_SECONDS + 20
             receive(Codec.BuildRequest(SCOPE, NOW))
             assert.are.equal(0, sync:Status().incoming)
             assert.is_true(logged("drop incomplete set from Bob"))
@@ -231,6 +235,36 @@ describe("GuildSync", function()
             assert.are.equal(0, deps.guildStore:Count())
         end)
 
+        it("accepts many sets in a row from one sender", function()
+            for setId = 1, 40 do
+                local list = {}
+                for i = 1, 30 do
+                    list[i] = { key = tostring(setId * 100 + i), min = 5, market = 6, qty = 1, time = NOW - 5 }
+                end
+                for _, text in ipairs(assert(Codec.BuildSet(SCOPE, 1000 + setId, list))) do
+                    receive(text)
+                end
+            end
+            assert.are.equal(1200, deps.guildStore:Count())
+            assert.are.equal(0, sync:Status().incoming)
+        end)
+
+        it("accepts the next set when a chunk of a set is lost", function()
+            for setId = 1, 6 do
+                local list = {}
+                for i = 1, 30 do
+                    list[i] = { key = tostring(setId * 100 + i), min = 5, market = 6, qty = 1, time = NOW - 5 }
+                end
+                for index, text in ipairs(assert(Codec.BuildSet(SCOPE, 1000 + setId, list))) do
+                    if not (setId == 3 and index == 2) then
+                        receive(text)
+                    end
+                end
+            end
+            assert.are.equal(150, deps.guildStore:Count())
+            assert.is_true(logged("drop replaced set from Bob"))
+        end)
+
         it("keeps the newest record of an item", function()
             for _, text in ipairs(remoteSet(3, 5, SCOPE, NOW - 5)) do
                 receive(text, "Bob-Realm")
@@ -260,15 +294,17 @@ describe("GuildSync", function()
             assert.same({ Codec.PREFIX }, prefixes)
         end)
 
-        it("shares at most the newest MAX_ITEMS items", function()
-            addLocal(Codec.MAX_ITEMS + 20)
+        it("has no cap: a share of 2000 items sends all of them, also the key 2592", function()
+            addLocal(2000)
+            localData["2592"] = { latest = { time = NOW - 3, min = 5, market = 6, qty = 1, auctions = 1,
+                partial = false }, days = {} }
             sync:SendSet("test")
-            local items = 0
-            for _, text in ipairs(wire) do
-                local chunk = assert(Codec.Parse(text))
-                items = items + #Codec.ParseItems(chunk.items, chunk.time)
-            end
-            assert.are.equal(Codec.MAX_ITEMS, items)
+            local items = wireItems()
+            assert.are.equal(2000, countWire())
+            assert.are.equal(6, items["2592"].market)
+            assert.are.equal(0, deps.queue:Pending())
+            assert.is_nil(sync:Status().shareTotal)
+            assert.is_nil(Codec.MAX_ITEMS)
         end)
 
         it("does not share old items, empty prices or odd keys", function()
@@ -308,7 +344,7 @@ describe("GuildSync", function()
             assert.are.equal(0, #wire)
         end)
 
-        it("replaces an older set that still waits in the queue", function()
+        it("does not queue a message twice when a new share starts while messages wait", function()
             addLocal(25)
             sendResult = 3
             sync:SendSet("first")
@@ -407,6 +443,210 @@ describe("GuildSync", function()
             runTimers()
             assert.is_true(#wire > tries)
             assert.are.equal(0, deps.queue:Pending())
+        end)
+    end)
+
+    describe("full share", function()
+        local function useSlowQueue()
+            deps.queue = makeQueue(4)
+            sync = ns.GuildSync.New(deps)
+        end
+
+        local function wireCounts()
+            local counts, total = {}, 0
+            for _, text in ipairs(wire) do
+                local chunk = assert(Codec.Parse(text))
+                if chunk.kind == "D" then
+                    for _, entry in ipairs(Codec.ParseItems(chunk.items, chunk.time)) do
+                        counts[entry.key] = (counts[entry.key] or 0) + 1
+                        total = total + 1
+                    end
+                end
+            end
+            return counts, total
+        end
+
+        local function step(seconds)
+            clock = clock + (seconds or 1)
+            runTimers()
+        end
+
+        -- Run the clock until the share ends. Return the largest queue length that it saw.
+        local function drain()
+            local largest = 0
+            for _ = 1, 3000 do
+                if not sync:Status().shareTotal and deps.queue:Pending() == 0 then
+                    break
+                end
+                step()
+                largest = math.max(largest, deps.queue:Pending())
+            end
+            return largest
+        end
+
+        local function record(market, time)
+            return { latest = { time = time, min = 5, market = market, qty = 1, auctions = 1, partial = false },
+                days = {} }
+        end
+
+        it("keeps the queue short, and a request goes before the queued items", function()
+            addLocal(2000)
+            useSlowQueue()
+            sync:SendSet("test")
+            local limit = ns.GuildSync.QUEUE_TARGET + 6
+            assert.is_true(deps.queue:Pending() <= limit)
+            assert.are.equal(4, #wire)
+            local status = sync:Status()
+            assert.are.equal(2000, status.shareTotal)
+            assert.is_true(status.shareSent < 2000)
+            local lines = ns.GuildSync.StatusLines(status, clock)
+            assert.is_truthy(lines[4]:find("share running: %d+ of 2000 items sent"))
+            sync:SendRequest(true)
+            local before = #wire
+            step()
+            assert.are.equal("Q", assert(Codec.Parse(wire[before + 1])).kind)
+            assert.is_true(drain() <= limit)
+            assert.are.equal(2000, countWire())
+            assert.is_nil(sync:Status().shareTotal)
+            assert.is_true(sync.marker.done)
+        end)
+
+        it("merges a new share into the running share and does not send everything twice", function()
+            addLocal(2000)
+            useSlowQueue()
+            sync:SendSet("first")
+            for _ = 1, 100 do
+                step()
+            end
+            local _, sentBefore = wireCounts()
+            assert.is_true(sentBefore > 300 and sentBefore < 1500)
+            localData["2600"] = record(8, NOW - 1)
+            localData["9001"] = record(9, NOW - 2)
+            sync:SendSet("second")
+            local status = sync:Status()
+            assert.are.equal(2001, status.shareTotal)
+            drain()
+            local counts, total = wireCounts()
+            local keys = 0
+            for _ in pairs(counts) do
+                keys = keys + 1
+            end
+            assert.are.equal(2001, keys)
+            assert.is_true(total <= 2001 + 1 + ns.GuildSync.SET_ITEMS)
+            assert.are.equal(8, wireItems()["2600"].market)
+            assert.are.equal(9, wireItems()["9001"].market)
+            assert.is_true(sync.marker.done)
+        end)
+
+        it("goes on with the unsent items when a new share has no change", function()
+            addLocal(300)
+            useSlowQueue()
+            sync:SendSet("first")
+            for _ = 1, 10 do
+                step()
+            end
+            sync:SendSet("second")
+            drain()
+            local counts, total = wireCounts()
+            assert.is_true(total <= 300 + ns.GuildSync.SET_ITEMS)
+            for i = 1, 300 do
+                assert.is_not_nil(counts[tostring(2000 + i)])
+            end
+        end)
+
+        it("pauses the cursor on a throttle result and goes on later without loss", function()
+            addLocal(300)
+            useSlowQueue()
+            sendResult = 3
+            sync:SendSet("test")
+            assert.are.equal(1, #wire)
+            local pending = deps.queue:Pending()
+            for _ = 1, 3 do
+                step(100)
+            end
+            assert.are.equal(4, #wire)
+            assert.are.equal(pending, deps.queue:Pending())
+            sendResult = 0
+            step(100)
+            drain()
+            assert.are.equal(300, countWire())
+        end)
+
+        it("waits after the throttle retries ran out, then sends the lost set again", function()
+            addLocal(300)
+            useSlowQueue()
+            sendResult = 3
+            sync:SendSet("test")
+            for _ = 1, 10 do
+                if sync:Status().sharePaused then
+                    break
+                end
+                step(100)
+            end
+            assert.is_true(sync:Status().sharePaused)
+            assert.are.equal(0, deps.queue:Pending())
+            assert.is_true(logged("share paused"))
+            assert.is_truthy(ns.GuildSync.StatusLines(sync:Status(), clock)[4]:find("paused", 1, true))
+            sendResult = 0
+            step(ns.GuildSync.THROTTLE_PAUSE + 1)
+            drain()
+            assert.are.equal(300, countWire())
+            assert.is_nil(sync:Status().shareTotal)
+        end)
+
+        it("marks the share as unfinished while it runs", function()
+            addLocal(200)
+            useSlowQueue()
+            sync:SendSet("test")
+            assert.is_false(sync.marker.done)
+            assert.are.equal(clock, sync.marker.time)
+            drain()
+            assert.is_true(sync.marker.done)
+        end)
+
+        it("sends the data again at login when the last share did not finish", function()
+            addLocal(200)
+            useSlowQueue()
+            sync:SendSet("scan")
+            local marker = sync.marker
+            assert.is_false(marker.done)
+            wire, timers = {}, {}
+            deps.marker = marker
+            useSlowQueue()
+            assert.is_true(sync:ResumeShare())
+            assert.is_true(logged("resume the share"))
+            drain()
+            assert.are.equal(200, countWire())
+            assert.is_true(marker.done)
+        end)
+
+        it("sends no data again at login when the last share finished", function()
+            addLocal(20)
+            sync:SendSet("scan")
+            local marker = sync.marker
+            assert.is_true(marker.done)
+            wire = {}
+            deps.marker = marker
+            deps.queue = makeQueue(1000)
+            sync = ns.GuildSync.New(deps)
+            assert.are.same({ false, "nothing to resume" }, { sync:ResumeShare() })
+            assert.are.equal(0, #wire)
+        end)
+
+        it("sends no data at login when there never was a share", function()
+            addLocal(20)
+            assert.are.same({ false, "nothing to resume" }, { sync:ResumeShare() })
+            assert.are.equal(0, #wire)
+        end)
+
+        it("keeps an unfinished share marked when sharing is off at login", function()
+            addLocal(20)
+            deps.marker = { time = NOW - 5000, done = false }
+            sync = ns.GuildSync.New(deps)
+            enabled = false
+            assert.are.same({ false, "disabled" }, { sync:ResumeShare() })
+            assert.is_false(deps.marker.done)
+            assert.are.equal(0, #wire)
         end)
     end)
 

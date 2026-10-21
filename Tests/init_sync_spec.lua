@@ -114,6 +114,12 @@ describe("Init guild sharing", function()
         assert.are.equal(1, #mock.addonSent)
     end)
 
+    it("keeps the marker of the last own share in the settings DB", function()
+        local scope = ns.guildSync.deps.scope
+        local markers = ns.db:Get("account", "sync.guildShare")
+        assert.are.equal(markers[scope], ns.guildSync.marker)
+    end)
+
     describe("received prices", function()
         local scope
 
@@ -121,16 +127,31 @@ describe("Init guild sharing", function()
             scope = ns.guildSync.deps.scope
         end)
 
-        local function putLocal(key, age, min)
+        -- Put a local record. Without withDays it is like the record of a partial scan: no day data.
+        local function putLocal(key, age, min, withDays)
             local record = ns.ScanRecord.New()
-            record.latest = { time = GetServerTime() - age, min = min, market = min + 1, qty = 1, auctions = 1,
-                partial = false }
+            local time = GetServerTime() - age
+            record.latest = { time = time, min = min, market = min + 1, qty = 1, auctions = 1, partial = false }
+            if withDays then
+                record.days = { { day = ns.ScanClock.DayOf(time), min = min, market = min + 1, qty = 1, scans = 1 } }
+            end
             ns.scanStore:Put(key, record)
         end
 
+        it("fill the day data of a newer partial local record, so ScanMarket has a value", function()
+            ns.SetGuildSync(true)
+            putLocal("2592", 1, 111)
+            for _, text in ipairs(remoteSet(scope, { "2592" }, 5000)) do
+                receive(text)
+            end
+            assert.are.equal(111, ns.formulaRun:Evaluate("scanmin", "2592"))
+            assert.are.equal(5000, ns.formulaRun:Evaluate("scanmarket", "2592"))
+            assert.is_true(ns.IsGuildPrice("2592"))
+        end)
+
         it("fill a gap in the price sources, and a newer local record wins", function()
             ns.SetGuildSync(true)
-            putLocal("3002", 1, 111)
+            putLocal("3002", 1, 111, true)
             for _, text in ipairs(remoteSet(scope, { "3001", "3002" }, 5000)) do
                 receive(text)
             end

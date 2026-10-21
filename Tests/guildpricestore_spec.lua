@@ -151,11 +151,59 @@ describe("GuildPriceStore", function()
             assert.is_false(reader:IsGuild("9"))
         end)
 
+        local function dayOf(market, time)
+            return { day = ns.ScanClock.DayOf(time), min = market - 1, market = market, qty = 1, scans = 1 }
+        end
+
         it("lets a newer local record win", function()
-            localData["1"] = { latest = { market = 111, time = now + 1 } }
+            localData["1"] = { latest = { market = 111, time = now + 1 }, days = { dayOf(111, now) } }
             assert.are.equal(111, reader:Get("1").latest.market)
             assert.is_false(reader:IsGuild("1"))
             assert.are.equal(600, reader:Get("2").latest.market)
+        end)
+
+        it("takes the day data from the shared record when a newer local record has none", function()
+            local local1 = { latest = { market = 111, time = now + 1 }, days = {} }
+            localData["1"] = local1
+            local record = reader:Get("1")
+            assert.are.equal(111, record.latest.market)
+            assert.are.equal(1, #record.days)
+            assert.are.equal(500, record.days[1].market)
+            assert.is_true(reader:IsGuild("1"))
+            assert.are.same({}, local1.days)
+        end)
+
+        it("gives the sources ScanMarket and ScanMin together when a partial local scan is newer", function()
+            assert(loadfile(manifest.path("ScanSources")))("Flipside", ns)
+            localData["1"] = { latest = { market = 111, min = 100, qty = 3, time = now + 1, partial = true },
+                days = {} }
+            local sources = ns.ScanSources.Compute(reader:Get("1"), now + 1)
+            assert.are.equal(100, sources.scanMin)
+            assert.are.equal(500, sources.scanMarket)
+            assert.is_nil(ns.ScanSources.Compute(localData["1"], now + 1).scanMarket)
+        end)
+
+        it("uses the shared record when the local record has no latest value", function()
+            localData["1"] = { days = { dayOf(111, now - 86400) } }
+            local record = reader:Get("1")
+            assert.are.equal(500, record.latest.market)
+            assert.are.equal(500, record.days[1].market)
+            assert.is_true(reader:IsGuild("1"))
+        end)
+
+        it("keeps the shared record as it is when it wins and has all parts", function()
+            localData["1"] = { latest = { market = 111, time = now - 1 }, days = { dayOf(111, now - 1) } }
+            local record = reader:Get("1")
+            assert.are.equal(500, record.latest.market)
+            assert.are.equal(500, record.days[1].market)
+            assert.is_true(reader:IsGuild("1"))
+        end)
+
+        it("follows a change of the local record", function()
+            localData["1"] = { latest = { market = 111, time = now + 1 }, days = { dayOf(111, now) } }
+            assert.are.equal(111, reader:Get("1").latest.market)
+            localData["1"] = { latest = { market = 222, time = now + 2 }, days = { dayOf(222, now) } }
+            assert.are.equal(222, reader:Get("1").latest.market)
         end)
 
         it("lets a newer shared record beat an older local record", function()
@@ -165,9 +213,17 @@ describe("GuildPriceStore", function()
         end)
 
         it("keeps the local record on equal times", function()
-            localData["1"] = { latest = { market = 111, time = now } }
+            localData["1"] = { latest = { market = 111, time = now }, days = { dayOf(111, now) } }
             assert.are.equal(111, reader:Get("1").latest.market)
             assert.is_false(reader:IsGuild("1"))
+        end)
+
+        it("keeps the local latest value on equal times and fills only the day data", function()
+            localData["1"] = { latest = { market = 111, time = now }, days = {} }
+            local record = reader:Get("1")
+            assert.are.equal(111, record.latest.market)
+            assert.are.equal(500, record.days[1].market)
+            assert.is_true(reader:IsGuild("1"))
         end)
 
         it("uses the local record when there is no shared record", function()

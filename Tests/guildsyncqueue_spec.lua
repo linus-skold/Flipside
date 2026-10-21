@@ -56,6 +56,49 @@ describe("GuildSyncQueue", function()
         assert.are.same({ "m1", "m2", "m3", "m5" }, sent)
     end)
 
+    it("sends an urgent message before the waiting ones", function()
+        for i = 1, 5 do
+            queue:Push("m" .. i)
+        end
+        queue:Push("urgent", true)
+        advance(1)
+        assert.are.same({ "m1", "m2", "m3", "urgent" }, sent)
+    end)
+
+    it("keeps the message that waits for a retry in front of an urgent message", function()
+        results = { 3 }
+        queue:Push("m1")
+        assert.is_true(queue:Waiting())
+        queue:Push("urgent", true)
+        advance(5)
+        assert.are.same({ "m1", "urgent" }, sent)
+        assert.is_false(queue:Waiting())
+    end)
+
+    it("tells if a text waits in the queue", function()
+        for i = 1, 4 do
+            queue:Push("m" .. i)
+        end
+        assert.is_false(queue:Has("m1"))
+        assert.is_true(queue:Has("m4"))
+    end)
+
+    it("calls onSpace before each step so the owner can add messages", function()
+        local extra = { "x1", "x2", "x3", "x4" }
+        queue.onSpace = function()
+            if queue:Pending() < 2 and #extra > 0 then
+                queue:Push(table.remove(extra, 1))
+            end
+        end
+        queue:Push("m1")
+        assert.are.same({ "m1", "x1", "x2" }, sent)
+        advance(1)
+        assert.are.same({ "m1", "x1", "x2", "x3" }, sent)
+        advance(1)
+        assert.are.same({ "m1", "x1", "x2", "x3", "x4" }, sent)
+        assert.are.equal(0, queue:Pending())
+    end)
+
     it("sends a burst at once, then one message each second", function()
         for i = 1, 6 do
             queue:Push("m" .. i)

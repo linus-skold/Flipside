@@ -80,15 +80,35 @@ function Q:RemoveIf(test)
     return removed
 end
 
+-- Return true if the first message waits for a retry after a throttle result.
+function Q:Waiting()
+    return self.tries > 0
+end
+
+-- Return true if the text waits in the queue.
+function Q:Has(text)
+    for _, item in ipairs(self.items) do
+        if item == text then
+            return true
+        end
+    end
+    return false
+end
+
 -- Add a message to the end of the queue. Return false when the queue is full.
-function Q:Push(text)
+-- With urgent, the message goes before the other waiting messages (not before a message that waits for a retry).
+function Q:Push(text, urgent)
     if #self.items >= Queue.MAX_LENGTH then
         if self.onDrop then
             self.onDrop(text, "full")
         end
         return false
     end
-    self.items[#self.items + 1] = text
+    if urgent then
+        table.insert(self.items, self.tries > 0 and 2 or 1, text)
+    else
+        self.items[#self.items + 1] = text
+    end
     self:_Pump()
     return true
 end
@@ -115,11 +135,24 @@ function Q:_Wake(seconds)
 end
 
 function Q:_Pump()
-    if self.scheduled then
+    if self.scheduled or self.pumping then
         return
     end
+    self.pumping = true
     self:_Refill()
-    while #self.items > 0 do
+    self:_Run()
+    self.pumping = false
+end
+
+-- Send the waiting messages. Before each step it calls onSpace, so the owner can add more messages.
+function Q:_Run()
+    while true do
+        if self.onSpace then
+            self.onSpace()
+        end
+        if #self.items == 0 then
+            return
+        end
         if self.tokens < 1 then
             self:_Wake((1 - self.tokens) / self.rate)
             return

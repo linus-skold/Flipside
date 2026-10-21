@@ -531,6 +531,15 @@ local function openGuildSync()
             ns.db:Set("account", "sync.guild", saved)
         end
         local guildStore = ns.GuildPriceStore.New(saved, { scope = scope, now = GetServerTime })
+        -- The marker of the last own share (time, done) lets the next login finish an unfinished share.
+        local markers = ns.db:Get("account", "sync.guildShare")
+        if type(markers) ~= "table" then
+            markers = {}
+            ns.db:Set("account", "sync.guildShare", markers)
+        end
+        if type(markers[scope]) ~= "table" then
+            markers[scope] = {}
+        end
         local queue = ns.GuildSyncQueue.New({
             send = function(text)
                 return C_ChatInfo.SendAddonMessage(ns.GuildSyncCodec.PREFIX, text, "GUILD")
@@ -538,7 +547,7 @@ local function openGuildSync()
             after = C_Timer.After,
             clock = GetTime,
             onSent = function(text)
-                log("sync", "info", "sent a message of %d bytes", #text)
+                log("sync", "debug", "sent a message of %d bytes", #text)
             end,
             onDrop = function(text, reason, result)
                 log("sync", "warn", "message of %d bytes dropped: %s %s", #text, reason, tostring(result))
@@ -554,6 +563,7 @@ local function openGuildSync()
             scope = scope,
             localStore = scan,
             guildStore = guildStore,
+            marker = markers[scope],
             queue = queue,
             clock = GetServerTime,
             after = C_Timer.After,
@@ -587,6 +597,7 @@ local function openGuildSync()
         sync:EnsureRegistered()
         C_Timer.After(30, function()
             sync:SendRequest()
+            sync:ResumeShare()
         end)
     end)
     if not ok then
