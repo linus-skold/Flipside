@@ -1203,7 +1203,7 @@ describe("BuyingTab", function()
                 return "|Hitem:10::::|h[Linen]|h", 4
             end
             local confirm = openItemConfirm()
-            assert.matches("Buy 1 x " .. EPIC:gsub("%p", "%%%0"), confirm.text.text)
+            assert.matches("Buy one stack: 1 x " .. EPIC:gsub("%p", "%%%0"), confirm.text.text)
             assert.matches("Total: 30c", confirm.text.text)
         end)
 
@@ -1234,8 +1234,8 @@ describe("BuyingTab", function()
                 return link, 4
             end
             local confirm = openItemConfirm()
-            assert.matches("Buy 1 x Item10", confirm.text.text)
-            link = "|Hitem:10::::|h[Linen]|h"
+            assert.matches("Buy one stack: 1 x Item10", confirm.text.text)
+            link ="|Hitem:10::::|h[Linen]|h"
             timers[#timers].fn()
             assert.is_not_nil(confirm.text.text:find(EPIC, 1, true))
         end)
@@ -1254,8 +1254,20 @@ describe("BuyingTab", function()
 
         it("keeps the quantity, the prices and the jump warning text", function()
             local confirm = openItemConfirm()
-            assert.matches("Buy 1 x Item10", confirm.text.text)
+            assert.matches("Buy one stack: 1 x Item10", confirm.text.text)
             assert.matches("Unit price: 30c   Total: 30c", confirm.text.text)
+            -- A dearer group gives the jump warning as a line in the box.
+            confirm:Close()
+            tab:_CancelQuote("test")
+            client.rows[10] = {
+                { auctionID = 7, unitPrice = 30, quantity = 1, isCommodity = false, buyout = 30 },
+                { auctionID = 8, unitPrice = 40, quantity = 1, isCommodity = false, buyout = 40 },
+            }
+            tab:Search()
+            fire("ITEM_RESULTS", 10)
+            tab:SelectLevel(ns.BuyingPlan.GroupKey(client.rows[10][2]))
+            click(ui.buyNext)
+            assert.matches("Price jumps from 30c to 40c %(%+33%%%)", confirmFrame().text.text)
         end)
     end)
     describe("the confirm box after a buy", function()
