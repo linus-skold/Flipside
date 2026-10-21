@@ -5,8 +5,8 @@ local _, ns = ...
 -- HasCommodityCheck, NameSearch, TargetedSearch, NameResultEvent, NameResults, NameItemKeyInfo, Capture, OwnedAuctions,
 -- CanReadOwned, OwnedEvent, OpenEvent, CloseEvent, CanScan, CanLiveSearch, LiveSearch, LiveResultEvents, LiveRows,
 -- LivePageCount, IsReady, ReadyEvent, RefreshOwned, CanBuy, StartCommodityPurchase, ConfirmCommodityPurchase,
--- CancelCommodityPurchase, QuoteSecondsLeft, BuyItemAuction, BuyEvents, CanPost, PostItem, PostCommodity, ConfirmPostItem, ConfirmPostCommodity,
--- Deposit, AvailablePostCount, IsSellItemValid, PostedEvent, MultisellEvent, CanSendPost, ThrottleEvents, AuctionInfo,
+-- CancelCommodityPurchase, QuoteSecondsLeft, BuyItemAuction, BuyEvents, CanPost, PostItem, PostCommodity,
+-- ConfirmPostItem, ConfirmPostCommodity, Deposit, AvailablePostCount, IsSellItemValid, PostedEvent, MultisellEvent, CanSendPost, ThrottleEvents, AuctionInfo,
 -- HookBid. A backend leaves out what its client
 -- cannot do.
 local AuctionClient = {}
