@@ -246,27 +246,17 @@ local function tableModel(ctx, key, line)
     if not any then
         return { left = NO_PRICES, right = INVALID, color = "dim" }
     end
-    local parts = {}
-    if record.latest then
-        local hours = ns.ScanClock.HoursBetween(record.latest.time, ctx.now or 0)
-        parts[#parts + 1] = "updated " .. TooltipLines.FormatAge(hours) .. " ago"
-    end
-    if stack > 1 then
-        parts[#parts + 1] = "stack of " .. stack
-    end
-    local header = "Flipside" .. (#parts > 0 and (" (" .. table.concat(parts, ", ") .. ")") or "")
     if #stats > 1 then
         local columns = {}
         for j, stat in ipairs(stats) do
             columns[j] = stat.name
         end
-        return { kind = "table", header = header, columns = columns, rows = rows }
+        return { kind = "table", columns = columns, rows = rows }
     end
     local compact = {}
     for i, row in ipairs(rows) do
         compact[i] = { left = row.label .. " " .. stats[1].name:lower(), right = row.cells[1], color = "normal" }
     end
-    compact[1].header = header
     return { multi = compact }
 end
 
@@ -379,7 +369,18 @@ local function countRows(ctx, rows, key)
         rows[#rows + 1] = { left = text, color = "dim" }
     end
 end
--- Returns an array of { left, right, color } rows. A price table row is { kind = "table", header, columns, rows }.
+-- Returns the dim age row of the latest scan, or nil without a record time.
+local function ageRow(ctx, key)
+    local record = key and ctx.getRecord and ctx.getRecord(key)
+    local latest = type(record) == "table" and record.latest
+    if type(latest) ~= "table" or type(latest.time) ~= "number" then
+        return nil
+    end
+    local hours = ns.ScanClock.HoursBetween(latest.time, ctx.now or 0)
+    return { left = "Updated " .. TooltipLines.FormatAge(hours) .. " ago", color = "dim", age = true }
+end
+
+-- Returns an array of { left, right, color } rows. A price table row is { kind = "table", columns, rows }.
 function TooltipLines.Build(ctx)
     local rows = {}
     local config = ctx and ctx.config
@@ -419,6 +420,9 @@ function TooltipLines.Build(ctx)
     end
     if config.showVendor ~= false then
         rows[#rows + 1] = vendorRow(ctx)
+    end
+    if config.showAgeLine then
+        rows[#rows + 1] = ageRow(ctx, key)
     end
     groupRows(ctx, rows, key, config)
     if config.showCounts then

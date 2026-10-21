@@ -108,7 +108,7 @@ Nine features come from your list, twelve are ones TSM users rely on that are ea
 | Ledger | Record sales, purchases, fees and failures; show profit | Same as Accounting; adds documented CSV export | You | MVP |
 | Sniper | Repeat searches to catch underpriced new listings | Same as Sniper; uses local scan prices for thresholds | You | Phase 2 |
 | Operations and price formulas | Reusable rules with a formula language | Same language; new local price sources; live formula preview | Added | MVP |
-| Tooltips | Prices, counts and history on every item (the history chart is Phase 2) | Shows prices as a Min/Avg/Max/Market table by window (1d, 14d, 30d, 60d) with the data age in the header | Added | MVP |
+| Tooltips | Prices, counts and history on every item (the history chart is Phase 2) | Shows prices as a Min/Avg/Max/Market table by window (1d, 14d, 30d, 60d) with no header line; the data age is an option | Added | MVP |
 | Inventory tracking | Counts per character, bank, mail, AH, guild (guild bank later; equipped items later) | Same | Added | MVP |
 | Decision log and dry run | Shows why each item was posted, skipped or cancelled | New | Added | MVP |
 | Crafting and queue | Profit per recipe, restock queue, craft next | Same | Added | Phase 2 |
@@ -188,7 +188,7 @@ All steps run as coroutines that yield each frame, with a progress bar. The scan
 ### 3.4 Freshness and confidence
 
 - Every price carries **age** (hours since last seen) and **samples** (days with data in the window).
-- Tooltips show the age once, in the header: "Flipside (updated 2 h ago)". The price table shows the prices of four windows (§5, tooltip design point 15). A formula line can still show age and days with data.
+- Tooltips have no "Flipside" header line (decided 2026-10-21). They show the data age only if the setting `showAgeLine` is on (default off): one dim line "Updated 2 h ago" after the price lines. The price table shows the prices of four windows (§5, tooltip design point 15). A formula line can still show age and days with data.
 - Operations get two safety settings: *max data age* and *min samples*. If either fails, the item is skipped with the reason "stale price" in the decision log.
 - The Flipside AH tab shows when the last full scan ran and when the next is available (a Dashboard comes in Phase 2).
 
@@ -929,9 +929,8 @@ Operations and formulas (§4.2–4.3), tooltips and inventory tracking (referenc
 13. **Forget character.** A function removes only the inventory of that character. The button comes later.
 14. **Min, max and average.** Superseded by point 15 for the default tooltip. The formula sources `ScanLow`, `ScanHigh` and `ScanMarket` (§4) still mean the last 14 days.
 
-15. **Price table (decided 2026-10-14).** The tooltip shows the prices as a table. The title line is "Flipside (updated 2 h ago)"; the age is that of the latest scan. With Alt and a stack, it is "Flipside (updated 2 h ago, stack of 5)" and all cells are multiplied by the stack count.
+15. **Price table (decided 2026-10-14).** The tooltip shows the prices as a table. There is no title line (decided 2026-10-21): a blank line separates the table from the client text. With Alt and a stack, all cells are multiplied by the stack count.
     ```
-    Flipside (updated 2 h ago)
             Min    Avg    Max    Market
     1d      ...
     14d     ...
@@ -946,20 +945,20 @@ Operations and formulas (§4.2–4.3), tooltips and inventory tracking (referenc
     - Today is the snapshots of today. Without snapshots, the latest scan counts as today if it is from today. Older days are the daily records.
     - A cell without data shows "-"; the table keeps its shape. An item with no data at all shows one line "Prices  invalid price" and no table.
     - The table is a line of the Tooltip tab ("Price table"). The player can turn it off or move it. It cannot be removed or edited. Formula lines of the player show below or above it as ordered. It is not a formula line, so it does not use the formula language.
-    - Drawing: `GameTooltip` lines have only a left and a right text. Flipside reserves one blank tooltip line per table row (the header row and four windows), draws the five columns in its own frame over them, and sets `SetMinimumWidth` so that the table fits. The frame hides on `OnTooltipCleared` and `OnHide`. Both clients have `GetLeftLine`, `NumLines` and `SetMinimumWidth` (checked in the Forever source and the TBC Anniversary source).
+    - Drawing: `GameTooltip` lines have only a left and a right text. Flipside reserves one blank tooltip line per table row (the column row and four windows), draws the five columns in its own frame over them, and sets `SetMinimumWidth` so that the table fits. The frame hides on `OnTooltipCleared` and `OnHide`. Both clients have `GetLeftLine`, `NumLines` and `SetMinimumWidth` (checked in the Forever source and the TBC Anniversary source).
     - Migration: a stored version 1 tooltip setting with the untouched Market, Min and Max lines gets the price table in their place, at the top. Changed, turned-off and custom lines stay below it.
 16. **Vendor price, periods and stats (decided 2026-10-20).**
     - **Vendor sell price.** A row "Vendor:" shows the unit sell price (11th return of `C_Item.GetItemInfo`). It is blue (`|cff4fa3ff`, constant `TooltipLines.VENDOR_COLOR`) on both sides. It is on by default. The check box "Vendor" on the Tooltip tab turns it off (renamed 2026-10-21). With Alt and a stack, the row shows the stack total ("Vendor x4:"), as the other rows do. The row is hidden when the price is 0 or not known. The client item tooltip also has its own "Sell Price" line (`GameTooltip_OnTooltipAddMoney`, Forever and TBC Anniversary source), so the player sees two vendor lines. The player can turn off the Flipside row.
     - **Periods.** The check boxes 1d, 14d, 30d and 60d of the Tooltip tab turn each window on or off. All are on by default. If no window is on, the price rows do not show.
     - **Stats.** The check boxes Min, Avg, Max and Market turn each column on or off. All are on by default. The columns keep the order of the table. If no stat is on, the price rows do not show.
-    - **Layout.** With two or more stats, the price table shows only the selected columns. With one stat, the table is replaced by one row for each window, such as "14d market  1g 2s", under the same title line.
+    - **Layout.** With two or more stats, the price table shows only the selected columns. With one stat, the table is replaced by one row for each window, such as "14d market  1g 2s", under the blank line.
 17. **Tooltip polish (decided 2026-10-21, user requests).**
     - **Counts.** The character rows show the name only, with no realm. If two shown characters have the same name on different realms, those two show "Name-Realm". On TBC the rows and the "Total" cover only the characters of the current realm (`GetNormalizedRealmName`); if the realm is not known, all characters show. Forever shows all realms.
     - **Class colour.** Each name has the colour of its class (`RAID_CLASS_COLORS`, entry `colorStr` or red, green and blue; both clients have the table). The class file (`UnitClass("player")`, second result) is saved in the holdings value of the character (`class`, version stays 1) at each login. Old data has no class and shows white. An unknown class file also shows white.
     - **Line colour.** A formula line has an optional colour `color = { r, g, b }` (parts 0 to 1) in the tooltip settings. The Tooltip tab has a swatch at the label box and a button "Default colour". A click on the swatch opens `ColorPickerFrame`: `SetupColorPickerAndShow(info)` with `swatchFunc` and `cancelFunc` where the client has it, else the fields `func`, `cancelFunc` and `previousValues`. Each change saves. Cancel gives the old colour back (or none). The row (label and value) uses the colour; a line with no colour looks as before. The price table has no colour.
     - **Alt.** The Alt code existed (`altStack`, hook stack count) but the tooltip did not change when Alt went up or down over an item. Now `Tooltip.Attach` subscribes to `MODIFIER_STATE_CHANGED`. If the key is an Alt key, the state differs from the last build and the tooltip is shown, it runs the `OnEnter` script of the tooltip owner. The client then builds the tooltip again and the hook runs. The stack count comes from the bag slot (Forever `GetBagID`, or the item location of a bank button; TBC the `ContainerFrame` parent or the `BankFrameItem` button). The label shows the count: "Min x20" (a final colon stays last: "Vendor x4:"). The table title keeps "stack of N". An unknown stack gives the value of one item.
     - **In-game checklist.** Forever and TBC: (a) vendor row is blue and reads "Vendor:"; the check box reads "Vendor". (b) Counts show class-coloured names with no realm. (c) TBC: a character on another realm does not show and is not in the total. (d) Forever: a second character with the same name on another realm shows "Name-Realm" for both. (e) A swatch click opens the colour picker; OK saves; Cancel restores; "Default colour" resets; the tooltip uses the colour. (f) Hover a stack in a bag and press and release Alt: the tooltip changes at once, with "x20" in the labels. (g) The same in a bank slot. (h) No Lua error and no "action blocked" message after step f.
-    - **Storage.** The tooltip settings keep `showVendor`, `periods` (by window label) and `stats` (`min`, `avg`, `max`, `market`). A stored setting without these keys gets the defaults (all on).
+    - **Storage.** The tooltip settings keep `showVendor`, `showAgeLine` (default off; a stored setting without it reads as off), `periods` (by window label) and `stats` (`min`, `avg`, `max`, `market`). A stored setting without these keys gets the defaults (all on).
     - In-game check: see the Tooltip tab list in the checklist of §5 (vendor row, each window, each stat subset).
 ### 5.11 Great Deals (new)
 

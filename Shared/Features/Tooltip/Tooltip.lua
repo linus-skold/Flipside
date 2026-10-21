@@ -7,7 +7,6 @@ ns.Tooltip = Tooltip
 
 Tooltip.stats = { count = 0, total = 0, max = 0 }
 
-local HEADER_COLOR = { 1, 0.82, 0 }
 local DIM_COLOR = { 0.6, 0.6, 0.6 }
 
 local QUEST_ITEM_CLASS = Enum and Enum.ItemClass and Enum.ItemClass.Questitem or 12
@@ -192,15 +191,7 @@ local function addRows(tooltip, rows)
     if #rows == 0 then
         return
     end
-    local title = "Flipside"
-    for _, row in ipairs(rows) do
-        if row.header then
-            title = row.header
-            break
-        end
-    end
     tooltip:AddLine(" ")
-    tooltip:AddLine(title, HEADER_COLOR[1], HEADER_COLOR[2], HEADER_COLOR[3])
     for _, row in ipairs(rows) do
         if row.kind == "table" then
             addTable(tooltip, row)

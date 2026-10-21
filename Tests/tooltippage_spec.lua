@@ -140,15 +140,15 @@ describe("TooltipPage", function()
             assert.are.equal("Item name, link or id", page.exampleInput.placeholder:GetText())
         end)
 
-        it("lays the 12 check boxes out in 3 even columns, row by row", function()
+        it("lays the 13 check boxes out in 3 even columns, row by row", function()
             local checks = page.gridChecks
-            assert.are.equal(12, #checks)
+            assert.are.equal(13, #checks)
             local texts = {}
             for i, box in ipairs(checks) do
                 texts[i] = box.Text:GetText()
             end
             assert.are.same({ "Min", "Avg", "Max", "Market", "1d", "14d", "30d", "60d", "Show group",
-                "Show operations", "Show counts per character", "Vendor" }, texts)
+                "Show operations", "Show counts per character", "Vendor", "Data age" }, texts)
             local function at(i)
                 local _, _, _, x, y = checks[i]:GetPoint()
                 return x, y
@@ -160,7 +160,7 @@ describe("TooltipPage", function()
             local width, height = x2 - x1, y1 - y4
             assert.is_true(width > 0 and height > 0)
             assert.are.equal(width, x3 - x2)
-            for i = 1, 12 do
+            for i = 1, 13 do
                 local x, y = at(i)
                 assert.are.equal(x1 + ((i - 1) % 3) * width, x)
                 assert.are.equal(y1 - math.floor((i - 1) / 3) * height, y)
@@ -179,6 +179,9 @@ describe("TooltipPage", function()
             assert.are.equal(page.grid, page.group:GetParent())
             assert.are.equal(checks[9], page.group)
             assert.are.equal(checks[12], page.vendor)
+            assert.are.equal(checks[13], page.age)
+            local _, y13 = at(13)
+            assert.are.equal(y1 - 4 * height, y13)
         end)
 
         it("shows the Alt hint", function()
@@ -613,7 +616,6 @@ describe("TooltipPage", function()
     describe("price table", function()
         local model = {
             kind = "table",
-            header = "Flipside (updated 2 h ago)",
             columns = { "Min", "Avg", "Max", "Market" },
             rows = {
                 { label = "1d", cells = { "1g", "2g", "3g", "4g" } },
@@ -628,7 +630,11 @@ describe("TooltipPage", function()
             tc = ns.TooltipConfig.New(db, { compile = function(text) return run:Compile(text) end })
             extra = {
                 buildPreview = function(_, config)
-                    return config.lines[1].kind == "table" and { model } or { { left = "Mine", right = "1g" } }
+                    local rows = config.lines[1].kind == "table" and { model } or { { left = "Mine", right = "1g" } }
+                    if config.showAgeLine then
+                        rows[#rows + 1] = { left = "Updated 2 h ago", color = "dim", age = true }
+                    end
+                    return rows
                 end,
             }
             build()
@@ -653,9 +659,9 @@ describe("TooltipPage", function()
             assert.is_false(page.tableView.frame:IsShown())
         end)
 
-        it("draws the model with the header over five rows", function()
+        it("draws the model over five rows with no header text", function()
             enter(page.exampleInput, "1")
-            assert.are.equal("Flipside (updated 2 h ago)", page.preview:GetText())
+            assert.are.equal("", page.preview:GetText())
             assert.is_true(page.tableView.frame:IsShown())
             local rows = page.tableView.rows
             assert.are.equal("", rows[1].label:GetText())
@@ -664,6 +670,15 @@ describe("TooltipPage", function()
             assert.are.equal("14d", rows[3].label:GetText())
             assert.are.equal("-", rows[3].cells[2]:GetText())
             assert.are.equal("4c", rows[5].cells[4]:GetText())
+        end)
+
+        it("shows the age line beside the table when the data age box is checked", function()
+            enter(page.exampleInput, "1")
+            assert.are.equal("", page.previewAge:GetText())
+            page.age:SetChecked(true)
+            click(page.age)
+            assert.are.equal("Updated 2 h ago", page.previewAge:GetText())
+            assert.is_true(page.tableView.frame:IsShown())
         end)
 
         it("hides the table when a formula line is selected", function()
@@ -694,6 +709,13 @@ describe("TooltipPage", function()
             page.vendor:SetChecked(false)
             click(page.vendor)
             assert.is_false(stored().showVendor)
+        end)
+
+        it("shows the data age box off and writes the flag", function()
+            assert.is_false(page.age:GetChecked())
+            page.age:SetChecked(true)
+            click(page.age)
+            assert.is_true(stored().showAgeLine)
         end)
 
         it("writes a period", function()

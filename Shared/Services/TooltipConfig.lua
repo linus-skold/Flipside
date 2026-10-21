@@ -11,7 +11,10 @@ local TABLE_LABEL = "Price table"
 local VERSION = 2
 local FLAGS = { showGroup = true, showOperation = true, showCounts = true }
 -- showVendor is new: a stored config without it gets true, so it is not checked on load.
-local SETTABLE_FLAGS = { showGroup = true, showOperation = true, showCounts = true, showVendor = true }
+-- showAgeLine is new and off by default: a stored config without it reads as false.
+local SETTABLE_FLAGS = {
+    showGroup = true, showOperation = true, showCounts = true, showVendor = true, showAgeLine = true,
+}
 local PERIODS = { "1d", "14d", "30d", "60d" }
 local STATS = { "min", "avg", "max", "market" }
 local FIELDS = {
@@ -59,6 +62,7 @@ local function NewDefaults()
         showOperation = true,
         showCounts = true,
         showVendor = true,
+        showAgeLine = false,
         periods = { ["1d"] = true, ["14d"] = true, ["30d"] = true, ["60d"] = true },
         stats = { min = true, avg = true, max = true, market = true },
         lines = { NewTableLine(1) },
@@ -197,6 +201,9 @@ end
 local function FillAltStack(data)
     if type(data.showVendor) ~= "boolean" then
         data.showVendor = true
+    end
+    if type(data.showAgeLine) ~= "boolean" then
+        data.showAgeLine = false
     end
     for field, names in pairs({ periods = PERIODS, stats = STATS }) do
         if type(data[field]) ~= "table" then

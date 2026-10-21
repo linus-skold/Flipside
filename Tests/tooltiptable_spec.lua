@@ -6,7 +6,6 @@ describe("Price table on a tooltip", function()
 
     local model = {
         kind = "table",
-        header = "Flipside (updated 2 h ago)",
         columns = { "Min", "Avg", "Max", "Market" },
         rows = {
             { label = "1d", cells = { "4s", "5s", "6s", "50s" } },
@@ -85,16 +84,18 @@ describe("Price table on a tooltip", function()
         mock.teardown()
     end)
 
-    it("uses the table header as the title and reserves one blank line per row", function()
+    it("reserves one blank line per row and adds no Flipside title", function()
         local tip = newTooltip("GameTooltip")
         onItem(tip, "item:5")
         assert.are.equal(" ", tip.lines[1].text)
-        assert.are.equal("Flipside (updated 2 h ago)", tip.lines[2].text)
-        for i = 3, 7 do
+        for i = 2, 6 do
             assert.are.equal(" ", tip.lines[i].text)
         end
-        assert.are.equal("Total: 5", tip.lines[8].left)
-        assert.are.equal(8, #tip.lines)
+        assert.are.equal("Total: 5", tip.lines[7].left)
+        assert.are.equal(7, #tip.lines)
+        for _, line in ipairs(tip.lines) do
+            assert.is_nil(tostring(line.text):find("Flipside", 1, true))
+        end
     end)
 
     it("anchors each row to its reserved line and draws five columns", function()
@@ -105,7 +106,7 @@ describe("Price table on a tooltip", function()
         assert.are.equal(tip, view.frame:GetParent())
         for index = 1, 5 do
             local row = view.rows[index]
-            assert.are.equal(tip.leftLines[index + 2], row.label.points[1][2])
+            assert.are.equal(tip.leftLines[index + 1], row.label.points[1][2])
             assert.are.equal("TOPLEFT", row.label.points[1][1])
             assert.are.equal(4, #row.cells)
             assert.are.equal("TOPRIGHT", row.cells[4].points[1][1])
@@ -190,7 +191,7 @@ describe("Price table on a tooltip", function()
         end
         onItem(tip, "item:6")
         assert.is_false(viewOf(tip).frame:IsShown())
-        assert.are.equal("Flipside", tip.lines[2].text)
+        assert.are.equal("Prices", tip.lines[2].left)
     end)
 
     it("hides a stale table when the item is shown again without a clear", function()
@@ -204,10 +205,10 @@ describe("Price table on a tooltip", function()
         local tip = newTooltip("GameTooltip")
         tip.NumLines = nil
         onItem(tip, "item:5")
-        assert.are.equal("Min  Avg  Max  Market", tip.lines[3].right)
-        assert.are.equal("1d", tip.lines[4].left)
-        assert.are.equal("4s  5s  6s  50s", tip.lines[4].right)
-        assert.are.equal(8, #tip.lines)
+        assert.are.equal("Min  Avg  Max  Market", tip.lines[2].right)
+        assert.are.equal("1d", tip.lines[3].left)
+        assert.are.equal("4s  5s  6s  50s", tip.lines[3].right)
+        assert.are.equal(7, #tip.lines)
     end)
 
     it("does not draw on a forbidden tooltip", function()
