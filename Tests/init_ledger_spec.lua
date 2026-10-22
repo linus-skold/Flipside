@@ -53,6 +53,12 @@ describe("Init ledger", function()
         ns.ledgerBuffer:Add(rec(1))
         ns.ledgerBuffer:Add(rec(2))
         mock.advance(0)
+        -- The cap flush is a Scheduler job: tick it to the end.
+        local frames = 0
+        while not ns.scheduler:IsIdle() and frames < 100 do
+            ns.scheduler:Tick()
+            frames = frames + 1
+        end
         assert.are.same({ "Flipside_Ledger" }, mock.addOnLoads)
         assert.are.equal(0, ns.ledgerBuffer:Count())
         local region = next(_G.FlipsideLedgerDB.records)

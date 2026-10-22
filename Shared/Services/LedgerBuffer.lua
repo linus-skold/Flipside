@@ -125,6 +125,19 @@ function Buffer:Drain()
     return list
 end
 
+-- Removes the oldest records (at most count) from the buffer and returns them. Newer records stay.
+function Buffer:TakeFront(count)
+    local list = self._db:Get("account", KEY)
+    local taken = {}
+    if type(list) ~= "table" then
+        return taken
+    end
+    for _ = 1, math.min(count, #list) do
+        taken[#taken + 1] = table.remove(list, 1)
+    end
+    return taken
+end
+
 -- Puts records back in front of the buffer after a failed move.
 function Buffer:Restore(records)
     if #records == 0 then
