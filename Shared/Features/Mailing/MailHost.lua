@@ -14,8 +14,8 @@ local EXTRA_WIDTH = 380
 local VIEW_GAP = { top = 2, right = 2, bottom = 0 }
 local VIEW_LEVEL = 5
 local OPEN_MAIL_X = 46
--- Delays in seconds: the inbox list refreshes on the next frame, the plan of the view after a burst of bag events.
-local INBOX_DELAY = 0
+-- Delays in seconds: the inbox list refreshes at most every 0.1 s, the plan of the view after a burst of bag events.
+local INBOX_DELAY = 0.1
 local VIEW_DELAY = 0.2
 
 -- Keep a child frame at its old width: a frame anchored at two corners of MailFrame would stretch with it.
@@ -143,6 +143,7 @@ end
 -- (optional; returns the compact inbox list, an InboxList, or nil), tabs() (optional; returns the tab list of
 -- watchTabs, one entry for each of Inbox and Send Mail). The inbox list does not depend on the layout:
 -- it shows on MAIL_SHOW, refreshes on MAIL_INBOX_UPDATE and hides on MAIL_CLOSED.
+-- take (optional, a MailTake): while it is active, the view does not read the bags; it reads once when the take ends.
 -- Returns an object with View(), the view or nil, and Inbox(), the inbox list or nil.
 function MailHost.Attach(deps)
     local host = { view = nil, inbox = nil }
@@ -188,8 +189,8 @@ function MailHost.Attach(deps)
             open = nil
         end
     end)
-    -- Many MAIL_INBOX_UPDATE events come in one take. They mark the list dirty, and one timer on the next frame
-    -- refreshes it once.
+    -- Many MAIL_INBOX_UPDATE events come in one take. They mark the list dirty, and one timer of INBOX_DELAY seconds
+    -- refreshes it once. An event after the refresh starts a new timer, so the last state always shows.
     deps.bus:Subscribe("MAIL_INBOX_UPDATE", OWNER, function()
         if not (open and host.inbox and host.inbox.frame:IsShown()) then
             return
@@ -207,7 +208,21 @@ function MailHost.Attach(deps)
             end
         end)
     end)
-    -- The bags changed: read the plan again after a short delay, but not while a run changes the bags.
+    -- Read the plan again if the bags changed, but not while a run changes the bags or a mail take is in progress.
+    local function refreshView()
+        local view = host.view
+        if not (viewDirty and open and view and view.frame:IsShown()) then
+            return
+        end
+        if deps.take and deps.take.IsActive() then
+            return
+        end
+        viewDirty = false
+        if not view.run:IsRunning() then
+            view:Refresh()
+        end
+    end
+    -- The bags changed: read the plan again after a short delay.
     -- A hidden view stays dirty until it shows again (show() refreshes it).
     deps.bus:Subscribe("BAG_UPDATE_DELAYED", OWNER, function()
         viewDirty = true
@@ -217,16 +232,11 @@ function MailHost.Attach(deps)
         viewScheduled = true
         deps.after(VIEW_DELAY, function()
             viewScheduled = false
-            local view = host.view
-            if not (viewDirty and open and view and view.frame:IsShown()) then
-                return
-            end
-            viewDirty = false
-            if not view.run:IsRunning() then
-                view:Refresh()
-            end
+            refreshView()
         end)
     end)
+    -- The take ended: the skipped plan read runs once.
+    deps.bus:Subscribe("Flipside.MailTakeEnded", OWNER, refreshView)
 
     function host.View()
         return host.view

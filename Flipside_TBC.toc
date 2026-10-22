@@ -50,6 +50,8 @@ Shared\Services\RulesExport.lua
 Shared\Services\MailingPlan.lua
 Shared\Services\AutoRules.lua
 Shared\Services\MailClient.lua
+Shared\Services\BagSnapshot.lua
+Shared\Services\MailTake.lua
 Shared\Services\MailingRun.lua
 Shared\Services\MailingLedger.lua
 Shared\Services\BuyingPlan.lua
