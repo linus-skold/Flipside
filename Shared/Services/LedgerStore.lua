@@ -400,7 +400,9 @@ end
 -- Turns records older than the retention days into daily sums (UTC days), for every region, ruleset and
 -- character. Log records older than logDays are deleted without a sum. It runs once for each day unless force.
 -- Returns the number of records that were removed from the full records.
-function Store:Compact(now, options)
+-- step() (optional) is called after each character list; it may yield. Each list changes in one piece,
+-- so a stop between two lists leaves the data consistent.
+function Store:Compact(now, options, step)
     options = options or {}
     if self._readOnly then
         return 0
@@ -415,16 +417,24 @@ function Store:Compact(now, options)
     local logCutoff = now - logDays * SECONDS_PER_DAY
     local total = 0
     local records = type(self._saved.records) == "table" and self._saved.records or {}
+    local targets = {}
     for region, byRegion in pairs(records) do
         for ruleset, byRuleset in pairs(byRegion) do
             for char, list in pairs(byRuleset) do
-                local bySums = ensure(ensure(ensure(self._saved, "sums"), region), ruleset)
-                total = total + compactList(list, ensure(bySums, char), cutoffDay, logCutoff)
+                targets[#targets + 1] = { region = region, ruleset = ruleset, char = char, list = list }
             end
         end
     end
+    for _, target in ipairs(targets) do
+        local bySums = ensure(ensure(ensure(self._saved, "sums"), target.region), target.ruleset)
+        local compacted = compactList(target.list, ensure(bySums, target.char), cutoffDay, logCutoff)
+        total = total + compacted
+        self._revision = self._revision + compacted
+        if step then
+            step()
+        end
+    end
     self._saved.lastCompact = today
-    self._revision = self._revision + total
     return total
 end
 

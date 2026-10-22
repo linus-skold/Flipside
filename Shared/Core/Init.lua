@@ -870,6 +870,9 @@ local function openLedger()
             inCombat = InCombatLockdown,
             now = GetServerTime,
             after = C_Timer.After,
+            startJob = ns.Scheduler and function(name, fn)
+                return ns.StartJob(name, fn)
+            end or nil,
             setting = function(key)
                 return ns.db:Get("account", key)
             end,
