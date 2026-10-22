@@ -52,41 +52,69 @@ describe("MailTotal", function()
         assert.are.same({ "Gold collected: 250c" }, lines)
     end)
 
-    it("prints one line for a batch of takes while the mailbox stays open", function()
+    it("prints one line with the total of the whole session and none while open", function()
         bus:Emit("MAIL_SHOW")
         gold = 1100
         bus:Emit("PLAYER_MONEY")
-        advance(0.25)
+        advance(5)
         gold = 1300
         bus:Emit("PLAYER_MONEY")
-        advance(0.25)
+        advance(5)
         assert.are.equal(0, #lines)
-        advance(0.25)
+        bus:Emit("MAIL_CLOSED")
+        advance(ns.MailTotal.WAIT)
         assert.are.same({ "Gold collected: 300c" }, lines)
     end)
 
-    it("counts a later batch from the new money and not twice", function()
+    it("prints one line when MAIL_CLOSED fires twice", function()
         bus:Emit("MAIL_SHOW")
-        gold = 1100
-        bus:Emit("PLAYER_MONEY")
-        advance(ns.MailTotal.WAIT)
-        gold = 1150
-        bus:Emit("PLAYER_MONEY")
-        advance(ns.MailTotal.WAIT)
+        gold = 1400
         bus:Emit("MAIL_CLOSED")
-        advance(ns.MailTotal.WAIT)
-        assert.are.same({ "Gold collected: 100c", "Gold collected: 50c" }, lines)
-    end)
-
-    it("ignores PLAYER_MONEY while the mailbox is closed", function()
-        gold = 1100
-        bus:Emit("PLAYER_MONEY")
+        bus:Emit("MAIL_CLOSED")
         advance(1)
-        assert.are.equal(0, #lines)
+        bus:Emit("MAIL_CLOSED")
+        advance(1)
+        assert.are.same({ "Gold collected: 400c" }, lines)
     end)
 
-    it("prints nothing for a batch of 0", function()
+    it("keeps the total when MAIL_SHOW fires again while open", function()
         bus:Emit("MAIL_SHOW")
+        gold = 1100
+        bus:Emit("MAIL_SHOW")
+        gold = 1300
+        bus:Emit("MAIL_CLOSED")
+        advance(1)
+        assert.are.same({ "Gold collected: 300c" }, lines)
+    end)
+
+    it("counts money that arrives late after the close", function()
+        bus:Emit("MAIL_SHOW")
+        bus:Emit("MAIL_CLOSED")
+        advance(0.4)
+        gold = 1200
+        bus:Emit("PLAYER_MONEY")
+        advance(0.4)
+        assert.are.equal(0, #lines)
+        gold = 1500
+        bus:Emit("PLAYER_MONEY")
+        advance(0.5)
+        assert.are.same({ "Gold collected: 500c" }, lines)
+    end)
+
+    it("does not wait for ever when money keeps coming", function()
+        bus:Emit("MAIL_SHOW")
+        bus:Emit("MAIL_CLOSED")
+        for _ = 1, ns.MailTotal.MAX_EXTENSIONS + 1 do
+            gold = gold + 10
+            bus:Emit("PLAYER_MONEY")
+            advance(0.4)
+        end
+        advance(0.4)
+        assert.are.equal(1, #lines)
+    end)
+
+    it("ignores PLAYER_MONEY while the mailbox is open or closed", function()
+        gold = 1100
         bus:Emit("PLAYER_MONEY")
         advance(1)
         assert.are.equal(0, #lines)

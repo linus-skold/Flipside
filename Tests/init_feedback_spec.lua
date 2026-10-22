@@ -120,18 +120,21 @@ describe("Init feedback", function()
         assert.is_true(found)
     end)
 
-    it("prints the mail money line in a batch while the mailbox is open", function()
+    it("prints the mail money line once at the close, with the total of the session", function()
         mock.messages = {}
         mock.money = 1000
         mock.fire("MAIL_SHOW")
+        mock.money = 6000
+        mock.fire("PLAYER_MONEY")
         mock.money = 11000
         mock.fire("PLAYER_MONEY")
         mock.advance(1)
-        assert.are.equal(1, #mock.messages)
-        assert.is_truthy(tostring(mock.messages[1]):find("Gold collected: 1g", 1, true))
+        assert.are.equal(0, #mock.messages)
+        mock.fire("MAIL_CLOSED")
         mock.fire("MAIL_CLOSED")
         mock.advance(1)
         assert.are.equal(1, #mock.messages)
+        assert.is_truthy(tostring(mock.messages[1]):find("Gold collected: 1g", 1, true))
     end)
 
     it("gives the window and the Groups page the new deps", function()
