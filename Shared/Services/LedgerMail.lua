@@ -158,12 +158,39 @@ function Mail:_Read()
     self._stats.reads = self._stats.reads + 1
     local list = {}
     local seen = {}
-    for index = 1, math.min(total, LedgerMail.MAX_MAILS) do
+    -- Pass 1: the cheap header reads and the cache keys. A key that two mails share is not cached, because the
+    -- mails cannot be told apart when the indexes shift.
+    local last = math.min(total, LedgerMail.MAX_MAILS)
+    local headers, keys, keyCount = {}, {}, {}
+    for index = 1, last do
         local header = api.header(index)
+        headers[index] = header
+        if type(header) == "table" and not self:_AnySecret(header) then
+            local key = table.concat({ tostring(header.sender), tostring(header.subject), tostring(header.money),
+                tostring(header.itemCount), tostring(header.itemQuantity), tostring(header.itemLink) }, "\31")
+            keys[index] = key
+            keyCount[key] = (keyCount[key] or 0) + 1
+        end
+    end
+    local oldCache, newCache = self._cache, {}
+    for index = 1, last do
+        local header = headers[index]
         if type(header) == "table" then
-            local invoice = self._invoices and api.invoice(index) or nil
+            local key = keys[index]
+            local rec = key and keyCount[key] == 1 and oldCache[key] or nil
+            local invoice
+            if rec then
+                self._stats.cacheHits = self._stats.cacheHits + 1
+                invoice = rec.invoice
+                newCache[key] = rec
+            else
+                if key and keyCount[key] == 1 then
+                    self._stats.cacheMisses = self._stats.cacheMisses + 1
+                end
+                invoice = self._invoices and api.invoice(index) or nil
+            end
             -- A mail with money, or a won-auction mail (it names the seller), needs the text read first.
-            if self._invoices and invoice == nil and api.text and not self:_AnySecret(header)
+            if not rec and self._invoices and invoice == nil and api.text and not self:_AnySecret(header)
                 and ((count(header.money) and header.money > 0) or self:_SubjectKind(header.subject) == "won") then
                 -- The client gives the invoice only after the mail text is read (this marks the mail as read).
                 -- One read for each mail is enough, so the result is cached by the identity of the mail.
@@ -188,7 +215,15 @@ function Mail:_Read()
             if self:_AnySecret(header) or self:_AnySecret(invoice) then
                 self._stats.skipped = self._stats.skipped + 1
             else
+                -- Keep the result for the next read. A missing invoice of a mail that may still get one is not kept.
+                if not rec and key and keyCount[key] == 1
+                    and (invoice ~= nil or not ((count(header.money) and header.money > 0)
+                        or self:_SubjectKind(header.subject) == "won")) then
+                    rec = { invoice = invoice }
+                    newCache[key] = rec
+                end
                 list[#list + 1] = {
+                    rec = rec,
                     index = index,
                     sender = text(header.sender) or "",
                     subject = text(header.subject) or "",
@@ -201,6 +236,8 @@ function Mail:_Read()
             end
         end
     end
+    -- Mails that left the inbox leave the cache.
+    self._cache = newCache
     return list
 end
 
@@ -274,7 +311,17 @@ function Mail:_Fingerprints(list)
     end
     local seen = {}
     for _, entry in ipairs(list) do
-        local base = self._Base(entry)
+        -- The base of a cached mail is computed once, while its invoice stays the same.
+        local rec = entry.rec
+        local base
+        if rec and rec.base and rec.baseInvoice == entry.invoice then
+            base = rec.base
+        else
+            base = self._Base(entry)
+            if rec then
+                rec.base, rec.baseInvoice = base, entry.invoice
+            end
+        end
         seen[base] = (seen[base] or 0) + 1
         if not entry.fp then
             local n = seen[base]
@@ -543,6 +590,7 @@ function Mail:Refresh(reset)
         self._snapshot = nil
         self._signature = nil
         self._textRead = {}
+        self._cache = {}
     end
     -- The header signature is cheap. If it is the same as at the last full read, the inbox did not change.
     local signature = self._snapshot and self:_Signature() or nil
@@ -658,6 +706,7 @@ function Mail:_Close()
     self._snapshot = nil
     self._signature = nil
     self._textRead = {}
+    self._cache = {}
     self._closed = true
 end
 
@@ -709,7 +758,9 @@ function LedgerMail.Attach(deps)
         _patterns = patterns,
         _pending = {},
         _textRead = {},
+        _cache = {},
         _stats = {
+            cacheHits = 0, cacheMisses = 0,
             sales = 0, sellers = 0, expired = 0, cancelled = 0, refunds = 0, mailMoney = 0, duplicates = 0, skipped = 0,
             rejected = 0, noInvoice = 0, unknownInvoice = 0, late = 0, unchanged = 0, reads = 0, deferred = 0,
         },
