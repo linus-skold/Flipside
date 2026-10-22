@@ -115,9 +115,26 @@ describe("Init feedback", function()
         mock.advance(1)
         local found = false
         for _, line in ipairs(mock.messages) do
-            found = found or tostring(line):find("You collected", 1, true) ~= nil
+            found = found or tostring(line):find("^Gold collected: ") ~= nil
         end
         assert.is_true(found)
+    end)
+
+    it("prints the mail money line once at the close, with the total of the session", function()
+        mock.messages = {}
+        mock.money = 1000
+        mock.fire("MAIL_SHOW")
+        mock.money = 6000
+        mock.fire("PLAYER_MONEY")
+        mock.money = 11000
+        mock.fire("PLAYER_MONEY")
+        mock.advance(1)
+        assert.are.equal(0, #mock.messages)
+        mock.fire("MAIL_CLOSED")
+        mock.fire("MAIL_CLOSED")
+        mock.advance(1)
+        assert.are.equal(1, #mock.messages)
+        assert.are.equal("Gold collected: 1g", mock.messages[1])
     end)
 
     it("gives the window and the Groups page the new deps", function()

@@ -1062,7 +1062,9 @@ local function openMailTotal()
         ns.MailTotal.Attach({
             bus = ns.bus,
             money = GetMoney,
-            print = printLine,
+            print = function(text)
+                DEFAULT_CHAT_FRAME:AddMessage(text)
+            end,
             format = ns.TooltipLines.FormatMoney,
             after = C_Timer.After,
             enabled = function()
