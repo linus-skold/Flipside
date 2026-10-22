@@ -158,6 +158,13 @@ function BuyingPlan.GroupKey(row)
     return string.format("%s|%s|%d|%d", item, row.owner or "", buyout, row.quantity or 1)
 end
 
+-- The key that Buy next follows from one bought stack to the next: buyout and stack size only. It leaves out the link
+-- and the seller, which a client can give late or not at all, so a stack keeps its key between two reads.
+function BuyingPlan.ChainKey(row)
+    local buyout = row.buyout or math.floor(row.unitPrice * (row.quantity or 1) + 0.5)
+    return string.format("%d|%d", buyout, row.quantity or 1)
+end
+
 -- The text of the Available column of a stack group: "50 stacks of 1", or "1 stack of 20".
 function BuyingPlan.AvailableText(stacks, stackSize)
     return string.format("%d %s of %d", stacks, stacks == 1 and "stack" or "stacks", stackSize)

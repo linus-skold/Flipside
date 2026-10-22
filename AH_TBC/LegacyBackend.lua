@@ -377,7 +377,7 @@ local READY_EVENT = "Flipside.LegacyQueryReady"
 local BOUGHT_EVENT = "Flipside.LegacyBuyCompleted"
 local BUY_ERROR_EVENT = "Flipside.LegacyBuyError"
 
-local live = { rows = {}, buy = nil, subscribed = false }
+local live = { rows = {}, buy = nil, subscribed = false, sorted = false }
 
 local function itemName(itemID)
     local getInfo = has("GetItemInfo") and _G.GetItemInfo or (type(C_Item) == "table" and C_Item.GetItemInfo)
@@ -415,8 +415,36 @@ local function pollReady(tries)
     end)
 end
 
+-- The server sort column for the unit price. The in-game check of this name is open (SPEC 5.3).
+local SORT_COLUMN = "unitprice"
+
+-- Set the browse list sort to unit price, cheapest first. Gives true if the list has that sort now. A client with no
+-- sort functions, or a refused call, gives false and the search then reads all pages.
+local function sortByUnitPrice()
+    if not (has("SortAuctionClearSort") and has("SortAuctionSetSort") and has("SortAuctionApplySort")) then
+        return false
+    end
+    if has("GetAuctionSort") then
+        local ok, column, reverse = pcall(_G.GetAuctionSort, "list", 1)
+        if ok and column == SORT_COLUMN and not reverse then
+            return true
+        end
+    end
+    local ok = pcall(function()
+        _G.SortAuctionClearSort("list")
+        _G.SortAuctionSetSort("list", SORT_COLUMN, false)
+        _G.SortAuctionApplySort("list")
+    end)
+    return ok
+end
+
+-- True if the last live search gave the pages sorted by unit price (page 1 holds the cheapest auctions).
+function Backend.SortedPaging()
+    return live.sorted == true
+end
+
 -- One exact-name query for an item. page is 0-based (default 0; a page holds 50 rows). Gives true, or false and a
--- text.
+-- text. The sort is set before the query.
 function Backend.LiveSearch(itemID, page)
     if not Backend.IsReady() then
         return false, "the Auction House is busy, try again in a moment"
@@ -424,6 +452,11 @@ function Backend.LiveSearch(itemID, page)
     local name = itemName(itemID)
     if type(name) ~= "string" or name == "" then
         return false, "the item name is not loaded yet, try again in a moment"
+    end
+    live.sorted = sortByUnitPrice()
+    if live.sorted and not Backend.IsReady() then
+        -- The sort call used the throttle. The sort stays, so the next try skips it.
+        return false, "the Auction House is busy, try again in a moment"
     end
     live.rows = {}
     ownQuery("lookup", name, nil, nil, page or 0, false, 0, false, true, nil)
@@ -479,6 +512,20 @@ function Backend.LiveRows(itemID)
     table.sort(rows, byPrice)
     live.rows = prints
     return rows
+end
+
+-- True if a row of the list page has no seller name yet. The client gives the name late and sends the list update
+-- again. A buy group that holds the seller needs the name, so the Buying tab waits a short time for it.
+function Backend.LiveOwnersPending(itemID)
+    for i = 1, tonumber((call("GetNumAuctionItems", "list"))) or 0 do
+        local info = { call("GetAuctionItemInfo", "list", i) }
+        local buyout = info[10]
+        if (itemID == nil or info[INFO_ITEM_ID] == itemID) and type(buyout) == "number" and buyout > 0
+            and (type(info[INFO_OWNER]) ~= "string" or info[INFO_OWNER] == "") then
+            return true
+        end
+    end
+    return false
 end
 
 function Backend.CanBuy()

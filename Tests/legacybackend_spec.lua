@@ -275,6 +275,70 @@ describe("LegacyBackend", function()
             assert.are.same({ ADDON_NAME, nil, nil, 3, false, 0, false, true, nil, n = 9 }, queries[1])
         end)
 
+        describe("sort by unit price", function()
+            local calls
+
+            before_each(function()
+                calls = {}
+                _G.SortAuctionClearSort = function(kind) calls[#calls + 1] = { "clear", kind } end
+                _G.SortAuctionSetSort = function(kind, column, reverse)
+                    calls[#calls + 1] = { "set", kind, column, reverse }
+                end
+                _G.SortAuctionApplySort = function(kind) calls[#calls + 1] = { "apply", kind } end
+            end)
+
+            after_each(function()
+                _G.SortAuctionClearSort, _G.SortAuctionSetSort, _G.SortAuctionApplySort = nil, nil, nil
+                _G.GetAuctionSort = nil
+            end)
+
+            it("sets the list sort before the query and reports sorted pages", function()
+                assert.is_false(A().SortedPaging())
+                assert.is_true(A().LiveSearch(11))
+                assert.are.same({ { "clear", "list" }, { "set", "list", "unitprice", false }, { "apply", "list" } },
+                    calls)
+                assert.are.equal(1, #queries)
+                assert.is_true(A().SortedPaging())
+            end)
+
+            it("skips the sort calls when the list has this sort already", function()
+                _G.GetAuctionSort = function() return "unitprice", false end
+                assert.is_true(A().LiveSearch(11))
+                assert.are.same({}, calls)
+                assert.is_true(A().SortedPaging())
+            end)
+
+            it("reads all pages (no sorted paging) when the client has no sort calls", function()
+                _G.SortAuctionApplySort = nil
+                assert.is_true(A().LiveSearch(11))
+                assert.are.equal(1, #queries)
+                assert.is_false(A().SortedPaging())
+            end)
+
+            it("reads all pages when a sort call raises an error", function()
+                _G.SortAuctionSetSort = function() error("bad column") end
+                assert.is_true(A().LiveSearch(11))
+                assert.are.equal(1, #queries)
+                assert.is_false(A().SortedPaging())
+            end)
+
+            it("refuses with a text and sends no query when the sort call used the throttle", function()
+                _G.SortAuctionApplySort = function() canQuery = false end
+                local ok, text = A().LiveSearch(11)
+                assert.is_false(ok)
+                assert.is_truthy(text:find("busy", 1, true))
+                assert.are.equal(0, #queries)
+            end)
+        end)
+
+        it("tells if a row of the list has no seller name yet", function()
+            lists.list = { listing(1, 100, 11), listing(1, 100, 12, "") }
+            assert.is_false(A().LiveOwnersPending(11))
+            assert.is_true(A().LiveOwnersPending(12))
+            lists.list = { listing(1, 100, 11) }
+            assert.is_false(A().LiveOwnersPending(11))
+        end)
+
         it("gives the number of result pages from the total of the list, 50 rows for each page", function()
             _G.GetNumAuctionItems = function() return 50, 120 end
             assert.are.equal(3, A().LivePageCount())

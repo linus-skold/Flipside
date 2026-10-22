@@ -4,7 +4,8 @@ local _, ns = ...
 -- Backend functions: StartScan, ScanDoneEvent, RowCount, ReadRow, RowLink, RowIsPet, ItemIsCommodity,
 -- HasCommodityCheck, NameSearch, TargetedSearch, NameResultEvent, NameResults, NameItemKeyInfo, Capture, OwnedAuctions,
 -- CanReadOwned, OwnedEvent, OpenEvent, CloseEvent, CanScan, CanLiveSearch, LiveSearch, LiveResultEvents, LiveRows,
--- LivePageCount, IsReady, ReadyEvent, RefreshOwned, CanBuy, StartCommodityPurchase, ConfirmCommodityPurchase,
+-- LivePageCount, SortedPaging, LiveOwnersPending, IsReady,
+-- ReadyEvent, RefreshOwned, CanBuy, StartCommodityPurchase, ConfirmCommodityPurchase,
 -- CancelCommodityPurchase, QuoteSecondsLeft, BuyItemAuction, BuyEvents, CanPost, PostItem, PostCommodity,
 -- ConfirmPostItem, ConfirmPostCommodity, Deposit, AvailablePostCount, IsSellItemValid, PostedEvent,
 -- MultisellEvent, CanSendPost, ThrottleEvents, AuctionInfo,
@@ -96,6 +97,10 @@ query("ScanTotal")
 -- then reads the page that the last search asked for.
 query("LiveSearch", false)
 query("LivePageCount")
+-- SortedPaging() is true if the last search gave the pages cheapest first, so page 1 holds the cheapest auctions.
+-- LiveOwnersPending() is true if a row of the last result has no seller name yet (the client gives it late).
+query("SortedPaging", false)
+query("LiveOwnersPending", false)
 query("LiveResultEvents")
 query("LiveRows", {})
 query("IsReady", true)

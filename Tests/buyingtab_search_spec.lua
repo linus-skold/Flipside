@@ -122,6 +122,65 @@ describe("BuyingTab name search", function()
         assert.are.same({ query = "Peacebloom", exact = true }, finder.calls[1])
     end)
 
+    describe("a name in quotes", function()
+        local one = { { itemID = 100, name = "Peacebloom", key = "100" } }
+
+        it("opens the stacks of the one item that matches, with no click", function()
+            finder.reply = one
+            assert.is_true(tab:SearchName('"Peacebloom"'))
+            assert.are.equal("100", tab.selectedKey)
+            assert.are.same({ 100 }, client.searches)
+            assert.is_not_nil(tab.pending)
+        end)
+
+        it("keeps the list when several items have that name", function()
+            assert.is_true(tab:SearchName('"Peacebloom"'))
+            assert.are.equal(2, #tab.list)
+            assert.is_nil(tab.selectedKey)
+            assert.are.same({}, client.searches)
+        end)
+
+        it("keeps the list when no item has that name", function()
+            finder.reply = {}
+            tab:SearchName('"Zzz"')
+            assert.is_nil(tab.selectedKey)
+            assert.are.same({}, client.searches)
+        end)
+
+        it("does not open a name that is not in quotes", function()
+            finder.reply = one
+            tab:SearchName("Peacebloom")
+            assert.is_nil(tab.selectedKey)
+            assert.are.same({}, client.searches)
+        end)
+
+        it("opens the item after the settle time, not before", function()
+            local push, finish
+            function finder.Find(_, _, callback, options)
+                push, finish = options.onItems, callback
+            end
+            tab:SearchName('"Peacebloom"')
+            push(one)
+            assert.is_nil(tab.selectedKey)
+            assert.are.same({}, client.searches)
+            finish(one)
+            assert.are.equal("100", tab.selectedKey)
+            assert.are.same({ 100 }, client.searches)
+        end)
+
+        it("leaves an item that the user picked during the settle time", function()
+            local push, finish
+            function finder.Find(_, _, callback, options)
+                push, finish = options.onItems, callback
+            end
+            tab:SearchName('"Peacebloom"')
+            push(one)
+            tab:Select_("100")
+            finish(one)
+            assert.are.same({}, client.searches)
+        end)
+    end)
+
     it("runs from the Enter key and the Search button", function()
         ui.searchInput:SetText("peace")
         ui.searchInput.scripts.OnEnterPressed(ui.searchInput)

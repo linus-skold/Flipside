@@ -42,6 +42,8 @@ describe("BuyingTab with stack groups", function()
         c.LivePageCount = function()
             return c.item and c.pages[c.item] and #c.pages[c.item] or nil
         end
+        c.SortedPaging = function() return c.sorted == true end
+        c.LiveOwnersPending = function() return c.ownersPending == true end
         c.LiveResultEvents = function() return "COMMODITY_RESULTS", "ITEM_RESULTS" end
         c.ReadyEvent = function() return "READY" end
         c.CloseEvent = function() return "CLOSE" end
@@ -289,18 +291,82 @@ describe("BuyingTab with stack groups", function()
             assert.are.same({}, client.violations)
         end)
 
-        it("stays in the group and shows No more stacks when the group is empty", function()
+        it("stays in the group first, then goes on with the next cheapest stack", function()
             local confirm = openBox({ auction(1, 30), auction(2, 30), auction(3, 31) })
             click(confirm.yesButton)
             bought({ auction(1, 30), auction(2, 31) })
             click(confirm.yesButton)
             bought({ auction(1, 31) })
             assert.is_true(confirm:IsShown())
-            assert.matches("No more stacks in this group", confirm.text.text)
+            assert.are.equal("Buy next", confirm.yesButton.text)
+            assert.is_true(confirm.yesButton.enabled)
+            assert.matches("Available: 1 stack of 1", confirm.text.text)
+            assert.are.equal(2, #client.calls)
+            click(confirm.yesButton)
+            assert.are.same({ { "bid", 1, 30 }, { "bid", 1, 30 }, { "bid", 1, 31 } }, client.calls)
+        end)
+
+        it("shows No more stacks only when the item has no buyable stack left", function()
+            local confirm = openBox({ auction(1, 30), auction(2, 30) })
+            click(confirm.yesButton)
+            bought({ auction(1, 30) })
+            click(confirm.yesButton)
+            bought({})
+            assert.is_true(confirm:IsShown())
+            assert.matches("No more stacks of this item", confirm.text.text)
             assert.is_false(confirm.yesButton.enabled)
             assert.are.equal("Close", confirm.noButton.text)
             assert.are.equal(2, #client.calls)
-            assert.are.equal("No more stacks in this group", ui.message.text)
+            assert.are.equal("No more stacks of this item", ui.message.text)
+        end)
+
+        it("skips your own stack and offers the next buyable one", function()
+            local confirm = openBox({ auction(1, 30), auction(2, 31, 1, "Me"), auction(3, 32, 1, "Ben") })
+            click(confirm.yesButton)
+            local mine = auction(1, 31, 1, "Me")
+            mine.ownerItem = true
+            bought({ mine, auction(2, 32, 1, "Ben") })
+            assert.is_true(confirm.yesButton.enabled)
+            click(confirm.yesButton)
+            assert.are.same({ { "bid", 1, 30 }, { "bid", 2, 32 } }, client.calls)
+        end)
+
+        it("follows a stack whose seller name comes late", function()
+            local confirm = openBox({ auction(1, 30, 1, "Anna"), auction(2, 30, 1, "Anna") })
+            click(confirm.yesButton)
+            local late = auction(1, 30)
+            late.owner = nil
+            bought({ late })
+            assert.is_true(confirm.yesButton.enabled)
+            assert.matches("Available: 1 stack of 1", confirm.text.text)
+            click(confirm.yesButton)
+            assert.are.equal(2, #client.calls)
+        end)
+
+        it("follows a stack whose link is missing in the fresh rows", function()
+            local first = auction(1, 30)
+            first.itemLink = "|cff1eff00|Hitem:10::::::::70:::::|h[Item10]|h|r"
+            local confirm = openBox({ first, auction(2, 30) })
+            click(confirm.yesButton)
+            bought({ auction(1, 30) })
+            assert.is_true(confirm.yesButton.enabled)
+            click(confirm.yesButton)
+            assert.are.equal(2, #client.calls)
+        end)
+
+        it("waits for the ready event when the client is not ready and then shows the next stack", function()
+            local confirm = openBox({ auction(1, 30), auction(2, 31) })
+            click(confirm.yesButton)
+            bus:Emit("ITEMBOUGHT", 1)
+            client.rows[10] = { auction(1, 31) }
+            client.ready = false
+            bus:Emit("ITEM_RESULTS", 10)
+            assert.is_false(confirm.yesButton.enabled)
+            assert.are.equal("waiting for the Auction House", ui.message.text)
+            client.ready = true
+            bus:Emit("READY")
+            assert.is_true(confirm.yesButton.enabled)
+            assert.are.equal("quoted", tab.buy.phase)
         end)
 
         it("stops at Cancel and buys nothing more", function()
@@ -337,6 +403,43 @@ describe("BuyingTab with stack groups", function()
             assert.is_true(confirm:IsShown())
         end)
 
+        it("drops only the failed auction, by its auction ID", function()
+            local confirm = openBox()
+            click(confirm.yesButton)
+            bus:Emit("ITEMERR", "busy")
+            bus:Emit("ITEM_RESULTS", 10)
+            local ids = {}
+            for _, row in ipairs(tab.results["10"].rows) do
+                ids[#ids + 1] = row.auctionID
+            end
+            assert.are.same({ 2, 3, 4 }, ids)
+            assert.is_true(confirm.yesButton.enabled)
+        end)
+
+        it("shows an identical stack again after a failed buy and a good buy", function()
+            local confirm = openBox()
+            click(confirm.yesButton)
+            bus:Emit("ITEMERR", "busy")
+            bus:Emit("ITEM_RESULTS", 10)
+            click(confirm.yesButton)
+            assert.are.same({ { "bid", 1, 30 }, { "bid", 2, 30 } }, client.calls)
+            bought({ auction(1, 30), auction(2, 30), auction(3, 30) }, 2)
+            -- The list holds three identical stacks. The failed one does not hide one of them.
+            assert.are.equal(3, #tab.results["10"].rows)
+            assert.matches("Available: 3 stacks of 1", confirm.text.text)
+        end)
+
+        it("keeps going after a failed buy when the next stack is the only buyable one of the item", function()
+            local confirm = openBox({ auction(1, 30), auction(2, 45) })
+            click(confirm.yesButton)
+            bus:Emit("ITEMERR", "busy")
+            client.rows[10] = { auction(1, 30), auction(2, 45) }
+            bus:Emit("ITEM_RESULTS", 10)
+            assert.are.equal(1, #tab.results["10"].rows)
+            assert.is_true(confirm.yesButton.enabled)
+            assert.are.equal(45, tab.buy.total)
+        end)
+
         it("buys an identical stack when the index changed", function()
             local confirm = openBox({ auction(1, 30, 1, "Anna"), auction(2, 31, 1, "Ben") })
             client.rows[10] = { auction(1, 31, 1, "Ben"), auction(2, 30, 1, "Anna") }
@@ -351,23 +454,26 @@ describe("BuyingTab with stack groups", function()
             assert.are.same({ { "bid", 2, 30 } }, client.calls)
         end)
 
-        it("never buys another price or stack size when no identical stack is left", function()
+        it("never buys another price or stack size at the click when no identical stack is left", function()
             local confirm = openBox({ auction(1, 30, 1, "Anna"), auction(2, 31, 1, "Ben") })
             client.rows[10] = { auction(1, 31, 1, "Ben"), auction(2, 60, 2, "Anna"), auction(3, 30, 1, "Cara") }
             click(confirm.yesButton)
             assert.are.same({}, client.calls)
             bus:Emit("ITEM_RESULTS", 10)
+            -- The box shows the error and the next stack, which is the same price and size from another seller.
             assert.matches("Error: the auction is gone", confirm.text.text)
-            assert.matches("No more stacks in this group", confirm.text.text)
-            assert.is_false(confirm.yesButton.enabled)
+            assert.is_true(confirm.yesButton.enabled)
+            assert.are.equal("Cara", tab.buy.row.owner)
             assert.are.same({}, client.calls)
         end)
 
-        it("never buys a different price in the middle of a chain", function()
+        it("shows a different price in the middle of a chain but buys only at the click", function()
             local confirm = openBox({ auction(1, 30), auction(2, 31, 1, "Ben") })
             click(confirm.yesButton)
             bought({ auction(1, 31, 1, "Ben") })
-            assert.matches("No more stacks in this group", confirm.text.text)
+            assert.is_true(confirm.yesButton.enabled)
+            assert.are.equal("quoted", tab.buy.phase)
+            assert.are.equal(31, tab.buy.total)
             assert.are.equal(1, #client.calls)
         end)
     end)
@@ -569,6 +675,171 @@ describe("BuyingTab with stack groups", function()
             bus:Emit("ITEM_RESULTS", 10)
             assert.are.equal(1, #client.searches)
             assert.are.equal("2 stacks of 1", ui.rowsList.rows[1].cells.quantity.text)
+        end)
+
+        describe("a late seller name", function()
+            local timers
+
+            -- The timers of the owner wait. The search timeout timers stay out.
+            local function ownerTimer()
+                for index, timer in ipairs(timers) do
+                    if timer.seconds < 1 then
+                        table.remove(timers, index)
+                        return timer
+                    end
+                end
+            end
+
+            before_each(function()
+                timers = {}
+                tab.deps.after = function(seconds, fn)
+                    timers[#timers + 1] = { seconds = seconds, fn = fn }
+                end
+                client.rows[10] = { auction(1, 30) }
+                tab:Select_("10")
+                tab:Search()
+            end)
+
+            it("waits for the update with the names before it shows the rows", function()
+                client.ownersPending = true
+                bus:Emit("ITEM_RESULTS", 10)
+                assert.is_nil(tab.results["10"])
+                assert.is_not_nil(tab.pending)
+                client.ownersPending = false
+                bus:Emit("ITEM_RESULTS", 10)
+                assert.is_not_nil(tab.results["10"])
+                assert.is_nil(tab.pending)
+            end)
+
+            it("accepts unknown names after a short, bounded wait", function()
+                client.ownersPending = true
+                bus:Emit("ITEM_RESULTS", 10)
+                for _ = 1, 3 do
+                    assert.is_nil(tab.results["10"])
+                    ownerTimer().fn()
+                end
+                assert.is_not_nil(tab.results["10"])
+                assert.is_nil(ownerTimer())
+            end)
+
+            it("does not read the page again when the names came before the timer", function()
+                client.ownersPending = true
+                bus:Emit("ITEM_RESULTS", 10)
+                client.ownersPending = false
+                bus:Emit("ITEM_RESULTS", 10)
+                local timer = ownerTimer()
+                client.rows[10] = {}
+                timer.fn()
+                assert.are.equal(1, #tab.results["10"].rows)
+            end)
+        end)
+
+        describe("sorted pages", function()
+            -- One auction for each page. The list is sorted by unit price.
+            local function sortedPages()
+                return {
+                    { auction(1, 29, 1, "Ben") },
+                    { auction(1, 30, 1, "Anna") },
+                    { auction(1, 31, 1, "Cara") },
+                }
+            end
+
+            -- Search the item and read page 1.
+            local function read(pages)
+                client.sorted = true
+                client.pages[10] = pages or sortedPages()
+                tab:Select_("10")
+                tab:Search()
+                bus:Emit("ITEM_RESULTS", 10)
+            end
+
+            it("reads page 1 only and shows it at once", function()
+                read()
+                assert.are.same({ { 10, 0 } }, client.searches)
+                assert.is_nil(tab.pending)
+                assert.is_false(ui.stop:IsShown())
+                assert.are.equal(1, #ui.rowsList.rows)
+                assert.is_true(ui.loadMore:IsShown())
+                assert.are.equal("Load more (1/3)", ui.loadMore.text)
+                assert.is_true(ui.buyNext.enabled)
+            end)
+
+            it("hides Load more when the result has one page", function()
+                read({ { auction(1, 29, 1, "Ben") } })
+                assert.is_false(ui.loadMore:IsShown())
+                assert.is_nil(tab.results["10"].more)
+            end)
+
+            it("reads the next page at Load more and keeps the pages that are loaded", function()
+                read()
+                click(ui.loadMore)
+                assert.are.same({ 10, 1 }, client.searches[2])
+                bus:Emit("ITEM_RESULTS", 10)
+                -- The client list shows page 2 now. The cheapest stack is on page 1: its page is read again.
+                bus:Emit("ITEM_RESULTS", 10)
+                assert.are.equal(2, #tab.results["10"].rows)
+                assert.are.same({ next = 2, total = 3 }, tab.results["10"].more)
+                assert.are.equal("Load more (2/3)", ui.loadMore.text)
+                click(ui.loadMore)
+                bus:Emit("ITEM_RESULTS", 10)
+                bus:Emit("ITEM_RESULTS", 10)
+                assert.are.equal(3, #tab.results["10"].rows)
+                assert.is_nil(tab.results["10"].more)
+                assert.is_false(ui.loadMore:IsShown())
+            end)
+
+            it("refuses Load more with no more pages", function()
+                read({ { auction(1, 29, 1, "Ben") } })
+                local ok = tab:LoadMore()
+                assert.is_false(ok)
+            end)
+
+            -- Buy the stack on page 1 and open the next box. Returns the box.
+            local function buyFirstStack()
+                read()
+                click(ui.buyNext)
+                local confirm = box()
+                click(confirm.yesButton)
+                return confirm
+            end
+
+            it("makes Buy next read the next page when the next stack is at the tail price", function()
+                local confirm = buyFirstStack()
+                -- The bought stack is gone. The pages shift: two pages are left.
+                client.pages[10] = { { auction(1, 30, 1, "Anna") }, { auction(1, 31, 1, "Cara") } }
+                bus:Emit("ITEMBOUGHT", 1)
+                bus:Emit("ITEM_RESULTS", 10)
+                -- The loaded page has only the stack at the tail price: Buy next reads the next page first.
+                assert.are.same({ 10, 1 }, client.searches[3])
+                bus:Emit("ITEM_RESULTS", 10)
+                bus:Emit("ITEM_RESULTS", 10)
+                assert.is_true(confirm.yesButton.enabled)
+                assert.are.equal("quoted", tab.buy.phase)
+                assert.are.equal(30, tab.buy.total)
+            end)
+
+            it("makes Buy next read the next page when the loaded page has only your own stacks", function()
+                local confirm = buyFirstStack()
+                local mine = auction(1, 30, 1, "Me")
+                mine.ownerItem = true
+                client.pages[10] = { { mine }, { auction(1, 31, 1, "Cara") } }
+                bus:Emit("ITEMBOUGHT", 1)
+                bus:Emit("ITEM_RESULTS", 10)
+                assert.are.same({ 10, 1 }, client.searches[3])
+                bus:Emit("ITEM_RESULTS", 10)
+                bus:Emit("ITEM_RESULTS", 10)
+                assert.is_true(confirm.yesButton.enabled)
+                assert.are.equal(31, tab.buy.total)
+            end)
+
+            it("says No more stacks only when no page is left", function()
+                local confirm = buyFirstStack()
+                client.pages[10] = {}
+                bus:Emit("ITEMBOUGHT", 1)
+                bus:Emit("ITEM_RESULTS", 10)
+                assert.is_true(confirm:IsShown())
+                assert.matches("No more stacks of this item", confirm.text.text)
+            end)
         end)
 
         describe("a buy", function()
