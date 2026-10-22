@@ -318,6 +318,7 @@ end
 -- deps: api = { numItems() (GetInboxNumItems), header(index) (GetInboxHeaderInfo), open(index), openID()
 -- (the index of the open mail or 0), isModified() (optional, the Shift-click test), autoLoot(index) (optional,
 -- AutoLootMailItem), freeSlots() (optional, the free bag slots) }, notify(text) (optional, a short status),
+-- onTake() (optional, called when a take starts),
 -- formatMoney(copper), blizzard() (the client frames to hide while the list shows),
 -- openMail() (the open-mail frame or nil),
 -- place(frame) (anchors the list), skin (optional).
@@ -379,7 +380,8 @@ function InboxList:VisibleRowCount()
 end
 
 -- Takes all money and attachments of a mail with the client function AutoLootMailItem, as the client does on a
--- Shift-click. Never pays a COD mail. Does not take items when the bags have no free slot.
+-- Shift-click. Calls deps.onTake() (optional) before the take starts. Never pays a COD mail.
+-- Does not take items when the bags have no free slot.
 function InboxList:TakeAll(index)
     local api = self.deps.api
     local mail = InboxList.ReadMail(api, index)
@@ -400,6 +402,9 @@ function InboxList:TakeAll(index)
     end
     log("info", string.format("take all from mail %d from %s: %d items, money %d", index, mail.sender, mail.items,
         mail.money))
+    if self.deps.onTake then
+        self.deps.onTake()
+    end
     api.autoLoot(index)
     return true
 end
