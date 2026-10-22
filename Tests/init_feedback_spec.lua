@@ -115,7 +115,7 @@ describe("Init feedback", function()
         mock.advance(1)
         local found = false
         for _, line in ipairs(mock.messages) do
-            found = found or tostring(line):find("Gold collected: ", 1, true) ~= nil
+            found = found or tostring(line):find("^Gold collected: ") ~= nil
         end
         assert.is_true(found)
     end)
@@ -134,7 +134,7 @@ describe("Init feedback", function()
         mock.fire("MAIL_CLOSED")
         mock.advance(1)
         assert.are.equal(1, #mock.messages)
-        assert.is_truthy(tostring(mock.messages[1]):find("Gold collected: 1g", 1, true))
+        assert.are.equal("Gold collected: 1g", mock.messages[1])
     end)
 
     it("gives the window and the Groups page the new deps", function()
