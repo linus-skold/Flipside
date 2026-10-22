@@ -49,7 +49,47 @@ describe("MailTotal", function()
         bus:Emit("MAIL_CLOSED")
         assert.are.equal(0, #lines)
         advance(ns.MailTotal.WAIT)
-        assert.are.same({ "You collected 250c from the mailbox." }, lines)
+        assert.are.same({ "Gold collected: 250c" }, lines)
+    end)
+
+    it("prints one line for a batch of takes while the mailbox stays open", function()
+        bus:Emit("MAIL_SHOW")
+        gold = 1100
+        bus:Emit("PLAYER_MONEY")
+        advance(0.25)
+        gold = 1300
+        bus:Emit("PLAYER_MONEY")
+        advance(0.25)
+        assert.are.equal(0, #lines)
+        advance(0.25)
+        assert.are.same({ "Gold collected: 300c" }, lines)
+    end)
+
+    it("counts a later batch from the new money and not twice", function()
+        bus:Emit("MAIL_SHOW")
+        gold = 1100
+        bus:Emit("PLAYER_MONEY")
+        advance(ns.MailTotal.WAIT)
+        gold = 1150
+        bus:Emit("PLAYER_MONEY")
+        advance(ns.MailTotal.WAIT)
+        bus:Emit("MAIL_CLOSED")
+        advance(ns.MailTotal.WAIT)
+        assert.are.same({ "Gold collected: 100c", "Gold collected: 50c" }, lines)
+    end)
+
+    it("ignores PLAYER_MONEY while the mailbox is closed", function()
+        gold = 1100
+        bus:Emit("PLAYER_MONEY")
+        advance(1)
+        assert.are.equal(0, #lines)
+    end)
+
+    it("prints nothing for a batch of 0", function()
+        bus:Emit("MAIL_SHOW")
+        bus:Emit("PLAYER_MONEY")
+        advance(1)
+        assert.are.equal(0, #lines)
     end)
 
     it("prints nothing when the money is the same", function()
@@ -74,7 +114,7 @@ describe("MailTotal", function()
         advance(0.25)
         gold = 1300
         advance(0.25)
-        assert.are.same({ "You collected 300c from the mailbox." }, lines)
+        assert.are.same({ "Gold collected: 300c" }, lines)
     end)
 
     it("prints the old result at once when the mailbox opens again", function()
@@ -82,13 +122,13 @@ describe("MailTotal", function()
         gold = 1100
         bus:Emit("MAIL_CLOSED")
         bus:Emit("MAIL_SHOW")
-        assert.are.same({ "You collected 100c from the mailbox." }, lines)
+        assert.are.same({ "Gold collected: 100c" }, lines)
         advance(1)
         assert.are.equal(1, #lines)
         gold = 1150
         bus:Emit("MAIL_CLOSED")
         advance(1)
-        assert.are.equal("You collected 50c from the mailbox.", lines[2])
+        assert.are.equal("Gold collected: 50c", lines[2])
     end)
 
     it("starts a new count at each open", function()
