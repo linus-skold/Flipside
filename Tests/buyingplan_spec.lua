@@ -424,6 +424,25 @@ describe("BuyingPlan", function()
             assert.are_not.equal(BP.GroupKey(auction(1, 30, 1)), BP.GroupKey(auction(1, 30, 2)))
         end)
 
+        it("gives the same chain key with a late seller name and with no link", function()
+            local late = auction(1, 30, 1, "Anna")
+            late.owner = nil
+            local linked = auction(2, 30, 1, "Anna", { itemLink = "|cff1eff00|Hitem:10::::::::70:::::|h[Ore]|h|r" })
+            assert.are_not.equal(BP.GroupKey(late), BP.GroupKey(auction(3, 30, 1, "Anna")))
+            assert.are.equal(BP.ChainKey(late), BP.ChainKey(auction(3, 30, 1, "Anna")))
+            assert.are.equal(BP.ChainKey(linked), BP.ChainKey(auction(3, 30, 1, "Anna")))
+        end)
+
+        it("gives another chain key for another buyout or stack size", function()
+            assert.are_not.equal(BP.ChainKey(auction(1, 30)), BP.ChainKey(auction(1, 31)))
+            assert.are_not.equal(BP.ChainKey(auction(1, 30, 1)), BP.ChainKey(auction(1, 30, 2)))
+        end)
+
+        it("makes the chain key of a row with no buyout field from the unit price", function()
+            local row = { unitPrice = 15, quantity = 2 }
+            assert.are.equal(BP.ChainKey(auction(1, 30, 2)), BP.ChainKey(row))
+        end)
+
         it("writes the available text for one stack and for many", function()
             assert.are.equal("1 stack of 20", BP.AvailableText(1, 20))
             assert.are.equal("50 stacks of 1", BP.AvailableText(50, 1))
