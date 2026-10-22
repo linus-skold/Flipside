@@ -7,15 +7,20 @@ ns.InventoryCapture = InventoryCapture
 
 local DEBOUNCE_SECONDS = 0.5
 local OWNER = "Flipside.InventoryCapture"
+local TAKE_ENDED = "Flipside.MailTakeEnded"
+-- The reads that wait while a mail take is in progress.
+local WAITS_FOR_TAKE = { bags = true, mail = true }
 
 -- deps: bus, holdings, holdingsRead, api, resolver, after, report.
--- Optional deps: ownedEvent (default: Forever name), bagIDs and bankIDs (lists of container ids).
+-- Optional deps: ownedEvent (default: Forever name), bagIDs and bankIDs (lists of container ids), take (a MailTake:
+-- while it is active, the bag and mail reads wait and run once when the take ends).
 -- api: { container = { numSlots, itemInfo }, mail = { numItems, itemLink, itemInfo }, auctions = { owned } }.
 function InventoryCapture.Attach(deps)
     local capture = { bankOpen = false }
     local api = deps.api or {}
     local reported = {}
     local pending = {}
+    local skipped = {}
 
     local function report(kind, message)
         if reported[kind] or not deps.report then
@@ -98,6 +103,7 @@ function InventoryCapture.Attach(deps)
     end
 
     -- Run the read once after the delay, however many events come in the meantime.
+    -- While a mail take is active, the bag and mail reads wait: the last one runs once when the take ends.
     local function schedule(kind, fn)
         if pending[kind] then
             return
@@ -105,6 +111,10 @@ function InventoryCapture.Attach(deps)
         pending[kind] = true
         deps.after(DEBOUNCE_SECONDS, function()
             pending[kind] = false
+            if WAITS_FOR_TAKE[kind] and deps.take and deps.take.IsActive() then
+                skipped[kind] = fn
+                return
+            end
             fn()
         end)
     end
@@ -144,6 +154,16 @@ function InventoryCapture.Attach(deps)
         schedule("auctions", function()
             capture.ReadAuctions()
         end)
+    end)
+
+    deps.bus:Subscribe(TAKE_ENDED, OWNER, function()
+        local run = skipped
+        skipped = {}
+        for kind in pairs(WAITS_FOR_TAKE) do
+            if run[kind] then
+                run[kind]()
+            end
+        end
     end)
 
     schedule("bags", readBagsAndOpenBank)

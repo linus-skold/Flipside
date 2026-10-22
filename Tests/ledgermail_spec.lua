@@ -672,6 +672,83 @@ describe("LedgerMail", function()
             assert.are.equal(reads + 1, mail:Stats().reads)
         end)
 
+        it("reads the invoice only of the changed mail (cache miss), the others hit", function()
+            fiveSales()
+            local stats = mail:Stats()
+            assert.are.equal(5, stats.cacheMisses)
+            assert.are.equal(0, stats.cacheHits)
+            local invoices = calls.invoice
+            inbox[2].money = 0
+            bus:Emit("MAIL_INBOX_UPDATE")
+            advance(0.4)
+            stats = mail:Stats()
+            assert.are.equal(invoices + 1, calls.invoice)
+            assert.are.equal(4, stats.cacheHits)
+            assert.are.equal(6, stats.cacheMisses)
+        end)
+
+        it("reads no invoice for the mails that stay after one mail is taken and deleted", function()
+            fiveSales()
+            local invoices = calls.invoice
+            change(3005)
+            table.remove(inbox, 3)
+            bus:Emit("MAIL_INBOX_UPDATE")
+            advance(0.4)
+            advance(2)
+            assert.are.equal(invoices, calls.invoice)
+            assert.are.equal(4, mail:Stats().cacheHits)
+            local sales = bySource("ahSale")
+            assert.are.equal(1, #sales)
+            assert.are.equal("Buyer3", sales[1].counterparty)
+            assert.are.equal(0, #bySource("mailMoney"))
+            -- The shifted mails give no new record at the next read.
+            inbox[3].money = 0
+            bus:Emit("MAIL_INBOX_UPDATE")
+            advance(0.4)
+            change(4005)
+            advance(2)
+            assert.are.equal(2, #bySource("ahSale"))
+            assert.are.equal("Buyer4", bySource("ahSale")[2].counterparty)
+        end)
+
+        it("does not cache mails with the same header, so each keeps its own invoice", function()
+            inbox[1] = saleMail("Rich", 9500, 100, 550)
+            inbox[2] = saleMail("Poor", 9500, 100, 550)
+            open()
+            assert.are.equal(0, mail:Stats().cacheHits)
+            assert.are.equal(0, mail:Stats().cacheMisses)
+            local invoices = calls.invoice
+            inbox[1].money = 0
+            bus:Emit("MAIL_INBOX_UPDATE")
+            advance(0.4)
+            assert.are.equal(invoices + 2, calls.invoice)
+            assert.are.equal(0, mail:Stats().cacheHits)
+        end)
+
+        it("drops the cache of a gone mail and on MAIL_SHOW and MAIL_CLOSED", function()
+            fiveSales()
+            table.remove(inbox, 5)
+            bus:Emit("MAIL_INBOX_UPDATE")
+            advance(0.4)
+            local hits = mail:Stats().cacheHits
+            assert.are.equal(4, hits)
+            -- A mail that comes back with the same header is a miss.
+            inbox[5] = saleMail("Buyer5", 5000, 10, 5)
+            inbox[5].subject = "Sold: Item 5"
+            inbox[5].invoice.itemName = "Item 5"
+            local invoices = calls.invoice
+            bus:Emit("MAIL_INBOX_UPDATE")
+            advance(0.4)
+            assert.are.equal(invoices + 1, calls.invoice)
+            bus:Emit("MAIL_CLOSED")
+            open()
+            assert.are.equal(0, mail:Stats().cacheHits - (hits + 4))
+            local misses = mail:Stats().cacheMisses
+            bus:Emit("MAIL_CLOSED")
+            open()
+            assert.are.equal(misses + 5, mail:Stats().cacheMisses)
+        end)
+
         it("writes the sale when the mailbox closes before the scheduled read", function()
             fiveSales()
             inbox[3].money = 0
