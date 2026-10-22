@@ -230,7 +230,8 @@ function AutoRules.Apply(store, plan)
 end
 
 -- Attaches the runner. On each bag change it adds the bag items of no group that match a rule.
--- deps: bus, rules (RulesStore), readBags() (entries { key, itemID }), itemCache, after, print(text) (optional).
+-- deps: bus, rules (RulesStore), readBags() (entries { key, itemID }), itemCache, after, print(text) (optional),
+-- take (optional, a MailTake: while it is active, the run waits and runs once when the take ends).
 function AutoRules.Attach(deps)
     local runner = { pending = false }
 
@@ -258,11 +259,21 @@ function AutoRules.Attach(deps)
         runner.pending = true
         deps.after(DEBOUNCE_SECONDS, function()
             runner.pending = false
+            if deps.take and deps.take.IsActive() then
+                runner.skipped = true
+                return
+            end
             runner.Run()
         end)
     end
 
     deps.bus:Subscribe("BAG_UPDATE_DELAYED", OWNER, schedule)
+    deps.bus:Subscribe("Flipside.MailTakeEnded", OWNER, function()
+        if runner.skipped then
+            runner.skipped = false
+            runner.Run()
+        end
+    end)
     schedule()
     return runner
 end

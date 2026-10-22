@@ -350,15 +350,17 @@ describe("AutoRules", function()
     end)
 
     describe("runner", function()
-        local bus, timers, printed, bagEntries, cache
+        local bus, timers, printed, bagEntries, cache, taking, reads
 
         local function attach()
             return ns.AutoRules.Attach({
                 bus = bus,
                 rules = store,
                 readBags = function()
+                    reads = reads + 1
                     return bagEntries
                 end,
+                take = { IsActive = function() return taking end },
                 itemCache = cache,
                 after = function(seconds, fn)
                     timers[#timers + 1] = { seconds = seconds, fn = fn }
@@ -379,7 +381,7 @@ describe("AutoRules", function()
 
         before_each(function()
             bus = ns.EventBus.New({})
-            timers, printed = {}, {}
+            timers, printed, taking, reads = {}, {}, false, 0
             local infos = {
                 [10] = { name = "Linen Cloth", quality = 1, classID = CLOTH },
                 [11] = { name = "Linen Bandage", quality = 3, classID = 1 },
@@ -452,6 +454,23 @@ describe("AutoRules", function()
             attach()
             fire()
             assert.are.same({}, printed)
+        end)
+
+        it("waits while a mail take runs and reads the bags once when it ends", function()
+            attach()
+            fire()
+            reads = 0
+            taking = true
+            for _ = 1, 3 do
+                bus:Emit("BAG_UPDATE_DELAYED")
+                fire()
+            end
+            assert.are.equal(0, reads)
+            taking = false
+            bus:Emit("Flipside.MailTakeEnded")
+            assert.are.equal(1, reads)
+            bus:Emit("Flipside.MailTakeEnded")
+            assert.are.equal(1, reads)
         end)
     end)
 

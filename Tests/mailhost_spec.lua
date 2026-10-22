@@ -2,7 +2,7 @@ local manifest = require("Tests.manifest")
 local mock = require("Tests.wow_mock")
 
 describe("MailHost", function()
-    local ns, bus, mailFrame, created, timers, delays, refreshes, running, inbox, send, openMail, lists
+    local ns, bus, mailFrame, created, timers, delays, refreshes, running, inbox, send, openMail, lists, taking
 
     local function makeView(parent, size)
         local view = { frame = CreateFrame("Frame", nil, parent), size = size, run = { IsRunning = function()
@@ -38,7 +38,7 @@ describe("MailHost", function()
         assert(loadfile(manifest.path("EventBus")))("Flipside", ns)
         assert(loadfile(manifest.path("MailHost")))("Flipside", ns)
         bus = ns.EventBus.New()
-        created, timers, delays, refreshes, running, lists = {}, {}, {}, 0, false, {}
+        created, timers, delays, refreshes, running, lists, taking = {}, {}, {}, 0, false, {}, false
         mailFrame = CreateFrame("Frame", "MailFrame", UIParent)
         mailFrame:SetSize(384, 512)
         inbox, send = stretched("InboxFrame"), stretched("SendMailFrame")
@@ -56,6 +56,7 @@ describe("MailHost", function()
                 return { inbox, send }
             end,
             create = makeView,
+            take = { IsActive = function() return taking end },
             createInbox = function()
                 local list = { frame = CreateFrame("Frame", nil, mailFrame), refreshes = 0 }
                 list.frame:Hide()
@@ -215,12 +216,42 @@ describe("MailHost", function()
         end
         assert.are.equal(0, lists[1].refreshes)
         assert.are.equal(1, #timers)
-        assert.are.equal(0, delays[1])
+        assert.are.equal(0.1, delays[1])
         runTimers()
         assert.are.equal(1, lists[1].refreshes)
         bus:Emit("MAIL_INBOX_UPDATE")
         runTimers()
         assert.are.equal(2, lists[1].refreshes, "a later event makes a new refresh")
+    end)
+
+    it("throttles the inbox list to one refresh in each window and keeps a trailing refresh", function()
+        bus:Emit("MAIL_SHOW")
+        bus:Emit("MAIL_INBOX_UPDATE")
+        bus:Emit("MAIL_INBOX_UPDATE")
+        assert.are.equal(1, #timers, "the second event in the window starts no timer")
+        runTimers()
+        assert.are.equal(1, lists[1].refreshes)
+        bus:Emit("MAIL_INBOX_UPDATE")
+        assert.are.equal(1, #timers, "an event after the refresh starts the trailing timer")
+        assert.are.equal(0.1, delays[1])
+        runTimers()
+        assert.are.equal(2, lists[1].refreshes)
+    end)
+
+    it("does not read the plan while a take runs and reads it once when the take ends", function()
+        bus:Emit("MAIL_SHOW")
+        refreshes = 0
+        taking = true
+        for _ = 1, 3 do
+            bus:Emit("BAG_UPDATE_DELAYED")
+            runTimers()
+        end
+        assert.are.equal(0, refreshes)
+        taking = false
+        bus:Emit("Flipside.MailTakeEnded")
+        assert.are.equal(1, refreshes)
+        bus:Emit("Flipside.MailTakeEnded")
+        assert.are.equal(1, refreshes)
     end)
 
     it("tries again once when the mail frame does not exist yet", function()

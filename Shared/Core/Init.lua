@@ -722,6 +722,29 @@ local function buildKeyResolver()
 end
 
 -- Create the groups and operations store and the custom sources; they need the settings DB.
+-- The container reads of the client through one cache, so the readers of one bag event share one client read.
+-- Returns { numSlots, itemInfo }. The cache clears on BAG_UPDATE_DELAYED and ITEM_LOCK_CHANGED.
+local function containerApi()
+    if not ns.bagSnapshot and ns.BagSnapshot then
+        ns.bagSnapshot = ns.BagSnapshot.New({
+            numSlots = C_Container.GetContainerNumSlots,
+            itemInfo = C_Container.GetContainerItemInfo,
+        }, ns.bus)
+    end
+    return ns.bagSnapshot or {
+        numSlots = C_Container.GetContainerNumSlots,
+        itemInfo = C_Container.GetContainerItemInfo,
+    }
+end
+
+-- The mail take state: the bag and mail reads wait while a take runs (see MailTake).
+local function mailTake()
+    if not ns.mailTake and ns.MailTake then
+        ns.mailTake = ns.MailTake.New({ bus = ns.bus, after = C_Timer.After })
+    end
+    return ns.mailTake
+end
+
 local function openRules()
     if not (ns.db and ns.RulesStore and ns.CustomSources) then
         return
@@ -749,10 +772,7 @@ local function openRules()
             return (resolver:KeyFor(itemID, link))
         end
         ns.readBags = function()
-            return (ns.BagItems.Read({
-                numSlots = C_Container.GetContainerNumSlots,
-                itemInfo = C_Container.GetContainerItemInfo,
-            }, resolver, { bagIDs = ns.Flavour.bagIDs() }))
+            return (ns.BagItems.Read(containerApi(), resolver, { bagIDs = ns.Flavour.bagIDs() }))
         end
         -- The bag items with their stacks (bag and slot), for the Selling tab.
         ns.readBagStacks = function()
@@ -802,12 +822,7 @@ end
 
 -- Client read functions for the inventory capture; mail is left out if the client has no mail functions.
 local function buildInventoryApi()
-    local api = {
-        container = {
-            numSlots = C_Container.GetContainerNumSlots,
-            itemInfo = C_Container.GetContainerItemInfo,
-        },
-    }
+    local api = { container = containerApi() }
     if type(GetInboxNumItems) == "function" and type(GetInboxItemLink) == "function"
         and type(GetInboxItem) == "function" then
         api.mail = { numItems = GetInboxNumItems, itemLink = GetInboxItemLink, itemInfo = GetInboxItem,
@@ -839,6 +854,7 @@ local function openInventory()
             resolver = buildKeyResolver(),
             after = C_Timer.After,
             report = ns.ReportError,
+            take = mailTake(),
         })
     end)
     if not ok then
@@ -1235,6 +1251,7 @@ local function openAutoRules()
         itemCache = ns.itemCache,
         after = C_Timer.After,
         print = printLine,
+        take = mailTake(),
     })
     if not ok then
         ns.ReportError("auto rules are not available this session: " .. tostring(err))
@@ -1290,6 +1307,12 @@ local function createInboxList()
         },
         formatMoney = ns.TooltipLines.FormatMoney,
         notify = printLine,
+        onTake = function()
+            local take = mailTake()
+            if take then
+                take.Begin()
+            end
+        end,
         blizzard = inboxClientFrames,
         openMail = function()
             return _G.OpenMailFrame
@@ -1309,7 +1332,10 @@ local function openMailing()
         return
     end
     local ok, err = pcall(function()
-        local client = ns.MailClient.New(ns.MailClient.Default())
+        local clientApi = ns.MailClient.Default()
+        local container = containerApi()
+        clientApi.numSlots, clientApi.itemInfo = container.numSlots, container.itemInfo
+        local client = ns.MailClient.New(clientApi)
         ns.rules:EnsureAllBagsGroup()
         local function itemName(key)
             local parsed = ns.ItemString.ParseKey(key)
@@ -1319,6 +1345,7 @@ local function openMailing()
         ns.MailHost.Attach({
             bus = ns.bus,
             after = C_Timer.After,
+            take = mailTake(),
             frame = function()
                 return _G.MailFrame
             end,

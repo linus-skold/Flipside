@@ -1,6 +1,6 @@
 local manifest = require("Tests.manifest")
 describe("InventoryCapture", function()
-    local ns, bus, saved, timers, reports, bags, bankSlots, mail, owned, failBags, attachmentReads
+    local ns, bus, saved, timers, reports, bags, bankSlots, mail, owned, failBags, attachmentReads, taking
 
     local function link(id)
         return "|cff1eff00|Hitem:" .. id .. "::::::::60:::::|h[x]|h|r"
@@ -47,6 +47,7 @@ describe("InventoryCapture", function()
                 timers[#timers + 1] = { seconds = seconds, fn = fn }
             end,
             report = function(message) reports[#reports + 1] = message end,
+            take = { IsActive = function() return taking end },
         })
     end
 
@@ -69,7 +70,7 @@ describe("InventoryCapture", function()
             assert(loadfile(manifest.path(name)))("Flipside", ns)
         end
         bus = ns.EventBus.New({})
-        saved, timers, reports, failBags, attachmentReads = {}, {}, {}, false, 0
+        saved, timers, reports, failBags, attachmentReads, taking = {}, {}, {}, false, 0, false
         bags = { [0] = { { itemID = 10, hyperlink = link(10), stackCount = 4 } } }
         bankSlots = { [6] = { { itemID = 20, hyperlink = link(20), stackCount = 2 } } }
         mail = { { { link = link(30), count = 5 } } }
@@ -170,5 +171,49 @@ describe("InventoryCapture", function()
         bus:Emit("BAG_UPDATE_DELAYED")
         run()
         assert.are.equal(first, #reports)
+    end)
+
+    local function countOf(location)
+        local n = 0
+        for _, entry in ipairs(saved) do
+            if entry.location == location then n = n + 1 end
+        end
+        return n
+    end
+
+    it("skips the bag and mail reads while a take runs and reads each once when it ends", function()
+        run()
+        saved = {}
+        taking = true
+        for _ = 1, 4 do
+            bus:Emit("BAG_UPDATE_DELAYED")
+            bus:Emit("MAIL_INBOX_UPDATE")
+            run()
+        end
+        assert.are.equal(0, #saved)
+        taking = false
+        bus:Emit("Flipside.MailTakeEnded")
+        assert.are.equal(1, countOf("bags"))
+        assert.are.equal(1, countOf("mail"))
+        bus:Emit("Flipside.MailTakeEnded")
+        assert.are.equal(1, countOf("bags"), "the skipped read runs once")
+        assert.are.equal(1, countOf("mail"))
+        assert.are.equal(5, last("mail")["30"])
+    end)
+
+    it("still reads the auctions while a take runs", function()
+        run()
+        saved = {}
+        taking = true
+        bus:Emit("OWNED_AUCTIONS_UPDATED")
+        run()
+        assert.are.equal(1, countOf("auctions"))
+    end)
+
+    it("does nothing at the end of a take when no read was skipped", function()
+        run()
+        saved = {}
+        bus:Emit("Flipside.MailTakeEnded")
+        assert.are.equal(0, #saved)
     end)
 end)
