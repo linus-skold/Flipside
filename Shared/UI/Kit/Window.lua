@@ -176,6 +176,16 @@ function Kit.CreateWindow(name, options)
         end
     end)
 
+    -- The X button calls HideUIPanel, which does nothing in combat. Hide the window directly instead.
+    -- A protected window (one with a secure child) cannot hide in combat, so it keeps the client path.
+    window.onCloseCallback = function(self)
+        if InCombatLockdown and InCombatLockdown() and self.IsProtected and self:IsProtected() then
+            return true
+        end
+        self:Hide()
+        return false
+    end
+
     table.insert(UISpecialFrames, name)
     window:Hide()
 
