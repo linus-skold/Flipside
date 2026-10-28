@@ -101,6 +101,73 @@ function BuyingPlan.ListEntries(items, deps)
     end
     return entries
 end
+
+BuyingPlan.VENDOR_FORMULA = "vendorsell"
+BuyingPlan.VENDOR_PATH = "Vendor"
+
+-- The items that the AH sells below their max price. deps: store (ScanStore-like: Keys, Get), itemCache
+-- (GetState(itemID) must not ask the client; Get(itemID) returns the info of a loaded item), formulaRun,
+-- formula (the max price formula text), since (server time: older records do not count).
+-- job is optional: it gets one checkpoint for each record.
+-- Only a record from a full scan at or after since counts. An item with no vendor price is skipped. An item whose
+-- data is not loaded is skipped and counted. This function asks for no item data. It lists the items that the caller
+-- can request (stats.queue, state "unknown") and the items with an open request (stats.waiting).
+-- Returns the entries, sorted by profit for each unit (max price - ScanMin), highest first, and the stats
+-- { records, unknown, queue = { itemID }, waiting = { itemID } }.
+function BuyingPlan.VendorEntries(deps, job)
+    local store, cache, run = deps.store, deps.itemCache, deps.formulaRun
+    local since = deps.since or 0
+    local entries = {}
+    local stats = { records = 0, unknown = 0, queue = {}, waiting = {} }
+    local seen = {}
+    for _, key in ipairs(store:Keys()) do
+        local record = store:Get(key)
+        local latest = record and record.latest
+        local parsed = latest and ns.ItemString.ParseKey(key)
+        if parsed and not latest.partial and latest.time >= since and latest.min > 0 then
+            stats.records = stats.records + 1
+            local itemID = parsed.itemID
+            local state = cache:GetState(itemID)
+            local info = state == "loaded" and cache:Get(itemID) or nil
+            if info == nil then
+                stats.unknown = stats.unknown + 1
+                if not seen[itemID] then
+                    seen[itemID] = true
+                    if state == "unknown" then
+                        stats.queue[#stats.queue + 1] = itemID
+                    elseif state == "requested" then
+                        stats.waiting[#stats.waiting + 1] = itemID
+                    end
+                end
+            elseif type(info.sellPrice) == "number" and info.sellPrice > 0 then
+                local max = run:Evaluate(deps.formula, key)
+                if type(max) == "number" and max > latest.min then
+                    entries[#entries + 1] = {
+                        key = key,
+                        itemID = parsed.itemID,
+                        groupPath = BuyingPlan.VENDOR_PATH,
+                        operationName = BuyingPlan.VENDOR_PATH,
+                        showAboveMax = false,
+                        maxPrice = max,
+                        scanMin = latest.min,
+                        profit = max - latest.min,
+                    }
+                end
+            end
+        end
+        if job then
+            job:Checkpoint(1)
+        end
+    end
+    table.sort(entries, function(a, b)
+        if a.profit ~= b.profit then
+            return a.profit > b.profit
+        end
+        return a.key < b.key
+    end)
+    return entries, stats
+end
+
 local function IsOwn(row, opts)
     if opts.isOwn then
         return opts.isOwn(row) == true

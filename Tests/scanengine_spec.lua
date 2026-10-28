@@ -1109,3 +1109,31 @@ describe("ScanEngine progress", function()
         assert.are.equal(4, final.rows)
     end)
 end)
+
+describe("ScanEngine last scan time", function()
+    it("saves the commit time that the records have, also when the clock moves in the commit", function()
+        local w = MakeWorld({ rows = { gearRow(1), gearRow(2), commodityRow(2001) } })
+        local commitTime = w.server
+        local realPut = w.store.Put
+        w.store.Put = function(self, key, record)
+            w.server = w.server + 1
+            return realPut(self, key, record)
+        end
+        local summary = Run(w)
+        assert.are.equal("ok", summary.result)
+        local full, partial = w.store:GetLastScan()
+        assert.are.equal(commitTime, full)
+        assert.is_false(partial)
+        assert.is_true(w.cooldown:GetLastSuccess() > commitTime)
+        for _, key in ipairs(w.store:Keys()) do
+            assert.are.equal(commitTime, w.store:Get(key).latest.time)
+            assert.is_true(w.store:Get(key).latest.time >= full)
+        end
+    end)
+
+    it("has no last scan time when the scan gets no result", function()
+        local w = MakeWorld({ noEvent = true, rows = { gearRow(1) } })
+        Run(w)
+        assert.is_nil((w.store:GetLastScan()))
+    end)
+end)

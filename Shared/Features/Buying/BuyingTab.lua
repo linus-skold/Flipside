@@ -23,6 +23,10 @@ local DEFAULT_JUMP = 25
 local MESSAGE_ROOM = 12 -- height that the left column gains when the message line is empty
 local SEARCH_SHIFT = 28 -- height of the name search row above the source tabs
 local JUMP_KEY = "buying.jumpPercent"
+local VENDOR_KEY = "buying.vendorFormula"
+local VENDOR_SETTLE = 5 -- most seconds that the Vendor list waits for item data before it builds again
+local VENDOR_BATCH = 100 -- most item data requests of the Vendor list that are open at one time
+local VENDOR_SCAN_CAP = 500 -- most queue items that one step asks for
 local RED = { 1, 0.2, 0.2 }
 -- The text for the amount box when the input is not a positive whole number.
 -- The units that a buy takes at first: one.
@@ -428,6 +432,9 @@ function Tab:RefreshList()
         self.list = saved and deps.plan.ListEntries(saved.items, {
             rules = deps.rules, formulaRun = deps.formulaRun, label = "Search list: " .. saved.name,
         }) or {}
+    elseif self.source == "vendor" then
+        self:_EnsureVendor()
+        self.list = self.vendorList or {}
     else
         self.list = deps.plan.ShoppingList({ rules = deps.rules, formulaRun = deps.formulaRun })
     end
@@ -438,9 +445,271 @@ function Tab:RefreshList()
     self:_Update()
 end
 
--- Show the groups ("groups") or the search lists ("lists") on the left side.
+-- The max price formula of the Vendor source. It is saved in the profile (buying.vendorFormula).
+function Tab:GetVendorFormula()
+    local db = self.deps.db
+    local value = db and db:Get("profile", VENDOR_KEY) or self.vendorFormula
+    if type(value) ~= "string" or value:match("^%s*$") then
+        return self.deps.plan.VENDOR_FORMULA
+    end
+    return value
+end
+
+-- Save a new max price formula and build the Vendor list again. A formula that does not compile is not saved.
+-- Returns true, or false and a text.
+function Tab:SetVendorFormula(text)
+    text = type(text) == "string" and text:match("^%s*(.-)%s*$") or ""
+    local err = self:_CheckVendorFormula(text)
+    local db = self.deps.db
+    if not err and text ~= self:GetVendorFormula() then
+        if db and not db:Set("profile", VENDOR_KEY, text) then
+            err = "settings are read-only"
+        else
+            self.vendorFormula = text
+            self.vendorDirty = true
+        end
+    end
+    self.vendorError = err
+    if not err and self.source == "vendor" then
+        self:RefreshList()
+    else
+        self:_Update()
+    end
+    return err == nil, err
+end
+
+-- Returns nil if the text is a valid formula, or the error text.
+function Tab:_CheckVendorFormula(text)
+    if text == "" then
+        return "enter a formula"
+    end
+    local run = self.deps.formulaRun
+    if run and run.Compile then
+        local compiled, err = run:Compile(text)
+        if not compiled then
+            return err and err.message or "formula error"
+        end
+    end
+    return nil
+end
+
+-- The profile and the formula of a Vendor list. A list built for other values is old.
+function Tab:_VendorKey()
+    local db = self.deps.db
+    return tostring(db and db:GetProfile() or "") .. "|" .. self:GetVendorFormula()
+end
+
+-- Build the Vendor list if it is not built or a scan, a new formula or another profile made it old.
+function Tab:_EnsureVendor()
+    if self.vendorBuilding then
+        return
+    end
+    if self.vendorDirty or self.vendorList == nil or self.vendorKey ~= self:_VendorKey() then
+        self:_BuildVendor()
+    end
+end
+
+-- The job did not end well: show a text, write the error to the log and try again at the next refresh.
+function Tab:_VendorFailed(message)
+    log("error", "vendor list failed: %s", tostring(message))
+    self.vendorBuilding = false
+    self.vendorJob = nil
+    self.vendorList = self.vendorList or {}
+    self.vendorFailed = true
+    self.vendorDirty = true
+    if self.ui then
+        self:_Update()
+    end
+end
+
+-- Build the Vendor list in a scheduler job. The job gives one checkpoint for each record.
+function Tab:_BuildVendor()
+    local deps = self.deps
+    self.vendorToken = self.vendorToken + 1
+    local token = self.vendorToken
+    if self.vendorJob and self.vendorJob.Cancel then
+        self.vendorJob:Cancel()
+    end
+    self.vendorJob = nil
+    self.vendorDirty = false
+    self.vendorFailed = false
+    self.vendorKey = self:_VendorKey()
+    self.vendorPending = false
+    self.vendorQueue, self.vendorPos = {}, 1
+    local since = deps.lastScan and deps.lastScan() or nil
+    if not (since and deps.scanStore and deps.itemCache) then
+        self.vendorBuilding = false
+        self.vendorList = {}
+        return
+    end
+    self.vendorBuilding = true
+    local function work(job)
+        local entries, stats = deps.plan.VendorEntries({
+            store = deps.scanStore, itemCache = deps.itemCache, formulaRun = deps.formulaRun,
+            formula = self:GetVendorFormula(), since = since,
+        }, job)
+        if token ~= self.vendorToken then
+            return
+        end
+        self.vendorJob = nil
+        self.vendorList, self.vendorBuilding = entries, false
+        self.vendorQueue, self.vendorPos = stats.queue, 1
+        -- Keep the open requests. An item that loaded while the job ran needs a new build.
+        local waiting = {}
+        local function keep(itemID)
+            if deps.itemCache:GetState(itemID) == "requested" then
+                waiting[itemID] = true
+            else
+                self.vendorPending = true
+            end
+        end
+        for itemID in pairs(self.vendorWaiting) do
+            keep(itemID)
+        end
+        for _, itemID in ipairs(stats.waiting) do
+            keep(itemID)
+        end
+        self.vendorWaiting = waiting
+        -- Show the list first. The pump only asks for item data and does not start a build itself.
+        if self.source == "vendor" then
+            self:RefreshList()
+        end
+        self:_PumpVendor()
+    end
+    if deps.runJob then
+        local job = deps.runJob("buying-vendor", work)
+        self.vendorJob = job
+        if job and job.OnDone then
+            job:OnDone(function(_, status, message)
+                if token == self.vendorToken and status ~= "done" then
+                    self:_VendorFailed(status == "failed" and message or status)
+                end
+            end)
+        end
+    else
+        work(nil)
+    end
+end
+
+-- Ask for the item data of the next items in the queue, so that at most VENDOR_BATCH requests are open. An item that
+-- the cache has at once does not count. The list is built again when no request is open and the queue is empty.
+function Tab:_PumpVendor()
+    local cache, queue = self.deps.itemCache, self.vendorQueue
+    if not (cache and queue) then
+        return
+    end
+    local open = 0
+    for _ in pairs(self.vendorWaiting) do
+        open = open + 1
+    end
+    local token, scanned, resolved = self.vendorToken, 0, false
+    while self.vendorPos <= #queue and open < VENDOR_BATCH and scanned < VENDOR_SCAN_CAP do
+        local itemID = queue[self.vendorPos]
+        self.vendorPos = self.vendorPos + 1
+        scanned = scanned + 1
+        cache:Request(itemID)
+        if cache:GetState(itemID) == "requested" then
+            self.vendorWaiting[itemID] = true
+            open = open + 1
+        else
+            resolved = true
+        end
+    end
+    if resolved then
+        self.vendorPending = true
+    end
+    if self.vendorPos <= #queue then
+        if open < VENDOR_BATCH then
+            self.deps.after(0.1, function()
+                if token == self.vendorToken then
+                    self:_PumpVendor()
+                end
+            end)
+        end
+    elseif open == 0 and self.vendorPending then
+        self:_ScheduleVendor(0)
+    end
+    if resolved and open > 0 then
+        self:_ScheduleVendor(VENDOR_SETTLE, true)
+    end
+end
+
+-- Draw the Vendor list again after delay seconds, if the source shows. A call with keep true leaves a timer that waits.
+function Tab:_ScheduleVendor(delay, keep)
+    if keep and self.vendorTimer then
+        return
+    end
+    self.vendorTimerToken = (self.vendorTimerToken or 0) + 1
+    local token = self.vendorTimerToken
+    self.vendorTimer = true
+    self.deps.after(delay, function()
+        if token ~= self.vendorTimerToken then
+            return
+        end
+        self.vendorTimer = false
+        if self.vendorPending then
+            self.vendorDirty = true
+        end
+        if self.active and self.ui and self.source == "vendor" then
+            self:RefreshList()
+        end
+    end)
+end
+
+-- A scan ended: the Vendor list is old now.
+function Tab:_OnVendorScan()
+    self.vendorDirty = true
+    if self.active and self.source == "vendor" then
+        self:RefreshList()
+    end
+end
+
+-- Item data arrived for an item that the Vendor list asked for. Ask for the next items. Build the list again when
+-- all requests ended, or after VENDOR_SETTLE seconds if some are still open.
+function Tab:_OnVendorItem(itemID)
+    if not self.vendorWaiting[itemID] then
+        return
+    end
+    self.vendorWaiting[itemID] = nil
+    self.vendorPending = true
+    self:_PumpVendor()
+    if self.vendorPos > #self.vendorQueue and next(self.vendorWaiting) == nil then
+        self:_ScheduleVendor(0)
+    else
+        self:_ScheduleVendor(VENDOR_SETTLE, true)
+    end
+end
+
+-- The text for the state of the Vendor list: it builds, it failed, there is no full scan, or no item is below its max
+-- price. Returns nil for a list with rows.
+function Tab:_VendorState()
+    if self.vendorBuilding then
+        return "Building list..."
+    end
+    if self.vendorFailed then
+        return "The list could not be built."
+    end
+    local last, partial = nil, false
+    if self.deps.lastScan then
+        last, partial = self.deps.lastScan()
+    end
+    if partial and (not last or #(self.vendorList or {}) == 0) then
+        return "The last scan was partial. Run a full scan."
+    end
+    if not last then
+        return "Run a full scan first."
+    end
+    if #(self.vendorList or {}) == 0 then
+        return "No items below the max price in the last scan."
+    end
+    return nil
+end
+
+-- Show the groups ("groups"), the search lists ("lists") or the vendor flips ("vendor") on the left side.
 function Tab:SetSource(source)
-    if source ~= "groups" and not (source == "lists" and self.deps.searchLists) then
+    local deps = self.deps
+    if source ~= "groups" and not (source == "lists" and deps.searchLists)
+        and not (source == "vendor" and deps.scanStore) then
         return false
     end
     self:_DropSearch()
@@ -451,6 +720,10 @@ function Tab:SetSource(source)
     if source == "lists" and not self.listID then
         local first = self.deps.searchLists:List()[1]
         self.listID = first and first.id or nil
+    end
+    if source == "vendor" and self.ui then
+        self.vendorError = nil
+        self.ui.vendorInput:SetText(self:GetVendorFormula())
     end
     self:RefreshList()
     return true
@@ -2242,12 +2515,25 @@ end
 function Tab:_UpdateLeft()
     local ui, lists = self.ui, self.deps.searchLists
     local isLists = self.source == "lists" and lists ~= nil and not self.searchResults
+    local isVendor = self.source == "vendor" and self.deps.scanStore ~= nil and not self.searchResults
     ui.sourceTabs.buttons[2]:SetShown(lists ~= nil)
+    ui.sourceTabs.buttons[3]:SetShown(self.deps.scanStore ~= nil)
     self.syncingTabs = true
-    ui.sourceTabs:Select(isLists and "lists" or "groups")
+    ui.sourceTabs:Select(isLists and "lists" or (isVendor and "vendor" or "groups"))
     self.syncingTabs = false
     for _, control in ipairs(ui.listControls) do
         control:SetShown(isLists)
+    end
+    for _, control in ipairs(ui.vendorControls) do
+        control:SetShown(isVendor)
+    end
+    if isVendor then
+        local state = self:_VendorState()
+        ui.vendorStatus:SetText(self.vendorError and ("Formula error: " .. self.vendorError) or state or "")
+        setColor(ui.vendorStatus, false)
+        if self.vendorError then
+            ui.vendorStatus:SetTextColor(RED[1], RED[2], RED[3])
+        end
     end
     if isLists then
         local items = {}
@@ -2259,10 +2545,11 @@ function Tab:_UpdateLeft()
         ui.rename:SetEnabled(self.listID ~= nil)
         ui.delete:SetEnabled(self.listID ~= nil)
     end
-    if self.placedFor ~= isLists then
-        self.placedFor = isLists
+    local mode = isLists and "lists" or (isVendor and "vendor" or "groups")
+    if self.placedFor ~= mode then
+        self.placedFor = mode
         ui.tree.frame:ClearAllPoints()
-        local top = (isLists and 122 or 44) + SEARCH_SHIFT
+        local top = ({ lists = 122, vendor = 94, groups = 44 })[mode] + SEARCH_SHIFT
         ui.tree.frame:SetPoint("TOPLEFT", ui.leftTop, "TOPLEFT", 0, -top)
         ui.tree.frame:SetPoint("BOTTOMLEFT", ui.content, "BOTTOMLEFT", 0, 0)
     end
@@ -2279,8 +2566,8 @@ function Tab:_Update()
     local canSearch = client.CanLiveSearch()
     local selected = self:_Selected()
     ui.stop:SetShown(self.queue ~= nil or self:_Reading())
-    if self.searchResults then
-        -- The results are a flat list of items, with no group nodes.
+    if self.searchResults or self.source == "vendor" then
+        -- The results and the vendor flips are a flat list of items, with no group nodes.
         self.nodes = {}
         for index, entry in ipairs(self.list) do
             self.nodes[index] = { id = "i" .. entry.key, kind = "item", entry = entry, text = self:_ItemName(entry) }
@@ -2297,6 +2584,9 @@ function Tab:_Update()
         local text = canSearch and "" or "Live search is not available."
         if self.source == "lists" and not self.listID then
             text = "Make or pick a search list, then add items."
+        end
+        if self.source == "vendor" then
+            text = self:_VendorState() or text
         end
         if self.searchResults then
             text = #self.list == 0 and "no items found" or "Pick an item. A searched item has no max price."
@@ -2447,7 +2737,8 @@ function Tab:_BuildLeft(content)
     local host = place(CreateFrame("Frame", nil, content), 0, -14 - SEARCH_SHIFT)
     host:SetSize(LIST_WIDTH, 30)
     local flavour = ns.Flavour or {}
-    ui.sourceTabs = Kit.CreateTopTabs(host, { { "groups", "Groups" }, { "lists", "Lists" } }, {
+    local sources = { { "groups", "Groups" }, { "lists", "Lists" }, { "vendor", "Vendor" } }
+    ui.sourceTabs = Kit.CreateTopTabs(host, sources, {
         template = flavour.topTabTemplate,
         tabPadding = flavour.topTabPadding,
         minTabWidth = flavour.topTabMinWidth,
@@ -2487,6 +2778,26 @@ function Tab:_BuildLeft(content)
     ui.addItem = control(Kit.Button(content, "Add", 50, function()
         self:AddItem(ui.itemInput:GetText())
     end), 262, -96 - SEARCH_SHIFT)
+    -- The Vendor source: the max price formula and the state of the list.
+    ui.vendorControls = {}
+    local function vendorControl(widget, x, y)
+        ui.vendorControls[#ui.vendorControls + 1] = place(widget, x, y)
+        return widget
+    end
+    local function saveVendor(text)
+        self:SetVendorFormula(text)
+    end
+    ui.vendorInput = vendorControl(Kit.Input(content, 340, saveVendor, saveVendor,
+        { placeholder = "max price formula" }), 6, -46 - SEARCH_SHIFT)
+    ui.vendorInput:HookScript("OnTextChanged", function(box, userInput)
+        if userInput and self.ui then
+            self.vendorError = self:_CheckVendorFormula(box:GetText():match("^%s*(.-)%s*$"))
+            self:_UpdateLeft()
+        end
+    end)
+    ui.vendorStatus = vendorControl(Kit.Label(content, "", "small"), 6, -70 - SEARCH_SHIFT)
+    ui.vendorStatus:SetJustifyH("LEFT")
+    ui.vendorStatus:SetWidth(LIST_WIDTH - 12)
     -- The name search row: find any item on the Auction House, also an item in no group.
     ui.searchInput = place(Kit.Input(content, 206, function(text)
         self:SearchName(text)
@@ -2706,14 +3017,26 @@ function Tab:Mount(parent, api)
     end
     bus:Subscribe("ITEM_DATA_LOAD_RESULT", OWNER, function(_, itemID)
         self:_OnItemLoaded(itemID)
+        self:_OnVendorItem(itemID)
     end)
     self.events[#self.events + 1] = "ITEM_DATA_LOAD_RESULT"
+    if self.deps.scanStore then
+        bus:Subscribe("Flipside.ScanFinished", OWNER, function()
+            self:_OnVendorScan()
+        end)
+        self.events[#self.events + 1] = "Flipside.ScanFinished"
+    end
     self:_Update()
 end
 
 -- Undo a failed Mount: hide the panel and keep no half-built state.
 function Tab:Unmount()
     self:_CancelQuote("the tab was removed")
+    self.vendorToken = self.vendorToken + 1
+    if self.vendorJob and self.vendorJob.Cancel then
+        self.vendorJob:Cancel()
+    end
+    self.vendorJob, self.vendorBuilding = nil, false
     if self.content then
         self.content:Hide()
     end
@@ -2726,7 +3049,9 @@ end
 
 -- Create the Buying core. The host mounts it and shows it.
 -- deps: bus, rules, formulaRun, after(seconds, fn); optional client, plan, log, itemInfo, db (the settings DB),
--- itemLink(itemID) (link, quality), searchLists, itemNameIndex, ahNameSearch, keyFor(link) and isAuctionHouseOpen()
+-- itemLink(itemID) (link, quality), scanStore, itemCache, lastScan() (time of the last full scan, and true if a
+-- partial scan came after it) and runJob(name, fn) (the Vendor source),
+-- searchLists, itemNameIndex, ahNameSearch, keyFor(link) and isAuctionHouseOpen()
 -- (search lists and the item box).
 function BuyingTab.New(deps)
     if type(deps) ~= "table" or type(deps.bus) ~= "table" then
@@ -2747,6 +3072,10 @@ function BuyingTab.New(deps)
             end
         end,
         db = deps.db,
+        scanStore = deps.scanStore or nil,
+        itemCache = deps.itemCache,
+        lastScan = deps.lastScan,
+        runJob = deps.runJob,
         searchLists = deps.searchLists or nil,
         itemNameIndex = deps.itemNameIndex,
         ahNameSearch = deps.ahNameSearch,
@@ -2759,6 +3088,7 @@ function BuyingTab.New(deps)
     return setmetatable({
         deps = resolved, list = {}, results = {}, events = {}, active = false, token = 0, dryRun = false,
         source = "groups", amount = DEFAULT_AMOUNT, requested = {},
+        vendorToken = 0, vendorWaiting = {},
     }, Tab)
 end
 

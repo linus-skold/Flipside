@@ -705,6 +705,10 @@ function Engine:_Commit(snaps, partial, partialKeys)
         store:Put(key, record)
     end
     self.deps.cooldown:MarkSuccess()
+    -- The scan time uses the same value as the records, so a record is never older than the scan that wrote it.
+    if store.SetLastScan then
+        store:SetLastScan(now, partial and true or false)
+    end
     return newItems, changed
 end
 
