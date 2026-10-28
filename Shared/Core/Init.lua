@@ -1180,7 +1180,7 @@ local function openLedgerHooks()
     end
 end
 
--- Save the gold balance of this character for the Ledger graph, at login and at logout.
+-- Save the gold balance of this character for the Ledger graph, at login, at PLAYER_ENTERING_WORLD and on PLAYER_MONEY.
 local function saveBalance()
     if not (ns.db and ns.LedgerBalance and type(GetMoney) == "function") then
         return
@@ -1194,7 +1194,9 @@ end
 
 local function openBalance()
     saveBalance()
-    ns.bus:Subscribe("PLAYER_LOGOUT", "Flipside.LedgerBalance", saveBalance)
+    -- Not at PLAYER_LOGOUT: GetMoney() gives 0 there on TBC Anniversary.
+    ns.bus:Subscribe("PLAYER_ENTERING_WORLD", "Flipside.LedgerBalance", saveBalance)
+    ns.bus:Subscribe("PLAYER_MONEY", "Flipside.LedgerBalance", saveBalance)
 end
 
 -- Create the tooltip settings and attach the tooltip lines; they need the settings DB.
