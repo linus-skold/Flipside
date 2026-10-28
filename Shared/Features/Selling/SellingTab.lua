@@ -2206,8 +2206,10 @@ end
 
 -- The label of the post button from the state.
 function Tab:PostLabel()
+    local wait = self.multi == nil and self.deps.client.PostWait and self.deps.client.PostWait() or 0
+    local suffix = wait > 0 and (" (" .. math.ceil(wait) .. " s)") or ""
     if self.awaiting then
-        return "Confirm post"
+        return "Confirm post" .. suffix
     end
     if self:_Scanning() then
         return "Scanning..."
@@ -2215,11 +2217,7 @@ function Tab:PostLabel()
     if self.lock then
         return "Wait..."
     end
-    local wait = self.multi == nil and self.deps.client.PostWait and self.deps.client.PostWait() or 0
-    if wait > 0 then
-        return "Post (" .. math.ceil(wait) .. " s)"
-    end
-    return "Post"
+    return "Post" .. suffix
 end
 
 -- The number of items of the selection that wait for their price (not searched yet, or searching now).

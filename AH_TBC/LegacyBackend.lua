@@ -673,7 +673,7 @@ end
 -- A post (or the last stack of a multi-stack post) was good at time t.
 function Pacing.Good(state, t)
     state.fails = 0
-    state.readyAt = t + POST_GAP_SECONDS
+    state.readyAt = math.max(state.readyAt, t + POST_GAP_SECONDS)
 end
 
 -- A post failed at time t.
@@ -740,7 +740,9 @@ end
 local function endMultisell(text)
     local multi = post.multi
     post.multi = nil
-    Pacing.Fail(pacing, now())
+    if multi then
+        Pacing.Fail(pacing, now())
+    end
     emitMultisell("failure", multi and multi.created or 0, multi and multi.total, text)
 end
 
@@ -815,6 +817,9 @@ local function onMultisellUpdate(_, created, total)
 end
 
 local function onMultisellFailure()
+    if post.multi == nil then
+        return
+    end
     endMultisell("the Auction House stopped the multi-stack post")
 end
 

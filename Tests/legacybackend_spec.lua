@@ -1050,6 +1050,91 @@ describe("LegacyBackend", function()
             assert.is_false(A().IsSellItemValid(0, 1))
         end)
 
+        describe("post pacing from events", function()
+            local clock, savedTime, errText
+
+            before_each(function()
+                savedTime = _G.GetTime
+                clock = 100
+                _G.GetTime = function() return clock end
+                errText = "Auction House database error."
+                _G.ERR_AUCTION_DATABASE_ERROR = errText
+                _G.GetAuctionSellItemInfo = function()
+                    if not sell then
+                        return nil
+                    end
+                    return "Copper Bar", 1, 20, 1, true, 0, 0, 20, 60, sell.item.itemID
+                end
+                A().MultisellEvent()
+                A().PostedEvent()
+            end)
+
+            after_each(function()
+                _G.GetTime = savedTime
+                _G.ERR_AUCTION_DATABASE_ERROR = nil
+            end)
+
+            it("waits 1.5 s after the created text of a one-stack post, with the query gate open", function()
+                assert.is_true(A().CanSendPost())
+                A().PostItem(0, 1, 24, 5, nil, 500, 11)
+                ns.bus:Emit("CHAT_MSG_SYSTEM", "Auction created.")
+                assert.are.equal(1.5, A().PostWait())
+                assert.is_false(A().CanSendPost())
+                clock = 101.6
+                assert.are.equal(0, A().PostWait())
+                assert.is_true(A().CanSendPost())
+            end)
+
+            it("starts the gap at the last stack of a multi-stack post", function()
+                A().PostItem(0, 1, 24, 20, nil, 500, 11, nil, 3)
+                ns.bus:Emit("AUCTION_MULTISELL_START", 3)
+                ns.bus:Emit("AUCTION_MULTISELL_UPDATE", 1, 3)
+                ns.bus:Emit("CHAT_MSG_SYSTEM", "Auction created.")
+                assert.are.equal(0, A().PostWait())
+                ns.bus:Emit("AUCTION_MULTISELL_UPDATE", 3, 3)
+                assert.are.equal(1.5, A().PostWait())
+            end)
+
+            it("waits 2 s after a one-stack failure and 4 s after a second one in a row", function()
+                A().PostItem(0, 1, 24, 5, nil, 500, 11)
+                ns.bus:Emit("UI_ERROR_MESSAGE", 1, errText)
+                assert.are.equal(2, A().PostWait())
+                assert.is_false(A().CanSendPost())
+                clock = 103
+                A().PostItem(0, 1, 24, 5, nil, 500, 11)
+                ns.bus:Emit("UI_ERROR_MESSAGE", 1, errText)
+                assert.are.equal(4, A().PostWait())
+            end)
+
+            it("waits 2 s after a refusal inside PostItem", function()
+                postResult = false
+                onPost = function()
+                    ns.bus:Emit("AUCTION_HOUSE_POST_ERROR")
+                end
+                assert.is_false((pcall(A().PostItem, 0, 1, 24, 5, nil, 500, 11)))
+                assert.are.equal(2, A().PostWait())
+            end)
+
+            it("counts one multisell failure once: a UI error then AUCTION_MULTISELL_FAILURE", function()
+                A().PostItem(0, 1, 24, 20, nil, 500, 11, nil, 3)
+                ns.bus:Emit("AUCTION_MULTISELL_START", 3)
+                ns.bus:Emit("UI_ERROR_MESSAGE", 1, errText)
+                ns.bus:Emit("AUCTION_MULTISELL_FAILURE")
+                assert.are.equal(2, A().PostWait())
+            end)
+
+            it("a good post does not shorten a longer failure wait", function()
+                local P = A().Backend().PostPacing
+                local state = P.New()
+                P.Fail(state, 100)
+                P.Fail(state, 100)
+                P.Good(state, 100)
+                assert.are.equal(4, P.Wait(state, 100))
+                P.Fail(state, 200)
+                assert.are.equal(2, P.Wait(state, 200))
+            end)
+        end)
+
         describe("deposit", function()
             it("is nil while the sale slot is empty", function()
                 assert.is_nil(A().Deposit(0, 1, 24, 5, false))
