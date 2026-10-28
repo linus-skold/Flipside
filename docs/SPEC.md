@@ -383,6 +383,7 @@ In-game checklist (open, both clients):
 - **Dry run:** runs the post and cancel logic without touching the AH and shows the queue with prices and reasons. The Buying tab has it. The Selling tab has no dry run (removed 2026-10-15, user request).
 - **Decision log:** every item gets one reason code (posting at undercut, at normal, below min, stale price, invalid price, keep-in-bags reached, post cap reached).
 - Blacklist of sellers works only from targeted searches (full scans carry no seller names).
+- **Error rows (2026-10-28):** a failed post keeps its row as "failed" with the server text, for example "Internal auction error. (0 of 1 stacks made)" or "the Auction House stopped the multi-stack post (1 of 4 stacks made)". There is no automatic retry. On TBC, Post then waits 2 s, doubled for each failure in a row (8 s at most); see §3 point 14a, "Post gap and failure cooldown".
 - **Keep in bags:** the operation has a number for each item (default 0). Posting leaves that many units of the item in the bags (see the feedback decisions in §5.2). The selling rule fields (stack size, keep quantity, post quantity, duration, vendor skip and sample fallback) are in point 27 below.
 
 #### Buying and Selling decisions (step 6, 2026-10-14)
