@@ -2215,6 +2215,10 @@ function Tab:PostLabel()
     if self.lock then
         return "Wait..."
     end
+    local wait = self.multi == nil and self.deps.client.PostWait and self.deps.client.PostWait() or 0
+    if wait > 0 then
+        return "Post (" .. math.ceil(wait) .. " s)"
+    end
     return "Post"
 end
 
@@ -2459,6 +2463,7 @@ function Tab:_RefreshPost()
         return
     end
     local open = self:_GateOpen()
+    ui.postNext:SetText(self:PostLabel())
     ui.postNext:SetEnabled(self.deps.client.CanPost() and self.multi == nil and self.lock == nil
         and not self:_Scanning() and open and (self.awaiting ~= nil or self:_Focus() ~= nil))
     local events = self.deps.client.ThrottleEvents

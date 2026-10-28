@@ -8,7 +8,7 @@ local _, ns = ...
 -- ReadyEvent, RefreshOwned, CanBuy, StartCommodityPurchase, ConfirmCommodityPurchase,
 -- CancelCommodityPurchase, QuoteSecondsLeft, BuyItemAuction, BuyEvents, CanPost, PostItem, PostCommodity,
 -- ConfirmPostItem, ConfirmPostCommodity, Deposit, AvailablePostCount, IsSellItemValid, PostedEvent,
--- MultisellEvent, CanSendPost, ThrottleEvents, AuctionInfo,
+-- MultisellEvent, CanSendPost, ThrottleEvents, PostWait, AuctionInfo,
 -- HookBid. A backend leaves out what its client
 -- cannot do.
 local AuctionClient = {}
@@ -156,6 +156,8 @@ query("MultisellEvent")
 -- caller polls CanSendPost.
 query("CanSendPost", true)
 query("ThrottleEvents")
+-- PostWait() gives the seconds left of the post gap or the failure cooldown (legacy client only); nil means none.
+query("PostWait")
 
 -- Search capture: nil means capture is off.
 -- AuctionInfo(auctionID) gives a table with itemLink, buyoutAmount and maybe quantity, or nil.

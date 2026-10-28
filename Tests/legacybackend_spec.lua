@@ -57,6 +57,50 @@ describe("LegacyBackend", function()
         end)
     end)
 
+    describe("post pacing", function()
+        local P, state
+
+        before_each(function()
+            P = ns.AuctionClient.Backend().PostPacing
+            state = P.New()
+        end)
+
+        it("waits 1.5 s after a good post", function()
+            assert.are.equal(0, P.Wait(state, 100))
+            P.Good(state, 100)
+            assert.are.equal(1.5, P.Wait(state, 100))
+            assert.are.equal(0.5, P.Wait(state, 101))
+            assert.are.equal(0, P.Wait(state, 102))
+        end)
+
+        it("waits 2, 4, 8, 8 s after failures in a row", function()
+            local expected = { 2, 4, 8, 8 }
+            for i, seconds in ipairs(expected) do
+                P.Fail(state, 100 * i)
+                assert.are.equal(seconds, P.Wait(state, 100 * i))
+            end
+        end)
+
+        it("resets the failure count after a good post", function()
+            P.Fail(state, 10)
+            P.Fail(state, 20)
+            P.Good(state, 30)
+            P.Fail(state, 40)
+            assert.are.equal(2, P.Wait(state, 40))
+        end)
+
+        it("keeps the gate open and the wait at 0 when no post ran", function()
+            assert.is_true(ns.AuctionClient.CanSendPost())
+            assert.are.equal(0, ns.AuctionClient.PostWait())
+        end)
+
+        it("a failure after a good post at the end of a multi-stack post keeps the longer wait", function()
+            P.Good(state, 100)
+            P.Fail(state, 100.5)
+            assert.are.equal(2, P.Wait(state, 100.5))
+        end)
+    end)
+
     it("loads the Selling tab after the Buying tab and before the host in the TBC TOC", function()
         local files = manifest.files(TOC)
         local buying = manifest.indexOf(files, "BuyingTab")
