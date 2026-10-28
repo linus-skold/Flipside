@@ -2229,6 +2229,16 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
             assert.is_false(ui.postNext.enabled)
         end)
 
+        it("TBC: the Confirm post label also shows the wait", function()
+            remount()
+            client.PostWait = function() return 1.2 end
+            tab.awaiting = {}
+            assert.are.equal("Confirm post (2 s)", tab:PostLabel())
+            client.PostWait = function() return 0 end
+            assert.are.equal("Confirm post", tab:PostLabel())
+            tab.awaiting = nil
+        end)
+
         it("Forever: with no PostWait the label stays Post", function()
             remount({ "GATE_READY" })
             gate = true
