@@ -109,6 +109,25 @@ describe("Kit", function()
             assert.is_false(w:IsShown())
         end)
 
+        it("hides from the close button callback and stops the client hide", function()
+            local w = Kit.CreateWindow("TestWindow", {})
+            w:Show()
+            assert.is_false(w.onCloseCallback(w))
+            assert.is_false(w:IsShown())
+        end)
+
+        it("keeps the client close path for a protected window in combat", function()
+            local w = Kit.CreateWindow("TestWindow", {})
+            w:Show()
+            local saved = _G.InCombatLockdown
+            _G.InCombatLockdown = function() return true end
+            w.IsProtected = function() return true end
+            local result = w.onCloseCallback(w)
+            _G.InCombatLockdown = saved
+            assert.is_true(result)
+            assert.is_true(w:IsShown())
+        end)
+
         it("drags by the title area", function()
             local w = Kit.CreateWindow("TestWindow", {})
             local handle = w.TitleContainer
