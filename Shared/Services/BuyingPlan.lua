@@ -104,34 +104,40 @@ end
 
 BuyingPlan.VENDOR_FORMULA = "vendorsell"
 BuyingPlan.VENDOR_PATH = "Vendor"
-BuyingPlan.VENDOR_REQUEST_LIMIT = 100
 
 -- The items that the AH sells below their max price. deps: store (ScanStore-like: Keys, Get), itemCache
--- (Get(itemID) returns info and state; Request(itemID)), formulaRun, formula (the max price formula text),
--- since (server time: older records do not count), requestLimit (item data requests for one build).
+-- (GetState(itemID) must not ask the client; Get(itemID) returns the info of a loaded item), formulaRun,
+-- formula (the max price formula text), since (server time: older records do not count).
 -- job is optional: it gets one checkpoint for each record.
 -- Only a record from a full scan at or after since counts. An item with no vendor price is skipped. An item whose
--- data is not loaded is skipped and counted; the first requestLimit of them are requested (stats.requested).
+-- data is not loaded is skipped and counted. This function asks for no item data. It lists the items that the caller
+-- can request (stats.queue, state "unknown") and the items with an open request (stats.waiting).
 -- Returns the entries, sorted by profit for each unit (max price - ScanMin), highest first, and the stats
--- { records, unknown, requested = { itemID } }.
+-- { records, unknown, queue = { itemID }, waiting = { itemID } }.
 function BuyingPlan.VendorEntries(deps, job)
     local store, cache, run = deps.store, deps.itemCache, deps.formulaRun
     local since = deps.since or 0
-    local limit = deps.requestLimit or BuyingPlan.VENDOR_REQUEST_LIMIT
     local entries = {}
-    local stats = { records = 0, unknown = 0, requested = {} }
+    local stats = { records = 0, unknown = 0, queue = {}, waiting = {} }
+    local seen = {}
     for _, key in ipairs(store:Keys()) do
         local record = store:Get(key)
         local latest = record and record.latest
         local parsed = latest and ns.ItemString.ParseKey(key)
         if parsed and not latest.partial and latest.time >= since and latest.min > 0 then
             stats.records = stats.records + 1
-            local info, state = cache:Get(parsed.itemID)
+            local itemID = parsed.itemID
+            local state = cache:GetState(itemID)
+            local info = state == "loaded" and cache:Get(itemID) or nil
             if info == nil then
                 stats.unknown = stats.unknown + 1
-                if state == "unknown" and #stats.requested < limit then
-                    stats.requested[#stats.requested + 1] = parsed.itemID
-                    cache:Request(parsed.itemID)
+                if not seen[itemID] then
+                    seen[itemID] = true
+                    if state == "unknown" then
+                        stats.queue[#stats.queue + 1] = itemID
+                    elseif state == "requested" then
+                        stats.waiting[#stats.waiting + 1] = itemID
+                    end
                 end
             elseif type(info.sellPrice) == "number" and info.sellPrice > 0 then
                 local max = run:Evaluate(deps.formula, key)

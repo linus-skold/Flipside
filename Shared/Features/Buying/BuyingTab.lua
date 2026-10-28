@@ -24,7 +24,9 @@ local MESSAGE_ROOM = 12 -- height that the left column gains when the message li
 local SEARCH_SHIFT = 28 -- height of the name search row above the source tabs
 local JUMP_KEY = "buying.jumpPercent"
 local VENDOR_KEY = "buying.vendorFormula"
-local VENDOR_SETTLE = 1 -- seconds that the Vendor list waits for more item data before it builds again
+local VENDOR_SETTLE = 5 -- most seconds that the Vendor list waits for item data before it builds again
+local VENDOR_BATCH = 100 -- most item data requests of the Vendor list that are open at one time
+local VENDOR_SCAN_CAP = 500 -- most queue items that one step asks for
 local RED = { 1, 0.2, 0.2 }
 -- The text for the amount box when the input is not a positive whole number.
 -- The units that a buy takes at first: one.
@@ -491,10 +493,32 @@ function Tab:_CheckVendorFormula(text)
     return nil
 end
 
--- Build the Vendor list if it is not built or a scan or a new formula made it old.
+-- The profile and the formula of a Vendor list. A list built for other values is old.
+function Tab:_VendorKey()
+    local db = self.deps.db
+    return tostring(db and db:GetProfile() or "") .. "|" .. self:GetVendorFormula()
+end
+
+-- Build the Vendor list if it is not built or a scan, a new formula or another profile made it old.
 function Tab:_EnsureVendor()
-    if not self.vendorBuilding and (self.vendorDirty or self.vendorList == nil) then
+    if self.vendorBuilding then
+        return
+    end
+    if self.vendorDirty or self.vendorList == nil or self.vendorKey ~= self:_VendorKey() then
         self:_BuildVendor()
+    end
+end
+
+-- The job did not end well: show a text, write the error to the log and try again at the next refresh.
+function Tab:_VendorFailed(message)
+    log("error", "vendor list failed: %s", tostring(message))
+    self.vendorBuilding = false
+    self.vendorJob = nil
+    self.vendorList = self.vendorList or {}
+    self.vendorFailed = true
+    self.vendorDirty = true
+    if self.ui then
+        self:_Update()
     end
 end
 
@@ -508,11 +532,13 @@ function Tab:_BuildVendor()
     end
     self.vendorJob = nil
     self.vendorDirty = false
+    self.vendorFailed = false
+    self.vendorKey = self:_VendorKey()
+    self.vendorQueue, self.vendorPos, self.vendorWaiting = {}, 1, {}
     local since = deps.lastScan and deps.lastScan() or nil
     if not (since and deps.scanStore and deps.itemCache) then
         self.vendorBuilding = false
         self.vendorList = {}
-        self.vendorStats = { records = 0, unknown = 0, requested = {} }
         return
     end
     self.vendorBuilding = true
@@ -524,10 +550,14 @@ function Tab:_BuildVendor()
         if token ~= self.vendorToken then
             return
         end
-        self.vendorList, self.vendorStats, self.vendorBuilding = entries, stats, false
-        for _, itemID in ipairs(stats.requested) do
+        self.vendorJob = nil
+        self.vendorList, self.vendorBuilding = entries, false
+        self.vendorQueue, self.vendorPos = stats.queue, 1
+        self.vendorWaiting = {}
+        for _, itemID in ipairs(stats.waiting) do
             self.vendorWaiting[itemID] = true
         end
+        self:_PumpVendor()
         if self.source == "vendor" then
             self:RefreshList()
         end
@@ -536,16 +566,77 @@ function Tab:_BuildVendor()
         local job = deps.runJob("buying-vendor", work)
         self.vendorJob = job
         if job and job.OnDone then
-            job:OnDone(function(_, status)
+            job:OnDone(function(_, status, message)
                 if token == self.vendorToken and status ~= "done" then
-                    self.vendorBuilding = false
-                    self.vendorList = self.vendorList or {}
+                    self:_VendorFailed(status == "failed" and message or status)
                 end
             end)
         end
     else
         work(nil)
     end
+end
+
+-- Ask for the item data of the next items in the queue, so that at most VENDOR_BATCH requests are open. An item that
+-- the cache has at once does not count. The list is built again when no request is open and the queue is empty.
+function Tab:_PumpVendor()
+    local cache, queue = self.deps.itemCache, self.vendorQueue
+    if not (cache and queue) then
+        return
+    end
+    local open = 0
+    for _ in pairs(self.vendorWaiting) do
+        open = open + 1
+    end
+    local token, scanned, resolved = self.vendorToken, 0, false
+    while self.vendorPos <= #queue and open < VENDOR_BATCH and scanned < VENDOR_SCAN_CAP do
+        local itemID = queue[self.vendorPos]
+        self.vendorPos = self.vendorPos + 1
+        scanned = scanned + 1
+        cache:Request(itemID)
+        if cache:GetState(itemID) == "requested" then
+            self.vendorWaiting[itemID] = true
+            open = open + 1
+        else
+            resolved = true
+        end
+    end
+    if resolved then
+        self.vendorDirty = true
+    end
+    if self.vendorPos <= #queue then
+        if open < VENDOR_BATCH then
+            self.deps.after(0.1, function()
+                if token == self.vendorToken then
+                    self:_PumpVendor()
+                end
+            end)
+        end
+    elseif open == 0 and self.vendorDirty then
+        self:_ScheduleVendor(0)
+    end
+    if resolved and open > 0 then
+        self:_ScheduleVendor(VENDOR_SETTLE, true)
+    end
+end
+
+-- Draw the Vendor list again after delay seconds, if the source shows. A call with keep true leaves a timer that waits.
+function Tab:_ScheduleVendor(delay, keep)
+    if keep and self.vendorTimer then
+        return
+    end
+    self.vendorTimerToken = (self.vendorTimerToken or 0) + 1
+    local token = self.vendorTimerToken
+    self.vendorTimer = true
+    self.deps.after(delay, function()
+        if token ~= self.vendorTimerToken then
+            return
+        end
+        self.vendorTimer = false
+        if self.active and self.ui and self.source == "vendor" then
+            self:RefreshList()
+        end
+    end)
 end
 
 -- A scan ended: the Vendor list is old now.
@@ -556,32 +647,39 @@ function Tab:_OnVendorScan()
     end
 end
 
--- Item data arrived for an item that the Vendor list asked for. Build the list again after a short wait, because
--- many items load one after the other.
+-- Item data arrived for an item that the Vendor list asked for. Ask for the next items. Build the list again when
+-- all requests ended, or after VENDOR_SETTLE seconds if some are still open.
 function Tab:_OnVendorItem(itemID)
     if not self.vendorWaiting[itemID] then
         return
     end
     self.vendorWaiting[itemID] = nil
     self.vendorDirty = true
-    if self.vendorSettling then
-        return
+    self:_PumpVendor()
+    if self.vendorPos > #self.vendorQueue and next(self.vendorWaiting) == nil then
+        self:_ScheduleVendor(0)
+    else
+        self:_ScheduleVendor(VENDOR_SETTLE, true)
     end
-    self.vendorSettling = true
-    self.deps.after(VENDOR_SETTLE, function()
-        self.vendorSettling = false
-        if self.active and self.ui and self.source == "vendor" then
-            self:RefreshList()
-        end
-    end)
 end
 
--- The text for the state of the Vendor list: it builds, there is no scan, or no item is below its max price.
+-- The text for the state of the Vendor list: it builds, it failed, there is no full scan, or no item is below its max
+-- price. Returns nil for a list with rows.
 function Tab:_VendorState()
     if self.vendorBuilding then
         return "Building list..."
     end
-    if not (self.deps.lastScan and self.deps.lastScan()) then
+    if self.vendorFailed then
+        return "The list could not be built."
+    end
+    local last, partial = nil, false
+    if self.deps.lastScan then
+        last, partial = self.deps.lastScan()
+    end
+    if partial and (not last or #(self.vendorList or {}) == 0) then
+        return "The last scan was partial. Run a full scan."
+    end
+    if not last then
         return "Run a full scan first."
     end
     if #(self.vendorList or {}) == 0 then
@@ -2934,7 +3032,8 @@ end
 
 -- Create the Buying core. The host mounts it and shows it.
 -- deps: bus, rules, formulaRun, after(seconds, fn); optional client, plan, log, itemInfo, db (the settings DB),
--- itemLink(itemID) (link, quality), scanStore, itemCache, lastScan() and runJob(name, fn) (the Vendor source),
+-- itemLink(itemID) (link, quality), scanStore, itemCache, lastScan() (time of the last full scan, and true if a
+-- partial scan came after it) and runJob(name, fn) (the Vendor source),
 -- searchLists, itemNameIndex, ahNameSearch, keyFor(link) and isAuctionHouseOpen()
 -- (search lists and the item box).
 function BuyingTab.New(deps)

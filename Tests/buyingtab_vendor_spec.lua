@@ -11,9 +11,17 @@ local function loadModules()
 end
 
 describe("BuyingTab Vendor source", function()
-    local ns, bus, client, tab, ui, db, timers, records, sell, requests, lastScan, held
+    local ns, bus, client, tab, ui, db, timers, records, sell, requests, lastScan, lastPartial, held, states
 
     local SCAN = 1000
+
+    local function count(map)
+        local n = 0
+        for _ in pairs(map) do
+            n = n + 1
+        end
+        return n
+    end
 
     local function makeClient()
         local c = { searches = {}, rows = {} }
@@ -81,15 +89,21 @@ describe("BuyingTab Vendor source", function()
                 Get = function(_, key) return records[key] end,
             },
             itemCache = {
+                GetState = function(_, itemID)
+                    return sell[itemID] and "loaded" or states[itemID] or "unknown"
+                end,
                 Get = function(_, itemID)
                     if sell[itemID] then
                         return { sellPrice = sell[itemID] }, "loaded"
                     end
-                    return nil, requests[itemID] and "requested" or "unknown"
+                    return nil, states[itemID] or "unknown"
                 end,
-                Request = function(_, itemID) requests[itemID] = true end,
+                Request = function(_, itemID)
+                    requests[itemID] = true
+                    states[itemID] = "requested"
+                end,
             },
-            lastScan = function() return lastScan end,
+            lastScan = function() return lastScan, lastPartial end,
             isAuctionHouseOpen = function() return true end,
             after = function(seconds, fn) timers[#timers + 1] = { seconds = seconds, fn = fn } end,
             itemInfo = function(id) return "item " .. id, 1 end,
@@ -109,8 +123,8 @@ describe("BuyingTab Vendor source", function()
         ns = loadModules()
         bus = ns.EventBus.New({})
         db = ns.SettingsDB.New({}, { character = "Alice-Realm", schemaVersion = 1 })
-        timers, requests, held = {}, {}, nil
-        records, sell, lastScan = {}, {}, SCAN
+        timers, requests, held, states = {}, {}, nil, {}
+        records, sell, lastScan, lastPartial = {}, {}, SCAN, false
         client = makeClient()
         ns.BuyingPlan.Log:Clear()
         tab = mount()
@@ -191,6 +205,64 @@ describe("BuyingTab Vendor source", function()
             assert.are.equal(1, builds)
         end)
 
+        it("builds again when the profile changes", function()
+            sell[100] = 1000
+            records["100"] = record(100)
+            local builds = 0
+            tab = mount({ runJob = function(_, fn) builds = builds + 1 fn({ Checkpoint = function() end }) end })
+            tab:SetSource("vendor")
+            tab:RefreshList()
+            assert.are.equal(1, builds)
+            db:SetProfile("Other")
+            tab:RefreshList()
+            assert.are.equal(2, builds)
+        end)
+
+        it("clears the job when the build ends", function()
+            sell[100] = 1000
+            records["100"] = record(100)
+            tab = mount({ runJob = function(_, fn)
+                held = fn
+                return { OnDone = function() end }
+            end })
+            tab:SetSource("vendor")
+            assert.is_not_nil(tab.vendorJob)
+            held({ Checkpoint = function() end })
+            assert.is_nil(tab.vendorJob)
+        end)
+
+        it("shows a text, not Building list..., when the job fails", function()
+            local onDone
+            tab = mount({ runJob = function(_, fn)
+                held = fn
+                return { OnDone = function(_, callback) onDone = callback end }
+            end })
+            tab:SetSource("vendor")
+            assert.are.equal("Building list...", tab.ui.vendorStatus.text)
+            onDone(nil, "failed", "boom")
+            assert.are.equal("The list could not be built.", tab.ui.vendorStatus.text)
+            assert.are.equal("The list could not be built.", tab.ui.summary.text)
+            assert.is_false(tab.vendorBuilding)
+        end)
+
+        it("says that the last scan was partial instead of that no item is below the max price", function()
+            lastPartial = true
+            tab:SetSource("vendor")
+            assert.are.equal("The last scan was partial. Run a full scan.", ui.vendorStatus.text)
+            lastScan = nil
+            tab:RefreshList()
+            assert.are.equal("The last scan was partial. Run a full scan.", ui.vendorStatus.text)
+        end)
+
+        it("keeps a list of the last full scan after a partial scan", function()
+            sell[100] = 1000
+            records["100"] = record(100)
+            lastPartial = true
+            tab:SetSource("vendor")
+            assert.are.equal(1, #tab.list)
+            assert.are.equal("", ui.vendorStatus.text)
+        end)
+
         it("builds again after a scan", function()
             sell[100] = 1000
             tab:Select()
@@ -201,6 +273,14 @@ describe("BuyingTab Vendor source", function()
             assert.are.equal(1, #tab.list)
         end)
 
+        local function runTimers()
+            local list = timers
+            timers = {}
+            for _, timer in ipairs(list) do
+                timer.fn()
+            end
+        end
+
         it("asks for item data and builds again when it arrives", function()
             records["100"] = record(100)
             tab:Select()
@@ -209,12 +289,50 @@ describe("BuyingTab Vendor source", function()
             assert.are.equal(0, #tab.list)
             sell[100] = 1000
             bus:Emit("ITEM_DATA_LOAD_RESULT", 100, true)
-            bus:Emit("ITEM_DATA_LOAD_RESULT", 100, true)
-            assert.are.equal(1, #timers)
-            timers[1].fn()
+            runTimers()
             assert.are.equal(1, #tab.list)
         end)
 
+        it("asks in batches of 100 and builds again once at the end", function()
+            local builds = 0
+            tab = mount({ runJob = function(_, fn) builds = builds + 1 fn({ Checkpoint = function() end }) end })
+            for id = 1, 150 do
+                records[tostring(id)] = record(100)
+            end
+            tab:Select()
+            tab:SetSource("vendor")
+            assert.are.equal(100, count(requests))
+            assert.are.equal(1, builds)
+            -- One item arrives: the next item is asked for, and the list is not built again at once.
+            local first
+            for id in pairs(requests) do
+                first = first or id
+            end
+            sell[first] = 1000
+            bus:Emit("ITEM_DATA_LOAD_RESULT", first, true)
+            assert.are.equal(101, count(requests))
+            assert.are.equal(1, builds)
+            assert.are.equal(5, timers[#timers].seconds)
+            -- All items arrive.
+            local done = { [first] = true }
+            local progress = true
+            while progress do
+                progress = false
+                for id = 1, 150 do
+                    if requests[id] and not done[id] then
+                        done[id] = true
+                        sell[id] = 1000
+                        bus:Emit("ITEM_DATA_LOAD_RESULT", id, true)
+                        progress = true
+                    end
+                end
+            end
+            assert.are.equal(150, count(requests))
+            assert.are.equal(1, builds)
+            runTimers()
+            assert.are.equal(2, builds)
+            assert.are.equal(150, #tab.list)
+        end)
         it("does not build again for an item that it did not ask for", function()
             tab:Select()
             tab:SetSource("vendor")

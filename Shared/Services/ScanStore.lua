@@ -42,15 +42,44 @@ function Store:_CanWrite()
     return false
 end
 
-function Store:_Items()
+function Store:_Slot()
     local data = self._saved.data
     local byRegion = type(data) == "table" and data[self._region]
     if self._realm and type(byRegion) == "table" then
         byRegion = byRegion[self._realm]
     end
     local slot = type(byRegion) == "table" and byRegion[self._ruleset]
-    local items = type(slot) == "table" and slot.items
+    return type(slot) == "table" and slot or nil
+end
+
+function Store:_Items()
+    local slot = self:_Slot()
+    local items = slot and slot.items
     return type(items) == "table" and items or nil
+end
+
+-- Save the time of a scan commit for this region, realm (TBC) and ruleset. A full scan (partial false) sets the time of
+-- the last full scan. A partial scan only marks that the last scan was partial. Returns false if nothing is saved.
+function Store:SetLastScan(time, partial)
+    local slot = self:_Slot()
+    if type(time) ~= "number" or not slot or not self:_CanWrite() then
+        return false
+    end
+    if partial then
+        slot.lastPartial = time
+    else
+        slot.lastFull = time
+        slot.lastPartial = nil
+    end
+    return true
+end
+
+-- Returns the time of the last full scan (or nil), and true if a partial scan came after it.
+function Store:GetLastScan()
+    local slot = self:_Slot()
+    local full = slot and type(slot.lastFull) == "number" and slot.lastFull or nil
+    local partial = slot and type(slot.lastPartial) == "number" and (full == nil or slot.lastPartial >= full)
+    return full, partial == true
 end
 
 local function CheckKey(key)

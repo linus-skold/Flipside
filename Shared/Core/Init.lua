@@ -1834,8 +1834,12 @@ openUI = function()
             scanStore = ns.scanStore,
             itemCache = ns.itemCache,
             runJob = ns.StartJob,
+            -- Time of the last full scan of this scan scope, and true if a partial scan came after it.
             lastScan = function()
-                return ns.scanCooldown and ns.scanCooldown:GetLastSuccess() or nil
+                if not ns.scanStore then
+                    return nil, false
+                end
+                return ns.scanStore:GetLastScan()
             end,
             readBags = ns.readBagStacks,
             searchLists = ns.searchLists,

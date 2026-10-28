@@ -44,15 +44,20 @@ describe("BuyingPlan.VendorEntries", function()
         sell = {}
         cache = {
             states = {},
-            Get = function(self, itemID)
+            GetState = function(self, itemID)
+                if sell[itemID] ~= nil then
+                    return "loaded"
+                end
+                return self.states[itemID] or "unknown"
+            end,
+            Get = function(_, itemID)
                 if sell[itemID] ~= nil then
                     return { sellPrice = sell[itemID] }, "loaded"
                 end
-                return nil, self.states[itemID] or "unknown"
+                return nil, "unknown"
             end,
-            Request = function(self, itemID)
+            Request = function(_, itemID)
                 requests[#requests + 1] = itemID
-                self.states[itemID] = "requested"
             end,
         }
         -- The formula "vendorsell" gives the sell price of the item; any other text is not valid.
@@ -128,33 +133,33 @@ describe("BuyingPlan.VendorEntries", function()
         assert.are.same({ 900, 500, 100 }, { entries[1].profit, entries[2].profit, entries[3].profit })
     end)
 
-    it("skips an item whose data is not loaded, counts it and requests it", function()
+    it("skips an item whose data is not loaded, counts it, queues it and does not request it", function()
         records["100"] = record(300)
         local entries, stats = ns.BuyingPlan.VendorEntries(deps())
         assert.are.same({}, entries)
         assert.are.equal(1, stats.unknown)
-        assert.are.same({ 100 }, requests)
+        assert.are.same({ 100 }, stats.queue)
+        assert.are.same({}, stats.waiting)
+        assert.are.same({}, requests)
         assert.are.same({}, evaluated)
     end)
 
-    it("requests at most requestLimit items, and none again that are asked for", function()
-        for id = 1, 5 do
-            records[tostring(id)] = record(300)
-        end
-        local _, stats = ns.BuyingPlan.VendorEntries(deps({ requestLimit = 2 }))
-        assert.are.equal(5, stats.unknown)
-        assert.are.equal(2, #requests)
-        ns.BuyingPlan.VendorEntries(deps({ requestLimit = 2 }))
-        assert.are.equal(4, #requests)
+    it("lists an item once in the queue and an item with an open request as waiting", function()
+        records["1"], records["1#s-5"], records["2"] = record(300), record(300), record(300)
+        cache.states[2] = "requested"
+        local _, stats = ns.BuyingPlan.VendorEntries(deps())
+        assert.are.same({ 1 }, stats.queue)
+        assert.are.same({ 2 }, stats.waiting)
+        assert.are.equal(3, stats.unknown)
     end)
 
-    it("does not request an item that failed to load", function()
+    it("does not queue an item that failed to load", function()
         records["100"] = record(300)
         cache.states[100] = "failed"
-        ns.BuyingPlan.VendorEntries(deps())
-        assert.are.same({}, requests)
+        local _, stats = ns.BuyingPlan.VendorEntries(deps())
+        assert.are.same({}, stats.queue)
+        assert.are.same({}, stats.waiting)
     end)
-
     it("gives one checkpoint for each record", function()
         sell[1], sell[2] = 500, 500
         records["1"], records["2"] = record(100), record(100)
