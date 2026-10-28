@@ -534,7 +534,8 @@ function Tab:_BuildVendor()
     self.vendorDirty = false
     self.vendorFailed = false
     self.vendorKey = self:_VendorKey()
-    self.vendorQueue, self.vendorPos, self.vendorWaiting = {}, 1, {}
+    self.vendorPending = false
+    self.vendorQueue, self.vendorPos = {}, 1
     local since = deps.lastScan and deps.lastScan() or nil
     if not (since and deps.scanStore and deps.itemCache) then
         self.vendorBuilding = false
@@ -553,14 +554,27 @@ function Tab:_BuildVendor()
         self.vendorJob = nil
         self.vendorList, self.vendorBuilding = entries, false
         self.vendorQueue, self.vendorPos = stats.queue, 1
-        self.vendorWaiting = {}
-        for _, itemID in ipairs(stats.waiting) do
-            self.vendorWaiting[itemID] = true
+        -- Keep the open requests. An item that loaded while the job ran needs a new build.
+        local waiting = {}
+        local function keep(itemID)
+            if deps.itemCache:GetState(itemID) == "requested" then
+                waiting[itemID] = true
+            else
+                self.vendorPending = true
+            end
         end
-        self:_PumpVendor()
+        for itemID in pairs(self.vendorWaiting) do
+            keep(itemID)
+        end
+        for _, itemID in ipairs(stats.waiting) do
+            keep(itemID)
+        end
+        self.vendorWaiting = waiting
+        -- Show the list first. The pump only asks for item data and does not start a build itself.
         if self.source == "vendor" then
             self:RefreshList()
         end
+        self:_PumpVendor()
     end
     if deps.runJob then
         local job = deps.runJob("buying-vendor", work)
@@ -602,7 +616,7 @@ function Tab:_PumpVendor()
         end
     end
     if resolved then
-        self.vendorDirty = true
+        self.vendorPending = true
     end
     if self.vendorPos <= #queue then
         if open < VENDOR_BATCH then
@@ -612,7 +626,7 @@ function Tab:_PumpVendor()
                 end
             end)
         end
-    elseif open == 0 and self.vendorDirty then
+    elseif open == 0 and self.vendorPending then
         self:_ScheduleVendor(0)
     end
     if resolved and open > 0 then
@@ -633,6 +647,9 @@ function Tab:_ScheduleVendor(delay, keep)
             return
         end
         self.vendorTimer = false
+        if self.vendorPending then
+            self.vendorDirty = true
+        end
         if self.active and self.ui and self.source == "vendor" then
             self:RefreshList()
         end
@@ -654,7 +671,7 @@ function Tab:_OnVendorItem(itemID)
         return
     end
     self.vendorWaiting[itemID] = nil
-    self.vendorDirty = true
+    self.vendorPending = true
     self:_PumpVendor()
     if self.vendorPos > #self.vendorQueue and next(self.vendorWaiting) == nil then
         self:_ScheduleVendor(0)

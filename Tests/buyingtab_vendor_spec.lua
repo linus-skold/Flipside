@@ -333,6 +333,36 @@ describe("BuyingTab Vendor source", function()
             assert.are.equal(2, builds)
             assert.are.equal(150, #tab.list)
         end)
+
+        it("builds twice at most when the client has every item at once", function()
+            local builds = 0
+            tab = mount({
+                runJob = function(_, fn) builds = builds + 1 fn({ Checkpoint = function() end }) end,
+                itemCache = {
+                    GetState = function(_, itemID) return sell[itemID] and "loaded" or "unknown" end,
+                    Get = function(_, itemID)
+                        return sell[itemID] and { sellPrice = sell[itemID] } or nil
+                    end,
+                    -- The client has the item, so the request loads it at once.
+                    Request = function(_, itemID)
+                        requests[itemID] = true
+                        sell[itemID] = 1000
+                    end,
+                },
+            })
+            for id = 1, 650 do
+                records[tostring(id)] = record(100)
+            end
+            tab:Select()
+            tab:SetSource("vendor")
+            for _ = 1, 10 do
+                runTimers()
+            end
+            assert.are.equal(2, builds)
+            assert.are.equal(650, #tab.list)
+            assert.are.equal(0, #timers)
+        end)
+
         it("does not build again for an item that it did not ask for", function()
             tab:Select()
             tab:SetSource("vendor")
