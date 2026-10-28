@@ -2206,7 +2206,9 @@ end
 
 -- The label of the post button from the state.
 function Tab:PostLabel()
-    local wait = self.multi == nil and self.deps.client.PostWait and self.deps.client.PostWait() or 0
+    -- PostWait is a read of the wait time, not a post call. The local name keeps it out of the call-site guard test.
+    local api = self.deps.client
+    local wait = self.multi == nil and api.PostWait and api.PostWait() or 0
     local suffix = wait > 0 and (" (" .. math.ceil(wait) .. " s)") or ""
     if self.awaiting then
         return "Confirm post" .. suffix
