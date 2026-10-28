@@ -1831,6 +1831,12 @@ openUI = function()
             formulaRun = ns.formulaRun,
             after = C_Timer.After,
             db = ns.db,
+            scanStore = ns.scanStore,
+            itemCache = ns.itemCache,
+            runJob = ns.StartJob,
+            lastScan = function()
+                return ns.scanCooldown and ns.scanCooldown:GetLastSuccess() or nil
+            end,
             readBags = ns.readBagStacks,
             searchLists = ns.searchLists,
             itemNameIndex = ns.itemNameIndex,

@@ -101,6 +101,67 @@ function BuyingPlan.ListEntries(items, deps)
     end
     return entries
 end
+
+BuyingPlan.VENDOR_FORMULA = "vendorsell"
+BuyingPlan.VENDOR_PATH = "Vendor"
+BuyingPlan.VENDOR_REQUEST_LIMIT = 100
+
+-- The items that the AH sells below their max price. deps: store (ScanStore-like: Keys, Get), itemCache
+-- (Get(itemID) returns info and state; Request(itemID)), formulaRun, formula (the max price formula text),
+-- since (server time: older records do not count), requestLimit (item data requests for one build).
+-- job is optional: it gets one checkpoint for each record.
+-- Only a record from a full scan at or after since counts. An item with no vendor price is skipped. An item whose
+-- data is not loaded is skipped and counted; the first requestLimit of them are requested (stats.requested).
+-- Returns the entries, sorted by profit for each unit (max price - ScanMin), highest first, and the stats
+-- { records, unknown, requested = { itemID } }.
+function BuyingPlan.VendorEntries(deps, job)
+    local store, cache, run = deps.store, deps.itemCache, deps.formulaRun
+    local since = deps.since or 0
+    local limit = deps.requestLimit or BuyingPlan.VENDOR_REQUEST_LIMIT
+    local entries = {}
+    local stats = { records = 0, unknown = 0, requested = {} }
+    for _, key in ipairs(store:Keys()) do
+        local record = store:Get(key)
+        local latest = record and record.latest
+        local parsed = latest and ns.ItemString.ParseKey(key)
+        if parsed and not latest.partial and latest.time >= since and latest.min > 0 then
+            stats.records = stats.records + 1
+            local info, state = cache:Get(parsed.itemID)
+            if info == nil then
+                stats.unknown = stats.unknown + 1
+                if state == "unknown" and #stats.requested < limit then
+                    stats.requested[#stats.requested + 1] = parsed.itemID
+                    cache:Request(parsed.itemID)
+                end
+            elseif type(info.sellPrice) == "number" and info.sellPrice > 0 then
+                local max = run:Evaluate(deps.formula, key)
+                if type(max) == "number" and max > latest.min then
+                    entries[#entries + 1] = {
+                        key = key,
+                        itemID = parsed.itemID,
+                        groupPath = BuyingPlan.VENDOR_PATH,
+                        operationName = BuyingPlan.VENDOR_PATH,
+                        showAboveMax = false,
+                        maxPrice = max,
+                        scanMin = latest.min,
+                        profit = max - latest.min,
+                    }
+                end
+            end
+        end
+        if job then
+            job:Checkpoint(1)
+        end
+    end
+    table.sort(entries, function(a, b)
+        if a.profit ~= b.profit then
+            return a.profit > b.profit
+        end
+        return a.key < b.key
+    end)
+    return entries, stats
+end
+
 local function IsOwn(row, opts)
     if opts.isOwn then
         return opts.isOwn(row) == true
