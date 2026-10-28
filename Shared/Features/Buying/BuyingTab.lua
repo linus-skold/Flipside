@@ -304,12 +304,23 @@ local function makeDialog(name)
             -- The box stays open. The yes button is off until the next Open.
             dialog.onYes = nil
             dialog.yesButton:SetEnabled(false)
-        else
-            dialog.onYes, dialog.onNo = nil, nil
+            if callback then
+                callback()
+            end
+            return
+        end
+        -- Run the callback first, in the click, then close the box (as the Selling box does). A callback that
+        -- opens the box again keeps it.
+        dialog.onYes, dialog.onNo = nil, nil
+        local ok, err = true, nil
+        if callback then
+            ok, err = pcall(callback)
+        end
+        if not (dialog.onYes or dialog.onNo) then
             dialog:Hide()
         end
-        if callback then
-            callback()
+        if not ok then
+            error(err, 0)
         end
     end
     dialog.yesButton = Kit.Button(dialog, "", 130, function()

@@ -596,6 +596,42 @@ describe("BuyingTab", function()
             assert.are.same({}, client.violations)
         end)
 
+        -- Keep buying runs the protected start while the box still shows, as the Selling box does.
+        local function atJump()
+            searchItem({ row(50, 1), row(65, 2) })
+            buyAndQuote(50, 50)
+            click(dialog("FlipsideBuyConfirm").yesButton)
+            fire("BOUGHT")
+            client.rows[10] = { row(65, 2) }
+            fire("COMMODITY_RESULTS", 10)
+            return dialog("FlipsideBuyJump")
+        end
+
+        it("runs Keep buying while the box still shows", function()
+            local warning = atJump()
+            local shown
+            local inner = client.StartCommodityPurchase
+            client.StartCommodityPurchase = function(...)
+                shown = warning:IsShown()
+                return inner(...)
+            end
+            click(warning.yesButton)
+            assert.is_true(shown)
+            assert.is_false(warning:IsShown())
+            assert.are.same({}, client.violations)
+        end)
+
+        it("hides the box and raises the error again when Keep buying fails", function()
+            local warning = atJump()
+            client.StartCommodityPurchase = function()
+                error("start failed", 0)
+            end
+            local ok, err = pcall(click, warning.yesButton)
+            assert.is_false(ok)
+            assert.are.equal("start failed", err)
+            assert.is_false(warning:IsShown())
+        end)
+
         it("shows no warning on +20 percent", function()
             searchItem({ row(50, 1), row(60, 1) })
             buyAndQuote(50, 50)
