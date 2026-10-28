@@ -623,12 +623,17 @@ describe("BuyingTab", function()
 
         it("hides the box and raises the error again when Keep buying fails", function()
             local warning = atJump()
+            -- The tab catches an error of the client call and logs it. The log call itself fails here, so the
+            -- error leaves the Keep buying callback and the box must raise it again.
             client.StartCommodityPurchase = function()
                 error("start failed", 0)
             end
+            tab.deps.log.Add = function()
+                error("log failed", 0)
+            end
             local ok, err = pcall(click, warning.yesButton)
             assert.is_false(ok)
-            assert.are.equal("start failed", err)
+            assert.are.equal("log failed", err)
             assert.is_false(warning:IsShown())
         end)
 
