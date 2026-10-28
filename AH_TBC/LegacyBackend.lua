@@ -655,6 +655,39 @@ local POST_WINDOW_SECONDS = 20
 local CONFIRM_WINDOW_SECONDS = 120
 local post = { subscribed = false, pending = nil, at = nil, refused = nil, single = nil }
 
+-- Post pacing (issue #155). The TBC server refuses a post that comes too fast ("Internal auction error"). After a good
+-- post the gate stays shut for POST_GAP_SECONDS. After a failed post it stays shut for 2 s, doubled for each failure in
+-- a row, 8 s at most. A good post resets the count. The pure functions take the state and the time.
+local POST_GAP_SECONDS = 1.5
+local POST_BACKOFF_SECONDS = 2
+local POST_BACKOFF_MAX_SECONDS = 8
+local pacing = { readyAt = 0, fails = 0 }
+
+local Pacing = {}
+Backend.PostPacing = Pacing
+
+function Pacing.New()
+    return { readyAt = 0, fails = 0 }
+end
+
+-- A post (or the last stack of a multi-stack post) was good at time t.
+function Pacing.Good(state, t)
+    state.fails = 0
+    state.readyAt = math.max(state.readyAt, t + POST_GAP_SECONDS)
+end
+
+-- A post failed at time t.
+function Pacing.Fail(state, t)
+    state.fails = state.fails + 1
+    local delay = math.min(POST_BACKOFF_MAX_SECONDS, POST_BACKOFF_SECONDS * 2 ^ (state.fails - 1))
+    state.readyAt = math.max(state.readyAt, t + delay)
+end
+
+-- Seconds left until the next post, 0 when the gate is open.
+function Pacing.Wait(state, t)
+    return math.max(0, state.readyAt - t)
+end
+
 -- Duration in hours to the legacy index: 1 = 12 h, 2 = 24 h, 3 = 48 h. A value with no exact match gives the nearest
 -- longer index that exists, and 3 above 48 h.
 function Backend.DurationIndex(hours)
@@ -707,6 +740,9 @@ end
 local function endMultisell(text)
     local multi = post.multi
     post.multi = nil
+    if multi then
+        Pacing.Fail(pacing, now())
+    end
     emitMultisell("failure", multi and multi.created or 0, multi and multi.total, text)
 end
 
@@ -724,6 +760,7 @@ end
 -- A one-stack post failed after the call returned: tell the Selling tab as a multisell failure of 1 stack.
 local function endSingle(text)
     post.single = nil
+    Pacing.Fail(pacing, now())
     emitMultisell("failure", 0, 1, text)
 end
 
@@ -774,11 +811,15 @@ local function onMultisellUpdate(_, created, total)
     post.multi = multi
     if type(created) == "number" and type(total) == "number" and created >= total then
         post.multi = nil
+        Pacing.Good(pacing, now())
     end
     emitMultisell("update", created, total)
 end
 
 local function onMultisellFailure()
+    if post.multi == nil then
+        return
+    end
     endMultisell("the Auction House stopped the multi-stack post")
 end
 
@@ -786,6 +827,9 @@ local function onPostText(_, text)
     if post.at and now() - post.at <= POST_WINDOW_SECONDS and type(text) == "string"
         and text == _G.ERR_AUCTION_STARTED then
         post.single = nil
+        if not post.multi then
+            Pacing.Good(pacing, now())
+        end
         ns.bus:Emit(POSTED_EVENT)
     end
 end
@@ -812,7 +856,13 @@ end
 
 -- True when the client takes a post now. The post uses the same throttle as a list query (CanSendAuctionQuery).
 function Backend.CanSendPost()
-    return not has("CanSendAuctionQuery") or _G.CanSendAuctionQuery("list") == true
+    return Pacing.Wait(pacing, now()) <= 0
+        and (not has("CanSendAuctionQuery") or _G.CanSendAuctionQuery("list") == true)
+end
+
+-- Seconds left of the post gap or the failure cooldown, 0 when none runs.
+function Backend.PostWait()
+    return Pacing.Wait(pacing, now())
 end
 
 -- The legacy client has no event for the end of the throttle, so this gives no list: the caller polls CanSendPost.
@@ -979,6 +1029,7 @@ function Backend.PostItem(bag, slot, duration, quantity, bid, buyout, itemID, gu
     if post.refused then
         local text = post.refused
         post.refused, post.at = nil, nil
+        Pacing.Fail(pacing, now())
         releaseSellSlot()
         error(text, 0)
     end
@@ -1002,6 +1053,7 @@ function Backend.ConfirmPostItem(bag, slot, duration, quantity, _bid, buyout, _i
     if post.refused then
         local text = post.refused
         post.refused = nil
+        Pacing.Fail(pacing, now())
         releaseSellSlot()
         error(text, 0)
     end

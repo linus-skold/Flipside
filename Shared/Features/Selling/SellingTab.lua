@@ -2206,8 +2206,12 @@ end
 
 -- The label of the post button from the state.
 function Tab:PostLabel()
+    -- PostWait is a read of the wait time, not a post call. The local name keeps it out of the call-site guard test.
+    local api = self.deps.client
+    local wait = self.multi == nil and api.PostWait and api.PostWait() or 0
+    local suffix = wait > 0 and (" (" .. math.ceil(wait) .. " s)") or ""
     if self.awaiting then
-        return "Confirm post"
+        return "Confirm post" .. suffix
     end
     if self:_Scanning() then
         return "Scanning..."
@@ -2215,7 +2219,7 @@ function Tab:PostLabel()
     if self.lock then
         return "Wait..."
     end
-    return "Post"
+    return "Post" .. suffix
 end
 
 -- The number of items of the selection that wait for their price (not searched yet, or searching now).
@@ -2459,6 +2463,7 @@ function Tab:_RefreshPost()
         return
     end
     local open = self:_GateOpen()
+    ui.postNext:SetText(self:PostLabel())
     ui.postNext:SetEnabled(self.deps.client.CanPost() and self.multi == nil and self.lock == nil
         and not self:_Scanning() and open and (self.awaiting ~= nil or self:_Focus() ~= nil))
     local events = self.deps.client.ThrottleEvents

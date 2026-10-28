@@ -2194,5 +2194,57 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
             assert.is_false(ui.postNext.enabled)
             assert.are.equal(1, #client.posts)
         end)
+
+        it("TBC: Post is off with a countdown during the post wait and on after", function()
+            local left = 1.2
+            remount()
+            client.PostWait = function() return left end
+            tab:_Update()
+            assert.is_false(ui.postNext.enabled)
+            assert.are.equal("Post (2 s)", ui.postNext.text)
+            left = 0.4
+            gate = false
+            local timer = pollTimers()[1]
+            timer.done = true
+            timer.fn()
+            assert.are.equal("Post (1 s)", ui.postNext.text)
+            left, gate = 0, true
+            timer = pollTimers()[1]
+            timer.done = true
+            timer.fn()
+            assert.are.equal("Post", ui.postNext.text)
+            assert.is_true(ui.postNext.enabled)
+        end)
+
+        it("TBC: a failed post stays failed with the reason while the wait runs", function()
+            remount()
+            gate = true
+            tab:_Update()
+            click(ui.postNext)
+            client.PostWait = function() return 2 end
+            gate = false
+            fire("MULTI", "failure", 0, 1, "Internal auction error.")
+            assert.are.equal("failed", entryOf("10").status)
+            assert.is_truthy(entryOf("10").note:find("Internal auction error", 1, true))
+            assert.is_false(ui.postNext.enabled)
+        end)
+
+        it("TBC: the Confirm post label also shows the wait", function()
+            remount()
+            client.PostWait = function() return 1.2 end
+            tab.awaiting = {}
+            assert.are.equal("Confirm post (2 s)", tab:PostLabel())
+            client.PostWait = function() return 0 end
+            assert.are.equal("Confirm post", tab:PostLabel())
+            tab.awaiting = nil
+        end)
+
+        it("Forever: with no PostWait the label stays Post", function()
+            remount({ "GATE_READY" })
+            gate = true
+            tab:_Update()
+            assert.are.equal("Post", ui.postNext.text)
+            assert.is_true(ui.postNext.enabled)
+        end)
     end)
 end)
