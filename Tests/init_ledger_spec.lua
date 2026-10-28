@@ -139,13 +139,23 @@ describe("Init ledger", function()
         assert.is_truthy(table.concat(mock.messages, "\n"):find("ledger mail: 1 sales", 1, true))
     end)
 
-    it("saves the gold balance at login and at logout", function()
+    it("saves the gold balance at login, at PLAYER_ENTERING_WORLD and on PLAYER_MONEY, not at logout", function()
+        local function saved()
+            return ns.LedgerBalance.ReadSnapshot(ns.db, "Tester-TestRealm")
+        end
         mock.money = 4200
         login()
-        local saved = ns.LedgerBalance.ReadSnapshot(ns.db, "Tester-TestRealm")
-        assert.are.equal(4200, saved.copper)
-        assert.are.equal(mock.serverBase, saved.time)
+        assert.are.equal(4200, saved().copper)
+        assert.are.equal(mock.serverBase, saved().time)
+        mock.money = 5000
+        mock.fire("PLAYER_ENTERING_WORLD")
+        assert.are.equal(5000, saved().copper)
         mock.money = 9900
+        mock.fire("PLAYER_MONEY")
+        assert.are.equal(9900, saved().copper)
+        -- GetMoney() gives 0 at logout on TBC Anniversary: no write there.
+        mock.money = 0
         mock.fire("PLAYER_LOGOUT")
-        assert.are.equal(9900, ns.LedgerBalance.ReadSnapshot(ns.db, "Tester-TestRealm").copper)
-    end)end)
+        assert.are.equal(9900, saved().copper)
+    end)
+end)
