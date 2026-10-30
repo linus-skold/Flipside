@@ -1199,6 +1199,61 @@ describe("SellingTab", function()
         end)
     end)
 
+    describe("a finished scan", function()
+        local age
+
+        local function remount()
+            age = 100
+            tab = mount({
+                now = function() return 1000000 end,
+                getRecord = function()
+                    return { latest = { time = 1000000 - age * 3600 }, days = { { scans = 5 } } }
+                end,
+            })
+            ui = tab.ui
+            client.rows[10] = {}
+        end
+
+        it("builds the candidates again when the tab is idle", function()
+            remount()
+            assert.matches("stale price", ns.SellingPlan.Decide(entryOf("10").candidate, {}).reason)
+            age = 1
+            fire("Flipside.ScanFinished")
+            assert.is_nil(entryOf("10").candidate.fewSamples)
+        end)
+
+        it("waits while the tab is hidden and builds when it shows", function()
+            remount()
+            tab:Deselect()
+            age = 1
+            fire("Flipside.ScanFinished")
+            assert.is_not_nil(entryOf("10").candidate.fewSamples)
+            tab:Select()
+            assert.is_nil(entryOf("10").candidate.fewSamples)
+        end)
+
+        it("waits for an open server confirm and builds after it", function()
+            remount()
+            selectCloth()
+            client.rows[10] = { row(120, 1) }
+            client.needsConfirmation = true
+            click(ui.postNext)
+            age = 1
+            fire("Flipside.ScanFinished")
+            assert.is_not_nil(entryOf("10").candidate.fewSamples)
+            confirms[1].onAccept()
+            assert.is_nil(entryOf("10").candidate.fewSamples)
+        end)
+
+        it("stops to listen when the tab unmounts", function()
+            local before = #tab.events
+            tab:Unmount()
+            assert.are.equal(0, #tab.events)
+            assert.is_true(before > 0)
+            fire("Flipside.ScanFinished")
+        end)
+    end)
+
     describe("the item link in a row", function()
         local LINK = "|cff1eff00|Hitem:10::::|h[Linen Cloth]|h|r"
         local inserted
