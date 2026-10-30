@@ -96,9 +96,13 @@ describe("SellingPlan", function()
             assert.equal("no data for max price: scanmarket missing, scan again", candidate().reason)
         end)
 
-        it("sets a reason for stale data", function()
+        it("marks stale data and does not block the candidate", function()
             stats = { ageHours = 100, samples = 10 }
-            assert.matches("stale", candidate().reason)
+            local c = candidate()
+            assert.is_nil(c.reason)
+            assert.matches("stale", c.fewSamples)
+            stats = { ageHours = nil, samples = 10 }
+            assert.matches("no data age", candidate().fewSamples)
             stats = { ageHours = 1, samples = 3 }
             assert.is_nil(candidate().reason)
             assert.is_nil(candidate().fewSamples)
@@ -110,7 +114,7 @@ describe("SellingPlan", function()
             assert.is_nil(c.reason)
             assert.equal("too few samples: 2 of 3", c.fewSamples)
             stats = { ageHours = 100, samples = 2 }
-            assert.matches("stale", candidate().reason)
+            assert.matches("stale", candidate().fewSamples)
         end)
 
         it("does not check the samples when the operation needs no scan data", function()
@@ -254,6 +258,50 @@ describe("SellingPlan", function()
             assert.equal(2, SP.NormalizeDuration(1))
             assert.equal(24, SP.NormalizeDuration(nil))
             assert.equal(24, SP.NormalizeDuration("x"))
+        end)
+
+        describe("with old data", function()
+            before_each(function()
+                stats = { ageHours = 100, samples = 10 }
+            end)
+
+            it("prices from the cheapest listing minus the undercut, with a reason", function()
+                local d = SP.Decide(candidate({ undercut = 50 }), { row(4500), row(4800) }, { maxStack = 20 })
+                assert.equal("post", d.action)
+                assert.equal(4450, d.price)
+                assert.equal("old data, using the cheapest listing", d.reason)
+            end)
+
+            it("skips with the stale reason when no other seller has a listing", function()
+                local none = SP.Decide(candidate(), {}, { maxStack = 20 })
+                assert.equal("skip", none.action)
+                assert.equal("stale price: data older than 72 h", none.reason)
+                local own = SP.Decide(candidate(), { row(4000, true) }, { maxStack = 20 })
+                assert.equal("skip", own.action)
+                assert.equal("stale price: data older than 72 h", own.reason)
+            end)
+
+            it("keeps the minimum price and the own lowest listing", function()
+                local low = SP.Decide(candidate(), { row(500) }, { maxStack = 20 })
+                assert.equal("below minimum", low.reason)
+                local atMin = SP.Decide(candidate({ belowMin = "postAtMin" }), { row(500) }, { maxStack = 20 })
+                assert.equal(1000, atMin.price)
+                local own = SP.Decide(candidate(), { row(4000, true), row(4500) }, { maxStack = 20 })
+                assert.equal("already lowest", own.reason)
+            end)
+
+            it("treats a missing data age the same way", function()
+                stats = { ageHours = nil, samples = 10 }
+                assert.equal(4499, SP.Decide(candidate(), { row(4500) }, { maxStack = 20 }).price)
+                local d = SP.Decide(candidate(), {}, { maxStack = 20 })
+                assert.equal("stale price: no data age", d.reason)
+            end)
+
+            it("uses the stale reason when the samples are also few", function()
+                stats = { ageHours = 100, samples = 1 }
+                local d = SP.Decide(candidate(), {}, { maxStack = 20 })
+                assert.matches("stale price", d.reason)
+            end)
         end)
 
         describe("with too few samples", function()

@@ -677,7 +677,7 @@ describe("SellingTab", function()
             assert.are.equal("below minimum", list[#list].reason)
         end)
 
-        it("skips stale data with the reason and makes no search", function()
+        it("searches with stale data and prices from the cheapest listing", function()
             tab = mount({
                 now = function()
                     return 1000000
@@ -688,8 +688,25 @@ describe("SellingTab", function()
             })
             ui = tab.ui
             ui.tree:Select("i10")
+            fire("ITEM_RESULTS", 10)
+            assert.are.same({ 10 }, client.searches)
+            assert.are.equal("old data, using the cheapest listing", entryOf("10").decision.reason)
+        end)
+
+        it("skips stale data with the stale reason when no listing exists", function()
+            tab = mount({
+                now = function()
+                    return 1000000
+                end,
+                getRecord = function()
+                    return { latest = { time = 1000000 - 100 * 3600 }, days = { { scans = 5 } } }
+                end,
+            })
+            ui = tab.ui
+            client.rows[10] = {}
+            ui.tree:Select("i10")
+            fire("ITEM_RESULTS", 10)
             assert.matches("stale price", entryOf("10").decision.reason)
-            assert.are.same({}, client.searches)
         end)
     end)
 
