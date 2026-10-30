@@ -687,6 +687,7 @@ describe("SellingTab", function()
                 end,
             })
             ui = tab.ui
+            client.rows[10] = { row(120, 1) }
             ui.tree:Select("i10")
             fire("ITEM_RESULTS", 10)
             assert.are.same({ 10 }, client.searches)
