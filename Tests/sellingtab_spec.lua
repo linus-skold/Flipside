@@ -677,7 +677,7 @@ describe("SellingTab", function()
             assert.are.equal("below minimum", list[#list].reason)
         end)
 
-        it("skips stale data with the reason and makes no search", function()
+        it("searches with stale data and prices from the cheapest listing", function()
             tab = mount({
                 now = function()
                     return 1000000
@@ -687,9 +687,27 @@ describe("SellingTab", function()
                 end,
             })
             ui = tab.ui
+            client.rows[10] = { row(120, 1) }
             ui.tree:Select("i10")
+            fire("ITEM_RESULTS", 10)
+            assert.are.same({ 10 }, client.searches)
+            assert.are.equal("old data, using the cheapest listing", entryOf("10").decision.reason)
+        end)
+
+        it("skips stale data with the stale reason when no listing exists", function()
+            tab = mount({
+                now = function()
+                    return 1000000
+                end,
+                getRecord = function()
+                    return { latest = { time = 1000000 - 100 * 3600 }, days = { { scans = 5 } } }
+                end,
+            })
+            ui = tab.ui
+            client.rows[10] = {}
+            ui.tree:Select("i10")
+            fire("ITEM_RESULTS", 10)
             assert.matches("stale price", entryOf("10").decision.reason)
-            assert.are.same({}, client.searches)
         end)
     end)
 
@@ -1178,6 +1196,61 @@ describe("SellingTab", function()
             confirms[1].onAccept()
             assert.is_true(bagReads > reads)
             assert.are.equal(6, entryOf("10").groupID)
+        end)
+    end)
+
+    describe("a finished scan", function()
+        local age
+
+        local function remount()
+            age = 100
+            tab = mount({
+                now = function() return 1000000 end,
+                getRecord = function()
+                    return { latest = { time = 1000000 - age * 3600 }, days = { { scans = 5 } } }
+                end,
+            })
+            ui = tab.ui
+            client.rows[10] = {}
+        end
+
+        it("builds the candidates again when the tab is idle", function()
+            remount()
+            assert.matches("stale price", ns.SellingPlan.Decide(entryOf("10").candidate, {}).reason)
+            age = 1
+            fire("Flipside.ScanFinished")
+            assert.is_nil(entryOf("10").candidate.fewSamples)
+        end)
+
+        it("waits while the tab is hidden and builds when it shows", function()
+            remount()
+            tab:Deselect()
+            age = 1
+            fire("Flipside.ScanFinished")
+            assert.is_not_nil(entryOf("10").candidate.fewSamples)
+            tab:Select()
+            assert.is_nil(entryOf("10").candidate.fewSamples)
+        end)
+
+        it("waits for an open server confirm and builds after it", function()
+            remount()
+            selectCloth()
+            client.rows[10] = { row(120, 1) }
+            client.needsConfirmation = true
+            click(ui.postNext)
+            age = 1
+            fire("Flipside.ScanFinished")
+            assert.is_not_nil(entryOf("10").candidate.fewSamples)
+            confirms[1].onAccept()
+            assert.is_nil(entryOf("10").candidate.fewSamples)
+        end)
+
+        it("stops to listen when the tab unmounts", function()
+            local before = #tab.events
+            tab:Unmount()
+            assert.are.equal(0, #tab.events)
+            assert.is_true(before > 0)
+            fire("Flipside.ScanFinished")
         end)
     end)
 
