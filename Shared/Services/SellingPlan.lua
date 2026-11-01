@@ -15,6 +15,7 @@ local DEFAULT_DURATION = ns.Flavour and ns.Flavour.defaultDuration or 24
 local DEFAULT_MAX_AGE = 72
 local DEFAULT_SAMPLES = 3
 local FEW_SAMPLES_WHY = "few samples, using the cheapest listing"
+local OLD_DATA_WHY = "old data, using the cheapest listing"
 
 -- The names of the missing sources that a scan can fill (not the "later" sources).
 local function MissingSources(info)
@@ -48,8 +49,8 @@ local function PriceFor(run, text, key, label)
     return nil, reason
 end
 
--- Returns a skip reason if the data is old. Returns nil, text if the data is fresh but has too few samples
--- (the text is the reason for a skip with no listing). Returns nil if the data is fine.
+-- Returns nil, text, why if the data is old, has no age or has too few samples. The text is the reason for a
+-- skip with no listing. The why is the reason for a post from the cheapest listing. Returns nil if the data is fine.
 local function SafetyReason(settings, stats)
     if not stats then
         return nil
@@ -57,13 +58,13 @@ local function SafetyReason(settings, stats)
     local maxAge = tonumber(settings.maxDataAgeHours) or DEFAULT_MAX_AGE
     local minSamples = tonumber(settings.minSamples) or DEFAULT_SAMPLES
     if stats.ageHours == nil then
-        return "stale price: no data age"
+        return nil, "stale price: no data age", OLD_DATA_WHY
     end
     if stats.ageHours > maxAge then
-        return "stale price: data older than " .. maxAge .. " h"
+        return nil, "stale price: data older than " .. maxAge .. " h", OLD_DATA_WHY
     end
     if (stats.samples or 0) < minSamples then
-        return nil, "too few samples: " .. tostring(stats.samples or 0) .. " of " .. minSamples
+        return nil, "too few samples: " .. tostring(stats.samples or 0) .. " of " .. minSamples, FEW_SAMPLES_WHY
     end
     return nil
 end
@@ -73,7 +74,8 @@ end
 -- deps.bagItems: BagItems.Read result with stacks.
 -- deps.owned: optional map key -> count of own auctions. deps.ownedUnits: optional map key -> units in them.
 -- deps.dataStats: optional function(key) returning { ageHours, samples }.
--- Old data gives a skip reason. Too few samples set candidate.fewSamples (a text) and Decide prices from the listings.
+-- Old data and too few samples set candidate.fewSamples (the skip text) and candidate.fallbackWhy.
+-- Decide then prices from the listings and skips with the text if no other seller has a listing.
 -- Returns one candidate for each bag item whose group has a selling operation, own or inherited from Base.
 function SellingPlan.Candidates(deps)
     local rules, run = deps.rules, deps.formulaRun
@@ -124,7 +126,8 @@ function SellingPlan.Candidates(deps)
                 end
             end
             if not candidate.reason and needData and deps.dataStats then
-                candidate.reason, candidate.fewSamples = SafetyReason(settings, deps.dataStats(item.key))
+                local _, text, why = SafetyReason(settings, deps.dataStats(item.key))
+                candidate.fewSamples, candidate.fallbackWhy = text, why
             end
             list[#list + 1] = candidate
         end
@@ -193,9 +196,9 @@ function SellingPlan.Decide(candidate, rows, opts)
     local price, why
     if competitor then
         price = competitor - undercut
-        why = candidate.fewSamples and FEW_SAMPLES_WHY or "undercut"
+        why = candidate.fewSamples and (candidate.fallbackWhy or FEW_SAMPLES_WHY) or "undercut"
     elseif candidate.fewSamples then
-        -- Too few samples: the market value is not safe, and no listing gives a price.
+        -- Old data or too few samples: the market value is not safe, and no listing gives a price.
         return Skip(candidate, candidate.fewSamples, info)
     elseif candidate.normalPrice then
         price = candidate.normalPrice

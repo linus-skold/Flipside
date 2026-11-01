@@ -2782,6 +2782,11 @@ function Tab:Mount(parent, api)
         self:_OnRules()
     end)
     self.events[#self.events + 1] = "Flipside.RulesChanged"
+    -- A scan changed the prices and the data age: build the candidates again.
+    bus:Subscribe("Flipside.ScanFinished", OWNER, function()
+        self:_OnRules()
+    end)
+    self.events[#self.events + 1] = "Flipside.ScanFinished"
     self:_Update()
 end
 
