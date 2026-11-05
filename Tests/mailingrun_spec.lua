@@ -81,6 +81,9 @@ describe("MailingRun", function()
             if c.failSend then
                 error("send failed")
             end
+            if c.refuse and c.refuse[recipient] then
+                return false, c.refuse[recipient]
+            end
             local items = {}
             for _, item in pairs(c.attachments) do
                 items[#items + 1] = item
@@ -324,6 +327,21 @@ describe("MailingRun", function()
         advance(0.2)
         advance(0.5)
         assert.are.equal(2, #client.attaches)
+    end)
+
+    it("skips a recipient that the client refuses and goes on with the next recipient", function()
+        start({ slot("A", 0, 1, 5), slot("B", 0, 2, 5), slot("C", 0, 3, 5) },
+            { mail("Alt", { "A", 0, 1, 5 }), mail("Alt", { "B", 0, 2, 5 }), mail("Bank", { "C", 0, 3, 5 }) })
+        client.refuse = { Alt = "log in to Alt once" }
+        settle()
+        advance(0.5)
+        settle()
+        assert.are.equal(1, #client.sends)
+        assert.are.equal("Bank", client.sends[1].recipient)
+        bus:Emit("MAIL_SEND_SUCCESS")
+        assert.are.equal(1, result.sent)
+        assert.are.equal(2, #result.skipped)
+        assert.are.equal("log in to Alt once", result.skipped[1].reason)
     end)
 
     it("stops if the send call raises an error", function()

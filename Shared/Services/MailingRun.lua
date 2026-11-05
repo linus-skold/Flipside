@@ -283,7 +283,17 @@ function Run:_Send(mail)
         self._onSending({ recipient = mail.recipient, postage = postage })
     end
     log("info", "sending to %s: %d attachments, postage %s", mail.recipient, #items, postage)
-    local ok, sendError = pcall(client.Send, mail.recipient, items[1].name)
+    local ok, sendError, refusal = pcall(client.Send, mail.recipient, items[1].name)
+    if ok and sendError == false then
+        -- The client refused the recipient (no full name known): skip this recipient and go on with the others.
+        local reason = refusal or "recipient refused"
+        log("warn", "mail to %s not sent: %s", mail.recipient, reason)
+        client.ClearAll()
+        self:_SkipItems(mail, items, reason)
+        self:_SkipRecipient(mail.recipient, reason)
+        self:_AfterBags()
+        return
+    end
     if not ok then
         log("error", "send call to %s failed: %s", mail.recipient, sendError)
         client.ClearAll()

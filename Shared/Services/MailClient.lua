@@ -159,11 +159,17 @@ function MailClient.New(api)
     end
 
     -- Sends the mail. Forever passes four arguments (the last one is the reply mail id, nil here), TBC passes three.
-    -- api.recipientName (optional) maps the typed recipient to the name for the call (Forever: the plain name of an
-    -- own character, with no realm and no surname).
+    -- api.recipientName (optional) maps the typed recipient to the name for the call (Forever: the full name
+    -- "Name<separator>Surname" of an own character). It returns nil and a reason if no full name is known. Then Send
+    -- does not call SendMail and returns false and the reason. Otherwise Send returns true.
     function client.Send(recipient, subject)
         if api.recipientName then
-            recipient = api.recipientName(recipient) or recipient
+            local name, reason = api.recipientName(recipient)
+            if not name then
+                log("warn", "SendMail not called for %s: %s", recipient, reason)
+                return false, reason
+            end
+            recipient = name
         end
         log("debug", "SendMail call: %s, subject %s", recipient, subject)
         if api.sendArgs == 4 then
@@ -171,6 +177,7 @@ function MailClient.New(api)
         else
             api.sendMail(recipient, subject, "")
         end
+        return true
     end
 
     return client

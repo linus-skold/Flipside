@@ -179,15 +179,26 @@ describe("MailClient", function()
             end
         end
 
-        it("sends the plain name of an own character on Forever", function()
+        it("sends the full name of an own character on Forever", function()
             wired({ usesSurname = true })
             local c = client(4)
             c.Send("Bank Jones", "Subject")
-            assert.are.same({ "sendMail", 4, "Bank", "Subject", "" }, calls[#calls])
+            assert.are.same({ "sendMail", 4, "Bank Jones", "Subject", "" }, calls[#calls])
             c.Send("bank-realm", "Subject")
-            assert.are.same({ "sendMail", 4, "Bank", "Subject", "" }, calls[#calls])
+            assert.are.same({ "sendMail", 4, "Bank Jones", "Subject", "" }, calls[#calls])
             c.Send("Bank", "Subject")
-            assert.are.same({ "sendMail", 4, "Bank", "Subject", "" }, calls[#calls])
+            assert.are.same({ "sendMail", 4, "Bank Jones", "Subject", "" }, calls[#calls])
+        end)
+
+        it("does not call SendMail for an own character with no saved surname on Forever", function()
+            wired({ usesSurname = true })
+            local c = client(4)
+            c.Send("Bank", "Subject")
+            local before = #calls
+            local sent, reason = c.Send("Me", "Subject")
+            assert.is_false(sent)
+            assert.is_truthy(reason:find("log in to Me once", 1, true))
+            assert.are.equal(before, #calls)
         end)
 
         it("sends a name that is not an own character as it is on Forever", function()
