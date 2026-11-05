@@ -1,8 +1,8 @@
 local _, ns = ...
 
--- The craft profit panel. It docks to the right side of the profession window of the client.
--- It shows the reagent cost, the AH value and the profit of the selected recipe.
--- The panel adds no hook. It reads the selected recipe on the game events and on a throttled OnUpdate of its own frame.
+-- The craft profit block. It is a plain child frame inside the profession window of the client, under the reagents.
+-- It shows the material cost and the profit of the selected recipe. The tooltip of the block has the detail.
+-- The block adds no hook. It reads the selected recipe on the game events and on a throttled OnUpdate of its own frame.
 local CraftPanel = {}
 ns.CraftPanel = CraftPanel
 
@@ -33,26 +33,40 @@ end
 
 -- Return the text to show for a result. Each entry is { text, tone } with tone "good", "bad" or nil.
 -- format(copper) gives the money text.
+-- Two lines only: the material cost and the profit or loss. A gain has the tone "good" and a loss has "bad".
+-- A partial cost (a reagent has no price) makes the profit an upper limit and a loss a lower limit.
 function CraftPanel.SummaryLines(result, format)
     local lines = {}
-    lines[#lines + 1] = { (result.partial and "Craft cost: at least " or "Craft cost: ") .. format(result.cost) }
+    lines[1] = { (result.partial and "Materials: at least " or "Materials: ") .. format(result.cost) }
     if not result.hasItem then
-        lines[#lines + 1] = { "No item to sell" }
+        lines[2] = { "No item to sell" }
         return lines
     end
     if result.value == nil then
-        lines[#lines + 1] = { "Item value: no price" }
+        lines[2] = { "No sell price" }
         return lines
     end
-    local made = result.made == 1 and "" or (" (" .. result.made .. " made)")
-    lines[#lines + 1] = { "Item value: " .. format(result.value) .. made }
-    lines[#lines + 1] = { "AH cut: -" .. format(result.cutAmount) }
-    local tone = result.profit > 0 and "good" or (result.profit < 0 and "bad" or nil)
-    local profit = result.partial and "Profit: at most " or "Profit: "
-    lines[#lines + 1] = { profit .. format(result.profit), tone }
-    if result.percent then
-        lines[#lines + 1] = { string.format("Profit of cost: %.0f%%", result.percent), tone }
+    local percent = result.percent and string.format(" (%.0f%%)", math.abs(result.percent)) or ""
+    if result.profit > 0 then
+        lines[2] = { (result.partial and "Profit: at most +" or "Profit: +") .. format(result.profit) .. percent, "good" }
+    elseif result.profit < 0 then
+        lines[2] = { (result.partial and "Loss: at least " or "Loss: ") .. format(-result.profit) .. percent, "bad" }
+    else
+        lines[2] = { "Profit: " .. format(0) .. percent }
     end
+    return lines
+end
+
+-- Return the tooltip lines of the block: item value, AH cut and the two formulas. result may be nil.
+function CraftPanel.DetailLines(result, format, reagentFormula, itemFormula)
+    local lines = {}
+    if result and result.hasItem and result.value ~= nil then
+        local made = result.made == 1 and "" or (" (" .. result.made .. " made)")
+        lines[#lines + 1] = "Item value: " .. format(result.value) .. made
+        lines[#lines + 1] = "AH cut: -" .. format(result.cutAmount)
+    end
+    lines[#lines + 1] = "Reagent price formula: " .. tostring(reagentFormula)
+    lines[#lines + 1] = "Item value formula: " .. tostring(itemFormula)
     return lines
 end
 
@@ -120,6 +134,9 @@ function Driver:Tick(seconds)
     end
     if self.client:SelectionKey() ~= self.lastKey then
         self:Refresh()
+    elseif self.view.Place then
+        -- The client lays out its reagents after the selection changes, so the anchor can change.
+        self.view:Place()
     end
 end
 
@@ -152,60 +169,32 @@ function Driver:Start()
     end
 end
 
-local MAX_ROWS = 12
-local ROW_HEIGHT = 28
-local PAD = 12
-local WIDTH = 280
+local PAD = 4
+local WIDTH = 290
+local LINE = 16
+local EDITOR_HEIGHT = 110
 
--- Create the frame view. deps: kit, client, format(copper), getFormulas(), setFormula(which, text) -> ok, message,
--- onFormulaChanged(). The result has the view methods and a frame field.
-local function buildView(deps)
+-- Create the block. deps: kit, client, format(copper), getFormulas(), setFormula(which, text) -> ok, message,
+-- onFormulaChanged(). The result has the view methods and a frame field. The frame is a child of the profession
+-- window, so it hides with that window. The client gives the parent and the anchor (CraftClient:Mount).
+local function buildView(deps, mount)
     local Kit = deps.kit
-    local frame = Kit.CreateWindow("FlipsideCraftPanel", { width = WIDTH, height = 200, title = "Flipside Crafting",
-        square = true })
-    -- The panel stays when Escape is pressed: the profession window decides when it hides.
-    for index = #UISpecialFrames, 1, -1 do
-        if UISpecialFrames[index] == "FlipsideCraftPanel" then
-            table.remove(UISpecialFrames, index)
-        end
-    end
-    local view = { frame = frame, rows = {} }
+    local frame = CreateFrame("Frame", nil, mount.parent)
+    frame:SetSize(WIDTH, 2 * LINE + 2 * PAD)
+    frame:EnableMouse(true)
+    local view = { frame = frame, mount = mount, usedLines = 0, summary = {} }
 
-    local message = Kit.Label(frame, "", "normal")
-    message:SetPoint("TOPLEFT", frame, "TOPLEFT", PAD, -36)
-    message:SetWidth(WIDTH - 2 * PAD)
-    message:SetJustifyH("LEFT")
-    view.message = message
-
-    for index = 1, MAX_ROWS do
-        local row = {}
-        row.icon = frame:CreateTexture(nil, "ARTWORK")
-        row.icon:SetSize(24, 24)
-        row.name = Kit.Label(frame, "", "normal")
-        row.name:SetJustifyH("LEFT")
-        row.name:SetWidth(130)
-        row.total = Kit.Label(frame, "", "highlight")
-        row.total:SetJustifyH("RIGHT")
-        row.unit = Kit.Label(frame, "", "small")
-        row.unit:SetJustifyH("LEFT")
-        row.icon:SetPoint("TOPLEFT", frame, "TOPLEFT", PAD, -36 - (index - 1) * ROW_HEIGHT)
-        row.name:SetPoint("TOPLEFT", row.icon, "TOPRIGHT", 6, 0)
-        row.unit:SetPoint("TOPLEFT", row.icon, "RIGHT", 6, -1)
-        row.total:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -PAD, -38 - (index - 1) * ROW_HEIGHT)
-        view.rows[index] = row
-    end
-
-    view.summary = {}
-    for index = 1, 6 do
+    for index = 1, 2 do
         local label = Kit.Label(frame, "", "normal")
         label:SetJustifyH("LEFT")
-        label:SetWidth(WIDTH - 2 * PAD)
+        label:SetWidth(index == 1 and WIDTH - 70 or WIDTH)
+        label:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, -PAD - (index - 1) * LINE)
         view.summary[index] = label
     end
 
     -- The formula editor: two text boxes, hidden until the player opens them.
     view.editor = CreateFrame("Frame", nil, frame)
-    view.editor:SetSize(WIDTH - 2 * PAD, 110)
+    view.editor:SetSize(WIDTH, EDITOR_HEIGHT)
     view.editor:Hide()
     local reagentLabel = Kit.Label(view.editor, "Reagent price formula", "small")
     reagentLabel:SetPoint("TOPLEFT", view.editor, "TOPLEFT", 0, 0)
@@ -218,63 +207,103 @@ local function buildView(deps)
             end
         end
     end
-    view.reagentInput = Kit.Input(view.editor, WIDTH - 2 * PAD - 8, saver("reagent"))
+    view.reagentInput = Kit.Input(view.editor, WIDTH - 8, saver("reagent"))
     view.reagentInput:SetPoint("TOPLEFT", reagentLabel, "BOTTOMLEFT", 4, -2)
     local itemLabel = Kit.Label(view.editor, "Item value formula", "small")
     itemLabel:SetPoint("TOPLEFT", view.reagentInput, "BOTTOMLEFT", -4, -6)
-    view.itemInput = Kit.Input(view.editor, WIDTH - 2 * PAD - 8, saver("item"))
+    view.itemInput = Kit.Input(view.editor, WIDTH - 8, saver("item"))
     view.itemInput:SetPoint("TOPLEFT", itemLabel, "BOTTOMLEFT", 4, -2)
     view.formulaMessage = Kit.Label(view.editor, "", "bad")
     view.formulaMessage:SetPoint("TOPLEFT", view.itemInput, "BOTTOMLEFT", -4, -4)
-    view.formulaMessage:SetWidth(WIDTH - 2 * PAD)
+    view.formulaMessage:SetWidth(WIDTH)
     view.formulaMessage:SetJustifyH("LEFT")
 
-    view.toggle = Kit.Button(frame, "Formulas", 90, function()
+    -- The Formulas button sits at the right end of the first line.
+    view.toggle = Kit.Button(frame, "Formulas", 66, function()
         view.editor:SetShown(not view.editor:IsShown())
         local reagent, item = deps.getFormulas()
         view.reagentInput:SetText(reagent)
         view.itemInput:SetText(item)
         view:Layout()
     end)
+    view.toggle:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 0, -PAD + 3)
 
-    -- Place the summary, the button and the editor below the last used row, and set the frame height.
+    frame:SetScript("OnEnter", function(self)
+        if not view.result then
+            return
+        end
+        local reagent, item = deps.getFormulas()
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText("Flipside crafting")
+        for _, text in ipairs(CraftPanel.DetailLines(view.result, deps.format, reagent, item)) do
+            GameTooltip:AddLine(text, 1, 1, 1)
+        end
+        GameTooltip:Show()
+    end)
+    frame:SetScript("OnLeave", function()
+        GameTooltip:Hide()
+    end)
+
+    -- Set the block height. On TBC the scroll child of the detail area grows by the same height, so that the
+    -- block stays inside the scroll range.
     function view:Layout()
-        local top = -40 - self.usedRows * ROW_HEIGHT - 6
-        for index, label in ipairs(self.summary) do
-            label:ClearAllPoints()
-            label:SetPoint("TOPLEFT", frame, "TOPLEFT", PAD, top - (index - 1) * 16)
-        end
-        top = top - self.usedSummary * 16 - 8
-        self.toggle:ClearAllPoints()
-        self.toggle:SetPoint("TOPLEFT", frame, "TOPLEFT", PAD, top)
-        top = top - 28
-        local height = -top + PAD
-        if self.editor:IsShown() then
+        local height = self.usedLines * LINE + 2 * PAD
+        if self.usedLines > 0 and self.editor:IsShown() then
             self.editor:ClearAllPoints()
-            self.editor:SetPoint("TOPLEFT", frame, "TOPLEFT", PAD, top)
-            height = height + 110
+            self.editor:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, -height)
+            height = height + EDITOR_HEIGHT
         end
-        frame:SetHeight(height)
+        frame:SetHeight(math.max(1, height))
+        self:Grow()
     end
 
-    view.usedRows, view.usedSummary = 0, 0
-
-    function view.Show()
-        local host = deps.client:Host()
-        frame:ClearAllPoints()
-        if host then
-            frame:SetPoint("TOPLEFT", host, "TOPRIGHT", 0, 0)
-        else
-            frame:SetPoint("CENTER")
+    function view:Grow()
+        local child = self.mount.scrollChild
+        if not child then
+            return
         end
+        self.baseHeight = self.baseHeight or child:GetHeight()
+        child:SetHeight(self.baseHeight + frame:GetHeight() + 8)
+        if self.mount.scrollFrame and self.mount.scrollFrame.UpdateScrollChildRect then
+            self.mount.scrollFrame:UpdateScrollChildRect()
+        end
+    end
+
+    -- Read the mount again and anchor the block under the reagents. Cheap when nothing changed.
+    function view:Place()
+        local current = deps.client:Mount()
+        if not current then
+            return
+        end
+        local old = self.mount
+        self.mount = current
+        if current.parent ~= frame:GetParent() then
+            frame:SetParent(current.parent)
+        end
+        if current.anchor ~= old.anchor or current.x ~= old.x or current.y ~= old.y or not self.placed then
+            frame:ClearAllPoints()
+            frame:SetPoint("TOPLEFT", current.anchor, current.relativePoint, current.x, current.y)
+            self.placed = true
+            self:Grow()
+        end
+    end
+
+    function view:Show()
+        self:Place()
         frame:Show()
+        self:Grow()
     end
 
-    function view.Hide()
+    function view:Hide()
         frame:Hide()
+        local child = self.mount.scrollChild
+        if child and self.baseHeight then
+            child:SetHeight(self.baseHeight)
+            self.baseHeight = nil
+        end
     end
 
-    function view.IsShown()
+    function view:IsShown()
         return frame:IsShown()
     end
 
@@ -287,44 +316,21 @@ local function buildView(deps)
             end
             label:SetShown(line ~= nil)
         end
-        view.usedSummary = #lines
-    end
-
-    local function setRows(result)
-        local used = result and math.min(#result.lines, MAX_ROWS) or 0
-        for index, row in ipairs(view.rows) do
-            local line = result and result.lines[index]
-            local shown = index <= used and line ~= nil
-            row.icon:SetShown(shown)
-            row.name:SetShown(shown)
-            row.unit:SetShown(shown)
-            row.total:SetShown(shown)
-            if shown then
-                row.icon:SetTexture(line.icon)
-                row.name:SetText((line.name or ("Item " .. line.itemID)) .. " x" .. line.count)
-                if line.unit then
-                    row.unit:SetText(deps.format(line.unit) .. " each")
-                    row.total:SetText(deps.format(line.total))
-                else
-                    row.unit:SetText(RED .. "no price|r")
-                    row.total:SetText("-")
-                end
-            end
-        end
-        view.usedRows = used
+        view.usedLines = #lines
+        view.toggle:SetShown(#lines > 0)
     end
 
     function view:Render(state)
-        if state.unsupported or state.empty then
-            message:SetText(state.unsupported and ns.CraftClient.UNSUPPORTED or "Select a recipe.")
-            message:Show()
-            setRows(nil)
+        self.result = state.result
+        if state.unsupported then
+            setSummary({ { ns.CraftClient.UNSUPPORTED } })
+        elseif state.empty then
             setSummary({})
+            self.editor:Hide()
         else
-            message:Hide()
-            setRows(state.result)
             setSummary(CraftPanel.SummaryLines(state.result, deps.format))
         end
+        self:Place()
         self:Layout()
     end
 
@@ -339,7 +345,7 @@ end
 -- Create the panel and start it. deps:
 --   kit, client (a CraftClient object), bus, format(copper), run (a FormulaRun object), cut(gross),
 --   getFormulas() -> reagent text, item text; setFormula(which, text) -> ok, message.
--- Returns the driver. The frame is built on the first TRADE_SKILL_SHOW.
+-- Returns the driver. The frame is built on the first TRADE_SKILL_SHOW, when the client gives a parent for it.
 function CraftPanel.Attach(deps)
     local view
     local driver
