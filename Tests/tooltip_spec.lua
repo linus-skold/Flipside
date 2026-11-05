@@ -193,6 +193,43 @@ describe("Tooltip", function()
         it("adds lines to a bind-on-equip chat link with no owner", function()
             assert.are.equal(3, run({ bind = 2, bound = true }))
         end)
+        it("adds lines when IsBound raises an error", function()
+            local owner = { GetBagID = function() return 0 end, GetID = function() return 1 end }
+            local lines = run({ bind = 2, owner = owner })
+            callbackDeps.isBound = function() error("Usage: local isBound = C_Item.IsBound(itemLocation)") end
+            local tip = newTooltip(owner)
+            registered[1].fn(tip, "item:5")
+            assert.are.equal(lines, #tip.lines)
+        end)
+        it("does not call IsBound for an empty location", function()
+            local called = false
+            local owner = { GetBagID = function() return 0 end, GetID = function() return 1 end }
+            run({ bind = 2, owner = owner })
+            callbackDeps.itemExists = function() return false end
+            callbackDeps.isBound = function() called = true return true end
+            local tip = newTooltip(owner)
+            registered[1].fn(tip, "item:5")
+            assert.is_false(called)
+            assert.are.equal(3, #tip.lines)
+        end)
+        it("does not call IsBound for an owner that is not a bag slot", function()
+            local called = false
+            local owner = { GetBagID = function() return nil end, GetID = function() return 2 end }
+            run({ bind = 2, owner = owner })
+            callbackDeps.isBound = function() called = true return true end
+            local tip = newTooltip(owner)
+            registered[1].fn(tip, "item:5")
+            assert.is_false(called)
+            assert.are.equal(3, #tip.lines)
+        end)
+        it("does not call IsBound for a bag owner with a bad slot id", function()
+            local called = false
+            local owner = { GetBagID = function() return 0 end, GetID = function() return 0 end }
+            run({ bind = 2, owner = owner })
+            callbackDeps.isBound = function() called = true return true end
+            registered[1].fn(newTooltip(owner), "item:5")
+            assert.is_false(called)
+        end)
     end)
 
     it("adds lines to a normal item and to an item with unknown class", function()

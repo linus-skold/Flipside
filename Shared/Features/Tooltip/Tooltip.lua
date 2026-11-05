@@ -57,30 +57,55 @@ local function locationOf(deps, tooltip)
     if not make or type(owner) ~= "table" or not owner.GetID then
         return nil
     end
+    local slotID = owner:GetID()
     local bagID = owner.GetBagID and owner:GetBagID()
     if bagID then
-        return make:CreateFromBagAndSlot(bagID, owner:GetID())
+        if type(bagID) ~= "number" or type(slotID) ~= "number" or slotID < 1 then
+            return nil
+        end
+        return make:CreateFromBagAndSlot(bagID, slotID)
     end
     local parent = owner.GetParent and owner:GetParent()
     local parentName = type(parent) == "table" and parent.GetName and parent:GetName()
     if type(parentName) == "string" and parentName:match("^ContainerFrame%d+$") then
-        return make:CreateFromBagAndSlot(parent:GetID(), owner:GetID())
+        local parentID = parent:GetID()
+        if type(parentID) ~= "number" or type(slotID) ~= "number" or slotID < 1 then
+            return nil
+        end
+        return make:CreateFromBagAndSlot(parentID, slotID)
     end
     local name = owner.GetName and owner:GetName()
-    if type(name) == "string" and name:match("^Character%a+Slot$") then
-        return make:CreateFromEquipmentSlot(owner:GetID())
+    if type(name) == "string" and name:match("^Character%a+Slot$") and type(slotID) == "number" then
+        return make:CreateFromEquipmentSlot(slotID)
     end
     return nil
 end
 
--- Returns true if the item at the tooltip owner is bound now. An unknown owner gives false.
+-- Returns true if the location is valid and holds an item. A missing check counts as a pass.
+local function locationHasItem(deps, location)
+    if type(location) == "table" and type(location.IsValid) == "function" and not location:IsValid() then
+        return false
+    end
+    local exists = deps.itemExists or (C_Item and C_Item.DoesItemExist)
+    if exists then
+        local ok, result = pcall(exists, location)
+        return ok and result == true
+    end
+    return true
+end
+
+-- Returns true if the item at the tooltip owner is bound now. An unknown owner or a client error gives false.
 local function isBoundNow(deps, tooltip)
     local isBound = deps.isBound or (C_Item and C_Item.IsBound)
     if not isBound then
         return false
     end
     local location = locationOf(deps, tooltip)
-    return location ~= nil and isBound(location) == true
+    if location == nil or not locationHasItem(deps, location) then
+        return false
+    end
+    local ok, result = pcall(isBound, location)
+    return ok and result == true
 end
 
 -- Returns true if the vendor sell price is 0 and no scan record exists. An unknown price gives false.
@@ -236,7 +261,7 @@ function Tooltip.Rows(deps, input, stackMode, stackCount, config)
 end
 
 -- deps: itemInfoInstant (optional, default C_Item.GetItemInfoInstant), itemInfo (optional, default C_Item.GetItemInfo),
--- isBound (default C_Item.IsBound), itemLocation (default ItemLocation),
+-- isBound (default C_Item.IsBound), itemExists (default C_Item.DoesItemExist), itemLocation (default ItemLocation),
 -- tooltipConfig, formulaRun, rules, holdings, getRecord, now, isAltDown, containerItemInfo,
 -- clock, report, bus (optional; with it, Alt up or down shows the tooltip again), currentRealmOnly, realm(),
 -- classColor(classFile) (default: RAID_CLASS_COLORS).
