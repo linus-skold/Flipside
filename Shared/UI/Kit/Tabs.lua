@@ -191,10 +191,19 @@ end
 -- options: onSelect(key), selected (start key, default the first tab), template (default PanelTopTabButtonTemplate),
 -- tabPadding and minTabWidth (each tab is as wide as its text + tabPadding, at least minTabWidth).
 -- The tabs use their own holder frame, so the parent can also have page tabs.
+-- contentInset (optional, pixels): the content area below the tabs gets the client inset background,
+-- and each content frame stays this many pixels inside its border.
 function Kit.CreateTopTabs(parent, tabs, options)
     options = options or {}
     local holder = CreateFrame("Frame", nil, parent)
     holder:SetAllPoints(parent)
+    local margin = options.contentInset or 0
+    local background
+    if options.contentInset then
+        background = Kit.Inset(parent)
+        background:SetPoint("TOPLEFT", parent, "TOPLEFT", 0, -TOP_TAB_HEIGHT)
+        background:SetPoint("BOTTOMRIGHT", parent, "BOTTOMRIGHT", 0, 0)
+    end
     local self = setmetatable({
         parent = parent, holder = holder, onSelect = options.onSelect,
         contents = {}, buttons = {}, indexByKey = {},
@@ -221,11 +230,12 @@ function Kit.CreateTopTabs(parent, tabs, options)
         self.indexByKey[key] = index
 
         local content = CreateFrame("Frame", nil, parent)
-        content:SetPoint("TOPLEFT", parent, "TOPLEFT", 0, -TOP_TAB_HEIGHT)
-        content:SetPoint("BOTTOMRIGHT", parent, "BOTTOMRIGHT", 0, 0)
+        content:SetPoint("TOPLEFT", parent, "TOPLEFT", margin, -TOP_TAB_HEIGHT - margin)
+        content:SetPoint("BOTTOMRIGHT", parent, "BOTTOMRIGHT", -margin, margin)
         content:Hide()
         self.contents[index] = content
     end
+    self.background = background
     PanelTemplates_SetNumTabs(holder, #tabs)
     local first = options.selected or (tabs[1] and (tabs[1].key or tabs[1][1]))
     if first then

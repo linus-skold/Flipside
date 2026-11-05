@@ -44,9 +44,10 @@ local function windowFrame()
 end
 
 local function saveCustom(page, name, text)
-    page.customName:SetText(name)
-    page.customText:SetText(text)
-    click(page.customSave)
+    click(page.customAdd)
+    page.customDialog.nameInput:SetText(name)
+    page.customDialog.textInput:SetText(text)
+    click(page.customDialog.saveButton)
 end
 
 local LINEN = "|cff1eff00|Hitem:2589::::::::60:::::|h[Linen Cloth]|h|r"
@@ -287,14 +288,14 @@ describe("Init rules", function()
             saveCustom(page, "aaa", "scanmin")
             saveCustom(page, "bbb", "aaa + 1")
             saveCustom(page, "aaa", "bbb + 1")
-            assert.are.equal("loop: aaa -> bbb -> aaa", page.customMessage:GetText())
+            assert.are.equal("loop: aaa -> bbb -> aaa", page.customDialog.error:GetText())
+            assert.is_true(page.customDialog:IsShown())
             assert.are.equal("scanmin", ns.customSources:Get("aaa"))
         end)
 
         it("deletes the selected source after the confirm", function()
             saveCustom(page, "myprice", "scanmin * 2")
             click(page.customList.rows[1])
-            assert.are.equal("myprice", page.customName:GetText())
             click(page.customDelete)
             assert.are.equal("FLIPSIDE_DELETE_CUSTOM_SOURCE", mock.popup.which)
             assert.are.equal("myprice", ns.customSources:List()[1].name)

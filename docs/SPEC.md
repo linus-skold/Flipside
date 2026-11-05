@@ -282,7 +282,7 @@ check(
 
 **Feedback decisions (2026-10-14)**
 
-7. **Formulas page.** The page explains each function and each source in plain words, as a reference list. The custom source section (save a formula under a name) must be easy to find. There are no user-defined functions with parameters.
+7. **Formulas page.** The page explains each function and each source in plain words, as a reference list. The custom source section (save a formula under a name) must be easy to find. It shows a list with the Add, Edit and Delete buttons. Add and Edit (also a double-click on a row) open a popup with a name box and a formula box, Save and Cancel; the popup shows the validation error and stays open. The name of a saved source is locked in Edit. On the Groups page the group list fills the page height, with New group and Import below it. The tabbed area has an inset background and no group name above the tabs (2026-11-05). There are no user-defined functions with parameters.
 
 ## Feature specs
 

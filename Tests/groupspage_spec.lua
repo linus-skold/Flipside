@@ -174,7 +174,7 @@ describe("GroupsPage", function()
             build()
             assert.are.equal("[No group]", treeText(1))
             assert.are.equal(1, page.tree.selected)
-            assert.are.equal("[No group]", page.header:GetText())
+            assert.is_nil(page.header)
             assert.are.equal(1, #page.tree.roots)
         end)
 
@@ -203,12 +203,30 @@ describe("GroupsPage", function()
             assert.are.equal("Rare (1)", treeText(rare))
         end)
 
-        it("shows the path of the selected group", function()
+        it("has no group name above the tabs", function()
             local herbs = store:CreateGroup(1, "Herbs")
-            local rare = store:CreateGroup(herbs, "Rare")
             build()
-            page.tree:Select(rare)
-            assert.are.equal("Herbs > Rare", page.header:GetText())
+            page.tree:Select(herbs)
+            assert.is_nil(page.header)
+        end)
+
+        it("gives the tab area an inset background", function()
+            build()
+            assert.are.equal("InsetFrameTemplate", page.topTabs.background.template)
+        end)
+
+        it("fills the page height with the list, and keeps the buttons below it", function()
+            build()
+            local frame = page.tree.frame
+            assert.are.equal(250, frame:GetWidth())
+            local bottom
+            for _, point in ipairs(frame.points) do
+                if point[1] == "BOTTOMLEFT" then
+                    bottom = point
+                end
+            end
+            assert.is_truthy(bottom)
+            assert.are.equal("BOTTOMLEFT", page.newButton.points[1][1])
         end)
 
         it("registers a refresh callback", function()
@@ -382,7 +400,6 @@ describe("GroupsPage", function()
             click(prompt.okButton)
             assert.are.equal("Plants", store:Name(herbs))
             assert.are.equal("Plants (0)", treeText(herbs))
-            assert.are.equal("Plants", page.header:GetText())
             assert.is_false(prompt:IsShown())
         end)
 

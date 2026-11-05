@@ -225,10 +225,73 @@ describe("FormulaPage", function()
             assert.are.equal("min(scanmin, 1)", found.descText:GetText())
         end)
 
-        it("copies the formula into the custom formula box", function()
+        it("has no name or formula box on the section, only in the popup", function()
+            assert.is_nil(page2.customName)
+            assert.is_nil(page2.customText)
+            assert.is_false(page2.customDialog:IsShown())
+        end)
+
+        it("opens an empty popup with Add", function()
+            page2.customAdd.scripts.OnClick(page2.customAdd)
+            local dialog = page2.customDialog
+            assert.is_true(dialog:IsShown())
+            assert.are.equal("", dialog.nameInput:GetText())
+            assert.are.equal("", dialog.textInput:GetText())
+        end)
+
+        it("copies the formula into the popup formula box", function()
             page2.formulaInput:SetText("  max(scanmin, 5) ")
             page2.customFrom.scripts.OnClick(page2.customFrom)
-            assert.are.equal("max(scanmin, 5)", page2.customText:GetText())
+            assert.is_true(page2.customDialog:IsShown())
+            assert.are.equal("max(scanmin, 5)", page2.customDialog.textInput:GetText())
+        end)
+
+        it("saves from the popup and closes it", function()
+            local saved
+            custom.Set = function(_, name, text)
+                saved = { name, text }
+                return true
+            end
+            page2.customAdd.scripts.OnClick(page2.customAdd)
+            page2.customDialog.nameInput:SetText(" other ")
+            page2.customDialog.textInput:SetText(" 5g ")
+            page2.customDialog.saveButton.scripts.OnClick(page2.customDialog.saveButton)
+            assert.are.same({ "other", "5g" }, saved)
+            assert.is_false(page2.customDialog:IsShown())
+        end)
+
+        it("shows the error in the popup and keeps it open", function()
+            custom.Set = function()
+                return nil, "bad formula"
+            end
+            page2.customAdd.scripts.OnClick(page2.customAdd)
+            page2.customDialog.saveButton.scripts.OnClick(page2.customDialog.saveButton)
+            assert.is_true(page2.customDialog:IsShown())
+            assert.are.equal("bad formula", page2.customDialog.error:GetText())
+        end)
+
+        it("edits the selected source with its name locked", function()
+            local row = page2.customList.rows[1]
+            row.scripts.OnClick(row)
+            page2.customEdit.scripts.OnClick(page2.customEdit)
+            local dialog = page2.customDialog
+            assert.is_true(dialog:IsShown())
+            assert.are.equal("mymin", dialog.nameInput:GetText())
+            assert.are.equal("min(scanmin, 1)", dialog.textInput:GetText())
+            assert.is_false(dialog.nameInput.enabled)
+        end)
+
+        it("opens the edit popup on a double-click", function()
+            local row = page2.customList.rows[1]
+            row.scripts.OnDoubleClick(row)
+            assert.is_true(page2.customDialog:IsShown())
+            assert.are.equal("mymin", page2.customDialog.nameInput:GetText())
+        end)
+
+        it("asks for a selection before Edit", function()
+            page2.customEdit.scripts.OnClick(page2.customEdit)
+            assert.are.equal("Select a custom source first.", page2.customMessage:GetText())
+            assert.is_false(page2.customDialog:IsShown())
         end)
 
         it("has a clear heading and button", function()
