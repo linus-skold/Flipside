@@ -50,24 +50,15 @@ local function log(level, text)
 end
 
 -- Returns true if the recipient is a known own character. Names match without regard to case; a name without a
--- realm matches the name part.
+-- realm matches the name part. On Forever "Name Surname" matches too (CharacterName).
 function MailingView.IsKnownCharacter(recipient, characters)
-    local wanted = recipient:lower()
-    local wantedName, wantedRealm = wanted:match("^([^%-]+)%-(.+)$")
-    for _, character in ipairs(characters or {}) do
-        local lower = character:lower()
-        local name, realm = lower:match("^([^%-]+)%-(.+)$")
-        if lower == wanted then
-            return true
-        end
-        if not wantedRealm and (name or lower) == wanted then
-            return true
-        end
-        if wantedRealm and not realm and lower == wantedName then
-            return true
-        end
-    end
-    return false
+    return ns.CharacterName.Resolve(recipient, characters) ~= nil
+end
+
+-- The name to show for a recipient: the display name of the own character that it names, else the text as typed.
+local function recipientText(text, characters)
+    local key = ns.CharacterName and ns.CharacterName.Enabled() and ns.CharacterName.Resolve(text, characters)
+    return key and ns.CharacterName.Display(key) or text
 end
 
 local function mailsText(count)
@@ -176,7 +167,7 @@ local function showTooltip(row, rule)
     if rule.reason then
         GameTooltip:AddLine("Cannot run: " .. rule.reason, RED[1], RED[2], RED[3])
     end
-    GameTooltip:AddLine("Recipient: " .. (rule.recipient ~= "" and rule.recipient or "none"), 1, 1, 1)
+    GameTooltip:AddLine("Recipient: " .. (rule.recipient ~= "" and rule.recipientShown or "none"), 1, 1, 1)
     if rule.unknown then
         GameTooltip:AddLine("Not one of your characters", GOLD[1], GOLD[2], GOLD[3])
     end
@@ -242,7 +233,7 @@ local function initRow(view, row, rule)
     local color = rule.reason and GREY or GOLD
     row.nameText:SetText(rule.name)
     setColor(row.nameText, color)
-    row.recipientText:SetText(rule.recipient)
+    row.recipientText:SetText(rule.recipientShown)
     setColor(row.recipientText, rule.unknown and RED or color)
     row.groupsText:SetText(rule.groupsShort)
     setColor(row.groupsText, color)
@@ -342,6 +333,7 @@ function MailingView:_BuildRule(entry, slots, characters)
     local groups = ns.MailingPlan.GroupsForOperation(deps.rules, entry.id)
     local rule = { id = entry.id, name = entry.name, groupNames = {}, mails = 0, items = 0 }
     rule.recipient = trim(tostring(settings.recipient or ""))
+    rule.recipientShown = recipientText(rule.recipient, characters)
     for _, group in ipairs(groups) do
         rule.groupNames[#rule.groupNames + 1] = tostring(deps.rules:Name(group.id))
     end

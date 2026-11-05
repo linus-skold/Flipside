@@ -705,6 +705,7 @@ describe("OperationsPage", function()
                     return 1, 1, 1, colors[quality]
                 end,
             }
+            assert(loadfile(manifest.path("CharacterName")))("Flipside", ns)
             assert(loadfile(manifest.path("MailingPlan")))("Flipside", ns)
             assert(loadfile(manifest.path("MailClient")))("Flipside", ns)
             build()

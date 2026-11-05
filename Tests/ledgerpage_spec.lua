@@ -324,6 +324,47 @@ describe("LedgerPage", function()
             assert.are.same({ "all", ME, ALT }, values(page.charDropdown))
         end)
 
+        describe("character names", function()
+            local function texts(dropdown)
+                local out = {}
+                for _, item in ipairs(dropdown.menuItems) do
+                    out[#out + 1] = item.text
+                end
+                return out
+            end
+
+            local function withNames(flavour)
+                setup()
+                assert(loadfile(manifest.path("CharacterName")))("Flipside", ns)
+                ns.Flavour = flavour
+                ns.CharacterName.Setup({
+                    db = {
+                        GetFor = function(_, key, name)
+                            return key == ALT and name == "surname" and "Jones" or nil
+                        end,
+                    },
+                })
+                build()
+            end
+
+            it("shows Name Surname in the picker on Forever and keeps the key as the value", function()
+                withNames({ usesSurname = true })
+                assert.are.same({ "all", ME, ALT }, values(page.charDropdown))
+                assert.are.same({ "All characters", "Me", "Alt Jones" }, texts(page.charDropdown))
+            end)
+
+            it("shows the key in the picker on TBC", function()
+                withNames({ usesSurname = false })
+                assert.are.same({ "All characters", ME, ALT }, texts(page.charDropdown))
+            end)
+
+            it("gives the text of a character cell", function()
+                withNames({ usesSurname = true })
+                assert.are.equal("Alt Jones", ns.LedgerPage.CharText(ALT))
+                assert.are.equal("", ns.LedgerPage.CharText(nil))
+            end)
+        end)
+
         it("puts the current character first when the sort order differs", function()
             saved.records.EU.standard["Aaa-Realm"] = { { time = NOW, char = "Aaa-Realm", type = "income",
                 source = "quest", money = 1 } }

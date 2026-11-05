@@ -153,7 +153,8 @@ local FIELDS = {
     mailing = {
         {
             key = "recipient", label = "Recipient", kind = "text", default = "", maxLength = 64,
-            help = "The character that gets the mail. Use Name or Name-Realm.",
+            help = "The character that gets the mail. Use Name or Name-Realm. On Forever, use Name or Name Surname"
+                .. " (the surname that the client shows); a realm is not needed.",
         },
         {
             key = "keep", label = "Keep in bags", kind = "number", default = 0, min = 0, max = 10000,

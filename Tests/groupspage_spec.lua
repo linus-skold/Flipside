@@ -1345,7 +1345,7 @@ describe("GroupsPage", function()
         end
 
         before_each(function()
-            for _, name in ipairs({ "MailingPlan", "MailClient", "AutoRules", "AutoRulesPanel" }) do
+            for _, name in ipairs({ "CharacterName", "MailingPlan", "MailClient", "AutoRules", "AutoRulesPanel" }) do
                 assert(loadfile(manifest.path(name)))("Flipside", ns)
             end
             ns.NameRegex = {

@@ -18,6 +18,7 @@ read_globals = {
     "C_AddOns",
     "C_AuctionHouse",
     "C_ChatInfo",
+    "Constants",
     "IsInGuild",
     "C_Container",
     "C_GameRules",

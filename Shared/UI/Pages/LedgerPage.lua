@@ -388,6 +388,14 @@ function LedgerPage.NameOf(char)
     return type(char) == "string" and char:match("^([^-]+)%-") or tostring(char)
 end
 
+-- The name to show for a character key. Forever: Name Surname. TBC: the key as it is (CharacterName).
+function LedgerPage.CharText(char)
+    if type(char) ~= "string" then
+        return ""
+    end
+    return ns.CharacterName and ns.CharacterName.Display(char) or char
+end
+
 -- True if the filter has no realm, or the character is on the realm of the filter.
 local function inRealm(filter, char)
     return filter.realm == nil or LedgerPage.RealmOf(char) == filter.realm
@@ -478,7 +486,7 @@ function LedgerPage.Columns(tab, showChar, formatters)
     if tab == "overview" then
         return {
             { key = "time", title = "Date", width = 104, format = formatters.time },
-            { key = "char", title = "Character", width = 110, hidden = not showChar },
+            { key = "char", title = "Character", width = 110, hidden = not showChar, format = formatters.char },
             { key = "kind", title = "Type", width = 100 },
             { key = "item", title = "Item", format = formatters.item },
             { key = "qty", title = "Qty", width = 36, number = true, format = function(v)
@@ -491,7 +499,7 @@ function LedgerPage.Columns(tab, showChar, formatters)
     local detailTitle = ({ sales = "Buyer", purchases = "Seller", loot = "Mob", expenses = "Type" })[tab] or "Detail"
     return {
         { key = "time", title = "Date", width = 104, format = formatters.time },
-        { key = "char", title = "Character", width = 110, hidden = not showChar },
+        { key = "char", title = "Character", width = 110, hidden = not showChar, format = formatters.char },
         { key = "item", title = "Item", format = formatters.item },
         { key = "qty", title = "Qty", width = 36, number = true, format = function(v)
             return v and v > 0 and tostring(v) or ""
@@ -724,7 +732,7 @@ function LedgerPage.Build(content, deps)
         local function add(name)
             if name and not seen[name] then
                 seen[name] = true
-                items[#items + 1] = { value = name, text = name }
+                items[#items + 1] = { value = name, text = LedgerPage.CharText(name) }
             end
         end
         add(deps.character)
@@ -803,7 +811,7 @@ function LedgerPage.Build(content, deps)
         local view = { tab = tab }
         view.columns = LedgerPage.Columns(tab, page.filter.char == ALL, { time = timeText, item = function(v)
             return itemText(v, tab)
-        end })
+        end, char = LedgerPage.CharText })
         view.options = { gap = 6 }
         view.moneyKeys = {}
         for _, column in ipairs(view.columns) do
@@ -1005,7 +1013,11 @@ function LedgerPage.Build(content, deps)
         page.graphScale = scale
         page.graph:SetPoints(series.points, { yMin = 0, yMax = scale.max, yTicks = scale.ticks })
         if #series.omitted > 0 then
-            page.graphNote:SetText("Not in the graph, no balance known yet: " .. table.concat(series.omitted, ", ")
+            local shown = {}
+            for index, name in ipairs(series.omitted) do
+                shown[index] = LedgerPage.CharText(name)
+            end
+            page.graphNote:SetText("Not in the graph, no balance known yet: " .. table.concat(shown, ", ")
                 .. ". Log in with the character once.")
         else
             page.graphNote:SetText("")

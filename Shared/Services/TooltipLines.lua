@@ -313,8 +313,15 @@ local function splitCharacter(full)
     return name or full, realm
 end
 
+-- The name of a character whose name another shown character has too. Forever: Name Surname (CharacterName).
+-- A character with no known surname, and every character on TBC, shows Name-Realm.
+local function clashName(key, name)
+    local shown = ns.CharacterName and ns.CharacterName.Display(key) or key
+    return shown ~= name and shown or key
+end
+
 -- Returns the characters to show: with ctx.currentRealmOnly, only those of ctx.realm. A shown character
--- has a display name: the name, or Name-Realm if another shown character has the same name.
+-- has a display name: the name, or the clash name if another shown character has the same name.
 local function shownCharacters(ctx, characters)
     local list, names = {}, {}
     for _, char in ipairs(characters) do
@@ -325,7 +332,7 @@ local function shownCharacters(ctx, characters)
         end
     end
     for _, item in ipairs(list) do
-        item.display = names[item.name] > 1 and item.char.name or item.name
+        item.display = names[item.name] > 1 and clashName(item.char.name, item.name) or item.name
     end
     return list
 end

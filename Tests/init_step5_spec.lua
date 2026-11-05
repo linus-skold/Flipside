@@ -200,6 +200,65 @@ describe("Init step 5", function()
             slash("forget")
             assert.is_truthy(mock.messages[1]:find("usage", 1, true))
         end)
+
+        describe("with a surname (Forever)", function()
+            before_each(function()
+                mock.playerSurname = "Smith"
+                mock.fire("PLAYER_LOGIN")
+                mock.advance(0.5)
+            end)
+
+            it("takes the exact key first", function()
+                ns.db:SetFor("Tester-Other", "surname", "Smith")
+                slash("forget Tester-TestRealm")
+                assert.are.same({ "Flipside: forgot the inventory of Tester-TestRealm" }, mock.messages)
+                assert.are.equal(0, ns.holdings:Count("2589").total)
+            end)
+
+            it("takes a unique Name Surname with no regard to case", function()
+                slash("forget tester SMITH")
+                assert.are.same({ "Flipside: forgot the inventory of Tester-TestRealm" }, mock.messages)
+                assert.are.equal(0, ns.holdings:Count("2589").total)
+            end)
+
+            it("removes nothing and lists the keys if more than one character matches", function()
+                ns.db:SetFor("Tester-Other", "surname", "Smith")
+                slash("forget Tester Smith")
+                assert.are.equal(1, #mock.messages)
+                assert.is_truthy(mock.messages[1]:find("more than one saved character matches", 1, true))
+                assert.is_truthy(mock.messages[1]:find("Tester Smith (Tester-Other)", 1, true))
+                assert.is_truthy(mock.messages[1]:find("Tester Smith (Tester-TestRealm)", 1, true))
+                assert.are.equal(5, ns.holdings:Count("2589").total)
+                assert.are.equal("Smith", ns.db:GetFor("Tester-Other", "surname"))
+            end)
+        end)
+    end)
+
+    describe("surname at login", function()
+        local KEY = "Tester-TestRealm"
+
+        it("saves the surname of the character on Forever", function()
+            mock.playerSurname = "Smith"
+            mock.fire("PLAYER_LOGIN")
+            assert.are.equal("Smith", ns.db:GetFor(KEY, "surname"))
+            assert.are.equal("Tester Smith", ns.CharacterName.Display(KEY))
+        end)
+
+        it("keeps the saved surname if the client gives none", function()
+            mock.playerSurname = "Smith"
+            mock.fire("PLAYER_LOGIN")
+            mock.playerSurname = nil
+            mock.fire("PLAYER_LOGIN")
+            assert.are.equal("Smith", ns.db:GetFor(KEY, "surname"))
+            mock.playerSurname = ""
+            mock.fire("PLAYER_LOGIN")
+            assert.are.equal("Smith", ns.db:GetFor(KEY, "surname"))
+        end)
+
+        it("saves no surname if the client never gave one", function()
+            assert.is_nil(ns.db:GetFor(KEY, "surname"))
+            assert.are.equal("Tester", ns.CharacterName.Display(KEY))
+        end)
     end)
 
     describe("window", function()

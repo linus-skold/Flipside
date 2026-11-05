@@ -102,6 +102,14 @@ describe("Holdings", function()
         assert.are.same({ "Alice-Realm", "Bob-Other" }, a:Characters())
     end)
 
+    it("forgets the saved surname of the character too", function()
+        local saved = {}
+        local db, a = Open(saved, "Alice-Realm")
+        db:SetFor("Bob-Other", "surname", "Jones")
+        a:Forget("Bob-Other")
+        assert.is_nil(saved["c/Bob-Other/surname"])
+    end)
+
     it("does not save when the DB is read-only", function()
         local saved = { _schema = 9 }
         local _, h = Open(saved)

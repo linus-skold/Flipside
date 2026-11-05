@@ -485,6 +485,7 @@ function M.reset(options)
     M.commodity = {} -- itemID -> isCommodity from GetItemKeyInfo; a missing id gives no info
     M.stackSizes = {} -- itemID -> max stack size
     M.playerName = nil -- result of UnitName("player")
+    M.playerSurname = nil -- second result of UnitName("player") (Forever: the surname)
     M.playerClass = "MAGE" -- class file that UnitClass("player") gives as its second result
     M.money = 0 -- result of GetMoney()
     M.noLines = false -- true removes CreateLine from the frames that are made after it
@@ -771,7 +772,7 @@ function M.reset(options)
         end,
     }
     _G.UnitName = function()
-        return M.playerName, nil
+        return M.playerName, M.playerSurname
     end
     _G.GetNormalizedRealmName = function()
         return M.realmName

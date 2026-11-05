@@ -412,6 +412,27 @@ describe("TooltipLines", function()
                 assert.are.equal("|cffffffffBob|r: 2 (bags 2)", rows[5].left)
             end)
 
+            it("shows Name Surname for names that clash on Forever", function()
+                load(manifest.path("CharacterName"))
+                ns.Flavour = { usesSurname = true }
+                local surnames = { ["Ann-Home"] = "Smith", ["Ann-Other"] = "Jones" }
+                ns.CharacterName.Setup({
+                    db = {
+                        GetFor = function(_, key, name)
+                            return name == "surname" and surnames[key] or nil
+                        end,
+                    },
+                })
+                local rows = withHoldings({
+                    { name = "Ann-Home", total = 4, bags = 4 },
+                    { name = "Ann-Other", total = 3, bags = 3 },
+                    { name = "Bob-Home", total = 2, bags = 2 },
+                }, {})
+                assert.are.equal("|cffffffffAnn Smith|r: 4 (bags 4)", rows[3].left)
+                assert.are.equal("|cffffffffAnn Jones|r: 3 (bags 3)", rows[4].left)
+                assert.are.equal("|cffffffffBob|r: 2 (bags 2)", rows[5].left)
+            end)
+
             it("uses white when the class is missing or has no colour", function()
                 local rows = withHoldings({
                     { name = "Ann-Home", total = 1, bags = 1, class = "UNKNOWN" },

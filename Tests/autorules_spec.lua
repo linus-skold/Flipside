@@ -36,7 +36,7 @@ describe("AutoRules", function()
     local function load()
         ns = {}
         for _, name in ipairs({ "EventBus", "ItemString", "SettingsDB", "GroupTree", "OperationSchema",
-            "RulesStore", "MailingPlan", "AutoRules" }) do
+            "RulesStore", "CharacterName", "MailingPlan", "AutoRules" }) do
             assert(loadfile(manifest.path(name)))("Flipside", ns)
         end
         ns.NameRegex = stubRegex()

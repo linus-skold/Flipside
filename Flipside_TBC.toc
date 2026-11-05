@@ -47,6 +47,7 @@ Shared\Services\RulesStore.lua
 Shared\Services\CustomSources.lua
 Shared\Services\AHNameSearch.lua
 Shared\Services\RulesExport.lua
+Shared\Services\CharacterName.lua
 Shared\Services\MailingPlan.lua
 Shared\Services\AutoRules.lua
 Shared\Services\MailClient.lua

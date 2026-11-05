@@ -43,6 +43,7 @@ describe("MailingPlan", function()
     before_each(function()
         ns = {}
         load("ItemString")
+        load("CharacterName")
         load("MailingPlan")
         P = ns.MailingPlan
     end)
@@ -173,6 +174,45 @@ describe("MailingPlan", function()
             slots = { slot("100", 0, 1, 3) }, self = "Me-Realm",
         })
         assert.equal(1, #otherRealm.mails)
+    end)
+
+    describe("with a surname (Forever)", function()
+        local function planFor(recipient, selfKey)
+            return P.Build({
+                groups = { { items = { "100" }, operation = op(recipient) } },
+                slots = { slot("100", 0, 1, 3) }, self = selfKey or "Me-Realm",
+            })
+        end
+
+        before_each(function()
+            local saved = { ["Me-Realm/surname"] = "Smith" }
+            ns.Flavour = { usesSurname = true }
+            ns.CharacterName.Setup({
+                db = {
+                    GetFor = function(_, key, name)
+                        return saved[key .. "/" .. name]
+                    end,
+                },
+            })
+        end)
+
+        it("skips Name Surname of the own character, with no regard to case", function()
+            assert.same({ "recipient is self" }, reasons(planFor("Me Smith")))
+            assert.same({ "recipient is self" }, reasons(planFor("ME smith")))
+            assert.same({ "recipient is self" }, reasons(planFor("Me")))
+            assert.same({ "recipient is self" }, reasons(planFor("Me-Realm")))
+        end)
+
+        it("sends to another surname, another realm key and another name", function()
+            assert.equal(1, #planFor("Me Jones").mails)
+            assert.equal(1, #planFor("Me-Other").mails)
+            assert.equal(1, #planFor("Alt Smith").mails)
+        end)
+
+        it("does not take Name Surname as an alias on TBC", function()
+            ns.Flavour = { usesSurname = false }
+            assert.equal(1, #planFor("Me Smith").mails)
+        end)
     end)
 
     it("leaves items of no group and items not in the bags alone", function()
