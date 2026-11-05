@@ -25,6 +25,69 @@ local function qualityName(value)
     return QUALITIES[value + 1] and QUALITIES[value + 1].text or tostring(value)
 end
 
+local HELP_WINDOW = "FlipsideAutoRuleHelp"
+local HELP_WIDTH, HELP_HEIGHT = 380, 470
+local EXAMPLE_COLOR = "|cff66ccff"
+
+-- A pattern example in colour. The pipe is doubled, because the client reads one pipe as an escape.
+local function example(text)
+    return EXAMPLE_COLOR .. text:gsub("|", "||") .. "|r"
+end
+
+-- The lines of the pattern help. They follow the header of NameRegex.lua.
+local function helpText()
+    local e = example
+    return table.concat({
+        "Plain text matches anywhere in the name. Case does not matter.",
+        "Slashes around the pattern are optional: " .. e("/ore/") .. " is the same as " .. e("ore") .. ".",
+        "",
+        e("^") .. " is the start of the name. " .. e("$") .. " is the end.",
+        "Examples: " .. e("^Heavy") .. ", " .. e("Stone$") .. ", " .. e("^Linen Cloth$"),
+        "",
+        e(".") .. " is any one character.",
+        e("*") .. " is zero or more. " .. e("+") .. " is one or more. " .. e("?") .. " is zero or one.",
+        "They apply to the item before them. Example: " .. e("Potion.*Healing"),
+        "",
+        e("a|b") .. " is either. " .. e("( )") .. " makes a group.",
+        "Examples: " .. e("^(Heavy|Solid) Stone$") .. ", " .. e("potion|elixir|flask"),
+        "",
+        e("[abc]") .. ", " .. e("[a-z]") .. " and " .. e("[^a]") .. " are character sets.",
+        e("\\d") .. " is a digit. " .. e("\\s") .. " is a space. " .. e("\\w") .. " is a letter, digit or underscore.",
+        "Example: " .. e("Rank \\d"),
+        "",
+        "A " .. e("\\") .. " before a special character makes it plain text.",
+        "Examples: " .. e("\\(") .. ", " .. e("\\."),
+        "",
+        "There are no flags. Matching always ignores case.",
+        "Not supported: " .. e("{n,m}") .. ", lazy quantifiers like " .. e("*?") .. ", and backreferences.",
+        e("\\D") .. ", " .. e("\\S") .. " and " .. e("\\W") .. " are plain letters.",
+        "A long or heavy pattern can stop early. Then it does not match.",
+    }, "\n")
+end
+
+-- Create the pattern help window, next to the editor. It starts hidden.
+function AutoRulesPanel.BuildHelp(Kit, editor)
+    local pad = Kit.Theme.padding
+    local help = Kit.CreateWindow(HELP_WINDOW, {
+        width = HELP_WIDTH,
+        height = HELP_HEIGHT,
+        title = "Name pattern help",
+    })
+    help:SetFrameStrata("DIALOG")
+    help:ClearAllPoints()
+    help:SetPoint("TOPLEFT", editor, "TOPRIGHT", 4, 0)
+    help.text = Kit.Label(help, helpText(), "highlight")
+    help.text:SetPoint("TOPLEFT", help, "TOPLEFT", pad + 8, -40)
+    help.text:SetWidth(HELP_WIDTH - 2 * (pad + 8))
+    help.text:SetJustifyH("LEFT")
+    help.text:SetJustifyV("TOP")
+    help.closeButton = Kit.Button(help, "Close", 100, function()
+        help:Hide()
+    end)
+    help.closeButton:SetPoint("BOTTOM", help, "BOTTOM", 0, pad + 4)
+    return help
+end
+
 -- Build the tab in panel. page gets RefreshAuto. hooks: say(text), report(ok, message), refresh(), editable().
 -- deps: rules, itemCache, readBags().
 function AutoRulesPanel.Build(panel, deps, page, hooks)
@@ -123,7 +186,22 @@ function AutoRulesPanel.Build(panel, deps, page, hooks)
         return label
     end
 
-    row(40, "Name pattern (regex, ignores case)")
+    local patternLabel = row(40, "Name pattern (regex, ignores case)")
+    local helpWindow
+    local function toggleHelp()
+        if not helpWindow then
+            helpWindow = AutoRulesPanel.BuildHelp(Kit, editor)
+            editor.helpWindow = helpWindow
+        end
+        if helpWindow:IsShown() then
+            helpWindow:Hide()
+        else
+            helpWindow:Show()
+        end
+    end
+    editor.helpButton = Kit.Button(editor, "?", 22, toggleHelp)
+    editor.helpButton:SetPoint("LEFT", patternLabel, "RIGHT", gap, 0)
+    Kit.Tooltip(editor.helpButton, "Pattern help")
     editor.pattern = Kit.Input(editor, EDITOR_WIDTH - 2 * edge - 6, nil, nil, {
         placeholder = "for example ^Linen (^ = start of the name)",
     })
