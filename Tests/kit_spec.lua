@@ -116,6 +116,27 @@ describe("Kit", function()
             assert.is_false(w:IsShown())
         end)
 
+        it("hides the window, not the close button, when the client passes the button", function()
+            local w = Kit.CreateWindow("TestWindow", {})
+            w:Show()
+            assert.is_not_nil(w.CloseButton)
+            assert.is_false(w.onCloseCallback(w.CloseButton))
+            assert.is_false(w:IsShown())
+            assert.is_not.equal(false, w.CloseButton.shown)
+        end)
+
+        it("takes the square path when there is no portrait", function()
+            local hidden = {}
+            _G.ButtonFrameTemplate_HidePortrait = function(frame)
+                hidden[#hidden + 1] = frame
+            end
+            local plain = Kit.CreateWindow("Plain", {})
+            local coin = Kit.CreateWindow("Coin", { portrait = "Interface\\Icons\\Foo" })
+            _G.ButtonFrameTemplate_HidePortrait = nil
+            assert.are.same({ plain }, hidden)
+            assert.is_not_nil(coin.portrait)
+        end)
+
         it("keeps the client close path for a protected window in combat", function()
             local w = Kit.CreateWindow("TestWindow", {})
             w:Show()
