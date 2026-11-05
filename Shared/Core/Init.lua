@@ -971,6 +971,13 @@ local function worldTooltipName()
     if not (tip and tip:IsShown() and tip:GetOwner() == _G.UIParent) then
         return nil
     end
+    -- A unit tooltip (a living NPC, pet or player) or a fading tooltip names no loot source.
+    if (type(_G.UnitExists) == "function" and _G.UnitExists("mouseover")) or tip:GetAlpha() < 1 then
+        return nil
+    end
+    if tip.GetUnit and tip:GetUnit() then
+        return nil
+    end
     local line = _G.GameTooltipTextLeft1
     return line and line:GetText() or nil
 end
@@ -1035,6 +1042,9 @@ local function openLedgerMoney()
                 isSecret = type(issecretvalue) == "function" and issecretvalue or nil,
                 isFishing = type(_G.IsFishingLoot) == "function" and _G.IsFishingLoot or nil,
                 unit = lootUnit,
+                playerName = function()
+                    return (UnitName("player"))
+                end,
                 tooltipName = worldTooltipName,
                 bagItemName = lootBagItemName,
                 formats = {

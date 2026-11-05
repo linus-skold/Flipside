@@ -705,15 +705,19 @@ The user approved points 1 to 10 on 2026-10-15. They are binding. The idea is si
    - The combat log is not used: `COMBAT_LOG_EVENT_UNFILTERED` is restricted (point 10). The old rule "the last kill in the combat log, `ledger.mobWindow`" was never built. The setting `ledger.mobWindow` stays in the defaults and has no use now.
    - `GetLootSourceInfo` does not exist in the Forever client (checked against Ketho/wow-ui-source-forever commit bd2470a). Flipside does not use it, also not on TBC.
    - Flipside reads the source once, at `LOOT_OPENED(autoLoot, isFromItem)` (Forever `Blizzard_APIDocumentationGenerated/LootDocumentation.lua` 217-227). It takes the first answer of this list. All reads are guarded and skip a secret value:
-     1. `isFromItem` is true: the source is an item (`src` = "item"). The name is the item of the bag slot of the last `ITEM_LOCK_CHANGED` (at most `LOCK_SECONDS` = 5 s before), read with `C_Container.GetContainerItemInfo`. If there is none, the target name of the last own cast (`UNIT_SPELLCAST_SENT`, at most `CAST_SECONDS` = 6 s before; a lockbox pick). If there is none, the source is unknown.
+     1. `isFromItem` is true: the source is an item (`src` = "item"). The name is the item of the bag slot of the last `ITEM_LOCK_CHANGED` (at most `LOCK_SECONDS` = 5 s before), read with `C_Container.GetContainerItemInfo`. If there is none, the target name of the last own cast (`UNIT_SPELLCAST_SENT`, at most `CAST_SECONDS` = 6 s before; a lockbox pick) is the name, with `src` empty. If there is none, the source is unknown.
      2. `IsFishingLoot()` is true: the text is "Fishing" (`src` = "fishing"). The call is used only if the client has it.
      3. The unit tokens `softinteract` and then `mouseover`: a game object (`UnitIsGameObject`, or a GUID that starts with "GameObject-") gives `src` = "object". A dead creature (GUID "Creature-" and `UnitIsDead`) gives `src` = "mob". The name is `UnitName`.
-     4. The title of the world tooltip (`GameTooltip` shown, owner `UIParent`). The kind is not known, so `src` is empty.
-     5. The target name of the last own cast (fresh, see above). This names a node or a chest when the mouse has moved away. `src` is empty.
-     6. The `target` unit, if it is a dead creature or a game object.
+     4. The title of the world tooltip (`GameTooltip` shown, not fading, owner `UIParent`, not a unit tooltip, and `UnitExists("mouseover")` false). The kind is not known, so `src` is empty.
+     5. The `target` unit, if it is a dead creature or a game object.
+     6. The target name of the last own cast (fresh, see above; a cast on the player is ignored). This names a node or a chest when the mouse has moved away. `src` is empty.
      7. Nothing: `mob` is empty and the record shows "unknown".
    - Money that another player looted and shared (no loot window of the player): the client chat message `CHAT_MSG_MONEY` with the text `LOOT_MONEY_SPLIT` ("Your share of the loot is ...") gives the amount. A money gain of that amount, in `SHARE_WINDOW_SECONDS` = 1 s before or after the message, is a `loot` record with `mob` = "[other player]" and `src` = "player". If the player has a loot window open (or its tail), the money is the player's own loot and the window gives the source. The message for own loot (`YOU_LOOT_MONEY`) is ignored.
    - The share match is by amount, like a quest: it comes before the context priority (point 10), except that an open loot window of the player comes first.
+   - Known risk: a stale or wrong cast name can still name a source when no unit or tooltip data exists.
+   - Known risk: AoE loot of several corpses can name the target for more than one window.
+   - Known risk: the chat money text may not parse if it uses coin icons.
+   - Known risk: the unit tooltip check depends on `GameTooltip:GetUnit` and `UnitExists("mouseover")` on each client.
    - Looted money is recorded with its source. The item records of the same loot window will use the same `mob` and `src` (they share `ctx`) when the loot item records are built (PR4); no item record exists yet.
    - The item value in the record is the vendor price at loot time. The `ScanMarket` value is computed when the user views the page. It is never stored.
 5. **Mail.**

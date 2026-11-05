@@ -127,13 +127,49 @@ describe("LootSource", function()
             assert.are.equal("item", kind)
         end)
 
-        it("falls back to the cast target for an item window, else to nothing", function()
+        it("uses the cast target for an item window only with no bag data, and gives no kind", function()
             local source = make()
             source:OnCast("player", "Small Lockbox")
             local name, kind = source:Resolve(true)
             assert.are.equal("Small Lockbox", name)
-            assert.are.equal("item", kind)
+            assert.is_nil(kind)
             assert.is_nil((source:Resolve(true)))
+        end)
+
+        it("prefers the bag lock to the cast target for an item window", function()
+            reads.bags["2:5"] = "Footlocker"
+            local source = make()
+            source:OnLock(2, 5)
+            source:OnCast("player", "Small Lockbox")
+            local name, kind = source:Resolve(true)
+            assert.are.equal("Footlocker", name)
+            assert.are.equal("item", kind)
+        end)
+
+        it("ignores a cast on the player, such as a self buff", function()
+            local source = make({
+                playerName = function()
+                    return "Tester"
+                end,
+            })
+            source:OnCast("player", "Tester")
+            assert.is_nil((source:Resolve(false)))
+        end)
+
+        it("uses a dead target before the cast target", function()
+            reads.units.target = { "Boar", "mob" }
+            local source = make()
+            source:OnCast("player", "Fireball Victim")
+            local name, kind = source:Resolve(false)
+            assert.are.equal("Boar", name)
+            assert.are.equal("mob", kind)
+        end)
+
+        it("uses the tooltip before the cast target", function()
+            reads.tooltip = "Peacebloom"
+            local source = make()
+            source:OnCast("player", "Silverleaf")
+            assert.are.equal("Peacebloom", (source:Resolve(false)))
         end)
 
         it("does not use an old bag lock", function()
@@ -178,6 +214,23 @@ describe("LootSource", function()
             assert.is_nil(source:ShareAmount("Bob loots 1 Gold."))
             assert.is_nil(source:ShareAmount("Your share of the loot is nothing."))
             assert.is_nil(source:ShareAmount(nil))
+        end)
+
+        it("reads a format that ends in %s, and the guild variant", function()
+            local source = make({
+                formats = { split = "Share: %s", gold = "%d Gold", silver = "%d Silver", copper = "%d Copper" },
+            })
+            assert.are.equal(10005, source:ShareAmount("Share: 1 Gold, 5 Copper"))
+            local guild = make({
+                formats = {
+                    split = "Your share of the loot is %s. (%s deposited to guild bank)", gold = "%d Gold",
+                    silver = "%d Silver", copper = "%d Copper",
+                },
+            })
+            local text = "Your share of the loot is 2 Silver, 50 Copper. (5 Silver deposited to guild bank)"
+            assert.are.equal(250, guild:ShareAmount(text))
+            -- The plain format also reads a guild text.
+            assert.are.equal(10000, make():ShareAmount("Your share of the loot is 1 Gold. (3 Silver deposited)"))
         end)
 
         it("gives nil for a secret message or when the texts are missing", function()

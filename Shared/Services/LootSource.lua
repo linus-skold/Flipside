@@ -52,7 +52,9 @@ function Source:OnCast(unit, target)
     if unit ~= "player" then
         return
     end
-    if type(target) == "string" and target ~= "" and not self:_Secret(target) then
+    -- A cast on the player (a self buff) names no loot source.
+    if type(target) == "string" and target ~= "" and not self:_Secret(target)
+        and target ~= self:_Read("playerName") then
         self._cast = { name = target, time = self._deps.now() }
     else
         self._cast = nil
@@ -78,8 +80,11 @@ function Source:Resolve(isFromItem)
         if lock and now - lock.time <= LootSource.LOCK_SECONDS then
             name = text(self:_Read("bagItemName", lock.bag, lock.slot))
         end
-        name = name or castName
-        return name, name and "item" or nil
+        if name then
+            return name, "item"
+        end
+        -- A cast name is a weak guess: no kind.
+        return castName, nil
     end
     if self:_Read("isFishing") == true then
         return LootSource.FISHING, "fishing"
@@ -94,14 +99,11 @@ function Source:Resolve(isFromItem)
     if tooltip then
         return tooltip, nil
     end
-    if castName then
-        return castName, nil
-    end
     local name, kind = self:_Read("unit", "target")
     if text(name) and (kind == "mob" or kind == "object") then
         return name, kind
     end
-    return nil
+    return castName, nil
 end
 
 -- Turn a client format text ("%s", "%d") into a Lua pattern with captures.
@@ -120,7 +122,13 @@ function Source:ShareAmount(message)
         or type(formats.split) ~= "string" then
         return nil
     end
-    local amounts = message:match("^" .. toPattern(formats.split))
+    -- A format that ends in "%s" needs an end anchor, or the lazy capture is empty. The guild variant of the text
+    -- ("... %s. (%s deposited ...)") has other text after the capture, so it has no anchor.
+    local pattern = "^" .. toPattern(formats.split)
+    if formats.split:sub(-2) == "%s" then
+        pattern = pattern .. "$"
+    end
+    local amounts = message:match(pattern)
     if not amounts then
         return nil
     end
