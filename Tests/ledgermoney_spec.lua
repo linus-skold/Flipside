@@ -3,6 +3,7 @@ local ns = {}
 assert(loadfile(manifest.path("EventBus")))("Flipside", ns)
 assert(loadfile(manifest.path("LedgerRecord")))("Flipside", ns)
 assert(loadfile(manifest.path("LedgerMoney")))("Flipside", ns)
+assert(loadfile(manifest.path("LootSource")))("Flipside", ns)
 
 local M = ns.LedgerMoney
 
@@ -1037,6 +1038,204 @@ describe("LedgerMoney", function()
             change(-5)
             assert.are.equal("unknown", last().source)
             assert.is_nil(last().counterparty)
+        end)
+    end)
+
+    describe("the source of looted money", function()
+        local reads
+
+        local function attachLoot()
+            reads = { units = {}, bags = {} }
+            local source = ns.LootSource.New({
+                now = function()
+                    return clock
+                end,
+                isFishing = function()
+                    return reads.fishing == true
+                end,
+                unit = function(token)
+                    local unit = reads.units[token]
+                    if unit then
+                        return unit[1], unit[2]
+                    end
+                end,
+                tooltipName = function()
+                    return reads.tooltip
+                end,
+                bagItemName = function(bag, slot)
+                    return reads.bags[bag .. ":" .. slot]
+                end,
+                formats = {
+                    split = "Your share of the loot is %s.", gold = "%d Gold", silver = "%d Silver",
+                    copper = "%d Copper",
+                },
+            })
+            tracker = attach({ lootSource = source })
+        end
+
+        local SPLIT = "Your share of the loot is 25 Copper."
+
+        before_each(attachLoot)
+
+        it("records the mob name and the kind", function()
+            reads.units.target = { "Boar", "mob" }
+            bus:Emit("LOOT_OPENED", false, false)
+            change(25)
+            assert.are.equal("loot", last().source)
+            assert.are.equal("Boar", last().mob)
+            assert.are.equal("mob", last().src)
+        end)
+
+        it("records a chest or a node as an object", function()
+            reads.units.softinteract = { "Large Solid Chest", "object" }
+            bus:Emit("LOOT_OPENED", false, false)
+            change(25)
+            assert.are.equal("Large Solid Chest", last().mob)
+            assert.are.equal("object", last().src)
+        end)
+
+        it("records a container item from the bag", function()
+            reads.bags["1:3"] = "Small Lockbox"
+            reads.units.target = { "Boar", "mob" }
+            bus:Emit("ITEM_LOCK_CHANGED", 1, 3)
+            bus:Emit("LOOT_OPENED", false, true)
+            change(25)
+            assert.are.equal("Small Lockbox", last().mob)
+            assert.are.equal("item", last().src)
+        end)
+
+        it("records fishing", function()
+            reads.fishing = true
+            bus:Emit("LOOT_OPENED", true, false)
+            change(25)
+            assert.are.equal("Fishing", last().mob)
+            assert.are.equal("fishing", last().src)
+        end)
+
+        it("records the world tooltip name with no kind", function()
+            reads.tooltip = "Peacebloom"
+            bus:Emit("LOOT_OPENED", false, false)
+            change(25)
+            assert.are.equal("Peacebloom", last().mob)
+            assert.is_nil(last().src)
+        end)
+
+        it("leaves the source empty when it is not known, so the record shows unknown", function()
+            bus:Emit("LOOT_OPENED", false, false)
+            change(25)
+            assert.are.equal("loot", last().source)
+            assert.is_nil(last().mob)
+            assert.is_nil(last().src)
+            assert.are.equal("unknown", ns.LedgerRecord.New(last()).mob)
+        end)
+
+        it("keeps the source in the loot tail", function()
+            reads.units.target = { "Boar", "mob" }
+            bus:Emit("LOOT_OPENED", false, false)
+            bus:Emit("LOOT_CLOSED")
+            advance(M.LOOT_TAIL_SECONDS - 0.1)
+            change(25)
+            assert.are.equal("Boar", last().mob)
+            assert.are.equal("mob", last().src)
+        end)
+
+        it("gives each loot window its own source", function()
+            reads.units.target = { "Boar", "mob" }
+            bus:Emit("LOOT_OPENED", false, false)
+            change(5)
+            bus:Emit("LOOT_CLOSED")
+            advance(M.LOOT_TAIL_SECONDS + 1)
+            reads.units.target = { "Wolf", "mob" }
+            bus:Emit("LOOT_OPENED", false, false)
+            change(6)
+            assert.are.equal("Boar", records[#records - 1].mob)
+            assert.are.equal("Wolf", last().mob)
+        end)
+
+        it("does not set a source on a spend in a loot window", function()
+            reads.units.target = { "Boar", "mob" }
+            bus:Emit("LOOT_OPENED", false, false)
+            change(-25)
+            assert.are.equal("unknown", last().source)
+            assert.is_nil(last().mob)
+        end)
+
+        it("records a share of another player's loot as [other player], message first", function()
+            bus:Emit("CHAT_MSG_MONEY", SPLIT)
+            change(25)
+            assert.are.equal("loot", last().source)
+            assert.are.equal("loot", last().type)
+            assert.are.equal(25, last().money)
+            assert.are.equal("[other player]", last().mob)
+            assert.are.equal("player", last().src)
+            assert.are.equal(1, #records)
+        end)
+
+        it("records a share as [other player], money change first", function()
+            change(25)
+            assert.are.equal(0, #records)
+            bus:Emit("CHAT_MSG_MONEY", SPLIT)
+            assert.are.equal(1, #records)
+            assert.are.equal("[other player]", last().mob)
+            advance(M.QUEST_WINDOW_SECONDS)
+            assert.are.equal(1, #records)
+        end)
+
+        it("labels a share before a merchant window that is open", function()
+            bus:Emit("MERCHANT_SHOW")
+            bus:Emit("CHAT_MSG_MONEY", SPLIT)
+            change(25)
+            assert.are.equal("loot", last().source)
+            assert.are.equal("[other player]", last().mob)
+        end)
+
+        it("keeps the source of the own loot window when a share message comes", function()
+            reads.units.target = { "Boar", "mob" }
+            bus:Emit("LOOT_OPENED", false, false)
+            bus:Emit("CHAT_MSG_MONEY", SPLIT)
+            change(25)
+            assert.are.equal("Boar", last().mob)
+            assert.are.equal("mob", last().src)
+            assert.are.equal(1, #records)
+        end)
+
+        it("ignores the own loot message and a share of another amount", function()
+            bus:Emit("CHAT_MSG_MONEY", "You loot 25 Copper.")
+            change(25)
+            advance(M.QUEST_WINDOW_SECONDS)
+            assert.are.equal("unknown", last().source)
+            bus:Emit("CHAT_MSG_MONEY", SPLIT)
+            change(30)
+            advance(M.QUEST_WINDOW_SECONDS)
+            assert.are.equal("unknown", last().source)
+        end)
+
+        it("ignores a share message that is too old", function()
+            bus:Emit("CHAT_MSG_MONEY", SPLIT)
+            advance(M.SHARE_WINDOW_SECONDS + 0.1)
+            change(25)
+            advance(M.QUEST_WINDOW_SECONDS)
+            assert.are.equal("unknown", last().source)
+        end)
+
+        it("does not use the loot events of a tracker with no loot source", function()
+            bus = ns.EventBus.New({
+                onFirstSubscriber = function(event)
+                    subscribed[#subscribed + 1] = event
+                end,
+            })
+            subscribed = {}
+            tracker = attach()
+            assert.is_true(#subscribed > 0)
+            for _, event in ipairs(subscribed) do
+                assert.are_not.equal("CHAT_MSG_MONEY", event)
+                assert.are_not.equal("UNIT_SPELLCAST_SENT", event)
+                assert.are_not.equal("ITEM_LOCK_CHANGED", event)
+            end
+            bus:Emit("LOOT_OPENED", false, false)
+            change(25)
+            assert.are.equal("loot", last().source)
+            assert.is_nil(last().mob)
         end)
     end)
 

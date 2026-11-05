@@ -63,6 +63,7 @@ Shared\Services\HoldingsRead.lua
 Shared\Services\TooltipConfig.lua
 Shared\Services\TooltipLines.lua
 Shared\Services\LedgerRecord.lua
+Shared\Services\LootSource.lua
 Shared\Services\LedgerBuffer.lua
 Shared\Services\LedgerStore.lua
 Shared\Services\LedgerLoader.lua

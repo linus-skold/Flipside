@@ -126,6 +126,18 @@ describe("LedgerRecord", function()
             assert.are.equal("Boar", named.mob)
         end)
 
+        it("accepts the source kinds of a loot record and refuses another kind", function()
+            for _, kind in ipairs({ "mob", "object", "item", "fishing", "player" }) do
+                local record = R.New({ time = 1, char = "A-R", type = "loot", source = "loot", mob = "X", src = kind })
+                assert.are.equal(kind, record.src, kind)
+            end
+            local record = R.New({ time = 1, char = "A-R", type = "loot", source = "loot", mob = "X", src = "pet" })
+            assert.is_nil(record)
+            local old = R.New({ time = 1, char = "A-R", type = "loot", source = "loot", mob = "Boar" })
+            assert.is_nil(old.src)
+            assert.are.equal("Boar", old.mob)
+        end)
+
         it("returns nil and a message for a bad record", function()
             local record, message = R.New({ time = 1 })
             assert.is_nil(record)

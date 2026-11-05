@@ -52,7 +52,8 @@ local function seed()
         rec({ time = NOW - 1500, type = "expired", source = "ahExpired", item = "100", qty = 1 }),
         rec({ time = NOW - 1400, type = "cancelled", source = "ahCancelled", item = "100", qty = 1 }),
         rec({ time = NOW - 1300, type = "loot", source = "loot", item = "300", qty = 3, value = 10, mob = "Boar" }),
-        rec({ time = NOW - 1300, type = "loot", source = "loot", money = 77, mob = "Boar" }),
+        -- This record has a kind (src). The item record above is an old record with none. Both show their text.
+        rec({ time = NOW - 1300, type = "loot", source = "loot", money = 77, mob = "Boar", src = "mob" }),
         rec({ time = NOW - 1200, type = "expense", source = "ahDeposit", money = 50 }),
         rec({ time = NOW - 1100, type = "expense", source = "repair", money = 200 }),
         rec({ time = NOW - 1000, type = "expense", source = "vendorPurchase", item = "400", qty = 1, money = 25 }),
@@ -302,7 +303,7 @@ describe("LedgerPage", function()
             end
             assert.are.equal("Buyer", page.views.sales.columns[7].title)
             assert.are.equal("Seller", page.views.purchases.columns[7].title)
-            assert.are.equal("Mob", page.views.loot.columns[7].title)
+            assert.are.equal("Source", page.views.loot.columns[7].title)
         end)
 
         it("shows the character column only for all characters", function()

@@ -17,6 +17,11 @@ LedgerMoney.QUEST_WINDOW_SECONDS = 1
 LedgerMoney.HINT_SECONDS = 10
 -- The time that a claim from another module waits for its money change.
 LedgerMoney.CLAIM_SECONDS = 5
+-- A chat message about a share of another player's loot and PLAYER_MONEY come in an order that is not verified.
+-- The message and the change must be less than this time apart, in any order.
+LedgerMoney.SHARE_WINDOW_SECONDS = 1
+-- The source text of money that another player looted and shared with the player.
+LedgerMoney.OTHER_PLAYER = "[other player]"
 -- The flight money can arrive after TAXIMAP_CLOSED. The tail keeps the taxi context open for this time (seconds).
 LedgerMoney.TAXI_TAIL_SECONDS = 3
 -- The time that a talent reset cost (CONFIRM_TALENT_WIPE) waits for its money change. The user confirms a dialog.
@@ -315,6 +320,8 @@ function Tracker:_WriteKind(kind, delta, ctx)
         fields.counterparty = entry.partner
     elseif kind == "taxi" and delta < 0 then
         fields.place = taxiPlace(entry, -delta)
+    elseif kind == "loot" and delta > 0 and entry then
+        fields.mob, fields.src = entry.mob, entry.mob and entry.src or nil
     end
     self:_Write(fields)
 end
@@ -490,6 +497,54 @@ function Tracker:_TakeQuest(delta)
     return nil
 end
 
+-- Write the record of money that another player looted and shared (no loot window of the player).
+function Tracker:_WriteShare(amount)
+    self:_Write({
+        source = "loot", type = "loot", money = amount, ctx = self:_NewId("loot"),
+        mob = LedgerMoney.OTHER_PLAYER, src = "player",
+    })
+end
+
+-- Find a share message of this amount. Returns true and removes it, or false. An open loot window of the player
+-- (or its tail) comes first: the money is then the player's own loot.
+function Tracker:_TakeShare(delta)
+    if delta <= 0 or self:Context("loot") then
+        return false
+    end
+    local now = self._now()
+    for i, share in ipairs(self._shares) do
+        if now - share.time > LedgerMoney.SHARE_WINDOW_SECONDS then
+            table.remove(self._shares, i)
+            return self:_TakeShare(delta)
+        elseif share.amount == delta then
+            table.remove(self._shares, i)
+            return true
+        end
+    end
+    return false
+end
+
+-- CHAT_MSG_MONEY: the text of a share of group loot gives the amount. The money change can come first.
+function Tracker:_OnShare(message)
+    local source = self._deps.lootSource
+    local ok, amount = pcall(source.ShareAmount, source, message)
+    if not ok or not amount then
+        return
+    end
+    self:_Ring("share", amount)
+    if self:Context("loot") then
+        return
+    end
+    for _, held in ipairs(self._held) do
+        if not held.done and held.kind == "none" and held.delta == amount then
+            held.done = true
+            self:_WriteShare(amount)
+            return
+        end
+    end
+    self._shares[#self._shares + 1] = { amount = amount, time = self._now() }
+end
+
 -- Find the talent reset cost that fits a spend. Returns its context id and removes it, or nil.
 function Tracker:_TakeWipe(delta)
     local wipe = self._wipe
@@ -533,6 +588,10 @@ function Tracker:_Process(delta)
     local wipeCtx = self:_TakeWipe(delta)
     if wipeCtx then
         self:_Write({ source = "talentReset", type = "expense", money = -delta, ctx = wipeCtx })
+        return
+    end
+    if self:_TakeShare(delta) then
+        self:_WriteShare(delta)
         return
     end
     local kind, ctx = self:ActiveContext()
@@ -602,10 +661,19 @@ function Tracker:_Read(name)
     return value
 end
 
-function Tracker:_Open(kind)
+function Tracker:_Open(kind, ...)
     self._tail[kind] = nil
     local entry = { id = self:_NewId(kind) }
-    if kind == "trade" then
+    if kind == "loot" then
+        -- LOOT_OPENED gives (autoLoot, isFromItem). The source is read now, while the target data is fresh.
+        local source = self._deps.lootSource
+        if source then
+            local ok, name, sourceKind = pcall(source.Resolve, source, (select(2, ...)))
+            if ok and type(name) == "string" and name ~= "" then
+                entry.mob, entry.src = name, sourceKind
+            end
+        end
+    elseif kind == "trade" then
         local partner = self:_Read("tradePartner")
         entry.partner = type(partner) == "string" and partner ~= "" and partner or nil
     elseif kind == "taxi" then
@@ -620,7 +688,9 @@ function Tracker:_Close(kind)
     self._open[kind] = nil
     local tail = TAILS[kind]
     if open and tail then
-        self._tail[kind] = { id = open.id, untilTime = self._now() + tail, nodes = open.nodes }
+        self._tail[kind] = {
+            id = open.id, untilTime = self._now() + tail, nodes = open.nodes, mob = open.mob, src = open.src,
+        }
     end
 end
 
@@ -850,6 +920,7 @@ function LedgerMoney.Attach(deps)
         _held = {},
         _claims = {},
         _quests = {},
+        _shares = {},
     }, Tracker)
 
     local bus = deps.bus
@@ -864,8 +935,8 @@ function LedgerMoney.Attach(deps)
     end
 
     for kind, events in pairs(WINDOWS) do
-        listen(events[1], function()
-            tracker:_Open(kind)
+        listen(events[1], function(...)
+            tracker:_Open(kind, ...)
         end)
         listen(events[2], function()
             tracker:_Close(kind)
@@ -880,6 +951,19 @@ function LedgerMoney.Attach(deps)
     bus:Subscribe("PLAYER_MONEY", OWNER, function()
         tracker:_OnMoney()
     end)
+    local lootSource = deps.lootSource
+    if lootSource then
+        listen("CHAT_MSG_MONEY", function(message)
+            tracker:_OnShare(message)
+        end)
+        -- Frequent events: no ring line.
+        bus:Subscribe("UNIT_SPELLCAST_SENT", OWNER, function(_, unit, target)
+            lootSource:OnCast(unit, target)
+        end)
+        bus:Subscribe("ITEM_LOCK_CHANGED", OWNER, function(_, bag, slot)
+            lootSource:OnLock(bag, slot)
+        end)
+    end
 
     local client = deps.client
     if client then
