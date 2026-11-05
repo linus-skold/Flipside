@@ -2,8 +2,8 @@ local _, ns = ...
 
 -- Display names and alias matching of the own characters (SPEC 5.5, "Character names on Forever").
 -- A character key stays "Name-Realm" in all saved data. On Forever the client has no real server name: the second
--- name is the surname of the character. The surname is saved per character key and used only to show a name and as
--- an alias when a typed name is matched. A flavour sets ns.Flavour.usesSurname for this. TBC shows the key as it is.
+-- name is the surname of the character. The surname is saved per character key. It is used to show a name, as an
+-- alias when a typed name is matched, and to build the full name for the mail call. A flavour sets ns.Flavour.usesSurname for this. TBC shows the key as it is.
 local CharacterName = {}
 ns.CharacterName = CharacterName
 
@@ -110,13 +110,31 @@ function CharacterName.Resolve(text, keys)
     return nil
 end
 
--- Returns the name to send to the mail call. Forever: the plain name of an own character that the text names
--- (no realm, no surname). Any other text, and every text on TBC, is returned as it is.
+-- Returns the name to send to the mail call. Forever has regional unique names: the server needs the full name
+-- "Name<separator>Surname".
+--  An own character that the text names: its full name. With no saved surname the result is nil and a reason.
+--  Other text with two parts ("Name Surname" or "Name-Surname"): the parts with the separator between them.
+--  Any other text, and every text on TBC: the text as it is.
 function CharacterName.MailName(text, keys)
-    if CharacterName.Enabled() then
-        local key = CharacterName.Resolve(text, keys)
-        if key then
-            return CharacterName.Plain(key)
+    if not CharacterName.Enabled() then
+        return text
+    end
+    local key = CharacterName.Resolve(text, keys)
+    if key then
+        local surname = CharacterName.Surname(key)
+        if surname then
+            return CharacterName.Plain(key) .. CharacterName.Separator() .. surname
+        end
+        return nil, "Flipside: log in to " .. CharacterName.Plain(key) .. " once so Flipside knows the surname"
+    end
+    if type(text) == "string" then
+        local separator = CharacterName.Separator()
+        local name, surname = text:match("^([^%-%s]+)%-([^%-%s]+)$")
+        if not name then
+            name, surname = text:match("^(%S+)%s+(%S+)$")
+        end
+        if name then
+            return name .. separator .. surname
         end
     end
     return text
