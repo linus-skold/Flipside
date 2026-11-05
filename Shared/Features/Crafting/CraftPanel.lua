@@ -48,7 +48,8 @@ function CraftPanel.SummaryLines(result, format)
     end
     local percent = result.percent and string.format(" (%.0f%%)", math.abs(result.percent)) or ""
     if result.profit > 0 then
-        lines[2] = { (result.partial and "Profit: at most +" or "Profit: +") .. format(result.profit) .. percent, "good" }
+        local label = result.partial and "Profit: at most +" or "Profit: +"
+        lines[2] = { label .. format(result.profit) .. percent, "good" }
     elseif result.profit < 0 then
         lines[2] = { (result.partial and "Loss: at least " or "Loss: ") .. format(-result.profit) .. percent, "bad" }
     else
@@ -303,7 +304,7 @@ local function buildView(deps, mount)
         end
     end
 
-    function view:IsShown()
+    function view.IsShown()
         return frame:IsShown()
     end
 

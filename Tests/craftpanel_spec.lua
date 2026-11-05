@@ -162,7 +162,8 @@ describe("CraftPanel", function()
         it("creates a plain child frame under the anchor and no separate window", function()
             local form = CreateFrame("Frame", "ProfessionsFrameForm")
             local reagents = CreateFrame("Frame", nil, form)
-            local client = fakeClient({ parent = form, anchor = reagents, relativePoint = "BOTTOMLEFT", x = 0, y = -10 })
+            local client = fakeClient({ parent = form, anchor = reagents, relativePoint = "BOTTOMLEFT", x = 0,
+                y = -10 })
             local driver = attach(client)
             driver.compute = function() return { cost = 100, partial = false, hasItem = true, made = 1, value = 300,
                 cutAmount = 15, profit = 185, percent = 185 } end
