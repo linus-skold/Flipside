@@ -3,7 +3,8 @@ local _, ns = ...
 -- Display names and alias matching of the own characters (SPEC 5.5, "Character names on Forever").
 -- A character key stays "Name-Realm" in all saved data. On Forever the client has no real server name: the second
 -- name is the surname of the character. The surname is saved per character key. It is used to show a name, as an
--- alias when a typed name is matched, and to build the full name for the mail call. A flavour sets ns.Flavour.usesSurname for this. TBC shows the key as it is.
+-- alias when a typed name is matched, and to build the full name for the mail call.
+-- A flavour sets ns.Flavour.usesSurname for this. TBC shows the key as it is.
 local CharacterName = {}
 ns.CharacterName = CharacterName
 
