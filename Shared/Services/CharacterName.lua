@@ -10,6 +10,9 @@ ns.CharacterName = CharacterName
 local SETTING_KEY = "surname"
 local DEFAULT_SEPARATOR = " "
 
+-- The name of the character setting that keeps the surname.
+CharacterName.SETTING_KEY = SETTING_KEY
+
 local deps = {}
 
 -- deps.db: a settings DB (GetFor, SetFor) that keeps the surname of each character key.
@@ -45,14 +48,14 @@ function CharacterName.Surname(key)
     return type(surname) == "string" and surname ~= "" and surname or nil
 end
 
--- Saves the surname of a character key. An empty or missing surname removes the saved value. Returns false if
+-- Saves the surname of a character key. An empty or missing surname keeps the saved value. Returns false if
 -- nothing was saved. This does nothing on a flavour with no surname.
 function CharacterName.SaveSurname(key, surname)
     if not (CharacterName.Enabled() and deps.db and type(key) == "string" and key ~= "") then
         return false
     end
     if type(surname) ~= "string" or surname == "" then
-        surname = nil
+        return false
     end
     if deps.db:GetFor(key, SETTING_KEY) == surname then
         return true

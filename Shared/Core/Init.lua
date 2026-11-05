@@ -2240,20 +2240,36 @@ local function forgetCommand(character)
             or "usage: /flip forget <Name-Realm>")
         return
     end
-    -- Forever also accepts the name that the client shows (Name Surname), with no regard to case.
+    -- An exact key wins. Forever then accepts the name that the client shows (Name Surname), with no regard to
+    -- case, but only if one character matches. With more than one match nothing is removed.
+    local characters = ns.holdings:Characters()
     local known = false
-    for _, name in ipairs(ns.holdings:Characters()) do
-        if name == character or (surnames and ns.CharacterName.Display(name):lower() == character:lower()) then
+    for _, name in ipairs(characters) do
+        if name == character then
             known = true
-            character = name
             break
         end
     end
-    local shown = ns.CharacterName and ns.CharacterName.Display(character) or character
+    if not known and surnames then
+        local matches, wanted = {}, character:lower()
+        for _, name in ipairs(characters) do
+            local shown = ns.CharacterName.Display(name)
+            if shown:lower() == wanted then
+                matches[#matches + 1] = shown .. " (" .. name .. ")"
+                character = name
+                known = true
+            end
+        end
+        if #matches > 1 then
+            printLine("more than one saved character matches " .. wanted .. ": " .. table.concat(matches, ", ")
+                .. ". Type the exact Name-Realm.")
+            return
+        end
+    end
     if not known then
         printLine("no saved character " .. character)
     elseif ns.holdings:Forget(character) then
-        printLine("forgot the inventory of " .. shown)
+        printLine("forgot the inventory of " .. character)
     else
         printLine("settings are read-only; the inventory was not removed")
     end
