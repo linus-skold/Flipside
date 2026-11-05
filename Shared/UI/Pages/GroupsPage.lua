@@ -10,7 +10,10 @@ local NO_GROUP_TEXT = "[No group]"
 local INHERIT = 0
 local MAX_RESULTS = 20
 local RIGHT = 260
-local TAB_Y = 24
+local TAB_Y = 0
+local LIST_WIDTH = 250
+local BUTTON_ROW = 28 -- button height and gap above the buttons
+local CONTENT_INSET = 4
 local LIST_Y = 46
 local ARROW_COLUMN = 44
 local STATUS_HEIGHT = 40 -- space at the bottom for the status lines
@@ -184,8 +187,10 @@ function GroupsPage.Build(content, deps)
             onRightClick(id, row)
         end,
     })
-    page.tree.frame:SetSize(250, 330)
-    place(page.tree.frame, 0, 0)
+    -- The list keeps its width and fills the page height down to the button row.
+    page.tree.frame:SetWidth(LIST_WIDTH)
+    page.tree.frame:SetPoint("TOPLEFT", content, "TOPLEFT", 0, 0)
+    page.tree.frame:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", 0, STATUS_HEIGHT + BUTTON_ROW)
 
     -- A new group goes below the selected group. With the no-group node selected it is a top-level group.
     -- The prompt shows the store message for a bad name and stays open.
@@ -279,7 +284,7 @@ function GroupsPage.Build(content, deps)
     end
 
     page.newButton = Kit.Button(content, "New group", 78, onNew)
-    place(page.newButton, 0, 338)
+    page.newButton:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", 0, STATUS_HEIGHT)
     page.importButton = Kit.Button(content, "Import", 78, onImport)
     page.importButton:SetPoint("LEFT", page.newButton, "RIGHT", gap, 0)
 
@@ -294,10 +299,7 @@ function GroupsPage.Build(content, deps)
         }, { title = tostring(rules:Name(id)) })
     end
 
-    -- Header and top tabs.
-
-    page.header = Kit.Label(content, "", "title")
-    place(page.header, RIGHT, 0)
+    -- Top tabs.
 
     local right = CreateFrame("Frame", nil, content)
     place(right, RIGHT, TAB_Y)
@@ -313,6 +315,7 @@ function GroupsPage.Build(content, deps)
         template = flavour.topTabTemplate,
         tabPadding = flavour.topTabPadding,
         minTabWidth = flavour.topTabMinWidth,
+        contentInset = CONTENT_INSET,
         onSelect = function(key)
             page.tab = key
         end,
@@ -751,15 +754,6 @@ function GroupsPage.Build(content, deps)
         local canEdit = editable()
         local canAdd = canEdit and not isBase
         local canShare = deps.customSources ~= nil
-        -- Base is hidden: the path starts below it, and the Base node reads "[No group]".
-        local names = {}
-        for position, name in ipairs(rules:Path(id) or {}) do
-            if position > 1 then
-                names[#names + 1] = name
-            end
-        end
-        page.header:SetText(isBase and NO_GROUP_TEXT or table.concat(names, " > "))
-
         for _, opType in ipairs(ns.OperationSchema.TYPES) do
             local row = page.opRows[opType]
             local items = { { value = INHERIT, text = "(inherit)" } }

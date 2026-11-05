@@ -75,6 +75,8 @@ end
 
 local DELETE_DIALOG = "FLIPSIDE_DELETE_CUSTOM_SOURCE"
 local CUSTOM_HEIGHT = 190
+local CUSTOM_WINDOW = "FlipsideCustomSourceWindow"
+local CUSTOM_BUTTON_ROW = 48 -- space below the list for the buttons and the message
 
 local function firstSentence(text)
     return text:match("^.-%.") or text
@@ -138,10 +140,12 @@ function FormulaPage.ReferenceRows(sources, custom)
     end
     return rows
 end
--- Build the custom sources section: a list, a name box, a formula box, Save and Delete.
+
+-- Build the custom sources section: a list, and the Add, Edit and Delete buttons.
+-- Add and Edit open one popup window with a name box and a formula box.
 function FormulaPage.BuildCustom(page, frame, deps)
     local Kit, custom, run = ns.Kit, deps.customSources, deps.formulaRun
-    local gap = Kit.Theme.gap
+    local gap, pad = Kit.Theme.gap, Kit.Theme.padding
     local selected
 
     local title = Kit.Label(frame, "Save as custom source", "highlight")
@@ -156,6 +160,80 @@ function FormulaPage.BuildCustom(page, frame, deps)
     message:SetJustifyH("LEFT")
     page.customMessage = message
 
+    -- The popup window.
+    local edge = pad + 8
+    local dialog = Kit.CreateWindow(CUSTOM_WINDOW, { width = 520, height = 220, title = "Custom source" })
+    dialog:SetFrameStrata("DIALOG")
+    dialog:SetToplevel(true)
+    page.customDialog = dialog
+    local save
+
+    local nameLabel = Kit.Label(dialog, "Name", "highlight")
+    nameLabel:SetPoint("TOPLEFT", dialog, "TOPLEFT", edge, -36)
+    dialog.nameInput = Kit.Input(dialog, 200, function()
+        save()
+    end)
+    dialog.nameInput:SetPoint("TOPLEFT", dialog, "TOPLEFT", edge, -52)
+    local textLabel = Kit.Label(dialog, "Formula", "highlight")
+    textLabel:SetPoint("TOPLEFT", dialog, "TOPLEFT", edge, -84)
+    dialog.textInput = Kit.Input(dialog, 520 - 2 * edge - 8, function()
+        save()
+    end)
+    dialog.textInput:SetPoint("TOPLEFT", dialog, "TOPLEFT", edge, -100)
+    dialog.error = Kit.Label(dialog, "", "bad")
+    dialog.error:SetPoint("TOPLEFT", dialog, "TOPLEFT", edge, -132)
+    dialog.error:SetWidth(520 - 2 * edge)
+    dialog.error:SetJustifyH("LEFT")
+
+    local function compile(text)
+        return run:Compile(text)
+    end
+    function save()
+        local name, text = trim(dialog.nameInput:GetText()), trim(dialog.textInput:GetText())
+        local ok, err = custom:Set(name, text, run and compile or nil)
+        if ok then
+            selected = name:lower()
+            message:SetText("")
+            dialog:Hide()
+        else
+            dialog.error:SetText(tostring(err))
+        end
+    end
+    dialog.saveButton = Kit.Button(dialog, SAVE, 100, save)
+    dialog.saveButton:SetPoint("BOTTOM", dialog, "BOTTOM", -55, pad + 4)
+    dialog.cancelButton = Kit.Button(dialog, CANCEL, 100, function()
+        dialog:Hide()
+    end)
+    dialog.cancelButton:SetPoint("BOTTOM", dialog, "BOTTOM", 55, pad + 4)
+
+    -- Show the popup. name is nil for a new source. A saved source keeps its name; only the formula changes.
+    local function openDialog(name, text)
+        dialog.nameInput:SetText(name or "")
+        dialog.nameInput:SetEnabled(name == nil)
+        dialog.textInput:SetText(text or "")
+        dialog.error:SetText("")
+        dialog:Show()
+        dialog:Raise()
+        local box = name == nil and dialog.nameInput or dialog.textInput
+        if box.SetFocus then
+            box:SetFocus()
+        end
+    end
+
+    local function findSelected()
+        for _, entry in ipairs(custom:List()) do
+            if entry.name:lower() == tostring(selected):lower() then
+                return entry
+            end
+        end
+    end
+
+    local function edit(entry)
+        selected = entry.name
+        message:SetText("")
+        openDialog(entry.name, entry.text)
+    end
+
     page.customList = Kit.CreateList(frame, {
         inset = true,
         initRow = function(row, data)
@@ -166,35 +244,30 @@ function FormulaPage.BuildCustom(page, frame, deps)
             row.nameText:SetText(data.name .. " = " .. data.text)
             row:SetScript("OnClick", function()
                 selected = data.name
-                page.customName:SetText(data.name)
-                page.customText:SetText(data.text)
                 message:SetText("")
+            end)
+            row:SetScript("OnDoubleClick", function()
+                edit(data)
             end)
         end,
     })
     page.customList.frame:SetPoint("TOPLEFT", helpLine, "BOTTOMLEFT", 0, -gap)
-    page.customList.frame:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 0, -38)
-    page.customList.frame:SetHeight(68)
+    page.customList.frame:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", 0, CUSTOM_BUTTON_ROW)
 
-    page.customName = Kit.Input(frame, 140, nil)
-    page.customName:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 6, 24)
-    page.customText = Kit.Input(frame, 430, nil)
-    page.customText:SetPoint("LEFT", page.customName, "RIGHT", gap * 2, 0)
-
-    local function compile(text)
-        return run:Compile(text)
-    end
-    page.customSave = Kit.Button(frame, "Save", 70, function()
-        local name, text = trim(page.customName:GetText()), trim(page.customText:GetText())
-        local ok, err = custom:Set(name, text, run and compile or nil)
-        if ok then
-            selected = name:lower()
-            message:SetText("")
-        else
-            message:SetText(tostring(err))
-        end
+    page.customAdd = Kit.Button(frame, "Add", 70, function()
+        message:SetText("")
+        openDialog(nil, "")
     end)
-    page.customSave:SetPoint("LEFT", page.customText, "RIGHT", gap * 2, 0)
+    page.customAdd:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 0, 18)
+    page.customEdit = Kit.Button(frame, "Edit", 70, function()
+        local entry = selected and findSelected()
+        if not entry then
+            message:SetText("Select a custom source first.")
+            return
+        end
+        edit(entry)
+    end)
+    page.customEdit:SetPoint("LEFT", page.customAdd, "RIGHT", gap, 0)
     page.customDelete = Kit.Button(frame, "Delete", 70, function()
         local name = selected
         if not name then
@@ -205,21 +278,16 @@ function FormulaPage.BuildCustom(page, frame, deps)
             local ok, err = custom:Delete(name)
             if ok then
                 selected = nil
-                page.customName:SetText("")
-                page.customText:SetText("")
                 message:SetText("")
             else
                 message:SetText(tostring(err))
             end
         end)
     end)
-    page.customDelete:SetPoint("LEFT", page.customSave, "RIGHT", gap, 0)
+    page.customDelete:SetPoint("LEFT", page.customEdit, "RIGHT", gap, 0)
     page.customFrom = Kit.Button(frame, "Save current formula as...", 170, function()
-        page.customText:SetText(trim(page.formulaInput:GetText()))
         message:SetText("")
-        if page.customName.SetFocus then
-            page.customName:SetFocus()
-        end
+        openDialog(nil, trim(page.formulaInput:GetText()))
     end)
     page.customFrom:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 0, 0)
     page.customList:SetData(custom:List())
