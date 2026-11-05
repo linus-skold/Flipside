@@ -113,6 +113,10 @@ function frameMethods:GetParent()
     return self.parent
 end
 
+function frameMethods:SetParent(parent)
+    self.parent = parent
+end
+
 function frameMethods:SetShown(shown)
     self.shown = shown and true or false
 end

@@ -81,6 +81,69 @@ function Client:Host()
     return nil
 end
 
+-- Return the lowest shown frame of a list of container keys on form, or nil.
+local function lowestShown(form, keys)
+    local best, bestBottom
+    for _, key in ipairs(keys) do
+        local container = form[key]
+        if type(container) == "table" and container.IsShown and container:IsShown() then
+            local bottom = container.GetBottom and container:GetBottom() or nil
+            if best == nil or (bottom and (not bestBottom or bottom < bestBottom)) then
+                best, bestBottom = container, bottom
+            end
+        end
+    end
+    return best
+end
+
+-- Return where the craft block goes, or nil if the profession window has no frame for it yet:
+-- { parent, anchor, relativePoint, x, y, scrollChild, scrollFrame }.
+-- The block anchors with its TOPLEFT point to the relativePoint of the anchor, under the reagents.
+-- scrollChild and scrollFrame are only set on the "tradeskill" path: the block is inside a scroll area there.
+-- Forever: the schematic form (Blizzard_ProfessionsRecipeSchematicForm.lua, Init) puts Reagents under the
+-- description, OptionalReagents under Reagents, and FinishingReagents beside or under them. The block goes under the
+-- lowest shown one. TBC: the block goes under the left reagent of the last row (Blizzard_TradeSkillUI.lua,
+-- TradeSkillFrame_SetSelection: 2 columns, reagent buttons TradeSkillReagent1 to 8).
+function Client:Mount()
+    local api = self.api
+    local path = self:Path()
+    if path == "professions" then
+        local page = api.ProfessionsFrame and api.ProfessionsFrame.CraftingPage
+        local form = page and page.SchematicForm
+        if type(form) ~= "table" then
+            return nil
+        end
+        local anchor = lowestShown(form, { "Reagents", "OptionalReagents", "FinishingReagents" })
+        if anchor then
+            return { parent = form, anchor = anchor, relativePoint = "BOTTOMLEFT", x = 0, y = -10 }
+        end
+        if form.Description then
+            return { parent = form, anchor = form.Description, relativePoint = "BOTTOMLEFT", x = 0, y = -10 }
+        end
+        return { parent = form, anchor = form, relativePoint = "TOPLEFT", x = 28, y = -250 }
+    elseif path == "tradeskill" then
+        local child = api.TradeSkillDetailScrollChildFrame
+        if type(child) ~= "table" then
+            return nil
+        end
+        local mount = { parent = child, scrollChild = child, scrollFrame = api.TradeSkillDetailScrollFrame,
+            relativePoint = "BOTTOMLEFT", x = 0, y = -8 }
+        local count = self:_Index() and guarded(api.GetTradeSkillNumReagents, self:_Index()) or 0
+        local last = count % 2 == 0 and count - 1 or count
+        local reagent = count > 0 and api["TradeSkillReagent" .. last] or nil
+        if reagent then
+            mount.anchor, mount.x = reagent, 5
+        else
+            mount.anchor = api.TradeSkillDescription or child
+            if mount.anchor == child then
+                mount.relativePoint, mount.x, mount.y = "TOPLEFT", 0, -100
+            end
+        end
+        return mount
+    end
+    return nil
+end
+
 -- The "professions" path: the recipe ID of the recipe on the crafting page, or nil.
 function Client:_RecipeID()
     local page = self.api.ProfessionsFrame and self.api.ProfessionsFrame.CraftingPage
