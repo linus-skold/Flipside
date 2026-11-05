@@ -325,6 +325,7 @@ local function buildView(deps, mount)
         self.result = state.result
         if state.unsupported then
             setSummary({ { ns.CraftClient.UNSUPPORTED } })
+            self.toggle:Hide()
         elseif state.empty then
             setSummary({})
             self.editor:Hide()
@@ -361,6 +362,10 @@ function CraftPanel.Attach(deps)
     local proxy = {}
     local function ensure()
         if not view then
+            local mount = deps.client:Mount()
+            if not mount then
+                return nil
+            end
             view = buildView({
                 kit = deps.kit,
                 client = deps.client,
@@ -370,13 +375,16 @@ function CraftPanel.Attach(deps)
                 onFormulaChanged = function()
                     driver:Refresh()
                 end,
-            })
+            }, mount)
             view.driver = driver
         end
         return view
     end
     function proxy.Show()
-        ensure():Show()
+        local built = ensure()
+        if built then
+            built:Show()
+        end
     end
     function proxy.Hide()
         if view then
@@ -387,7 +395,15 @@ function CraftPanel.Attach(deps)
         return view ~= nil and view:IsShown()
     end
     function proxy.Render(_, state)
-        ensure():Render(state)
+        local built = ensure()
+        if built then
+            built:Render(state)
+        end
+    end
+    function proxy.Place()
+        if view then
+            view:Place()
+        end
     end
     driver = CraftPanel.NewDriver({
         client = deps.client,
