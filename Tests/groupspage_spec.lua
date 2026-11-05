@@ -1372,6 +1372,21 @@ describe("GroupsPage", function()
             assert.are.same({}, rowTexts())
         end)
 
+        it("opens the pattern help from the ? button and toggles it", function()
+            assert.are.equal("?", editor.helpButton:GetText())
+            click(editor.helpButton)
+            local help = editor.helpWindow
+            assert.is_true(help:IsShown())
+            assert.is_truthy(help.text:GetText():find("Plain text matches anywhere", 1, true))
+            assert.is_truthy(help.text:GetText():find("a||b", 1, true))
+            click(editor.helpButton)
+            assert.is_false(help:IsShown())
+            click(editor.helpButton)
+            assert.is_true(help:IsShown())
+            click(help.closeButton)
+            assert.is_false(help:IsShown())
+        end)
+
         it("has no tab when the logic is not loaded", function()
             ns.AutoRulesPanel = nil
             build()
