@@ -6,7 +6,7 @@ describe("MailingView", function()
 
     local function loadModules()
         local env = { ReportError = function() end, Flavour = {} }
-        for _, name in ipairs({ "EventBus", "MailingPlan", "Theme", "Widgets", "List", "MailingView" }) do
+        for _, name in ipairs({ "EventBus", "CharacterName", "MailingPlan", "Theme", "Widgets", "List", "MailingView" }) do
             assert(loadfile(manifest.path(name)))("Flipside", env)
         end
         return env
@@ -232,6 +232,41 @@ describe("MailingView", function()
         assert.is_true(ns.MailingView.IsKnownCharacter("BANK-REALM", characters))
         assert.is_false(ns.MailingView.IsKnownCharacter("Bank-Other", characters))
         assert.is_false(ns.MailingView.IsKnownCharacter("Stranger", characters))
+    end)
+
+    describe("with a surname (Forever)", function()
+        before_each(function()
+            local saved = { ["Bank-Realm/surname"] = "Jones", ["Me-Realm/surname"] = "Smith" }
+            ns.Flavour = { usesSurname = true }
+            ns.CharacterName.Setup({
+                db = {
+                    GetFor = function(_, key, name)
+                        return saved[key .. "/" .. name]
+                    end,
+                },
+            })
+        end)
+
+        it("matches Name Surname of an own character, with no regard to case", function()
+            assert.is_true(ns.MailingView.IsKnownCharacter("Bank Jones", characters))
+            assert.is_true(ns.MailingView.IsKnownCharacter("bank jones", characters))
+            assert.is_true(ns.MailingView.IsKnownCharacter("Bank", characters))
+            assert.is_true(ns.MailingView.IsKnownCharacter("Bank-Realm", characters))
+        end)
+
+        it("does not match another surname or another realm key", function()
+            assert.is_false(ns.MailingView.IsKnownCharacter("Bank Smith", characters))
+            assert.is_false(ns.MailingView.IsKnownCharacter("Bank-Other", characters))
+            assert.is_false(ns.MailingView.IsKnownCharacter("Stranger Jones", characters))
+        end)
+
+        it("shows the display name of an own character as the recipient", function()
+            view:Refresh()
+            assert.are.equal("Bank Jones", rowOf(20).recipientText:GetText())
+            assert.are.equal("Nobody", rowOf(21).recipientText:GetText())
+            assert.is_true(view.byId[21].unknown)
+            assert.is_falsy(view.byId[20].unknown)
+        end)
     end)
 
     it("shows a rule with no recipient or no groups as disabled, with the reason", function()

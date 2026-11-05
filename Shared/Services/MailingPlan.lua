@@ -23,18 +23,13 @@ local function Trim(text)
     return (text:match("^%s*(.-)%s*$"))
 end
 
--- True if the recipient is the own character. A name without a realm matches the name part only.
+-- True if the recipient is the own character. A name without a realm matches the name part only. On Forever the
+-- recipient can also be "Name Surname" (CharacterName).
 local function IsSelf(recipient, selfName)
     if not selfName or selfName == "" then
         return false
     end
-    local a, b = recipient:lower(), selfName:lower()
-    local nameA, realmA = a:match("^([^%-]+)%-(.+)$")
-    local nameB, realmB = b:match("^([^%-]+)%-(.+)$")
-    if realmA and realmB then
-        return a == b
-    end
-    return (nameA or a) == (nameB or b)
+    return ns.CharacterName.Resolve(recipient, { selfName }) ~= nil
 end
 
 -- Returns the settings of a mailing operation as a recipient and two whole numbers, or nil without a recipient.

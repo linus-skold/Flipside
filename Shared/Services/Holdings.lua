@@ -190,6 +190,8 @@ end
 -- Removes the holdings of one character; keeps its other keys.
 function H:Forget(character)
     local ok = self._db:RemoveFor(character, STORE_KEY)
+    -- The saved surname (CharacterName) would keep the character in the list.
+    self._db:RemoveFor(character, "surname")
     self._index = nil
     return ok
 end

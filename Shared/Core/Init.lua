@@ -155,6 +155,27 @@ local function openSettingsDB()
     ns.bus:Emit("Flipside.DBReady")
 end
 
+-- Character names (SPEC 5.5, "Character names on Forever"). Forever: save the surname of this character per character key at login.
+-- The separator between name and surname is a client constant (Constants.CharacterNameSeparatorConsts).
+-- The default separator is a space.
+local function openCharacterName()
+    if not ns.CharacterName then
+        return
+    end
+    ns.CharacterName.Setup({
+        db = ns.db,
+        separator = function()
+            local consts = type(Constants) == "table" and Constants.CharacterNameSeparatorConsts
+            return consts and consts.CHARACTERNAME_SURNAME_SEPARATOR
+        end,
+    })
+    local key = characterKey()
+    if key and ns.CharacterName.Enabled() then
+        local _, surname = UnitName("player")
+        ns.CharacterName.SaveSurname(key, surname)
+    end
+end
+
 -- Auction House state, from the client events.
 local auctionHouseOpen = false
 
@@ -1340,6 +1361,9 @@ local function openMailing()
         local clientApi = ns.MailClient.Default()
         local container = containerApi()
         clientApi.numSlots, clientApi.itemInfo = container.numSlots, container.itemInfo
+        clientApi.recipientName = function(text)
+            return ns.CharacterName.MailName(text, ns.holdings and ns.holdings:Characters() or {})
+        end
         local client = ns.MailClient.New(clientApi)
         ns.rules:EnsureAllBagsGroup()
         local function itemName(key)
@@ -1479,6 +1503,7 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
         pcall(writeSessionMarker)
         trackAuctionHouse()
         openSettingsDB()
+        openCharacterName()
         if ns.db then
             openScan()
         end
@@ -2209,20 +2234,26 @@ local function forgetCommand(character)
         printLine("inventory tracking is not available this session")
         return
     end
+    local surnames = ns.CharacterName and ns.CharacterName.Enabled()
     if character == "" then
-        printLine("usage: /flip forget <Name-Realm>")
+        printLine(surnames and "usage: /flip forget <Name Surname> (or <Name-Realm>)"
+            or "usage: /flip forget <Name-Realm>")
         return
     end
+    -- Forever also accepts the name that the client shows (Name Surname), with no regard to case.
     local known = false
     for _, name in ipairs(ns.holdings:Characters()) do
-        if name == character then
+        if name == character or (surnames and ns.CharacterName.Display(name):lower() == character:lower()) then
             known = true
+            character = name
+            break
         end
     end
+    local shown = ns.CharacterName and ns.CharacterName.Display(character) or character
     if not known then
         printLine("no saved character " .. character)
     elseif ns.holdings:Forget(character) then
-        printLine("forgot the inventory of " .. character)
+        printLine("forgot the inventory of " .. shown)
     else
         printLine("settings are read-only; the inventory was not removed")
     end

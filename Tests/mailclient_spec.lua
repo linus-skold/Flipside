@@ -160,6 +160,52 @@ describe("MailClient", function()
         assert.are.same({ "sendMail", 4, "Bank", "Subject", "" }, calls[#calls])
     end)
 
+    describe("recipient name", function()
+        local keys = { "Bank-Realm", "Me-Realm" }
+
+        -- The same wiring as Init: the recipient goes through CharacterName.MailName with the own characters.
+        local function wired(flavour)
+            ns.Flavour = flavour
+            load("CharacterName")
+            ns.CharacterName.Setup({
+                db = {
+                    GetFor = function(_, key, name)
+                        return key == "Bank-Realm" and name == "surname" and "Jones" or nil
+                    end,
+                },
+            })
+            api.recipientName = function(text)
+                return ns.CharacterName.MailName(text, keys)
+            end
+        end
+
+        it("sends the plain name of an own character on Forever", function()
+            wired({ usesSurname = true })
+            local c = client(4)
+            c.Send("Bank Jones", "Subject")
+            assert.are.same({ "sendMail", 4, "Bank", "Subject", "" }, calls[#calls])
+            c.Send("bank-realm", "Subject")
+            assert.are.same({ "sendMail", 4, "Bank", "Subject", "" }, calls[#calls])
+            c.Send("Bank", "Subject")
+            assert.are.same({ "sendMail", 4, "Bank", "Subject", "" }, calls[#calls])
+        end)
+
+        it("sends a name that is not an own character as it is on Forever", function()
+            wired({ usesSurname = true })
+            client(4).Send("Stranger Jones", "Subject")
+            assert.are.same({ "sendMail", 4, "Stranger Jones", "Subject", "" }, calls[#calls])
+        end)
+
+        it("sends the recipient as it is on TBC", function()
+            wired({ usesSurname = false })
+            local c = client(3)
+            c.Send("Bank-Realm", "Subject")
+            assert.are.same({ "sendMail", 3, "Bank-Realm", "Subject", "" }, calls[#calls])
+            c.Send("bank", "Subject")
+            assert.are.same({ "sendMail", 3, "bank", "Subject", "" }, calls[#calls])
+        end)
+    end)
+
     it("reads the postage and the money", function()
         local c = client(3)
         assert.are.equal(30, c.Postage())
