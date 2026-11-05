@@ -15,8 +15,7 @@ local BASIC = 1 -- Enum.CraftingReagentType.Basic (ProfessionConstantsDocumentat
 -- The button sits above the Create All button of the crafting page (Blizzard_ProfessionsCrafting.lua:268).
 -- Change only this table to move it.
 local LAYOUT = { width = 100, height = 22, x = 0, y = 4 }
-local TEXT_OPEN = "Search the reagents of this recipe on the Auction House"
-local TEXT_CLOSED = "Open the Auction House to search"
+local TEXT = "Search the reagents of this recipe on the Auction House"
 
 -- Returns the basic reagent items of a schematic as a list of { itemID, name }, without duplicates.
 -- Modifying, finishing and automatic slots give none. A slot with quality tiers gives each tier.
@@ -136,8 +135,8 @@ local function build(deps, page)
     end
     local function refresh()
         local info = recipeInfo()
-        button:SetShown(info ~= nil and type(info.recipeID) == "number")
-        button:SetAlpha(deps.isAuctionHouseOpen() and 1 or 0.6)
+        -- The button shows only while the Auction House is open.
+        button:SetShown(info ~= nil and type(info.recipeID) == "number" and deps.isAuctionHouseOpen() == true)
     end
     button:SetScript("OnClick", function()
         local ok, err = pcall(search, deps, recipeInfo())
@@ -148,7 +147,7 @@ local function build(deps, page)
     button:SetScript("OnEnter", function(self)
         local tip = deps.tooltip
         tip:SetOwner(self, "ANCHOR_RIGHT")
-        tip:SetText(deps.isAuctionHouseOpen() and TEXT_OPEN or TEXT_CLOSED)
+        tip:SetText(TEXT)
         tip:Show()
     end)
     button:SetScript("OnLeave", function()
