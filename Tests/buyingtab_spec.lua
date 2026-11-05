@@ -1235,7 +1235,7 @@ describe("BuyingTab", function()
             _G.ButtonFrameTemplate_HidePortrait = function(frame)
                 hidden[#hidden + 1] = frame
             end
-            ns.Kit.CreateWindow("PlainWindow", { width = 100, height = 100 })
+            ns.Kit.CreateWindow("PlainWindow", { width = 100, height = 100, portrait = "Interface\\Icons\\Foo" })
             assert.are.same({}, hidden)
         end)
 

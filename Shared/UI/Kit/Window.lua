@@ -134,7 +134,7 @@ function Kit.CreateWindow(name, options)
         end
     end
 
-    if options.square and hasPortrait then
+    if (options.square or not options.portrait) and hasPortrait then
         -- The client function also swaps the border, so the round ring goes with the portrait.
         if ButtonFrameTemplate_HidePortrait then
             pcall(ButtonFrameTemplate_HidePortrait, window)
@@ -178,12 +178,22 @@ function Kit.CreateWindow(name, options)
 
     -- The X button calls HideUIPanel, which does nothing in combat. Hide the window directly instead.
     -- A protected window (one with a secure child) cannot hide in combat, so it keeps the client path.
-    window.onCloseCallback = function(self)
-        if InCombatLockdown and InCombatLockdown() and self.IsProtected and self:IsProtected() then
+    -- The client calls this with the close button as the argument, not the window. Use the window upvalue,
+    -- or the button hides itself and the window stays open.
+    window.onCloseCallback = function()
+        if InCombatLockdown and InCombatLockdown() and window.IsProtected and window:IsProtected() then
             return true
         end
-        self:Hide()
+        window:Hide()
         return false
+    end
+
+    -- Some templates have no close button. Add one with a client template.
+    if not window.CloseButton then
+        local close = CreateFrame("Button", nil, window, "UIPanelCloseButton")
+        close:SetPoint("TOPRIGHT", window, "TOPRIGHT", 1, 0)
+        close:SetFrameLevel(window:GetFrameLevel() + 20)
+        window.CloseButton = close
     end
 
     table.insert(UISpecialFrames, name)
