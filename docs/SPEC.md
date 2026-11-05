@@ -718,6 +718,10 @@ The user approved points 1 to 10 on 2026-10-15. They are binding. The idea is si
    - Known risk: AoE loot of several corpses can name the target for more than one window.
    - Known risk: the chat money text may not parse if it uses coin icons.
    - Known risk: the unit tooltip check depends on `GameTooltip:GetUnit` and `UnitExists("mouseover")` on each client.
+   - Known risk (W3): `softinteract` comes before `mouseover`. With soft targeting on, a mouse-click loot among many corpses can name the nearest corpse, not the clicked one. If the in-game check fails, put `mouseover` first.
+   - Known risk (N2): the `CHAT_MSG_MONEY` money text format on Forever and TBC is not verified (`GOLD_AMOUNT` words or coin textures). If it does not parse, no share matches and the gain is Unknown. No money is lost.
+   - Known risk (N3): the share match by amount comes before the context priority. A merchant, trade or mail gain of the same amount less than 1 s after a share message gets "[other player]". The reverse order (gain first, merchant open) labels the share as merchant.
+   - Known risk (N4): the bag lock is the last `ITEM_LOCK_CHANGED` in 5 s. If opening a container does not fire it, an item that the player moved just before can give a wrong item name.
    - Looted money is recorded with its source. The item records of the same loot window will use the same `mob` and `src` (they share `ctx`) when the loot item records are built (PR4); no item record exists yet.
    - The item value in the record is the vendor price at loot time. The `ScanMarket` value is computed when the user views the page. It is never stored.
 5. **Mail.**
