@@ -167,6 +167,28 @@ describe("RecipeSearch", function()
             assert.is_true(button.shown)
         end)
 
+        it("hides the button while the Auction House is closed", function()
+            ahOpen = false
+            deps = makeDeps()
+            ns.RecipeSearch.Attach(deps)
+            assert.is_false(button.shown)
+        end)
+
+        it("shows and hides the button when the Auction House opens or closes", function()
+            deps = makeDeps()
+            ns.RecipeSearch.Attach(deps)
+            assert.is_true(button.shown)
+            ahOpen = false
+            bus:Emit("AH_CLOSE")
+            assert.is_false(button.shown)
+            ahOpen = true
+            bus:Emit("AH_OPEN")
+            assert.is_true(button.shown)
+            recipeInfo = nil
+            bus:Emit("AH_OPEN")
+            assert.is_false(button.shown)
+        end)
+
         it("anchors above the Create All button and writes no Blizzard field", function()
             deps = makeDeps()
             assert.has_no.errors(function()
@@ -214,23 +236,11 @@ describe("RecipeSearch", function()
             assert.is_nil(calls[4])
         end)
 
-        it("shows the matching tooltip text", function()
+        it("shows the tooltip text", function()
             button.scripts.OnEnter(button)
-            ahOpen = false
-            button.scripts.OnEnter(button)
-            assert.are.equal("Open the Auction House to search", deps.tooltip.lines[2])
             assert.is_truthy(deps.tooltip.lines[1]:find("Auction House"))
             button.scripts.OnLeave()
             assert.is_false(deps.tooltip.shown)
-        end)
-
-        it("updates the look when the Auction House opens or closes", function()
-            ahOpen = false
-            bus:Emit("AH_CLOSE")
-            assert.are.equal(0.6, button.alpha)
-            ahOpen = true
-            bus:Emit("AH_OPEN")
-            assert.are.equal(1, button.alpha)
         end)
 
         it("prints one line and does nothing when the list module is missing", function()
