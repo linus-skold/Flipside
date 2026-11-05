@@ -6,7 +6,8 @@ describe("MailingView", function()
 
     local function loadModules()
         local env = { ReportError = function() end, Flavour = {} }
-        for _, name in ipairs({ "EventBus", "CharacterName", "MailingPlan", "Theme", "Widgets", "List", "MailingView" }) do
+        local names = { "EventBus", "CharacterName", "MailingPlan", "Theme", "Widgets", "List", "MailingView" }
+        for _, name in ipairs(names) do
             assert(loadfile(manifest.path(name)))("Flipside", env)
         end
         return env

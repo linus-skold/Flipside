@@ -155,7 +155,8 @@ local function openSettingsDB()
     ns.bus:Emit("Flipside.DBReady")
 end
 
--- Character names (SPEC 5.5, "Character names on Forever"). Forever: save the surname of this character per character key at login.
+-- Character names (SPEC 5.5, "Character names on Forever").
+-- Forever: save the surname of this character per character key at login.
 -- The separator between name and surname is a client constant (Constants.CharacterNameSeparatorConsts).
 -- The default separator is a space.
 local function openCharacterName()
