@@ -496,7 +496,7 @@ function LedgerPage.Columns(tab, showChar, formatters)
             { key = "detail", title = "Detail", width = 150 },
         }
     end
-    local detailTitle = ({ sales = "Buyer", purchases = "Seller", loot = "Mob", expenses = "Type" })[tab] or "Detail"
+    local detailTitle = ({ sales = "Buyer", purchases = "Seller", loot = "Source", expenses = "Type" })[tab] or "Detail"
     return {
         { key = "time", title = "Date", width = 104, format = formatters.time },
         { key = "char", title = "Character", width = 110, hidden = not showChar, format = formatters.char },

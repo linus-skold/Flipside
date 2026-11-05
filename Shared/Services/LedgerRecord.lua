@@ -108,6 +108,9 @@ local CHECKS = {
     qty = isCount,
     money = isCount,
     mob = isText,
+    src = function(v)
+        return v == "mob" or v == "object" or v == "item" or v == "fishing" or v == "player"
+    end,
     ctx = isText,
     fp = isText,
     invoiceType = isText,

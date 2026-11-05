@@ -938,6 +938,58 @@ local function openLedger()
     end
 end
 
+-- Read one unit as a loot source for the ledger: its name and its kind, "mob" (a dead creature) or "object" (a game
+-- object). Any other unit gives nil. Each client call is guarded, because the clients differ. It only reads.
+local function lootUnit(token)
+    if type(_G.UnitExists) ~= "function" then
+        return nil
+    end
+    local isObject = type(_G.UnitIsGameObject) == "function" and _G.UnitIsGameObject(token) == true
+    if not isObject and not _G.UnitExists(token) then
+        return nil
+    end
+    local name = UnitName(token)
+    if isObject then
+        return name, "object"
+    end
+    local guid = type(_G.UnitGUID) == "function" and _G.UnitGUID(token) or nil
+    if type(guid) ~= "string" then
+        return nil
+    end
+    if guid:match("^GameObject%-") then
+        return name, "object"
+    end
+    if guid:match("^Creature%-") and type(_G.UnitIsDead) == "function" and _G.UnitIsDead(token) then
+        return name, "mob"
+    end
+    return nil
+end
+
+-- The title of the tooltip that the client shows for the thing under the mouse in the world, or nil.
+local function worldTooltipName()
+    local tip = _G.GameTooltip
+    if not (tip and tip:IsShown() and tip:GetOwner() == _G.UIParent) then
+        return nil
+    end
+    -- A unit tooltip (a living NPC, pet or player) or a fading tooltip names no loot source.
+    if (type(_G.UnitExists) == "function" and _G.UnitExists("mouseover")) or tip:GetAlpha() < 1 then
+        return nil
+    end
+    if tip.GetUnit and tip:GetUnit() then
+        return nil
+    end
+    local line = _G.GameTooltipTextLeft1
+    return line and line:GetText() or nil
+end
+
+local function lootBagItemName(bag, slot)
+    local info = C_Container.GetContainerItemInfo(bag, slot)
+    if not info then
+        return nil
+    end
+    return info.itemName or (info.hyperlink and info.hyperlink:match("%[(.-)%]")) or nil
+end
+
 -- Create the money tracker; it needs the ledger buffer. It reads money changes and client events only.
 local function openLedgerMoney()
     if not (ns.db and ns.ledgerBuffer and ns.LedgerMoney and type(GetMoney) == "function") then
@@ -985,6 +1037,21 @@ local function openLedgerMoney()
                 return info and info.hyperlink or nil
             end,
             deposit = client.Deposit,
+            lootSource = ns.LootSource and ns.LootSource.New({
+                now = GetTime,
+                isSecret = type(issecretvalue) == "function" and issecretvalue or nil,
+                isFishing = type(_G.IsFishingLoot) == "function" and _G.IsFishingLoot or nil,
+                unit = lootUnit,
+                playerName = function()
+                    return (UnitName("player"))
+                end,
+                tooltipName = worldTooltipName,
+                bagItemName = lootBagItemName,
+                formats = {
+                    split = _G.LOOT_MONEY_SPLIT, gold = _G.GOLD_AMOUNT, silver = _G.SILVER_AMOUNT,
+                    copper = _G.COPPER_AMOUNT,
+                },
+            }) or nil,
         })
     end)
     if not ok then
