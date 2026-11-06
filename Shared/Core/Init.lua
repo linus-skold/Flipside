@@ -1450,13 +1450,12 @@ local function openMailing()
         local mailboxWindow = ns.Flavour.mailboxWindow and ns.MailboxWindow and ns.db
         local host
         local function setMailWindow(on)
-            -- A switch while a run or a take is active would hide the Stop button.
-            if host.IsBusy() then
-                printLine("Wait for the mailing run to end, then switch the mailbox")
-                return
-            end
-            if ns.MailboxWindow.SetOn(ns.db, on) then
-                host.Switch()
+            ns.MailboxWindow.Apply(ns.db, host, on, printLine)
+        end
+        -- /flip mailbox: the fallback when a toggle button is not visible.
+        if mailboxWindow then
+            ns.ToggleMailbox = function()
+                setMailWindow(not ns.MailboxWindow.IsOn(ns.db))
             end
         end
         host = ns.MailHost.Attach({
@@ -2442,6 +2441,13 @@ function ns.HandleSlash(msg)
     elseif command == "destroy" then
         ns.OpenDestroyWindow()
         return
+    elseif command == "mailbox" then
+        if ns.ToggleMailbox then
+            ns.ToggleMailbox()
+        else
+            printLine("the Flipside mailbox window is not available this session")
+        end
+        return
     elseif command == "minimap" then
         minimapCommand()
         return
@@ -2461,6 +2467,9 @@ function ns.HandleSlash(msg)
         printScanHelp()
     end
     printLine("/flip destroy opens the Destroy window")
+    if ns.ToggleMailbox then
+        printLine("/flip mailbox switches between the Flipside mailbox and the Blizzard mailbox")
+    end
     printLine("No feature exists yet.")
 end
 

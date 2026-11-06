@@ -16,8 +16,9 @@ local PAD = 8
 local BODY_TOP = 28
 local BAR_HEIGHT = 28
 local TOGGLE_WIDTH = 120
--- The toggle button on MailFrame: at the top right, left of the close button.
-local MAILFRAME_TOGGLE = { width = 110, height = 20, x = -28, y = -3, level = 30 }
+-- The toggle button on MailFrame: right of the tabs under the frame. The level is above the highest client child
+-- level (the title and the close button have 510).
+local MAILFRAME_TOGGLE = { width = 110, height = 22, tabGap = 10, level = 520 }
 
 -- Setting mail.window (account scope, default on): true or no value shows the Flipside window, false shows the
 -- Blizzard mailbox. The last choice stays. db is the settings DB (Get and Set).
@@ -38,12 +39,35 @@ local PAGES = {
     { key = "rules", title = "Mailing rules" },
 }
 
+-- Set the setting and switch the open mailbox (host is the MailHost object). A run or a take that is active
+-- refuses the switch: it would hide the Stop button. say(text) prints a short line. Returns true if it switched.
+function MailboxWindow.Apply(db, host, on, say)
+    if host.IsBusy() then
+        say("Wait for the mailing run to end, then switch the mailbox")
+        return false
+    end
+    if not MailboxWindow.SetOn(db, on) then
+        return false
+    end
+    host.Switch()
+    return true
+end
+
 -- Make the button on MailFrame that switches to the Flipside window. onClick runs on a click.
+-- The button sits right of the client tabs under the frame (Inbox, Send Mail). They are children of MailFrame, so
+-- the button shows on both tabs. The title bar is not safe: the NineSlice border (level 500), the title and the
+-- close button (level 510) of ButtonFrameTemplate sit above a normal child there.
 function MailboxWindow.CreateToggle(mailFrame, onClick)
     local spec = MAILFRAME_TOGGLE
     local button = ns.Kit.Button(mailFrame, "Flipside mailbox", spec.width, onClick)
     button:SetHeight(spec.height)
-    button:SetPoint("TOPRIGHT", mailFrame, "TOPRIGHT", spec.x, spec.y)
+    local tab = _G.MailFrameTab2 or _G.MailFrameTab1
+    if tab then
+        button:SetPoint("LEFT", tab, "RIGHT", spec.tabGap, 0)
+    else
+        button:SetPoint("TOPRIGHT", mailFrame, "BOTTOMRIGHT", -spec.tabGap, 2)
+    end
+    button:SetFrameStrata(mailFrame:GetFrameStrata())
     button:SetFrameLevel(mailFrame:GetFrameLevel() + spec.level)
     return button
 end

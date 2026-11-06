@@ -4,7 +4,7 @@ local mock = require("Tests.wow_mock")
 local MODULES = { "Theme", "Window", "Widgets", "Tabs", "EventBus", "MailboxWindow", "MailHost" }
 
 describe("MailboxWindow and the Forever layouts of MailHost", function()
-    local ns, bus, mailFrame, inbox, send, openMail, db, host, closeCalls, created, lists, running, refuseClose
+    local ns, bus, mailFrame, inbox, send, openMail, db, host, closeCalls, created, lists, running, refuseClose, said
 
     local function fakeDb()
         local values = {}
@@ -76,11 +76,9 @@ describe("MailboxWindow and the Forever layouts of MailHost", function()
         }
         if forever then
             local function setOn(on)
-                if host.IsBusy() then
-                    return
-                end
-                ns.MailboxWindow.SetOn(db, on)
-                host.Switch()
+                ns.MailboxWindow.Apply(db, host, on, function(text)
+                    said[#said + 1] = text
+                end)
             end
             deps.mode = function()
                 return ns.MailboxWindow.IsOn(db) and "window" or "plain"
@@ -129,7 +127,7 @@ describe("MailboxWindow and the Forever layouts of MailHost", function()
             assert(loadfile(manifest.path(name)))("Flipside", ns)
         end
         bus = ns.EventBus.New()
-        db, closeCalls, created, lists, running, refuseClose = fakeDb(), 0, {}, {}, false, false
+        db, closeCalls, created, lists, running, refuseClose, said = fakeDb(), 0, {}, {}, false, false, {}
         mailFrame = CreateFrame("Frame", "MailFrame", UIParent)
         mailFrame:SetSize(338, 424)
         inbox, send = stretched("InboxFrame"), stretched("SendMailFrame")
@@ -284,6 +282,57 @@ describe("MailboxWindow and the Forever layouts of MailHost", function()
             assert.are.equal(1, #windowFrames())
             assert.are.equal(1, #created)
             assert.are.equal(2, created[1].refreshes, "the view reads the plan again when it shows")
+        end)
+
+        it("shows the toggle after each switch to the Blizzard mailbox, in both orders", function()
+            for _ = 1, 3 do
+                click(host.window.toggle)
+                assert.is_true(host.toggle:IsShown())
+                click(host.toggle)
+                assert.is_false(host.toggle:IsShown())
+                assert.is_true(host.window.frame:IsShown())
+            end
+        end)
+
+        it("switches with the slash path (Apply with the opposite value) and refuses it while busy", function()
+            local function flip()
+                return ns.MailboxWindow.Apply(db, host, not ns.MailboxWindow.IsOn(db), function(text)
+                    said[#said + 1] = text
+                end)
+            end
+            assert.is_true(flip())
+            assert.is_false(ns.MailboxWindow.IsOn(db))
+            assert.is_true(host.toggle:IsShown())
+            assert.is_true(flip())
+            assert.is_true(host.window.frame:IsShown())
+            running = true
+            assert.is_false(flip())
+            assert.is_true(ns.MailboxWindow.IsOn(db))
+            assert.are.equal(1, #said)
+        end)
+    end)
+
+    describe("the toggle on MailFrame", function()
+        local tab
+
+        before_each(function()
+            tab = CreateFrame("Button", "MailFrameTab2", mailFrame)
+            _G.MailFrameTab2 = tab
+        end)
+
+        after_each(function()
+            _G.MailFrameTab2 = nil
+        end)
+
+        it("sits right of the client tabs, above the title level, in the strata of MailFrame", function()
+            ns.MailboxWindow.SetOn(db, false)
+            attach(true)
+            bus:Emit("MAIL_SHOW")
+            local point, relative, relativePoint = host.toggle:GetPoint(1)
+            assert.are.same({ "LEFT", tab, "RIGHT" }, { point, relative, relativePoint })
+            assert.is_true(host.toggle:GetFrameLevel() > 510)
+            assert.are.equal(mailFrame:GetFrameStrata(), host.toggle:GetFrameStrata())
+            assert.is_true(host.toggle:IsShown())
         end)
     end)
 
