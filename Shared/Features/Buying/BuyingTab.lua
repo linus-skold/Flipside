@@ -111,10 +111,34 @@ function BuyingTab.StackPrice(level)
     return size and level.unitPrice * size or nil
 end
 
+-- The unit price as a whole percent of the market value (ScanMarket), or nil if there is no market value.
+function BuyingTab.MarketPercent(unitPrice, market)
+    if type(unitPrice) ~= "number" or type(market) ~= "number" or market <= 0 then
+        return nil
+    end
+    return math.floor(unitPrice / market * 100 + 0.5)
+end
+
+-- The text of the age of the scan data in hours, or nil if the age is not known.
+function BuyingTab.AgeText(hours)
+    if type(hours) ~= "number" then
+        return nil
+    end
+    if hours < 1 then
+        return "< 1 h"
+    end
+    if hours >= 48 then
+        return string.format("%d d", math.floor(hours / 24 + 0.5))
+    end
+    return string.format("%d h", math.floor(hours + 0.5))
+end
+
 -- Build the price level rows to show. state is "buy", "above" or "own".
 -- Levels above the maximum show only if the operation sets showAboveMax.
-function BuyingTab.DescribeLevels(entry, levels, showAboveMax)
+-- scan is optional: { market, ageHours } of the item from the scan data. It adds the percent and the age text.
+function BuyingTab.DescribeLevels(entry, levels, showAboveMax, scan)
     local out = {}
+    local ageText = scan and BuyingTab.AgeText(scan.ageHours) or nil
     for _, level in ipairs(levels or {}) do
         local state
         if level.own then
@@ -130,6 +154,7 @@ function BuyingTab.DescribeLevels(entry, levels, showAboveMax)
                 stackPrice = BuyingTab.StackPrice(level), id = level.id, stacks = level.stacks,
                 stackSize = level.stackSize, owner = level.own and OWN_TEXT or level.owner,
                 timeLeft = level.timeLeft,
+                percent = scan and BuyingTab.MarketPercent(level.unitPrice, scan.market) or nil, age = ageText,
             }
         end
     end
@@ -2468,6 +2493,14 @@ local LEVEL_COLUMNS = {
             end
             return "x" .. tostring(value)
         end },
+    { key = "percent", title = "% of market", width = { share = 1 }, number = true,
+        format = function(value)
+            return value and (tostring(value) .. "%") or "-"
+        end },
+    { key = "age", title = "Data age", width = { share = 1 }, number = true,
+        format = function(value)
+            return value or "-"
+        end },
     { key = "owner", title = "Seller", width = { share = 1 }, hidden = true,
         format = function(value)
             return value or ""
@@ -2479,7 +2512,7 @@ local LEVEL_COLUMNS = {
 }
 local LEVEL_OPTIONS = { gap = 6 }
 local STACK_COLUMN, QUANTITY_COLUMN = LEVEL_COLUMNS[2], LEVEL_COLUMNS[3]
-local OWNER_COLUMN, TIME_COLUMN = LEVEL_COLUMNS[4], LEVEL_COLUMNS[5]
+local OWNER_COLUMN, TIME_COLUMN = LEVEL_COLUMNS[6], LEVEL_COLUMNS[7]
 -- The share of the Available column when it shows the text of a stack group.
 local WIDE_SHARE = 1.6
 
@@ -2566,6 +2599,21 @@ function Tab:_UpdateLeft()
     end
 end
 
+-- The market value (ScanMarket) and the age in hours of the scan data of an item, or nil if the item has no scan data.
+function Tab:_ScanInfo(entry)
+    local deps = self.deps
+    local record = deps.getRecord and entry.key and deps.getRecord(entry.key)
+    if type(record) ~= "table" or not ns.ScanSources then
+        return nil
+    end
+    local now = deps.now and deps.now() or nil
+    if type(now) ~= "number" then
+        return nil
+    end
+    local values = ns.ScanSources.Compute(record, now)
+    return { market = values.scanMarket, ageHours = values.scanAge }
+end
+
 -- Update the buttons, the list and the right side from the state.
 function Tab:_Update()
     local ui = self.ui
@@ -2621,7 +2669,7 @@ function Tab:_Update()
         ui.loadMore:SetEnabled(self.pending == nil and self.buy == nil)
     end
     local levels = done and self:_Levels(done.rows) or {}
-    local described = BuyingTab.DescribeLevels(selected, levels, selected.showAboveMax)
+    local described = BuyingTab.DescribeLevels(selected, levels, selected.showAboveMax, self:_ScanInfo(selected))
     -- The selection stays on the same unit price if the level is still in the list. Else it clears.
     if self.levelSel then
         local shown = false
@@ -2654,6 +2702,8 @@ function Tab:_Update()
     local costKey = hasCommodityMarket() and "unitPrice" or "stackPrice"
     ui.totalCells.unitPrice:SetText("")
     ui.totalCells.stackPrice:SetText("")
+    ui.totalCells.percent:SetText("")
+    ui.totalCells.age:SetText("")
     ui.totalCells[costKey]:SetText("Total  " .. money(totals.cost))
     ui.buyNext:SetText(verb)
     ui.buyNext:SetEnabled(nextLevel ~= nil and reason == nil)
@@ -3063,7 +3113,7 @@ end
 -- itemLink(itemID) (link, quality), scanStore, itemCache, lastScan() (time of the last full scan, and true if a
 -- partial scan came after it) and runJob(name, fn) (the Vendor source),
 -- searchLists, itemNameIndex, ahNameSearch, keyFor(link) and isAuctionHouseOpen()
--- (search lists and the item box).
+-- (search lists and the item box), and getRecord(key) with now() (the % of market and data age columns).
 function BuyingTab.New(deps)
     if type(deps) ~= "table" or type(deps.bus) ~= "table" then
         error("deps.bus must be a table", 2)
@@ -3084,6 +3134,8 @@ function BuyingTab.New(deps)
         end,
         db = deps.db,
         scanStore = deps.scanStore or nil,
+        getRecord = deps.getRecord,
+        now = deps.now,
         itemCache = deps.itemCache,
         lastScan = deps.lastScan,
         runJob = deps.runJob,
