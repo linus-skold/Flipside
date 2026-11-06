@@ -184,9 +184,9 @@ describe("MailboxWindow and the Forever layouts of MailHost", function()
             assert.is_not_nil(pages.send)
         end)
 
-        it("has exactly the size of MailFrame and no drag script", function()
+        it("has the height of MailFrame, its width plus the wide-layout extra, and no drag script", function()
             local window = host.window.frame
-            assert.are.same({ 338, 424 }, { window:GetWidth(), window:GetHeight() })
+            assert.are.same({ 338 + ns.MailHost.EXTRA_WIDTH, 424 }, { window:GetWidth(), window:GetHeight() })
             local handle = window.TitleContainer or window
             assert.is_nil(handle.scripts.OnDragStart)
             assert.is_nil(handle.scripts.OnDragStop)

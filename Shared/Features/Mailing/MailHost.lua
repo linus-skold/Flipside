@@ -12,6 +12,8 @@ local OWNER = "Flipside.MailHost"
 -- The extra width of the wide layout, and the gaps of the view in the new strip, in pixels. The view has the full
 -- height of the strip: its header sits in the row of the client title, its bottom bar on the client bottom row.
 local EXTRA_WIDTH = 380
+-- The Flipside mailbox window (Forever) uses the same extra width.
+MailHost.EXTRA_WIDTH = EXTRA_WIDTH
 local VIEW_GAP = { top = 2, right = 2, bottom = 0 }
 local VIEW_LEVEL = 5
 local OPEN_MAIL_X = 46

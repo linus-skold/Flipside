@@ -8,7 +8,8 @@ MailboxWindow.__index = MailboxWindow
 ns.MailboxWindow = MailboxWindow
 
 local NAME = "FlipsideMailboxWindow"
--- The size in pixels if MailFrame has no size yet. The window has exactly the size of MailFrame, so it covers it.
+-- The size in pixels if MailFrame has no size yet. The window has the height of MailFrame and its width plus
+-- MailHost.EXTRA_WIDTH, so it covers MailFrame and reaches to the right as the old wide layout did.
 local MIN_WIDTH, MIN_HEIGHT = 420, 520
 local PAD = 8
 -- The space from the top edge to the tabs, and the bottom row that holds the toggle button.
@@ -98,7 +99,7 @@ function MailboxWindow:Open(mailFrame)
     frame:ClearAllPoints()
     frame:SetPoint("TOPLEFT", mailFrame, "TOPLEFT", 0, 0)
     local width, height = mailFrame:GetWidth() or 0, mailFrame:GetHeight() or 0
-    frame:SetSize(width > 0 and width or MIN_WIDTH, height > 0 and height or MIN_HEIGHT)
+    frame:SetSize(width > 0 and width + ns.MailHost.EXTRA_WIDTH or MIN_WIDTH, height > 0 and height or MIN_HEIGHT)
     if not self.hooked then
         self.hooked = true
         -- The client hides MailFrame on ESC and on a walk away: the window goes with it.
