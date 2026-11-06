@@ -47,6 +47,9 @@ describe("MailClient", function()
             end,
             click = function(index, clear)
                 calls[#calls + 1] = { "click", index, clear }
+                if index == nil then
+                    return
+                end
                 if clear then
                     held[index] = nil
                 elseif api.accept ~= false then
