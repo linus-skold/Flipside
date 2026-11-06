@@ -47,6 +47,9 @@ describe("MailClient", function()
             end,
             click = function(index, clear)
                 calls[#calls + 1] = { "click", index, clear }
+                if index == nil then
+                    return
+                end
                 if clear then
                     held[index] = nil
                 elseif api.accept ~= false then
@@ -214,6 +217,93 @@ describe("MailClient", function()
             assert.are.same({ "sendMail", 3, "Bank-Realm", "Subject", "" }, calls[#calls])
             c.Send("bank", "Subject")
             assert.are.same({ "sendMail", 3, "bank", "Subject", "" }, calls[#calls])
+        end)
+    end)
+
+    describe("for the Send page", function()
+        it("reads one slot with its icon and quality, and lists only the filled slots", function()
+            held[2] = { "Name2", 102, "icon2", 4, 3 }
+            held[5] = { "Name5", 105, "icon5", 1 }
+            local c = client(4)
+            assert.is_nil(c.Item(1))
+            assert.are.same({ index = 2, name = "Name2", itemID = 102, texture = "icon2", count = 4, quality = 3 },
+                c.Item(2))
+            local items = c.Items()
+            assert.are.equal(2, #items)
+            assert.are.same({ 2, 5 }, { items[1].index, items[2].index })
+        end)
+
+        it("clicks a slot with the clear flag, or with no argument for the cursor item", function()
+            local c = client(4)
+            c.Click(3, false)
+            assert.are.same({ "click", 3, false }, calls[#calls])
+            c.Click(3, true)
+            assert.are.same({ "click", 3, true }, calls[#calls])
+            c.Click()
+            assert.are.same({ "click" }, calls[#calls])
+        end)
+
+        it("passes the flag of the send page to the client, and nothing if the api has no call", function()
+            local shown
+            local c = client(4)
+            c.SetShowing(true)
+            api.setShowing = function(flag)
+                shown = flag
+            end
+            c.SetShowing(1)
+            assert.is_true(shown)
+            c.SetShowing(nil)
+            assert.is_false(shown)
+        end)
+
+        it("sends the text and sets the money as the client does: both to 0, then one amount", function()
+            local order = {}
+            api.setMoney = function(copper)
+                order[#order + 1] = { "money", copper }
+            end
+            api.setCOD = function(copper)
+                order[#order + 1] = { "cod", copper }
+            end
+            local c = client(4)
+            assert.is_true(c.Send("Bank", "Subject", "Hello", { money = 500, cod = 0 }))
+            assert.are.same({ { "cod", 0 }, { "money", 0 }, { "money", 500 } }, order)
+            assert.are.same({ "sendMail", 4, "Bank", "Subject", "Hello" }, calls[#calls])
+            order = {}
+            c.Send("Bank", "Subject", "Hello", { money = 0, cod = 900 })
+            assert.are.same({ { "cod", 0 }, { "money", 0 }, { "cod", 900 } }, order)
+            -- A send with no options (the mailing run) still sets both to 0, so no old amount goes with it.
+            order = {}
+            c.Send("Bank", "Subject", "Hello")
+            assert.are.same({ { "cod", 0 }, { "money", 0 } }, order)
+        end)
+
+        it("sets money and cash on delivery to 0 with ResetMoney, and does nothing if the api has no setter", function()
+            local order = {}
+            local c = client(4)
+            c.ResetMoney()
+            api.setMoney = function(copper)
+                order[#order + 1] = { "money", copper }
+            end
+            api.setCOD = function(copper)
+                order[#order + 1] = { "cod", copper }
+            end
+            c.ResetMoney()
+            assert.are.same({ { "cod", 0 }, { "money", 0 } }, order)
+        end)
+
+        it("sets no money if the recipient has no full name", function()
+            local order = {}
+            api.setMoney = function(copper)
+                order[#order + 1] = copper
+            end
+            api.setCOD = api.setMoney
+            api.recipientName = function()
+                return nil, "no surname"
+            end
+            local sent, reason = client(4).Send("Me", "Subject", "", { money = 5, cod = 0 })
+            assert.is_false(sent)
+            assert.are.equal("no surname", reason)
+            assert.are.same({}, order)
         end)
     end)
 

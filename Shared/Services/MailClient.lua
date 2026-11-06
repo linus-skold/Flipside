@@ -74,6 +74,16 @@ function MailClient.Default()
         getItem = GetSendMailItem,
         price = GetSendMailPrice,
         money = GetMoney,
+        -- The money calls and the send-mail-showing flag (the Send page of the Flipside mailbox window, Forever).
+        setMoney = function(copper)
+            return SetSendMailMoney(copper)
+        end,
+        setCOD = function(copper)
+            return SetSendMailCOD(copper)
+        end,
+        setShowing = function(shown)
+            return SetSendMailShowing(shown)
+        end,
         -- The call looks up SendMail each time, so the post-hook of the ledger (LedgerHooks) always runs.
         sendMail = function(...)
             return SendMail(...)
@@ -137,6 +147,55 @@ function MailClient.New(api)
         return list
     end
 
+    -- Returns { index, name, itemID, texture, count, quality } for an attachment slot, or nil if it is empty.
+    -- This is the data that the Send page shows (GetSendMailItem gives the five values in this order).
+    function client.Item(index)
+        local name, itemID, texture, count, quality = api.getItem(index)
+        if not name then
+            return nil
+        end
+        return {
+            index = index, name = name, itemID = itemID, texture = texture, count = tonumber(count) or 1,
+            quality = quality,
+        }
+    end
+
+    -- Returns the filled slots as a list of Item entries, in slot order.
+    function client.Items()
+        local list = {}
+        for index = 1, MailClient.MAX_ATTACHMENTS do
+            list[#list + 1] = client.Item(index)
+        end
+        return list
+    end
+
+    -- A click on an attachment slot, as the client does it: the item on the cursor goes in the slot, or the item of
+    -- the slot goes on the cursor. clear = true (right click) returns the item to the bags. With no index the
+    -- item on the cursor goes in the first free slot.
+    function client.Click(index, clear)
+        if index == nil then
+            api.click()
+        else
+            api.click(index, clear and true or false)
+        end
+    end
+
+    -- Sets the money and the cash on delivery amount of the mail to 0 (the client does this first at each send).
+    function client.ResetMoney()
+        if api.setMoney and api.setCOD then
+            api.setCOD(0)
+            api.setMoney(0)
+        end
+    end
+
+    -- Tells the client if a Send page shows. While it is true, a right click on a bag item puts the item in the
+    -- first free attachment slot (this is the client route that the Send Mail tab uses).
+    function client.SetShowing(shown)
+        if api.setShowing then
+            api.setShowing(shown and true or false)
+        end
+    end
+
     -- Takes one attachment off the mail. The second argument of the click is the clear flag of the right click.
     function client.ClearSlot(index)
         api.click(index, true)
@@ -162,7 +221,9 @@ function MailClient.New(api)
     -- api.recipientName (optional) maps the typed recipient to the name for the call (Forever: the full name
     -- "Name<separator>Surname" of an own character). It returns nil and a reason if no full name is known. Then Send
     -- does not call SendMail and returns false and the reason. Otherwise Send returns true.
-    function client.Send(recipient, subject)
+    -- body (optional) is the text of the mail, default "". options (optional, the Send page) is { money, cod } in
+    -- copper: the client sets both to 0 first, then sets the one that is more than 0 (SendMailButtonMixin:OnClick).
+    function client.Send(recipient, subject, body, options)
         if api.recipientName then
             local name, reason = api.recipientName(recipient)
             if not name then
@@ -171,11 +232,22 @@ function MailClient.New(api)
             end
             recipient = name
         end
+        -- Always set both to 0 first, so no old amount goes with a mail of the mailing run.
+        client.ResetMoney()
+        if options and api.setMoney and api.setCOD then
+            if (options.money or 0) > 0 then
+                api.setMoney(options.money)
+            end
+            if (options.cod or 0) > 0 then
+                api.setCOD(options.cod)
+            end
+        end
+        body = body or ""
         log("debug", "SendMail call: %s, subject %s", recipient, subject)
         if api.sendArgs == 4 then
-            api.sendMail(recipient, subject, "", nil)
+            api.sendMail(recipient, subject, body, nil)
         else
-            api.sendMail(recipient, subject, "")
+            api.sendMail(recipient, subject, body)
         end
         return true
     end

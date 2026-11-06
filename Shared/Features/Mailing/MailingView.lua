@@ -244,7 +244,8 @@ end
 
 -- deps: rules (RulesStore), client (MailClient object), newRun(callbacks) (returns a MailingRun), characters()
 -- (own characters), selfName(), itemName(key), formatMoney(copper), confirm(text, onAccept), skin (optional, the
--- list skin of the Auction House tabs).
+-- list skin of the Auction House tabs), blocked() (optional; returns a text if a run must not start now, for
+-- example because the send slots hold items).
 -- size (optional) is { width, height }. A host can instead anchor view.frame at two corners.
 function MailingView.Create(parent, deps, size)
     local view = { rules = {}, byId = {}, deps = deps, statusText = "" }
@@ -434,6 +435,13 @@ end
 
 function MailingView:_Start(chosen)
     if self.run:IsRunning() or #chosen == 0 then
+        return
+    end
+    -- The Send page shares the send slots with the run: a run needs them empty.
+    local blocked = self.deps.blocked and self.deps.blocked()
+    if blocked then
+        self.statusText = blocked
+        self.status:SetText(blocked)
         return
     end
     local names = {}

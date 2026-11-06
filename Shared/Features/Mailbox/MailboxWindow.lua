@@ -104,6 +104,8 @@ function MailboxWindow.Create(deps)
     local note = Kit.Label(self.pages.send, "Sending mail in this window comes next. Use the Blizzard mailbox to send.",
         "normal")
     note:SetPoint("CENTER", self.pages.send, "CENTER", 0, 0)
+    -- The host hides the note when it puts the Send page in (SendPage).
+    self.sendNote = note
     self.toggle = Kit.Button(frame, "Blizzard mailbox", TOGGLE_WIDTH, function()
         deps.onToggle()
     end)

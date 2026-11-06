@@ -1486,6 +1486,31 @@ local function openMailing()
                     setMailWindow(true)
                 end)
             end or nil,
+            createSend = mailboxWindow and ns.SendPage and ns.MailCompose and function(page)
+                return ns.SendPage.Create(page, {
+                    client = client,
+                    bus = ns.bus,
+                    after = C_Timer.After,
+                    characters = function()
+                        return ns.holdings and ns.holdings:Characters() or {}
+                    end,
+                    selfName = function()
+                        return characterKey() or UnitName("player")
+                    end,
+                    mailName = clientApi.recipientName,
+                    formatMoney = ns.TooltipLines.FormatMoney,
+                    -- The send slots are one buffer: the page and the mailing run must not use it together.
+                    isRunning = function()
+                        return host.view and host.view.run:IsRunning() or false
+                    end,
+                    windowShown = function()
+                        return host.window and host.window.frame:IsShown() or false
+                    end,
+                    clientSendShown = function()
+                        return _G.SendMailFrame and _G.SendMailFrame:IsVisible() or false
+                    end,
+                })
+            end or nil,
             createWindow = mailboxWindow and function()
                 return ns.MailboxWindow.Create({
                     onToggle = function()
@@ -1522,6 +1547,12 @@ local function openMailing()
                     selfName = function()
                         return characterKey() or UnitName("player")
                     end,
+                    -- Forever: a run does not start while the send slots hold items (the Send page or the client).
+                    blocked = mailboxWindow and function()
+                        if #client.Items() > 0 then
+                            return "The mail slots hold items: send or clear that mail first"
+                        end
+                    end or nil,
                     itemName = itemName,
                     formatMoney = ns.TooltipLines.FormatMoney,
                     confirm = function(text, onAccept)
