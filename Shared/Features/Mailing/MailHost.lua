@@ -2,8 +2,9 @@ local _, ns = ...
 
 -- The host of the mailing view. On MAIL_SHOW it places the view with a layout, on MAIL_CLOSED it takes the layout
 -- away. Both clients have a MailFrame global, so one host serves both flavours.
--- A layout decides the place of the view. Today the only layout is "wide": MailFrame gets wider and the view sits in
--- the new strip. A "tab" layout needs only a new entry in MailHost.LAYOUTS (SPEC 5.5, "Switch to a tab").
+-- A layout decides the place of the view. TBC uses "wide": MailFrame gets wider and the view sits in the new strip.
+-- Forever uses "window" (a Flipside window covers MailFrame) or "plain" (the client MailFrame, no change).
+-- A "tab" layout needs only a new entry in MailHost.LAYOUTS (SPEC 5.5, "Switch to a tab").
 local MailHost = {}
 ns.MailHost = MailHost
 
@@ -11,6 +12,8 @@ local OWNER = "Flipside.MailHost"
 -- The extra width of the wide layout, and the gaps of the view in the new strip, in pixels. The view has the full
 -- height of the strip: its header sits in the row of the client title, its bottom bar on the client bottom row.
 local EXTRA_WIDTH = 380
+-- The Flipside mailbox window (Forever) uses the same extra width.
+MailHost.EXTRA_WIDTH = EXTRA_WIDTH
 local VIEW_GAP = { top = 2, right = 2, bottom = 0 }
 local VIEW_LEVEL = 5
 local OPEN_MAIL_X = 46
@@ -112,6 +115,71 @@ MailHost.LAYOUTS = {
 
         return layout
     end,
+
+    -- Forever, setting "Blizzard mailbox": the client MailFrame stays as the client made it. Only the button that
+    -- switches to the Flipside window shows. No view and no inbox list.
+    plain = function(deps, host)
+        local layout = { plain = true }
+
+        function layout.Open(mailFrame)
+            host.toggle = host.toggle or deps.createToggle(mailFrame)
+            host.toggle:Show()
+        end
+
+        function layout.Close()
+            if host.toggle then
+                host.toggle:Hide()
+            end
+        end
+
+        return layout
+    end,
+
+    -- Forever, setting "Flipside mailbox": a Flipside window covers MailFrame, which stays shown under it (hiding
+    -- MailFrame would end the mail session). The window has the inbox list and the mailing view in its pages.
+    -- OpenMailFrame moves to the right edge of the window and goes above it.
+    window = function(deps, host)
+        local layout = { ownInbox = true, noTabs = true }
+        local saved
+
+        function layout.Open(mailFrame)
+            host.toggle = host.toggle or deps.createToggle(mailFrame)
+            host.toggle:Hide()
+            host.window = host.window or deps.createWindow()
+            local box = host.window
+            box:Open(mailFrame)
+            if not host.view then
+                host.view = deps.create(box.pages.rules)
+                host.view.frame:SetAllPoints(box.pages.rules)
+            end
+            if not host.inbox and deps.createInbox then
+                host.inbox = deps.createInbox(mailFrame, box.pages.inbox)
+            end
+            local openMail = deps.openMail and deps.openMail()
+            if openMail and not saved then
+                saved = { points = moveOpenMail(openMail, box.frame), strata = openMail:GetFrameStrata() }
+                openMail:SetFrameStrata("DIALOG")
+            end
+            host.view:Show()
+        end
+
+        function layout.Close()
+            if host.view then
+                host.view:Hide()
+            end
+            if host.window then
+                host.window:Hide()
+            end
+            local openMail = saved and deps.openMail and deps.openMail()
+            if openMail then
+                unpinChild({ child = openMail, points = saved.points })
+                openMail:SetFrameStrata(saved.strata)
+            end
+            saved = nil
+        end
+
+        return layout
+    end,
 }
 
 -- Each tab of MailFrame has its own bottom button. A small child frame of each tab frame shows and hides with the
@@ -144,10 +212,22 @@ end
 -- watchTabs, one entry for each of Inbox and Send Mail). The inbox list does not depend on the layout:
 -- it shows on MAIL_SHOW, refreshes on MAIL_INBOX_UPDATE and hides on MAIL_CLOSED.
 -- take (optional, a MailTake): while it is active, the view does not read the bags; it reads once when the take ends.
--- Returns an object with View(), the view or nil, and Inbox(), the inbox list or nil.
+-- Forever layouts "plain" and "window": mode is a function that gives the key; createToggle(mailFrame) (the button
+-- on MailFrame that switches to the window), createWindow() (a MailboxWindow); in "window" create(parent) makes the
+-- view in the rules page, and createInbox(mailFrame, parent) makes the inbox list in the inbox page.
+-- Returns an object with View(), the view or nil, Inbox(), the inbox list or nil, IsBusy(), Switch() and Fallback().
 function MailHost.Attach(deps)
     local host = { view = nil, inbox = nil }
-    local layout = MailHost.LAYOUTS[deps.mode or "wide"](deps, host)
+    -- deps.mode can be a function: it gives the key again at each MAIL_SHOW and at each host.Switch().
+    local layouts, layout = {}, nil
+    -- forcePlain: the plain layout for this visit, whatever the mode says (host.Fallback).
+    local forcePlain = false
+    local function pickLayout()
+        local key = forcePlain and "plain" or type(deps.mode) == "function" and deps.mode() or deps.mode or "wide"
+        layouts[key] = layouts[key] or MailHost.LAYOUTS[key](deps, host)
+        layout = layouts[key]
+    end
+    pickLayout()
     local open
     local inboxDirty, inboxScheduled, viewDirty, viewScheduled = false, false, false, false
 
@@ -162,25 +242,33 @@ function MailHost.Attach(deps)
             end
             return
         end
+        pickLayout()
         layout.Open(mailFrame)
         open = mailFrame
-        watchTabs(deps, host)
-        host.view:Refresh()
-        viewDirty = false
-        if deps.createInbox then
+        if layout.plain then
+            return
+        end
+        if not layout.noTabs then
+            watchTabs(deps, host)
+        end
+        -- A run or a take changes the bags: the view reads the plan when it ends (refreshView).
+        if host.view.run:IsRunning() or (deps.take and deps.take.IsActive()) then
+            viewDirty = true
+        else
+            host.view:Refresh()
+            viewDirty = false
+        end
+        if deps.createInbox and not layout.ownInbox then
             host.inbox = host.inbox or deps.createInbox(mailFrame)
-            if host.inbox then
-                host.inbox:Show()
-                -- Show reads the inbox, so an update that came before it needs no second read.
-                inboxDirty = false
-            end
+        end
+        if host.inbox then
+            host.inbox:Show()
+            -- Show reads the inbox, so an update that came before it needs no second read.
+            inboxDirty = false
         end
     end
 
-    deps.bus:Subscribe("MAIL_SHOW", OWNER, function()
-        show(true)
-    end)
-    deps.bus:Subscribe("MAIL_CLOSED", OWNER, function()
+    local function close()
         if open then
             if host.inbox then
                 host.inbox:Hide()
@@ -188,7 +276,41 @@ function MailHost.Attach(deps)
             layout.Close(open)
             open = nil
         end
+    end
+
+    deps.bus:Subscribe("MAIL_SHOW", OWNER, function()
+        show(true)
     end)
+    deps.bus:Subscribe("MAIL_CLOSED", OWNER, function()
+        close()
+        forcePlain = false
+    end)
+    -- True if a mailing run or a mail take is active. A switch then would hide the Stop button.
+    function host.IsBusy()
+        return (host.view and host.view.run:IsRunning()) or (deps.take and deps.take.IsActive()) or false
+    end
+    -- Apply the layout that deps.mode gives now, while the mailbox is open. Nothing happens if it is closed.
+    -- Returns false and does nothing while a run or a take is active.
+    function host.Switch()
+        if host.IsBusy() then
+            return false
+        end
+        forcePlain = false
+        if open then
+            close()
+            show(false)
+        end
+        return true
+    end
+    -- The window closed but MailFrame did not hide (the client refused in combat): show the plain MailFrame for
+    -- this visit. The saved setting does not change.
+    function host.Fallback()
+        if open then
+            forcePlain = true
+            close()
+            show(false)
+        end
+    end
     -- Many MAIL_INBOX_UPDATE events come in one take. They mark the list dirty, and one timer of INBOX_DELAY seconds
     -- refreshes it once. An event after the refresh starts a new timer, so the last state always shows.
     deps.bus:Subscribe("MAIL_INBOX_UPDATE", OWNER, function()

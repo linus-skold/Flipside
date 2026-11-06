@@ -38,6 +38,8 @@ ns.Flavour = {
     mailDelay = 0.5,
     -- Seconds to wait for BAG_UPDATE_DELAYED after a mail before the run goes on.
     mailBagWait = 5,
+    -- Forever has the Flipside mailbox window and the switch to the Blizzard mailbox (SPEC 5.5). TBC has neither.
+    mailboxWindow = true,
     -- Fallback bar of the mailing view (bottom offset, height). Open All is 26 px up (centre), Cancel is 4 px up.
     -- Source: Blizzard_MailFrame/MailFrame.xml.
     mailBar = { inbox = { bottom = 14, height = 24 }, send = { bottom = 4, height = 22 } },

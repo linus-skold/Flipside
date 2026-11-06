@@ -53,6 +53,10 @@ function frameMethods:SetFrameStrata(strata)
     self.strata = strata
 end
 
+function frameMethods:GetFrameStrata()
+    return self.strata or "MEDIUM"
+end
+
 function frameMethods:SetToplevel(toplevel)
     self.toplevel = toplevel
 end

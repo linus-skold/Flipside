@@ -109,6 +109,7 @@ Shared\Features\Inventory\InventoryCapture.lua
 Shared\Features\Mailing\MailingView.lua
 Shared\Features\Mailing\InboxList.lua
 Shared\Features\Mailing\MailHost.lua
+Shared\Features\Mailbox\MailboxWindow.lua
 Shared\Features\Destroy\DestroyWindow.lua
 Shared\Features\Crafting\CraftClient.lua
 Shared\Features\Crafting\CraftPanel.lua

@@ -1367,14 +1367,15 @@ local function inboxClientFrames()
 end
 
 -- Make the compact inbox list in the client InboxFrame. Returns nil if the client has no inbox function to reuse.
-local function createInboxList()
+-- With a page frame (the Flipside mailbox window) the list fills the page and hides no client frame.
+local function createInboxList(page)
     local inbox = _G.InboxFrame
     if not (ns.InboxList and inbox and type(InboxFrame_OnClick) == "function" and type(GetInboxHeaderInfo) == "function"
         and type(GetInboxNumItems) == "function" and type(AutoLootMailItem) == "function"
         and type(IsModifiedClick) == "function") then
         return nil
     end
-    return ns.InboxList.Create(inbox, {
+    return ns.InboxList.Create(page or inbox, {
         api = {
             numItems = GetInboxNumItems,
             header = GetInboxHeaderInfo,
@@ -1407,14 +1408,20 @@ local function createInboxList()
                 take.Begin()
             end
         end,
-        blizzard = inboxClientFrames,
+        blizzard = page and function()
+            return {}
+        end or inboxClientFrames,
         openMail = function()
             return _G.OpenMailFrame
         end,
         skin = ns.AuctionTabs and ns.AuctionTabs.Skin,
-        -- The area of the client buttons, taller: down to the Open All button.
+        -- The area of the client buttons, taller: down to the Open All button. In a page: the whole page.
         place = function(frame)
-            ns.InboxList.Anchor(frame, inbox, _G.MailItem1, _G.OpenAllMail, _G.MailItem7)
+            if page then
+                frame:SetAllPoints(page)
+            else
+                ns.InboxList.Anchor(frame, inbox, _G.MailItem1, _G.OpenAllMail, _G.MailItem7)
+            end
         end,
     })
 end
@@ -1439,7 +1446,20 @@ local function openMailing()
             local info = parsed and ns.itemCache:Get(parsed.itemID)
             return info and info.name or key
         end
-        ns.MailHost.Attach({
+        -- Forever: the window or the Blizzard mailbox. TBC has no window and keeps the wide layout.
+        local mailboxWindow = ns.Flavour.mailboxWindow and ns.MailboxWindow and ns.db
+        local host
+        local function setMailWindow(on)
+            -- A switch while a run or a take is active would hide the Stop button.
+            if host.IsBusy() then
+                printLine("Wait for the mailing run to end, then switch the mailbox")
+                return
+            end
+            if ns.MailboxWindow.SetOn(ns.db, on) then
+                host.Switch()
+            end
+        end
+        host = ns.MailHost.Attach({
             bus = ns.bus,
             after = C_Timer.After,
             take = mailTake(),
@@ -1456,9 +1476,34 @@ local function openMailing()
                 end
                 return list
             end,
-            createInbox = function()
-                return createInboxList()
+            createInbox = function(_, page)
+                return createInboxList(page)
             end,
+            mode = mailboxWindow and function()
+                return ns.MailboxWindow.IsOn(ns.db) and "window" or "plain"
+            end or nil,
+            createToggle = mailboxWindow and function(mailFrame)
+                return ns.MailboxWindow.CreateToggle(mailFrame, function()
+                    setMailWindow(true)
+                end)
+            end or nil,
+            createWindow = mailboxWindow and function()
+                return ns.MailboxWindow.Create({
+                    onToggle = function()
+                        setMailWindow(false)
+                    end,
+                    closeMail = function()
+                        local mailFrame = _G.MailFrame
+                        if mailFrame and mailFrame:IsShown() and _G.HideUIPanel then
+                            _G.HideUIPanel(mailFrame)
+                        end
+                        -- The client can refuse in combat. Then show the plain MailFrame for this visit.
+                        if mailFrame and mailFrame:IsShown() then
+                            host.Fallback()
+                        end
+                    end,
+                })
+            end or nil,
             -- The bottom bar of the view follows Open All on the Inbox tab and Cancel on the Send Mail tab.
             tabs = function()
                 local bar = ns.Flavour.mailBar
