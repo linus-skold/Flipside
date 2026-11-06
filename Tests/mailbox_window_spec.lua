@@ -254,7 +254,7 @@ describe("MailboxWindow and the Forever layouts of MailHost", function()
             assert.are.equal(2, inbox:GetNumPoints())
             assert.are.equal("BOTTOMRIGHT", (inbox:GetPoint(2)))
             assert.are.equal(mailFrame, (select(2, openMail:GetPoint(1))))
-            assert.are.equal("MEDIUM", openMail.strata)
+            assert.are.equal("MEDIUM", openMail:GetFrameStrata())
         end)
 
         it("shows only the toggle button, which opens the window", function()
