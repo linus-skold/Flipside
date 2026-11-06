@@ -22,7 +22,7 @@ local QUESTION_MARK = "Interface\\Icons\\INV_Misc_QuestionMark"
 local SLOT_BACKGROUND = "Interface\\Buttons\\UI-Slot-Background"
 local GREY, RED, WHITE = { 0.6, 0.6, 0.6 }, { 1, 0.3, 0.3 }, { 1, 1, 1 }
 -- Seconds to wait after MAIL_UNLOCK_SEND_ITEMS before a send that got no result counts as cancelled.
-local UNLOCK_WAIT = 2
+local UNLOCK_WAIT = 10
 local OWN_CHARACTERS = "Own characters"
 -- Rows (pixels from the top of the page).
 local ROW = { to = -2, resolved = -26, subject = -48, body = -74, slotsLabel = -166, slots = -182, money = -228,
@@ -125,7 +125,10 @@ function SendPage.Create(parent, deps)
             if value ~= "" then
                 self:_SetRecipient(value)
             end
-            self.characters:SetValue("")
+            -- Set the list back after the menu closes: a change inside the menu callback builds the menu again.
+            deps.after(0, function()
+                self.characters:SetValue("")
+            end)
         end,
     })
     self.characters:SetPoint("LEFT", self.recipient, "RIGHT", 10, 0)
@@ -195,7 +198,8 @@ end
 function SendPage:_Subscribe(bus)
     -- The send slots changed (an attach, a clear, a bag click, a run).
     bus:Subscribe("MAIL_SEND_INFO_UPDATE", OWNER, function()
-        if self.frame:IsShown() then
+        -- IsVisible: a tab of the window hides the parent of this frame, so IsShown stays true.
+        if self.frame:IsVisible() then
             self:Refresh()
         end
     end)
@@ -215,20 +219,28 @@ function SendPage:_Subscribe(bus)
             self.pending = false
             self.message, self.messageIsError = "Mail failed: " .. (self.lastError or "unknown reason"), true
         end
+        -- A failed send must not leave money or cash on delivery in the send slots.
+        self.deps.client.ResetMoney()
         self:Refresh()
     end)
-    -- The client unlocks the slots after its confirm popup (an unrefundable item). If the user cancels the popup,
-    -- no result comes: after a short wait the page takes the send as cancelled.
+    -- The client unlocks the slots after its confirm popup (an unrefundable item), also when the user accepts it.
+    -- The send stays pending until MAIL_SEND_SUCCESS or MAIL_FAILED. If the user cancels the popup, no result
+    -- comes: after a long wait, and only if the slots still hold items, the page takes the send as cancelled.
     bus:Subscribe("MAIL_UNLOCK_SEND_ITEMS", OWNER, function()
         self.deps.after(UNLOCK_WAIT, function()
-            if self.pending then
+            if self.pending and #self.deps.client.Items() > 0 then
                 self.pending = false
+                self.message, self.messageIsError = "The send got no result. Check the mailbox before you send again",
+                    true
+                self.deps.client.ResetMoney()
                 self:Refresh()
             end
         end)
     end)
+    -- Last: the host closed the window before this handler runs. The client has no send page when the mailbox closes.
     bus:Subscribe("MAIL_CLOSED", OWNER, function()
         self.pending = false
+        self.deps.client.SetShowing(false)
     end)
 end
 
@@ -312,11 +324,11 @@ function SendPage:Sync()
     local deps = self.deps
     local shown
     if deps.windowShown() then
-        shown = self.frame:IsShown() and not self:_Locked()
+        shown = self.frame:IsVisible() and not self:_Locked()
     else
         shown = deps.clientSendShown()
     end
-    deps.client.SetShowing(shown)
+    deps.client.SetShowing(shown and true or false)
 end
 
 -- Reads the send slots and the fields again and shows the state of the page.
@@ -339,6 +351,11 @@ function SendPage:Refresh()
     end
     local mode = Compose.Mode(self.mode, self.items)
     if mode ~= self.mode then
+        -- The last attachment went in cash on delivery mode: the amount must not turn into a money send.
+        if self.mode == Compose.COD then
+            self.money:SetCopper(nil)
+            self.message, self.messageIsError = "Cash on delivery needs an attachment. The amount is cleared", false
+        end
         self.mode = mode
         self.radio:SetValue(mode)
     end
@@ -422,6 +439,7 @@ function SendPage:Clear()
         return
     end
     self.deps.client.ClearAll()
+    self.deps.client.ResetMoney()
     self:_ResetForm()
     self:Refresh()
 end

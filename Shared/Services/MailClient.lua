@@ -180,6 +180,14 @@ function MailClient.New(api)
         end
     end
 
+    -- Sets the money and the cash on delivery amount of the mail to 0 (the client does this first at each send).
+    function client.ResetMoney()
+        if api.setMoney and api.setCOD then
+            api.setCOD(0)
+            api.setMoney(0)
+        end
+    end
+
     -- Tells the client if a Send page shows. While it is true, a right click on a bag item puts the item in the
     -- first free attachment slot (this is the client route that the Send Mail tab uses).
     function client.SetShowing(shown)
@@ -224,9 +232,9 @@ function MailClient.New(api)
             end
             recipient = name
         end
+        -- Always set both to 0 first, so no old amount goes with a mail of the mailing run.
+        client.ResetMoney()
         if options and api.setMoney and api.setCOD then
-            api.setCOD(0)
-            api.setMoney(0)
             if (options.money or 0) > 0 then
                 api.setMoney(options.money)
             end

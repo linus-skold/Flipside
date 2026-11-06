@@ -1507,7 +1507,7 @@ local function openMailing()
                         return host.window and host.window.frame:IsShown() or false
                     end,
                     clientSendShown = function()
-                        return _G.SendMailFrame and _G.SendMailFrame:IsShown() or false
+                        return _G.SendMailFrame and _G.SendMailFrame:IsVisible() or false
                     end,
                 })
             end or nil,

@@ -91,12 +91,12 @@ describe("MailboxWindow and the Forever layouts of MailHost", function()
             end
             if withSend then
                 deps.createSend = function(page)
-                    local send = { page = page, syncs = 0 }
-                    function send.Sync()
-                        send.syncs = send.syncs + 1
+                    local made = { page = page, syncs = 0 }
+                    function made.Sync()
+                        made.syncs = made.syncs + 1
                     end
-                    sends[#sends + 1] = send
-                    return send
+                    sends[#sends + 1] = made
+                    return made
                 end
             end
             deps.createWindow = function()

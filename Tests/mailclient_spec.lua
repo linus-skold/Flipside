@@ -268,9 +268,24 @@ describe("MailClient", function()
             order = {}
             c.Send("Bank", "Subject", "Hello", { money = 0, cod = 900 })
             assert.are.same({ { "cod", 0 }, { "money", 0 }, { "cod", 900 } }, order)
+            -- A send with no options (the mailing run) still sets both to 0, so no old amount goes with it.
             order = {}
             c.Send("Bank", "Subject", "Hello")
-            assert.are.same({}, order)
+            assert.are.same({ { "cod", 0 }, { "money", 0 } }, order)
+        end)
+
+        it("sets money and cash on delivery to 0 with ResetMoney, and does nothing if the api has no setter", function()
+            local order = {}
+            local c = client(4)
+            c.ResetMoney()
+            api.setMoney = function(copper)
+                order[#order + 1] = { "money", copper }
+            end
+            api.setCOD = function(copper)
+                order[#order + 1] = { "cod", copper }
+            end
+            c.ResetMoney()
+            assert.are.same({ { "cod", 0 }, { "money", 0 } }, order)
         end)
 
         it("sets no money if the recipient has no full name", function()
