@@ -213,13 +213,15 @@ end
 -- Forever layouts "plain" and "window": mode is a function that gives the key; createToggle(mailFrame) (the button
 -- on MailFrame that switches to the window), createWindow() (a MailboxWindow); in "window" create(parent) makes the
 -- view in the rules page, and createInbox(mailFrame, parent) makes the inbox list in the inbox page.
--- Returns an object with View(), the view or nil, Inbox(), the inbox list or nil, and Switch().
+-- Returns an object with View(), the view or nil, Inbox(), the inbox list or nil, IsBusy(), Switch() and Fallback().
 function MailHost.Attach(deps)
     local host = { view = nil, inbox = nil }
     -- deps.mode can be a function: it gives the key again at each MAIL_SHOW and at each host.Switch().
     local layouts, layout = {}, nil
+    -- forcePlain: the plain layout for this visit, whatever the mode says (host.Fallback).
+    local forcePlain = false
     local function pickLayout()
-        local key = type(deps.mode) == "function" and deps.mode() or deps.mode or "wide"
+        local key = forcePlain and "plain" or type(deps.mode) == "function" and deps.mode() or deps.mode or "wide"
         layouts[key] = layouts[key] or MailHost.LAYOUTS[key](deps, host)
         layout = layouts[key]
     end
@@ -247,8 +249,13 @@ function MailHost.Attach(deps)
         if not layout.noTabs then
             watchTabs(deps, host)
         end
-        host.view:Refresh()
-        viewDirty = false
+        -- A run or a take changes the bags: the view reads the plan when it ends (refreshView).
+        if host.view.run:IsRunning() or (deps.take and deps.take.IsActive()) then
+            viewDirty = true
+        else
+            host.view:Refresh()
+            viewDirty = false
+        end
         if deps.createInbox and not layout.ownInbox then
             host.inbox = host.inbox or deps.createInbox(mailFrame)
         end
@@ -272,11 +279,32 @@ function MailHost.Attach(deps)
     deps.bus:Subscribe("MAIL_SHOW", OWNER, function()
         show(true)
     end)
-    deps.bus:Subscribe("MAIL_CLOSED", OWNER, close)
+    deps.bus:Subscribe("MAIL_CLOSED", OWNER, function()
+        close()
+        forcePlain = false
+    end)
+    -- True if a mailing run or a mail take is active. A switch then would hide the Stop button.
+    function host.IsBusy()
+        return (host.view and host.view.run:IsRunning()) or (deps.take and deps.take.IsActive()) or false
+    end
     -- Apply the layout that deps.mode gives now, while the mailbox is open. Nothing happens if it is closed.
+    -- Returns false and does nothing while a run or a take is active.
     function host.Switch()
-        local frame = open
-        if frame then
+        if host.IsBusy() then
+            return false
+        end
+        forcePlain = false
+        if open then
+            close()
+            show(false)
+        end
+        return true
+    end
+    -- The window closed but MailFrame did not hide (the client refused in combat): show the plain MailFrame for
+    -- this visit. The saved setting does not change.
+    function host.Fallback()
+        if open then
+            forcePlain = true
             close()
             show(false)
         end

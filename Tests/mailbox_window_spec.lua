@@ -4,7 +4,7 @@ local mock = require("Tests.wow_mock")
 local MODULES = { "Theme", "Window", "Widgets", "Tabs", "EventBus", "MailboxWindow", "MailHost" }
 
 describe("MailboxWindow and the Forever layouts of MailHost", function()
-    local ns, bus, mailFrame, inbox, send, openMail, db, host, closeCalls, created, lists
+    local ns, bus, mailFrame, inbox, send, openMail, db, host, closeCalls, created, lists, running, refuseClose
 
     local function fakeDb()
         local values = {}
@@ -22,7 +22,7 @@ describe("MailboxWindow and the Forever layouts of MailHost", function()
 
     local function makeView(parent)
         local view = { frame = CreateFrame("Frame", nil, parent), refreshes = 0, run = { IsRunning = function()
-            return false
+            return running
         end } }
         function view:Show()
             self.frame:Show()
@@ -76,6 +76,9 @@ describe("MailboxWindow and the Forever layouts of MailHost", function()
         }
         if forever then
             local function setOn(on)
+                if host.IsBusy() then
+                    return
+                end
                 ns.MailboxWindow.SetOn(db, on)
                 host.Switch()
             end
@@ -94,6 +97,10 @@ describe("MailboxWindow and the Forever layouts of MailHost", function()
                     end,
                     closeMail = function()
                         closeCalls = closeCalls + 1
+                        -- The client refused to hide MailFrame (combat): Init.lua then calls Fallback.
+                        if refuseClose then
+                            host.Fallback()
+                        end
                     end,
                 })
             end
@@ -122,7 +129,7 @@ describe("MailboxWindow and the Forever layouts of MailHost", function()
             assert(loadfile(manifest.path(name)))("Flipside", ns)
         end
         bus = ns.EventBus.New()
-        db, closeCalls, created, lists = fakeDb(), 0, {}, {}
+        db, closeCalls, created, lists, running, refuseClose = fakeDb(), 0, {}, {}, false, false
         mailFrame = CreateFrame("Frame", "MailFrame", UIParent)
         mailFrame:SetSize(338, 424)
         inbox, send = stretched("InboxFrame"), stretched("SendMailFrame")
@@ -175,6 +182,47 @@ describe("MailboxWindow and the Forever layouts of MailHost", function()
             assert.is_true(lists[1].frame:IsShown())
             assert.are.equal(1, created[1].refreshes)
             assert.is_not_nil(pages.send)
+        end)
+
+        it("has exactly the size of MailFrame and no drag script", function()
+            local window = host.window.frame
+            assert.are.same({ 338, 424 }, { window:GetWidth(), window:GetHeight() })
+            local handle = window.TitleContainer or window
+            assert.is_nil(handle.scripts.OnDragStart)
+            assert.is_nil(handle.scripts.OnDragStop)
+        end)
+
+        it("does not switch while a run is active, and Switch returns false", function()
+            running = true
+            assert.is_true(host.IsBusy())
+            click(host.window.toggle)
+            assert.is_true(ns.MailboxWindow.IsOn(db), "the setting does not change")
+            assert.is_true(host.window.frame:IsShown())
+            assert.is_false(host.Switch())
+            running = false
+            assert.is_true(host.Switch())
+        end)
+
+        it("shows the plain MailFrame for this visit if closing the session did not hide MailFrame", function()
+            refuseClose = true
+            host.window.frame:Hide()
+            assert.are.equal(1, closeCalls)
+            assert.is_true(mailFrame:IsShown())
+            assert.is_true(host.toggle:IsShown())
+            assert.are.equal(mailFrame, (select(2, openMail:GetPoint(1))))
+            assert.are.equal("MEDIUM", openMail:GetFrameStrata())
+            assert.is_true(ns.MailboxWindow.IsOn(db), "the saved setting does not change")
+            bus:Emit("MAIL_CLOSED")
+            bus:Emit("MAIL_SHOW")
+            assert.is_true(host.window.frame:IsShown(), "the next visit uses the saved setting")
+        end)
+
+        it("does not read the plan at show while a run is active", function()
+            bus:Emit("MAIL_CLOSED")
+            local before = created[1].refreshes
+            running = true
+            bus:Emit("MAIL_SHOW")
+            assert.are.equal(before, created[1].refreshes)
         end)
 
         it("leaves the child frames of MailFrame as they are", function()

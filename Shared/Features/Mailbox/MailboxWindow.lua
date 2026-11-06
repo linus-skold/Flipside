@@ -8,7 +8,7 @@ MailboxWindow.__index = MailboxWindow
 ns.MailboxWindow = MailboxWindow
 
 local NAME = "FlipsideMailboxWindow"
--- The smallest size, in pixels. The window is never smaller than MailFrame, so it always covers it.
+-- The size in pixels if MailFrame has no size yet. The window has exactly the size of MailFrame, so it covers it.
 local MIN_WIDTH, MIN_HEIGHT = 420, 520
 local PAD = 8
 -- The space from the top edge to the tabs, and the bottom row that holds the toggle button.
@@ -62,6 +62,11 @@ function MailboxWindow.Create(deps)
     })
     -- The window follows MailFrame: the user cannot drag it away.
     frame:SetMovable(false)
+    -- Kit.CreateWindow made the title drag call StartMoving: take it off for this window only.
+    local handle = frame.TitleContainer or frame
+    handle:RegisterForDrag()
+    handle:SetScript("OnDragStart", nil)
+    handle:SetScript("OnDragStop", nil)
     self.frame = frame
     local body = CreateFrame("Frame", nil, frame)
     body:SetPoint("TOPLEFT", frame, "TOPLEFT", PAD, -BODY_TOP)
@@ -92,7 +97,8 @@ function MailboxWindow:Open(mailFrame)
     local frame = self.frame
     frame:ClearAllPoints()
     frame:SetPoint("TOPLEFT", mailFrame, "TOPLEFT", 0, 0)
-    frame:SetSize(math.max(MIN_WIDTH, mailFrame:GetWidth() or 0), math.max(MIN_HEIGHT, mailFrame:GetHeight() or 0))
+    local width, height = mailFrame:GetWidth() or 0, mailFrame:GetHeight() or 0
+    frame:SetSize(width > 0 and width or MIN_WIDTH, height > 0 and height or MIN_HEIGHT)
     if not self.hooked then
         self.hooked = true
         -- The client hides MailFrame on ESC and on a walk away: the window goes with it.

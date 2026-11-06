@@ -1450,6 +1450,11 @@ local function openMailing()
         local mailboxWindow = ns.Flavour.mailboxWindow and ns.MailboxWindow and ns.db
         local host
         local function setMailWindow(on)
+            -- A switch while a run or a take is active would hide the Stop button.
+            if host.IsBusy() then
+                printLine("Wait for the mailing run to end, then switch the mailbox")
+                return
+            end
             if ns.MailboxWindow.SetOn(ns.db, on) then
                 host.Switch()
             end
@@ -1488,8 +1493,13 @@ local function openMailing()
                         setMailWindow(false)
                     end,
                     closeMail = function()
-                        if _G.MailFrame and _G.MailFrame:IsShown() and _G.HideUIPanel then
-                            _G.HideUIPanel(_G.MailFrame)
+                        local mailFrame = _G.MailFrame
+                        if mailFrame and mailFrame:IsShown() and _G.HideUIPanel then
+                            _G.HideUIPanel(mailFrame)
+                        end
+                        -- The client can refuse in combat. Then show the plain MailFrame for this visit.
+                        if mailFrame and mailFrame:IsShown() then
+                            host.Fallback()
                         end
                     end,
                 })
