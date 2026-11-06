@@ -1354,7 +1354,7 @@ D16 names the commands `/flipside` and `/flip`. Both do the same. The handler is
 | `/flip minimap` | Shows or hides the minimap button and saves the choice |
 | `/flip resetpos` | Puts the Flipside window back in the centre and forgets the saved position |
 
-Any other text prints a short help with the profile name, the version and the scan state.
+Any other text prints a short help with the profile name, the version, the scan state and the list of commands that exist on the client.
 
 
 The MVP is done when a player on WoW: Forever can scan, see prices in tooltips, buy and sell by group rules and see profit in the ledger. Vendoring moved to Phase 2 on 2026-11-06. Phases follow the Phase column in the feature list; changing a dropdown there moves a feature.
