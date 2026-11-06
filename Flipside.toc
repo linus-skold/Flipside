@@ -52,6 +52,7 @@ Shared\Services\CharacterName.lua
 Shared\Services\MailingPlan.lua
 Shared\Services\AutoRules.lua
 Shared\Services\MailClient.lua
+Shared\Services\MailCompose.lua
 Shared\Services\BagSnapshot.lua
 Shared\Services\MailTake.lua
 Shared\Services\MailingRun.lua
@@ -110,6 +111,7 @@ Shared\Features\Mailing\MailingView.lua
 Shared\Features\Mailing\InboxList.lua
 Shared\Features\Mailing\MailHost.lua
 Shared\Features\Mailbox\MailboxWindow.lua
+Shared\Features\Mailbox\SendPage.lua
 Shared\Features\Destroy\DestroyWindow.lua
 Shared\Features\Crafting\CraftClient.lua
 Shared\Features\Crafting\CraftPanel.lua

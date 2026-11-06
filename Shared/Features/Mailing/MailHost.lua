@@ -155,6 +155,16 @@ MailHost.LAYOUTS = {
             if not host.inbox and deps.createInbox then
                 host.inbox = deps.createInbox(mailFrame, box.pages.inbox)
             end
+            if not host.send and deps.createSend then
+                host.send = deps.createSend(box.pages.send)
+                if box.sendNote then
+                    box.sendNote:Hide()
+                end
+            end
+            if host.send then
+                -- The page tells the client if a send page shows: the window opens over the client tab.
+                host.send:Sync()
+            end
             local openMail = deps.openMail and deps.openMail()
             if openMail and not saved then
                 saved = { points = moveOpenMail(openMail, box.frame), strata = openMail:GetFrameStrata() }
@@ -214,7 +224,8 @@ end
 -- take (optional, a MailTake): while it is active, the view does not read the bags; it reads once when the take ends.
 -- Forever layouts "plain" and "window": mode is a function that gives the key; createToggle(mailFrame) (the button
 -- on MailFrame that switches to the window), createWindow() (a MailboxWindow); in "window" create(parent) makes the
--- view in the rules page, and createInbox(mailFrame, parent) makes the inbox list in the inbox page.
+-- view in the rules page, and createInbox(mailFrame, parent) makes the inbox list in the inbox page. createSend(parent)
+-- (optional) makes the Send page in the send page (a SendPage); host.send is that page.
 -- Returns an object with View(), the view or nil, Inbox(), the inbox list or nil, IsBusy(), Switch() and Fallback().
 function MailHost.Attach(deps)
     local host = { view = nil, inbox = nil }

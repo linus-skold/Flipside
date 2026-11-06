@@ -5,6 +5,7 @@ local MODULES = { "Theme", "Window", "Widgets", "Tabs", "EventBus", "MailboxWind
 
 describe("MailboxWindow and the Forever layouts of MailHost", function()
     local ns, bus, mailFrame, inbox, send, openMail, db, host, closeCalls, created, lists, running, refuseClose, said
+    local withSend, sends
 
     local function fakeDb()
         local values = {}
@@ -88,6 +89,16 @@ describe("MailboxWindow and the Forever layouts of MailHost", function()
                     setOn(true)
                 end)
             end
+            if withSend then
+                deps.createSend = function(page)
+                    local send = { page = page, syncs = 0 }
+                    function send.Sync()
+                        send.syncs = send.syncs + 1
+                    end
+                    sends[#sends + 1] = send
+                    return send
+                end
+            end
             deps.createWindow = function()
                 return ns.MailboxWindow.Create({
                     onToggle = function()
@@ -128,6 +139,7 @@ describe("MailboxWindow and the Forever layouts of MailHost", function()
         end
         bus = ns.EventBus.New()
         db, closeCalls, created, lists, running, refuseClose, said = fakeDb(), 0, {}, {}, false, false, {}
+        withSend, sends = false, {}
         mailFrame = CreateFrame("Frame", "MailFrame", UIParent)
         mailFrame:SetSize(338, 424)
         inbox, send = stretched("InboxFrame"), stretched("SendMailFrame")
@@ -309,6 +321,26 @@ describe("MailboxWindow and the Forever layouts of MailHost", function()
             assert.is_false(flip())
             assert.is_true(ns.MailboxWindow.IsOn(db))
             assert.are.equal(1, #said)
+        end)
+    end)
+
+    describe("with a Send page", function()
+        before_each(function()
+            withSend = true
+            attach(true)
+            bus:Emit("MAIL_SHOW")
+        end)
+
+        it("makes the page once in the send page, hides the note and tells the page at each open", function()
+            assert.are.equal(1, #sends)
+            assert.are.equal(host.window.pages.send, sends[1].page)
+            assert.are.equal(sends[1], host.send)
+            assert.is_false(host.window.sendNote:IsShown())
+            assert.are.equal(1, sends[1].syncs)
+            bus:Emit("MAIL_CLOSED")
+            bus:Emit("MAIL_SHOW")
+            assert.are.equal(1, #sends)
+            assert.are.equal(2, sends[1].syncs)
         end)
     end)
 

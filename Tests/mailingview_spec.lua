@@ -342,6 +342,23 @@ describe("MailingView", function()
         assert.are.equal(0, #confirms)
     end)
 
+    it("does not start a run while blocked() gives a text, and shows the text", function()
+        local text = "The mail slots hold items: send or clear that mail first"
+        view.deps.blocked = function()
+            return text
+        end
+        view:RunRule(20)
+        view:RunAll()
+        assert.are.equal(0, #confirms)
+        assert.are.equal(0, #started)
+        assert.are.equal(text, view.status:GetText())
+        view.deps.blocked = function()
+            return nil
+        end
+        view:RunRule(20)
+        assert.are.equal(1, #confirms)
+    end)
+
     it("shows the rule and mail count in the status line when idle", function()
         assert.are.equal("6 rules, 3 mails ready", view.statusText)
         assert.is_true(view.runAll.enabled)
