@@ -16,6 +16,9 @@ local function UnitPriceFromBuyout(buyoutAmount, count)
     return buyoutAmount / count
 end
 
+-- A legacy browse page holds at most 50 rows. A longer list is a get-all result, which Flipside does not capture.
+local MAX_PAGE_ROWS = 50
+
 local function IsPositiveInteger(value)
     return type(value) == "number" and value > 0 and value == math.floor(value)
 end
@@ -149,7 +152,7 @@ end
 -- Save the rows of one legacy list page. rows: { itemID, count, buyout, link }; buyout is for the whole stack.
 -- full is true if the page holds all results of the query. A row that has no key or no buyout is skipped.
 function Capture:OnPageResults(rows, full)
-    if type(rows) ~= "table" or not self:_CanCapture() then
+    if type(rows) ~= "table" or #rows > MAX_PAGE_ROWS or not self:_CanCapture() then
         return
     end
     local keyFor = self.keyFor
