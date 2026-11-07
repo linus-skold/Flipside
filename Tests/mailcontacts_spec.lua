@@ -26,7 +26,7 @@ describe("MailContacts", function()
                 friends = { "frank", "Anna" },
                 own = { "Wolf", "bear" },
             })
-            assert.are.same({ "Own characters", "Friends", "Guild", "Contacts" }, titles(groups))
+            assert.are.same({ "Own characters", "Friends", "Guild", "Saved" }, titles(groups))
             assert.are.same({ "bear", "Wolf" }, groups[1].names)
             assert.are.same({ "Anna", "frank" }, groups[2].names)
             assert.are.same({ "Beta", "gamma" }, groups[3].names)
@@ -63,6 +63,23 @@ describe("MailContacts", function()
             assert.are.same({ "Anna" }, groups[1].names)
             assert.are.same({ "Bob" }, groups[2].names)
             assert.are.same({ "Cleo" }, groups[3].names)
+        end)
+
+        it("matches Name, Name-Realm and Name-Surname spellings of one character", function()
+            local groups = Contacts.Merge({
+                own = { "Anna Smith", "Bea" },
+                friends = { "Anna-Smith", "BEA-Home Realm", "Cara-Home Realm" },
+                guild = { "Cara", "Dora-Other", "dora other", "Me-Home Realm" },
+            }, { "Me-Home Realm", "Me" }, "Home Realm")
+            assert.are.same({ "Anna Smith", "Bea" }, groups[1].names)
+            assert.are.same({ "Cara-Home Realm" }, groups[2].names)
+            assert.are.same({ "Dora-Other" }, groups[3].names)
+        end)
+
+        it("keeps a name of another realm apart from the same name of the home realm", function()
+            local groups = Contacts.Merge({ own = { "Anna" }, friends = { "Anna-Other" } }, nil, "Home")
+            assert.are.same({ "Anna" }, groups[1].names)
+            assert.are.same({ "Anna-Other" }, groups[2].names)
         end)
 
         it("drops empty and bad entries and trims the names", function()
@@ -104,7 +121,7 @@ describe("MailContacts", function()
                 { value = "", text = "Contacts" },
                 { value = "", text = "Friends", header = true },
                 { value = "Anna", text = "Anna" },
-                { value = "", text = "Contacts", header = true },
+                { value = "", text = "Saved", header = true },
                 { value = "Zed", text = "Zed" },
             }, items)
         end)
@@ -138,7 +155,7 @@ describe("MailContacts", function()
             local list, added, reason = Contacts.Add({ "Anna" }, "ANNA")
             assert.is_false(added)
             assert.are.same({ "Anna" }, list)
-            assert.are.equal("ANNA is already a contact", reason)
+            assert.are.equal("ANNA is already saved", reason)
         end)
 
         it("removes a name, case does not matter, and does not change the old list", function()
@@ -155,6 +172,38 @@ describe("MailContacts", function()
             assert.are.same({ "Anna" }, list)
             assert.is_false((select(2, Contacts.Remove({ "Anna" }, ""))))
             assert.is_false((select(2, Contacts.Remove(nil, "Anna"))))
+        end)
+
+        it("refuses a name over the client limit", function()
+            local long = string.rep("a", Contacts.MAX_NAME + 1)
+            local list, added, reason = Contacts.Add({}, long)
+            assert.is_false(added)
+            assert.are.same({}, list)
+            assert.are.equal("The name is too long", reason)
+            assert.is_true((select(2, Contacts.Add({}, string.rep("a", Contacts.MAX_NAME)))))
+            assert.are.equal(77, Contacts.MAX_NAME)
+        end)
+
+        it("refuses the current character in any spelling", function()
+            local rules = { exclude = { "Me-Home Realm", "Me" }, realm = "Home Realm" }
+            for _, text in ipairs({ "Me", "me", "ME-home realm" }) do
+                local list, added, reason = Contacts.Add({}, text, rules)
+                assert.is_false(added)
+                assert.are.same({}, list)
+                assert.are.equal("That is the current character", reason)
+            end
+            assert.is_true((select(2, Contacts.Add({}, "Me-Other", rules))))
+        end)
+
+        it("refuses a saved name in another spelling and removes it in any spelling", function()
+            local list, added = Contacts.Add({ "Anna-Home" }, "anna", { realm = "Home" })
+            assert.is_false(added)
+            assert.are.same({ "Anna-Home" }, list)
+            local rest, removed = Contacts.Remove({ "Anna-Home", "Bob" }, "ANNA", "Home")
+            assert.is_true(removed)
+            assert.are.same({ "Bob" }, rest)
+            assert.is_true(Contacts.Has({ "Anna-Home" }, "Anna", "Home"))
+            assert.is_false(Contacts.Has({ "Anna-Home" }, "Anna"))
         end)
 
         it("tells if a name is in the list", function()

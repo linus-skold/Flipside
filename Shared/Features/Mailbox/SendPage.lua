@@ -101,7 +101,7 @@ end
 -- clientSendShown() (true while the Send Mail tab of the client shows).
 -- Optional deps for the contact list (MailContacts): friends() and guild() (lists of names), request() (asks the
 -- client for new friend and guild data), contacts() (the manual list) and saveContacts(list) (returns false if it
--- cannot save). moneyText(copper) gives the money text for the subject default.
+-- cannot save), realm() (the home realm, for the match of "Name" and "Name-Realm"). moneyText(copper) gives the money text for the subject default.
 -- Returns a page object: frame, Refresh(), Sync(), Clear(), OnTab(key).
 function SendPage.Create(parent, deps)
     local Kit, Compose = ns.Kit, ns.MailCompose
@@ -275,6 +275,7 @@ function SendPage:_LoadContacts()
     local deps, Contacts = self.deps, ns.MailContacts
     local own = deps.selfName and deps.selfName()
     local exclude = {}
+    self.realm = deps.realm and deps.realm() or nil
     if own then
         exclude = { own, ns.CharacterName.Display(own), ns.CharacterName.Plain(own) }
     end
@@ -284,13 +285,14 @@ function SendPage:_LoadContacts()
             ownNames[#ownNames + 1] = ns.CharacterName.Display(key)
         end
     end
+    self.exclude = exclude
     self.manual = deps.contacts and deps.contacts() or {}
     local groups = Contacts.Merge({
         own = ownNames,
         friends = deps.friends and deps.friends() or {},
         guild = deps.guild and deps.guild() or {},
         manual = self.manual,
-    }, exclude)
+    }, exclude, self.realm)
     self.names = Contacts.Flat(groups)
     self.contactList:SetItems(Contacts.MenuItems(groups, CONTACTS))
 end
@@ -316,7 +318,8 @@ function SendPage:_SaveContact()
     if not deps.saveContacts then
         return
     end
-    local list, added, reason = ns.MailContacts.Add(self.manual, self.recipient:GetText())
+    local list, added, reason = ns.MailContacts.Add(self.manual, self.recipient:GetText(),
+        { exclude = self.exclude, realm = self.realm })
     if not added then
         self:_Say(reason, true)
         return
@@ -335,7 +338,7 @@ function SendPage:_RemoveContact()
     if not deps.saveContacts then
         return
     end
-    local list, removed = ns.MailContacts.Remove(self.manual, self.recipient:GetText())
+    local list, removed = ns.MailContacts.Remove(self.manual, self.recipient:GetText(), self.realm)
     if not removed then
         self:_Say("The recipient is not a saved contact", true)
         return
@@ -471,9 +474,10 @@ function SendPage:Refresh()
     self.sendButton:SetEnabled(ok and not self.pending)
     local Contacts = ns.MailContacts
     local typed = recipient.text
-    self.saveContact:SetEnabled(deps.saveContacts ~= nil and typed ~= "" and not Contacts.Has(self.names, typed)
-        and not Contacts.Has(self.manual, typed))
-    self.removeContact:SetEnabled(deps.saveContacts ~= nil and Contacts.Has(self.manual, typed))
+    local realm = self.realm
+    local _, canAdd = Contacts.Add(self.manual, typed, { exclude = self.exclude, realm = realm })
+    self.saveContact:SetEnabled(deps.saveContacts ~= nil and canAdd and not Contacts.Has(self.names, typed, realm))
+    self.removeContact:SetEnabled(deps.saveContacts ~= nil and Contacts.Has(self.manual, typed, realm))
     self.money:SetEnabled(not running)
     if running then
         self.status:SetText("A mailing run is active. The Send page waits.")

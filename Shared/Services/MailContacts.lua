@@ -13,13 +13,31 @@ MailContacts.GROUPS = {
     { key = "own", title = "Own characters" },
     { key = "friends", title = "Friends" },
     { key = "guild", title = "Guild" },
-    { key = "manual", title = "Contacts" },
+    { key = "manual", title = "Saved" },
 }
+-- The longest recipient name: letters="77" of SendMailNameEditBox in Blizzard_MailFrame/MailFrame.xml (Forever).
+MailContacts.MAX_NAME = 77
 -- Seconds between two requests to the client for a new friend list and guild roster.
 MailContacts.REQUEST_WAIT = 15
 
 local function trim(text)
     return (tostring(text or ""):match("^%s*(.-)%s*$"))
+end
+
+-- The text that two spellings of one character share, so the merge and the checks match them. Case does not
+-- matter. A realm suffix "-Realm" of the home realm (realm, optional) goes away: "Anna-Home" is "Anna". Any other
+-- "-" counts as a space: "Anna-Surname" is "Anna Surname". Spaces and "-" in the realm do not matter.
+function MailContacts.Key(name, realm)
+    name = trim(name):lower()
+    local base, suffix = name:match("^(.-)%-(.+)$")
+    if base and base ~= "" then
+        local home = realm and (tostring(realm):lower():gsub("[%s%-]", "")) or ""
+        if home ~= "" and (suffix:gsub("[%s%-]", "")) == home then
+            return base
+        end
+        return base .. " " .. suffix
+    end
+    return name
 end
 
 local function before(a, b)
@@ -47,14 +65,14 @@ function MailContacts.Clean(list)
     return result
 end
 
--- Returns true if the name is in the list (case does not matter).
-function MailContacts.Has(list, name)
-    name = trim(name):lower()
-    if name == "" then
+-- Returns true if the name is in the list (MailContacts.Key spelling; realm is optional).
+function MailContacts.Has(list, name, realm)
+    if trim(name) == "" then
         return false
     end
+    local wanted = MailContacts.Key(name, realm)
     for _, entry in ipairs(list or {}) do
-        if type(entry) == "string" and entry:lower() == name then
+        if type(entry) == "string" and MailContacts.Key(entry, realm) == wanted then
             return true
         end
     end
@@ -62,21 +80,22 @@ function MailContacts.Has(list, name)
 end
 
 -- Merges the sources into groups. sources has a list of names for each group key (own, friends, guild, manual).
--- exclude is a list of names that must not show (the current character). Returns a list of
+-- exclude is a list of names that must not show (the current character). realm (optional) is the home realm
+-- for MailContacts.Key: "Anna", "anna" and "Anna-Realm" are one name. Returns a list of
 -- { key, title, names } in the order of MailContacts.GROUPS. A group with no name is not in the list. Each name
 -- shows once, in the first group that holds it. The names of a group are sorted, case does not matter.
-function MailContacts.Merge(sources, exclude)
+function MailContacts.Merge(sources, exclude, realm)
     local seen = {}
     for _, name in ipairs(exclude or {}) do
         if type(name) == "string" and trim(name) ~= "" then
-            seen[trim(name):lower()] = true
+            seen[MailContacts.Key(name, realm)] = true
         end
     end
     local groups = {}
     for _, group in ipairs(MailContacts.GROUPS) do
         local names = {}
         for _, name in ipairs(MailContacts.Clean((sources or {})[group.key])) do
-            local key = name:lower()
+            local key = MailContacts.Key(name, realm)
             if not seen[key] then
                 seen[key] = true
                 names[#names + 1] = name
@@ -114,15 +133,23 @@ function MailContacts.MenuItems(groups, placeholder)
 end
 
 -- Adds a name to the manual list. Returns the new list (the old list does not change), true, or the old list copy,
--- false and a reason. An empty name and a name that the list holds already (case does not matter) are refused.
-function MailContacts.Add(list, name)
+-- false and a reason. Refused: an empty name, a name over MAX_NAME letters, the current character and a name that
+-- the list holds already. rules (optional): exclude (names of the current character) and realm (MailContacts.Key).
+function MailContacts.Add(list, name, rules)
+    rules = rules or {}
     local current = MailContacts.Clean(list)
     name = trim(name)
     if name == "" then
         return current, false, "Enter a name first"
     end
-    if MailContacts.Has(current, name) then
-        return current, false, name .. " is already a contact"
+    if #name > MailContacts.MAX_NAME then
+        return current, false, "The name is too long"
+    end
+    if MailContacts.Has(rules.exclude, name, rules.realm) then
+        return current, false, "That is the current character"
+    end
+    if MailContacts.Has(current, name, rules.realm) then
+        return current, false, name .. " is already saved"
     end
     current[#current + 1] = name
     return current, true
@@ -130,11 +157,14 @@ end
 
 -- Removes a name from the manual list. Returns the new list and true, or the list copy and false if the name is
 -- not in the list.
-function MailContacts.Remove(list, name)
+function MailContacts.Remove(list, name, realm)
     local current = MailContacts.Clean(list)
-    name = trim(name):lower()
+    if trim(name) == "" then
+        return current, false
+    end
+    local wanted = MailContacts.Key(name, realm)
     for index, entry in ipairs(current) do
-        if entry:lower() == name then
+        if MailContacts.Key(entry, realm) == wanted then
             table.remove(current, index)
             return current, true
         end

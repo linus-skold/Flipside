@@ -1502,6 +1502,7 @@ local function openMailing()
                     -- The contact list: friends and guild from the client, the manual list in the account setting.
                     friends = ns.MailContacts.Friends,
                     guild = ns.MailContacts.GuildMembers,
+                    realm = GetNormalizedRealmName,
                     request = function()
                         ns.MailContacts.Request(GetTime())
                     end,

@@ -169,6 +169,10 @@ function frameMethods:GetText()
     return self.text
 end
 
+function frameMethods:SetCursorPosition(position)
+    self.cursor = position
+end
+
 function frameMethods:SetID(id)
     self.id = id
 end
