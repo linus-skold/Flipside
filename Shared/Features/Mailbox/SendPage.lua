@@ -101,7 +101,8 @@ end
 -- clientSendShown() (true while the Send Mail tab of the client shows).
 -- Optional deps for the contact list (MailContacts): friends() and guild() (lists of names), request() (asks the
 -- client for new friend and guild data), contacts() (the manual list) and saveContacts(list) (returns false if it
--- cannot save), realm() (the home realm, for the match of "Name" and "Name-Realm"). moneyText(copper) gives the money text for the subject default.
+-- cannot save), realm() (the home realm, for the match of "Name" and "Name-Realm"). moneyText(copper) gives the
+-- money text for the subject default.
 -- Returns a page object: frame, Refresh(), Sync(), Clear(), OnTab(key).
 function SendPage.Create(parent, deps)
     local Kit, Compose = ns.Kit, ns.MailCompose
