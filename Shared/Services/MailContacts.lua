@@ -134,8 +134,8 @@ end
 
 -- Adds a name to the manual list. Returns the new list (the old list does not change), true, or the old list copy,
 -- false and a reason. Refused: an empty name, a name over MAX_NAME letters, the current character and a name that
--- the list holds already. rules (optional): exclude (names of the current character), listed (names that the groups show already, an own
--- character, a friend or a guild member) and realm (MailContacts.Key).
+-- the list holds already, and a name that another group lists. rules (optional): exclude (names of the current
+-- character), listed (the names that the groups show: own characters, friends, guild) and realm (MailContacts.Key).
 function MailContacts.Add(list, name, rules)
     rules = rules or {}
     local current = MailContacts.Clean(list)
