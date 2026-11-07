@@ -218,6 +218,10 @@ function frameMethods:EnableMouse(enabled)
     self.mouse = enabled
 end
 
+function frameMethods:IsMouseEnabled()
+    return self.mouse == true
+end
+
 function frameMethods:RegisterForDrag(...)
     self.dragButtons = { ... }
 end
@@ -372,6 +376,10 @@ function frameMethods:SetAlpha(alpha)
     self.alpha = alpha
 end
 
+function frameMethods:GetAlpha()
+    return self.alpha or 1
+end
+
 function frameMethods:SetBlendMode(mode)
     self.blendMode = mode
 end
@@ -387,6 +395,14 @@ function frameMethods:GenerateMenu()
     local items = {}
     self.menuItems = items
     local root = {}
+    self.menuTitles, self.menuScroll = {}, nil
+    -- A title sits before the item that comes next: at is the index of that item.
+    function root.CreateTitle(_, text)
+        table.insert(self.menuTitles, { text = text, at = #items + 1 })
+    end
+    function root.SetScrollMode(_, extent)
+        self.menuScroll = extent
+    end
     function root.CreateRadio(_, text, isSelected, setSelected, value)
         table.insert(items, {
             text = text, value = value,

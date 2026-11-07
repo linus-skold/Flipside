@@ -5,7 +5,7 @@ local MODULES = { "Theme", "Window", "Widgets", "Tabs", "EventBus", "MailboxWind
 
 describe("MailboxWindow and the Forever layouts of MailHost", function()
     local ns, bus, mailFrame, inbox, send, openMail, db, host, closeCalls, created, lists, running, refuseClose, said
-    local withSend, sends
+    local withSend, sends, tabKeys
 
     local function fakeDb()
         local values = {}
@@ -104,6 +104,9 @@ describe("MailboxWindow and the Forever layouts of MailHost", function()
                     onToggle = function()
                         setOn(false)
                     end,
+                    onTab = function(key)
+                        tabKeys[#tabKeys + 1] = key
+                    end,
                     closeMail = function()
                         closeCalls = closeCalls + 1
                         -- The client refused to hide MailFrame (combat): Init.lua then calls Fallback.
@@ -139,7 +142,7 @@ describe("MailboxWindow and the Forever layouts of MailHost", function()
         end
         bus = ns.EventBus.New()
         db, closeCalls, created, lists, running, refuseClose, said = fakeDb(), 0, {}, {}, false, false, {}
-        withSend, sends = false, {}
+        withSend, sends, tabKeys = false, {}, {}
         mailFrame = CreateFrame("Frame", "MailFrame", UIParent)
         mailFrame:SetSize(338, 424)
         inbox, send = stretched("InboxFrame"), stretched("SendMailFrame")
@@ -321,6 +324,112 @@ describe("MailboxWindow and the Forever layouts of MailHost", function()
             assert.is_false(flip())
             assert.is_true(ns.MailboxWindow.IsOn(db))
             assert.are.equal(1, #said)
+        end)
+    end)
+
+    describe("while the window shows, MailFrame", function()
+        local tab1, tab2, hides
+
+        before_each(function()
+            mailFrame:EnableMouse(true)
+            tab1 = CreateFrame("Button", "MailFrameTab1", mailFrame)
+            tab2 = CreateFrame("Button", "MailFrameTab2", mailFrame)
+            tab1:EnableMouse(true)
+            tab2:EnableMouse(true)
+            _G.MailFrameTab1, _G.MailFrameTab2 = tab1, tab2
+            hides = 0
+            mailFrame:HookScript("OnHide", function()
+                hides = hides + 1
+            end)
+            openMail:Show()
+            attach(true)
+            bus:Emit("MAIL_SHOW")
+        end)
+
+        after_each(function()
+            _G.MailFrameTab1, _G.MailFrameTab2 = nil, nil
+        end)
+
+        local function assertConcealed()
+            for _, frame in ipairs({ mailFrame, tab1, tab2 }) do
+                assert.are.equal(0, frame:GetAlpha())
+                assert.is_false(frame:IsMouseEnabled())
+            end
+        end
+
+        local function assertRevealed()
+            for _, frame in ipairs({ mailFrame, tab1, tab2 }) do
+                assert.are.equal(1, frame:GetAlpha())
+                assert.is_true(frame:IsMouseEnabled())
+            end
+        end
+
+        it("is invisible and takes no mouse, with the tabs, but stays shown", function()
+            assertConcealed()
+            assert.is_true(mailFrame:IsShown())
+            assert.are.equal(0, hides, "MailFrame is never hidden, which would close the mail session")
+        end)
+
+        it("leaves the open-mail frame visible beside the window", function()
+            assert.are.equal(1, openMail:GetAlpha())
+            assert.is_true(openMail:IsShown())
+        end)
+
+        it("shows again when the user switches to the Blizzard mailbox, and hides again on the way back", function()
+            click(host.window.toggle)
+            assertRevealed()
+            assert.is_true(mailFrame:IsShown())
+            click(host.toggle)
+            assertConcealed()
+            assert.are.equal(0, hides)
+        end)
+
+        it("shows again on MAIL_CLOSED", function()
+            bus:Emit("MAIL_CLOSED")
+            assertRevealed()
+            assert.are.equal(0, hides)
+        end)
+
+        it("shows again when MailFrame hides (ESC or walking away)", function()
+            mailFrame:Hide()
+            assertRevealed()
+        end)
+
+        it("shows again when the user closes the window, also if the client keeps MailFrame", function()
+            host.window.frame:Hide()
+            assert.are.equal(1, closeCalls)
+            assertRevealed()
+        end)
+
+        it("keeps the old alpha and mouse state of a frame", function()
+            bus:Emit("MAIL_CLOSED")
+            mailFrame:SetAlpha(0.5)
+            tab1:EnableMouse(false)
+            bus:Emit("MAIL_SHOW")
+            assert.are.equal(0, mailFrame:GetAlpha())
+            bus:Emit("MAIL_CLOSED")
+            assert.are.equal(0.5, mailFrame:GetAlpha())
+            assert.is_false(tab1:IsMouseEnabled())
+            assert.is_true(tab2:IsMouseEnabled())
+        end)
+
+        it("is not changed with the Blizzard mailbox setting", function()
+            bus:Emit("MAIL_CLOSED")
+            ns.MailboxWindow.SetOn(db, false)
+            bus:Emit("MAIL_SHOW")
+            assertRevealed()
+        end)
+    end)
+
+    describe("the page tabs", function()
+        it("tell the host which page the user chose, and not at the first open", function()
+            attach(true)
+            bus:Emit("MAIL_SHOW")
+            assert.are.same({}, tabKeys)
+            host.window.tabs:Select("inbox")
+            host.window.tabs:Select("rules")
+            host.window.tabs:Select("send")
+            assert.are.same({ "inbox", "rules", "send" }, tabKeys)
         end)
     end)
 

@@ -23,7 +23,10 @@ local SLOT_BACKGROUND = "Interface\\Buttons\\UI-Slot-Background"
 local GREY, RED, WHITE = { 0.6, 0.6, 0.6 }, { 1, 0.3, 0.3 }, { 1, 1, 1 }
 -- Seconds to wait after MAIL_UNLOCK_SEND_ITEMS before a send that got no result counts as cancelled.
 local UNLOCK_WAIT = 10
-local OWN_CHARACTERS = "Own characters"
+local CONTACTS = "Contacts"
+-- The most height of the contact menu in pixels (a guild list is long: the menu scrolls), and the seconds that the
+-- page waits after a friend or guild event before it reads the contacts again.
+local MENU_EXTENT, CONTACTS_DELAY = 320, 2
 -- Rows (pixels from the top of the page).
 local ROW = { to = -2, resolved = -26, subject = -48, body = -74, slotsLabel = -166, slots = -182, money = -228,
     postage = -262 }
@@ -96,7 +99,10 @@ end
 -- (the key of this character), mailName(text, keys) (CharacterName.MailName), formatMoney(copper), isRunning()
 -- (true while a mailing run uses the send slots), windowShown() (true while the Flipside window shows),
 -- clientSendShown() (true while the Send Mail tab of the client shows).
--- Returns a page object: frame, Refresh(), Sync(), Clear().
+-- Optional deps for the contact list (MailContacts): friends() and guild() (lists of names), request() (asks the
+-- client for new friend and guild data), contacts() (the manual list) and saveContacts(list) (returns false if it
+-- cannot save). moneyText(copper) gives the money text for the subject default.
+-- Returns a page object: frame, Refresh(), Sync(), Clear(), OnTab(key).
 function SendPage.Create(parent, deps)
     local Kit, Compose = ns.Kit, ns.MailCompose
     local self = setmetatable({
@@ -118,20 +124,29 @@ function SendPage.Create(parent, deps)
     self.recipient:SetScript("OnTextChanged", function(box, userInput)
         self:_RecipientChanged(box, userInput)
     end)
-    self.characters = Kit.Dropdown(frame, 150, {
-        items = { { value = "", text = OWN_CHARACTERS } },
+    self.contactList = Kit.Dropdown(frame, 150, {
+        items = { { value = "", text = CONTACTS } },
         value = "",
+        scrollExtent = MENU_EXTENT,
         onChange = function(value)
             if value ~= "" then
                 self:_SetRecipient(value)
             end
             -- Set the list back after the menu closes: a change inside the menu callback builds the menu again.
             deps.after(0, function()
-                self.characters:SetValue("")
+                self.contactList:SetValue("")
             end)
         end,
     })
-    self.characters:SetPoint("LEFT", self.recipient, "RIGHT", 10, 0)
+    self.contactList:SetPoint("LEFT", self.recipient, "RIGHT", 10, 0)
+    self.saveContact = Kit.Button(frame, "Save", 56, function()
+        self:_SaveContact()
+    end)
+    self.saveContact:SetPoint("LEFT", self.contactList, "RIGHT", 6, 0)
+    self.removeContact = Kit.Button(frame, "Remove", 66, function()
+        self:_RemoveContact()
+    end)
+    self.removeContact:SetPoint("LEFT", self.saveContact, "RIGHT", 4, 0)
     self.resolved = Kit.Label(frame, "", "small")
     self.resolved:SetPoint("TOPLEFT", frame, "TOPLEFT", LABEL_WIDTH + 6, ROW.resolved)
 
@@ -173,17 +188,20 @@ function SendPage.Create(parent, deps)
         self:_Send()
     end)
     self.sendButton:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", 0, 0)
-    self.clearButton = Kit.Button(frame, "Clear", 90, function()
-        self:Clear()
-    end)
-    self.clearButton:SetPoint("RIGHT", self.sendButton, "LEFT", -6, 0)
     self.status = Kit.Label(frame, "", "small")
     self.status:SetJustifyH("LEFT")
     self.status:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 0, 4)
-    self.status:SetPoint("RIGHT", self.clearButton, "LEFT", -6, 0)
+    self.status:SetPoint("RIGHT", self.sendButton, "LEFT", -6, 0)
+
+    -- Tab and Shift-Tab: recipient, subject, text, gold, silver, copper, and round again.
+    Kit.TabOrder({ self.recipient, self.subject, self.body.EditBox, self.money.gold, self.money.silver,
+        self.money.copper })
 
     frame:SetScript("OnShow", function()
-        self:_LoadNames()
+        if deps.request then
+            deps.request()
+        end
+        self:_LoadContacts()
         self:Refresh()
     end)
     frame:SetScript("OnHide", function()
@@ -191,7 +209,7 @@ function SendPage.Create(parent, deps)
     end)
     self:_Subscribe(deps.bus)
     self.ready = true
-    self:_LoadNames()
+    self:_LoadContacts()
     return self
 end
 
@@ -237,6 +255,13 @@ function SendPage:_Subscribe(bus)
             end
         end)
     end)
+    -- The friend list and the guild roster come after a request, and change while the page shows.
+    bus:Subscribe("FRIENDLIST_UPDATE", OWNER, function()
+        self:_ContactsChanged()
+    end)
+    bus:Subscribe("GUILD_ROSTER_UPDATE", OWNER, function()
+        self:_ContactsChanged()
+    end)
     -- Last: the host closed the window before this handler runs. The client has no send page when the mailbox closes.
     bus:Subscribe("MAIL_CLOSED", OWNER, function()
         self.pending = false
@@ -244,23 +269,83 @@ function SendPage:_Subscribe(bus)
     end)
 end
 
--- Reads the own characters again: the names for the list and the autocomplete.
-function SendPage:_LoadNames()
-    local deps = self.deps
+-- Reads all contact sources again: the own characters, the friends, the guild and the manual list. They make the
+-- groups of the contact list and the names for the autocomplete. The current character is not in them.
+function SendPage:_LoadContacts()
+    local deps, Contacts = self.deps, ns.MailContacts
     local own = deps.selfName and deps.selfName()
-    local names = {}
+    local exclude = {}
+    if own then
+        exclude = { own, ns.CharacterName.Display(own), ns.CharacterName.Plain(own) }
+    end
+    local ownNames = {}
     for _, key in ipairs(deps.characters()) do
         if key ~= own then
-            names[#names + 1] = ns.CharacterName.Display(key)
+            ownNames[#ownNames + 1] = ns.CharacterName.Display(key)
         end
     end
-    table.sort(names)
-    self.names = names
-    local items = { { value = "", text = OWN_CHARACTERS } }
-    for _, name in ipairs(names) do
-        items[#items + 1] = { value = name, text = name }
+    self.manual = deps.contacts and deps.contacts() or {}
+    local groups = Contacts.Merge({
+        own = ownNames,
+        friends = deps.friends and deps.friends() or {},
+        guild = deps.guild and deps.guild() or {},
+        manual = self.manual,
+    }, exclude)
+    self.names = Contacts.Flat(groups)
+    self.contactList:SetItems(Contacts.MenuItems(groups, CONTACTS))
+end
+
+-- A friend or guild event came: read the contacts again after a short wait, and only while the page shows.
+function SendPage:_ContactsChanged()
+    if self.contactsWait or not self.frame:IsVisible() then
+        return
     end
-    self.characters:SetItems(items)
+    self.contactsWait = true
+    self.deps.after(CONTACTS_DELAY, function()
+        self.contactsWait = false
+        if self.frame:IsVisible() then
+            self:_LoadContacts()
+            self:Refresh()
+        end
+    end)
+end
+
+-- Saves the typed recipient in the manual list.
+function SendPage:_SaveContact()
+    local deps = self.deps
+    if not deps.saveContacts then
+        return
+    end
+    local list, added, reason = ns.MailContacts.Add(self.manual, self.recipient:GetText())
+    if not added then
+        self:_Say(reason, true)
+        return
+    end
+    if not deps.saveContacts(list) then
+        self:_Say("Flipside could not save the contact", true)
+        return
+    end
+    self:_LoadContacts()
+    self:_Say(list[#list] .. " saved as a contact", false)
+end
+
+-- Removes the typed recipient from the manual list. A friend, a guild member or an own character stays.
+function SendPage:_RemoveContact()
+    local deps = self.deps
+    if not deps.saveContacts then
+        return
+    end
+    local list, removed = ns.MailContacts.Remove(self.manual, self.recipient:GetText())
+    if not removed then
+        self:_Say("The recipient is not a saved contact", true)
+        return
+    end
+    if not deps.saveContacts(list) then
+        self:_Say("Flipside could not save the contact", true)
+        return
+    end
+    self:_LoadContacts()
+    self:_Say("Contact removed", false)
 end
 
 function SendPage:_SetRecipient(text)
@@ -341,14 +426,6 @@ function SendPage:Refresh()
     local running = self:_Locked()
     self.items = deps.client.Items()
 
-    if not running then
-        local current = self.subject:GetText()
-        local subject, previous = Compose.SubjectUpdate(current, self.previous, self.items)
-        self.previous = previous
-        if subject ~= current then
-            self.subject:SetText(subject)
-        end
-    end
     local mode = Compose.Mode(self.mode, self.items)
     if mode ~= self.mode then
         -- The last attachment went in cash on delivery mode: the amount must not turn into a money send.
@@ -358,6 +435,16 @@ function SendPage:Refresh()
         end
         self.mode = mode
         self.radio:SetValue(mode)
+    end
+    if not running then
+        -- The default subject: the first attachment, or with none the money to send.
+        local current = self.subject:GetText()
+        local subject, previous = Compose.SubjectFor(current, self.previous, self.items, self.mode,
+            self.money:GetCopper(), deps.moneyText)
+        self.previous = previous
+        if subject ~= current then
+            self.subject:SetText(subject)
+        end
     end
     self.radio.buttons[2]:SetEnabled(#self.items > 0 and not running)
     for _, slot in ipairs(Compose.Slots(self.items)) do
@@ -382,7 +469,11 @@ function SendPage:Refresh()
 
     local ok, reason = Compose.Validate(form)
     self.sendButton:SetEnabled(ok and not self.pending)
-    self.clearButton:SetEnabled(not running)
+    local Contacts = ns.MailContacts
+    local typed = recipient.text
+    self.saveContact:SetEnabled(deps.saveContacts ~= nil and typed ~= "" and not Contacts.Has(self.names, typed)
+        and not Contacts.Has(self.manual, typed))
+    self.removeContact:SetEnabled(deps.saveContacts ~= nil and Contacts.Has(self.manual, typed))
     self.money:SetEnabled(not running)
     if running then
         self.status:SetText("A mailing run is active. The Send page waits.")
@@ -425,12 +516,21 @@ end
 -- Empties the fields and the money. The attachments stay: Clear returns them.
 function SendPage:_ResetForm()
     self.mode, self.previous, self.pending = ns.MailCompose.MONEY, "", false
+    -- The money goes first: an empty subject would get the money default again.
+    self.money:SetCopper(nil)
+    self.radio:SetValue(ns.MailCompose.MONEY)
     self:_SetRecipient("")
     self.subject:SetText("")
     self.body:SetText("")
-    self.money:SetCopper(nil)
-    self.radio:SetValue(ns.MailCompose.MONEY)
     self.message = nil
+end
+
+-- The user chose a page of the window. The Inbox page and the Mailing rules page clear this page
+-- (MailCompose.ClearOnTab), but not while a mailing run works or a send waits for its result.
+function SendPage:OnTab(key)
+    if ns.MailCompose.ClearOnTab(key, self:_Locked(), self.pending) then
+        self:Clear()
+    end
 end
 
 -- Returns all attachments to the bags and empties the fields.

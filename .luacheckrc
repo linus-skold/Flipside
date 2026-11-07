@@ -49,6 +49,7 @@ read_globals = {
     "GetRepairAllCost",
     "C_MerchantFrame",
     "IsAltKeyDown",
+    "IsShiftKeyDown",
     "LoadAddOn",
     "ItemLocation",
     "TooltipDataProcessor",

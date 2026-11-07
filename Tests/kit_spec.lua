@@ -717,6 +717,84 @@ describe("Kit", function()
             d:SetItems({ { value = "z", text = "Zed" } })
             assert.are.equal("", d:GetText())
         end)
+
+        it("shows a header item as a title, which cannot be chosen", function()
+            local d = Kit.Dropdown(parent, 140, {
+                items = { { value = "", text = "Pick" }, { value = "", text = "Group", header = true },
+                    { value = "a", text = "Alpha" } },
+                value = "",
+                scrollExtent = 300,
+            })
+            assert.are.equal(2, #d.menuItems)
+            assert.are.same({ { text = "Group", at = 2 } }, d.menuTitles)
+            assert.are.equal(300, d.menuScroll)
+            d:OpenMenu()
+            assert.is_true(d.menuOpen)
+        end)
+
+        it("skips a header item in the cycling fallback", function()
+            mock.missingTemplates.WowStyle1DropdownTemplate = true
+            local d = Kit.Dropdown(parent, 140, {
+                items = { { value = "", text = "Pick" }, { value = "", text = "Group", header = true },
+                    { value = "a", text = "Alpha" } },
+                value = "",
+            })
+            d:GetScript("OnClick")(d)
+            assert.are.equal("a", d:GetValue())
+            d:GetScript("OnClick")(d)
+            assert.are.equal("", d:GetValue())
+        end)
+    end)
+
+    describe("TabOrder", function()
+        local boxes, shift
+        before_each(function()
+            local parent = CreateFrame("Frame")
+            boxes = {}
+            for index = 1, 4 do
+                boxes[index] = CreateFrame("EditBox", nil, parent)
+                boxes[index]:Show()
+            end
+            shift = false
+            rawset(_G, "IsShiftKeyDown", function()
+                return shift
+            end)
+            Kit.TabOrder(boxes)
+        end)
+
+        after_each(function()
+            rawset(_G, "IsShiftKeyDown", nil)
+        end)
+
+        local function press(index)
+            boxes[index].focused = nil
+            boxes[index]:GetScript("OnTabPressed")(boxes[index])
+        end
+
+        it("moves the focus to the next box, and from the last box to the first", function()
+            press(1)
+            assert.is_true(boxes[2].focused)
+            press(4)
+            assert.is_true(boxes[1].focused)
+        end)
+
+        it("moves the focus back with Shift, and from the first box to the last", function()
+            shift = true
+            press(3)
+            assert.is_true(boxes[2].focused)
+            press(1)
+            assert.is_true(boxes[4].focused)
+        end)
+
+        it("skips a box that is disabled or hidden", function()
+            boxes[2]:SetEnabled(false)
+            boxes[3]:Hide()
+            press(1)
+            assert.is_true(boxes[4].focused)
+            shift = true
+            press(4)
+            assert.is_true(boxes[1].focused)
+        end)
     end)
 
     describe("NumberInput", function()

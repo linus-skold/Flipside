@@ -53,6 +53,7 @@ Shared\Services\MailingPlan.lua
 Shared\Services\AutoRules.lua
 Shared\Services\MailClient.lua
 Shared\Services\MailCompose.lua
+Shared\Services\MailContacts.lua
 Shared\Services\BagSnapshot.lua
 Shared\Services\MailTake.lua
 Shared\Services\MailingRun.lua
