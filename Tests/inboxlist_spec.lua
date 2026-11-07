@@ -469,4 +469,102 @@ describe("InboxList", function()
         assert.are.equal("|cffff2020" .. "1 Hr|r", ns.InboxList.DaysText(0.01))
         assert.are.equal("|cffff2020" .. "12 Hr|r", ns.InboxList.DaysText(0.5))
     end)
+
+    describe("Open all bar", function()
+        local barList, openAll, errors
+
+        before_each(function()
+            errors = {}
+            openAll = { running = false, status = "", started = 0, stopped = 0 }
+            function openAll.IsRunning()
+                return openAll.running
+            end
+            function openAll.Start()
+                openAll.started = openAll.started + 1
+                openAll.running = true
+            end
+            function openAll.Stop()
+                openAll.stopped = openAll.stopped + 1
+            end
+            function openAll.Status()
+                return openAll.status
+            end
+            local parent = CreateFrame("Frame", "OpenAllPage", UIParent)
+            barList = ns.InboxList.Create(parent, {
+                api = {
+                    numItems = function()
+                        return #mails
+                    end,
+                    header = header,
+                    openID = function()
+                        return 0
+                    end,
+                    isModified = function()
+                        return shift
+                    end,
+                    autoLoot = function(index)
+                        looted[#looted + 1] = index
+                    end,
+                    freeSlots = function()
+                        return free
+                    end,
+                    open = function() end,
+                },
+                formatMoney = tostring,
+                notify = function(text)
+                    told[#told + 1] = text
+                end,
+                showError = function(text)
+                    errors[#errors + 1] = text
+                end,
+                fullText = "Inventory is full.",
+                openAll = openAll,
+                blizzard = function()
+                    return {}
+                end,
+                place = function(frame)
+                    frame:SetAllPoints(parent)
+                end,
+            })
+            barList:Show()
+        end)
+
+        it("shows the button as Open all, and Stop while the run goes", function()
+            assert.are.equal("Open all", barList.openAllButton:GetText())
+            assert.is_true(barList.openAllButton:IsEnabled())
+            barList.openAllButton.scripts.OnClick(barList.openAllButton)
+            assert.are.equal(1, openAll.started)
+            assert.are.equal("Stop", barList.openAllButton:GetText())
+            assert.is_true(barList:IsOpenAllRunning())
+            barList.openAllButton.scripts.OnClick(barList.openAllButton)
+            assert.are.equal(1, openAll.stopped)
+        end)
+
+        it("is off when the inbox is empty", function()
+            mails = {}
+            barList:Refresh()
+            assert.is_false(barList.openAllButton:IsEnabled())
+        end)
+
+        it("shows the status of the run", function()
+            openAll.status = "Opened 2 mails, took 5c"
+            barList:UpdateOpenAll()
+            assert.are.equal("Opened 2 mails, took 5c", barList.statusLabel:GetText())
+        end)
+
+        it("shows the full bags error and a status line on a Shift-click", function()
+            shift, free = true, 0
+            barList:Click(1)
+            assert.are.same({}, looted)
+            assert.are.same({ "Inventory is full." }, errors)
+            assert.are.same({ "Bags are full" }, told)
+            assert.are.equal("Inventory is full.", barList.statusLabel:GetText())
+        end)
+
+        it("does not take on a Shift-click while the run goes", function()
+            shift, openAll.running = true, true
+            barList:Click(1)
+            assert.are.same({}, looted)
+        end)
+    end)
 end)

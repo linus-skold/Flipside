@@ -296,9 +296,10 @@ function MailHost.Attach(deps)
         close()
         forcePlain = false
     end)
-    -- True if a mailing run or a mail take is active. A switch then would hide the Stop button.
+    -- True if a mailing run, an Open all run or a mail take is active. A switch then would hide the Stop button.
     function host.IsBusy()
-        return (host.view and host.view.run:IsRunning()) or (deps.take and deps.take.IsActive()) or false
+        return (host.view and host.view.run:IsRunning()) or (deps.take and deps.take.IsActive())
+            or (host.inbox and host.inbox.IsOpenAllRunning and host.inbox:IsOpenAllRunning()) or false
     end
     -- Apply the layout that deps.mode gives now, while the mailbox is open. Nothing happens if it is closed.
     -- Returns false and does nothing while a run or a take is active.

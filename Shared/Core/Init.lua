@@ -1368,40 +1368,71 @@ end
 
 -- Make the compact inbox list in the client InboxFrame. Returns nil if the client has no inbox function to reuse.
 -- With a page frame (the Flipside mailbox window) the list fills the page and hides no client frame.
-local function createInboxList(page)
+local function createInboxList(page, blocked)
     local inbox = _G.InboxFrame
     if not (ns.InboxList and inbox and type(InboxFrame_OnClick) == "function" and type(GetInboxHeaderInfo) == "function"
         and type(GetInboxNumItems) == "function" and type(AutoLootMailItem) == "function"
         and type(IsModifiedClick) == "function") then
         return nil
     end
-    return ns.InboxList.Create(page or inbox, {
-        api = {
-            numItems = GetInboxNumItems,
-            header = GetInboxHeaderInfo,
-            openID = function()
-                return inbox.openMailID
-            end,
-            -- Shift-click (the client setting MAILAUTOLOOTTOGGLE) takes all contents with AutoLootMailItem.
-            isModified = function()
-                return IsModifiedClick("MAILAUTOLOOTTOGGLE")
-            end,
-            autoLoot = AutoLootMailItem,
-            freeSlots = function()
-                local free = 0
-                for bag = 0, _G.NUM_BAG_SLOTS or 4 do
-                    free = free + (C_Container.GetContainerNumFreeSlots(bag) or 0)
+    local fullText = _G.ERR_INV_FULL or (ns.MailOpenAll and ns.MailOpenAll.FULL_FALLBACK) or "Inventory is full."
+    local function showError(text)
+        if ns.MailOpenAll then
+            ns.MailOpenAll.ShowError(_G.UIErrorsFrame, text)
+        end
+    end
+    local list
+    local api = {
+        numItems = GetInboxNumItems,
+        header = GetInboxHeaderInfo,
+        openID = function()
+            return inbox.openMailID
+        end,
+        -- Shift-click (the client setting MAILAUTOLOOTTOGGLE) takes all contents with AutoLootMailItem.
+        isModified = function()
+            return IsModifiedClick("MAILAUTOLOOTTOGGLE")
+        end,
+        autoLoot = AutoLootMailItem,
+        freeSlots = function()
+            local free = 0
+            for bag = 0, _G.NUM_BAG_SLOTS or 4 do
+                free = free + (C_Container.GetContainerNumFreeSlots(bag) or 0)
+            end
+            return free
+        end,
+        -- The client function opens the mail from the state of the button: checked opens, unchecked closes.
+        open = function(index)
+            local opening = inbox.openMailID ~= index
+            InboxFrame_OnClick({ GetChecked = function() return opening end }, index)
+        end,
+    }
+    -- Open all: the Flipside mailbox window only (a page frame). TBC keeps the compact inbox as it is.
+    local openAll
+    if page and ns.MailOpenAll and ns.bus and mailTake() then
+        openAll = ns.MailOpenAll.New({
+            api = api,
+            bus = ns.bus,
+            after = C_Timer.After,
+            take = mailTake(),
+            formatMoney = ns.TooltipLines.FormatMoney,
+            fullText = fullText,
+            showError = showError,
+            say = printLine,
+            blocked = blocked,
+            onChange = function()
+                if list then
+                    list:UpdateOpenAll()
                 end
-                return free
             end,
-            -- The client function opens the mail from the state of the button: checked opens, unchecked closes.
-            open = function(index)
-                local opening = inbox.openMailID ~= index
-                InboxFrame_OnClick({ GetChecked = function() return opening end }, index)
-            end,
-        },
+        })
+    end
+    list = ns.InboxList.Create(page or inbox, {
+        api = api,
         formatMoney = ns.TooltipLines.FormatMoney,
         notify = printLine,
+        showError = showError,
+        fullText = fullText,
+        openAll = openAll,
         onTake = function()
             local take = mailTake()
             if take then
@@ -1415,15 +1446,18 @@ local function createInboxList(page)
             return _G.OpenMailFrame
         end,
         skin = ns.AuctionTabs and ns.AuctionTabs.Skin,
-        -- The area of the client buttons, taller: down to the Open All button. In a page: the whole page.
+        -- The area of the client buttons, taller: down to the Open All button. In a page: the whole page, without
+        -- the bottom bar of the Open all button.
         place = function(frame)
             if page then
-                frame:SetAllPoints(page)
+                frame:SetPoint("TOPLEFT", page, "TOPLEFT", 0, 0)
+                frame:SetPoint("BOTTOMRIGHT", page, "BOTTOMRIGHT", 0, openAll and ns.InboxList.BAR_HEIGHT or 0)
             else
                 ns.InboxList.Anchor(frame, inbox, _G.MailItem1, _G.OpenAllMail, _G.MailItem7)
             end
         end,
     })
+    return list
 end
 
 -- Attach the mailing view to the MailFrame; it needs the groups and operations.
@@ -1476,7 +1510,12 @@ local function openMailing()
                 return list
             end,
             createInbox = function(_, page)
-                return createInboxList(page)
+                -- Open all and a mailing run share the bags and the mail commands: they do not run together.
+                return createInboxList(page, function()
+                    if host and host.view and host.view.run:IsRunning() then
+                        return "Wait for the mailing run to end"
+                    end
+                end)
             end,
             mode = mailboxWindow and function()
                 return ns.MailboxWindow.IsOn(ns.db) and "window" or "plain"
@@ -1577,6 +1616,9 @@ local function openMailing()
                     end,
                     -- Forever: a run does not start while the send slots hold items (the Send page or the client).
                     blocked = mailboxWindow and function()
+                        if host and host.inbox and host.inbox:IsOpenAllRunning() then
+                            return "Wait for Open all to end"
+                        end
                         if #client.Items() > 0 then
                             return "The mail slots hold items: send or clear that mail first"
                         end
