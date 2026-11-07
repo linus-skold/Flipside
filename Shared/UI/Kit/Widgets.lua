@@ -173,13 +173,15 @@ local function checkItems(items, level)
         error("Kit.Dropdown: items must be a table", level + 1)
     end
     for index, item in ipairs(items) do
-        if type(item) ~= "table" or item.value == nil or type(item.text) ~= "string" then
+        if type(item) ~= "table" or (item.value == nil and not item.header) or type(item.text) ~= "string" then
             error("Kit.Dropdown: item " .. index .. " needs a value and a string text", level + 1)
         end
     end
 end
 
--- Create a drop-down. options: items = { { value, text } }, value, onChange(value).
+-- Create a drop-down. options: items = { { value, text } }, value, onChange(value), scrollExtent (the most height in
+-- pixels of the menu; a longer menu scrolls).
+-- An item with header = true is a title in the menu: a user cannot choose it. The one-button fallback skips it.
 -- Methods: SetItems(items), SetValue(value), GetValue(). SetValue does not call onChange.
 -- The items and the value live in a local table, not on the client frame. The menu code of the
 -- client reads only plain copies of the items, so a bad value gives a Lua error and not a crash.
@@ -200,7 +202,7 @@ function Kit.Dropdown(parent, width, options)
     local function copyItems(items)
         local copy = {}
         for index, item in ipairs(items) do
-            copy[index] = { value = item.value, text = item.text }
+            copy[index] = { value = item.value, text = item.text, header = item.header and true or nil }
         end
         return copy
     end
@@ -208,7 +210,12 @@ function Kit.Dropdown(parent, width, options)
 
     if not menu then
         dropdown = Kit.Button(parent, "", width, function(self)
-            local items = state.items
+            local items = {}
+            for _, item in ipairs(state.items) do
+                if not item.header then
+                    items[#items + 1] = item
+                end
+            end
             if #items == 0 then
                 return
             end
@@ -268,13 +275,40 @@ function Kit.Dropdown(parent, width, options)
             end
         end
         dropdown:SetupMenu(function(_, root)
+            if options.scrollExtent and root.SetScrollMode then
+                root:SetScrollMode(options.scrollExtent)
+            end
             for _, item in ipairs(state.items) do
-                root:CreateRadio(item.text, isSelected, setSelected, item.value)
+                if item.header then
+                    root:CreateTitle(item.text)
+                else
+                    root:CreateRadio(item.text, isSelected, setSelected, item.value)
+                end
             end
         end)
     end
     refresh(dropdown)
     return dropdown
+end
+
+-- Let Tab and Shift-Tab move the focus along a list of edit boxes, in the order of the list. Tab goes to the next
+-- box and Shift-Tab to the one before; the ends join. A box that is disabled or hidden is skipped. In a
+-- multi-line box, Tab moves the focus and inserts no tab character.
+function Kit.TabOrder(boxes)
+    for index, box in ipairs(boxes) do
+        box:SetScript("OnTabPressed", function()
+            local step = IsShiftKeyDown() and -1 or 1
+            local position = index
+            for _ = 1, #boxes - 1 do
+                position = (position - 1 + step) % #boxes + 1
+                local target = boxes[position]
+                if target:IsShown() and (not target.IsEnabled or target:IsEnabled()) then
+                    target:SetFocus()
+                    return
+                end
+            end
+        end)
+    end
 end
 
 local GRID_COLUMN_WIDTH = 140

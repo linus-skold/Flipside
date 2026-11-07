@@ -169,6 +169,10 @@ function frameMethods:GetText()
     return self.text
 end
 
+function frameMethods:SetCursorPosition(position)
+    self.cursor = position
+end
+
 function frameMethods:SetID(id)
     self.id = id
 end
@@ -218,6 +222,10 @@ function frameMethods:EnableMouse(enabled)
     self.mouse = enabled
 end
 
+function frameMethods:IsMouseEnabled()
+    return self.mouse == true
+end
+
 function frameMethods:RegisterForDrag(...)
     self.dragButtons = { ... }
 end
@@ -246,6 +254,14 @@ end
 
 function frameMethods:SetNormalTexture(texture)
     self.normalTexture = texture
+end
+
+function frameMethods:ClearNormalTexture()
+    self.normalTexture = nil
+end
+
+function frameMethods:IsVisible()
+    return self.shown ~= false
 end
 
 function frameMethods:SetPushedTexture(texture)
@@ -372,6 +388,10 @@ function frameMethods:SetAlpha(alpha)
     self.alpha = alpha
 end
 
+function frameMethods:GetAlpha()
+    return self.alpha or 1
+end
+
 function frameMethods:SetBlendMode(mode)
     self.blendMode = mode
 end
@@ -387,6 +407,14 @@ function frameMethods:GenerateMenu()
     local items = {}
     self.menuItems = items
     local root = {}
+    self.menuTitles, self.menuScroll = {}, nil
+    -- A title sits before the item that comes next: at is the index of that item.
+    function root.CreateTitle(_, text)
+        table.insert(self.menuTitles, { text = text, at = #items + 1 })
+    end
+    function root.SetScrollMode(_, extent)
+        self.menuScroll = extent
+    end
     function root.CreateRadio(_, text, isSelected, setSelected, value)
         table.insert(items, {
             text = text, value = value,

@@ -1486,7 +1486,7 @@ local function openMailing()
                     setMailWindow(true)
                 end)
             end or nil,
-            createSend = mailboxWindow and ns.SendPage and ns.MailCompose and function(page)
+            createSend = mailboxWindow and ns.SendPage and ns.MailCompose and ns.MailContacts and function(page)
                 return ns.SendPage.Create(page, {
                     client = client,
                     bus = ns.bus,
@@ -1499,6 +1499,28 @@ local function openMailing()
                     end,
                     mailName = clientApi.recipientName,
                     formatMoney = ns.TooltipLines.FormatMoney,
+                    -- The contact list: friends and guild from the client, the manual list in the account setting.
+                    friends = ns.MailContacts.Friends,
+                    guild = ns.MailContacts.GuildMembers,
+                    realm = GetNormalizedRealmName,
+                    request = function()
+                        ns.MailContacts.Request(GetTime())
+                    end,
+                    contacts = function()
+                        return ns.MailContacts.Load(ns.db)
+                    end,
+                    saveContacts = function(list)
+                        return ns.MailContacts.Save(ns.db, list)
+                    end,
+                    -- The money text of the client (no coin icons) for the subject default of a money mail.
+                    moneyText = function(copper)
+                        local api = _G.C_CurrencyInfo
+                        if type(api) ~= "table" or not api.GetCoinText then
+                            return nil
+                        end
+                        local ok, text = pcall(api.GetCoinText, copper)
+                        return ok and text or nil
+                    end,
                     -- The send slots are one buffer: the page and the mailing run must not use it together.
                     isRunning = function()
                         return host.view and host.view.run:IsRunning() or false
@@ -1515,6 +1537,12 @@ local function openMailing()
                 return ns.MailboxWindow.Create({
                     onToggle = function()
                         setMailWindow(false)
+                    end,
+                    -- The Inbox and Mailing rules pages clear the Send page.
+                    onTab = function(key)
+                        if host.send and host.send.OnTab then
+                            host.send:OnTab(key)
+                        end
                     end,
                     closeMail = function()
                         local mailFrame = _G.MailFrame

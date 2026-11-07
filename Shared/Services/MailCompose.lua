@@ -55,6 +55,36 @@ function MailCompose.SubjectUpdate(current, previous, items)
     return current, ""
 end
 
+-- The subject for the form, with the money default. With attachments the rules of SubjectUpdate hold. With no
+-- attachment and money to send, an empty box or a box that holds the previous default gets the money text; it
+-- follows the amount. A typed subject stays. When the amount goes to 0, the default goes (as the attachment
+-- default does). moneyText(copper) gives the text of an amount, or nil. Returns the new subject and the new
+-- previous default.
+function MailCompose.SubjectFor(current, previous, items, mode, copper, moneyText)
+    current, previous = current or "", previous or ""
+    copper = math.max(0, math.floor(tonumber(copper) or 0))
+    if #(items or {}) > 0 or mode ~= MailCompose.MONEY or copper <= 0 or not moneyText then
+        return MailCompose.SubjectUpdate(current, previous, items)
+    end
+    local text = moneyText(copper)
+    if type(text) ~= "string" or text == "" then
+        return MailCompose.SubjectUpdate(current, previous, items)
+    end
+    if current == "" or current == previous then
+        return text, text
+    end
+    return current, previous
+end
+
+-- True if the Send page must clear itself when the user switches to the tab with this key. The Inbox tab and the
+-- Mailing rules tab clear it. A mailing run or a send that waits for its result stops the clear.
+function MailCompose.ClearOnTab(key, running, pending)
+    if running or pending then
+        return false
+    end
+    return key == "inbox" or key == "rules"
+end
+
 -- Returns the money mode that can hold: cash on delivery needs at least one attachment.
 function MailCompose.Mode(mode, items)
     if mode == MailCompose.COD and #(items or {}) > 0 then

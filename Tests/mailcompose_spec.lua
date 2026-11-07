@@ -177,4 +177,75 @@ describe("MailCompose", function()
             assert.are.equal("A mailing run is active", reason)
         end)
     end)
+
+    describe("the subject with the money default", function()
+        local function text(copper)
+            return copper .. " copper"
+        end
+
+        local function subject(current, previous, list, mode, copper)
+            local result, kept = Compose.SubjectFor(current, previous, list, mode, copper, text)
+            return { result, kept }
+        end
+
+        it("puts the money text in an empty subject when only money is sent", function()
+            assert.are.same({ "12345 copper", "12345 copper" }, subject("", "", {}, "money", 12345))
+        end)
+
+        it("follows the amount while the box holds the last default", function()
+            assert.are.same({ "100 copper", "100 copper" }, subject("12345 copper", "12345 copper", {}, "money", 100))
+        end)
+
+        it("keeps a typed subject", function()
+            assert.are.same({ "Thanks", "12345 copper" }, subject("Thanks", "12345 copper", {}, "money", 500))
+            assert.are.same({ "Thanks", "" }, subject("Thanks", "", {}, "money", 500))
+        end)
+
+        it("takes the default away when the amount goes to 0", function()
+            assert.are.same({ "", "" }, subject("12345 copper", "12345 copper", {}, "money", 0))
+            assert.are.same({ "Thanks", "" }, subject("Thanks", "12345 copper", {}, "money", 0))
+        end)
+
+        it("fills the box again after the user empties it", function()
+            assert.are.same({ "50 copper", "50 copper" }, subject("", "12345 copper", {}, "money", 50))
+        end)
+
+        it("lets an attachment win over the money", function()
+            local list = items({ 1, "Wool", 5 })
+            assert.are.same({ "Wool (5)", "Wool (5)" }, subject("", "", list, "money", 999))
+            assert.are.same({ "Wool (5)", "Wool (5)" }, subject("999 copper", "999 copper", list, "money", 999))
+            assert.are.same({ "Mine", "Wool (5)" }, subject("Mine", "Wool (5)", list, "money", 999))
+        end)
+
+        it("turns the item default into the money default when the last attachment goes", function()
+            assert.are.same({ "70 copper", "70 copper" }, subject("Wool (5)", "Wool (5)", {}, "money", 70))
+            assert.are.same({ "", "" }, subject("Wool (5)", "Wool (5)", {}, "money", 0))
+        end)
+
+        it("gives no default in cash on delivery mode or without a money formatter", function()
+            assert.are.same({ "", "" }, subject("", "", {}, "cod", 500))
+            assert.are.same({ "", "" }, { Compose.SubjectFor("", "", {}, "money", 500, nil) })
+            assert.are.same({ "", "" }, { Compose.SubjectFor("", "", {}, "money", 500, function()
+                return ""
+            end) })
+        end)
+    end)
+
+    describe("the clear on a tab switch", function()
+        it("clears on the Inbox tab and on the Mailing rules tab", function()
+            assert.is_true(Compose.ClearOnTab("inbox", false, false))
+            assert.is_true(Compose.ClearOnTab("rules", false, false))
+        end)
+
+        it("does not clear on the Send tab or on an unknown tab", function()
+            assert.is_false(Compose.ClearOnTab("send", false, false))
+            assert.is_false(Compose.ClearOnTab(nil, false, false))
+        end)
+
+        it("does not clear while a mailing run is active or a send waits for its result", function()
+            assert.is_false(Compose.ClearOnTab("inbox", true, false))
+            assert.is_false(Compose.ClearOnTab("rules", false, true))
+            assert.is_false(Compose.ClearOnTab("rules", true, true))
+        end)
+    end)
 end)
