@@ -195,6 +195,17 @@ describe("MailContacts", function()
             assert.is_true((select(2, Contacts.Add({}, "Me-Other", rules))))
         end)
 
+        it("refuses a name that another group lists, such as an own alt, a friend or a guild member", function()
+            local rules = { listed = { "Alt Smith", "Frank" }, realm = "Home" }
+            for _, text in ipairs({ "Alt Smith", "alt-smith", "FRANK-Home" }) do
+                local list, added, reason = Contacts.Add({}, text, rules)
+                assert.is_false(added)
+                assert.are.same({}, list)
+                assert.are.equal(text .. " is in the list already", reason)
+            end
+            assert.is_true((select(2, Contacts.Add({}, "Zed", rules))))
+        end)
+
         it("refuses a saved name in another spelling and removes it in any spelling", function()
             local list, added = Contacts.Add({ "Anna-Home" }, "anna", { realm = "Home" })
             assert.is_false(added)

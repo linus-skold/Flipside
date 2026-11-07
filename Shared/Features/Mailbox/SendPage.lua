@@ -320,7 +320,7 @@ function SendPage:_SaveContact()
         return
     end
     local list, added, reason = ns.MailContacts.Add(self.manual, self.recipient:GetText(),
-        { exclude = self.exclude, realm = self.realm })
+        { exclude = self.exclude, listed = self.names, realm = self.realm })
     if not added then
         self:_Say(reason, true)
         return
@@ -476,8 +476,8 @@ function SendPage:Refresh()
     local Contacts = ns.MailContacts
     local typed = recipient.text
     local realm = self.realm
-    local _, canAdd = Contacts.Add(self.manual, typed, { exclude = self.exclude, realm = realm })
-    self.saveContact:SetEnabled(deps.saveContacts ~= nil and canAdd and not Contacts.Has(self.names, typed, realm))
+    local _, canAdd = Contacts.Add(self.manual, typed, { exclude = self.exclude, listed = self.names, realm = realm })
+    self.saveContact:SetEnabled(deps.saveContacts ~= nil and canAdd)
     self.removeContact:SetEnabled(deps.saveContacts ~= nil and Contacts.Has(self.manual, typed, realm))
     self.money:SetEnabled(not running)
     if running then
