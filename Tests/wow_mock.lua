@@ -256,6 +256,14 @@ function frameMethods:SetNormalTexture(texture)
     self.normalTexture = texture
 end
 
+function frameMethods:ClearNormalTexture()
+    self.normalTexture = nil
+end
+
+function frameMethods:IsVisible()
+    return self.shown ~= false
+end
+
 function frameMethods:SetPushedTexture(texture)
     self.pushedTexture = texture
 end
