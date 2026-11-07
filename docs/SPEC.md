@@ -694,7 +694,7 @@ A free window, opened and closed with `/flip destroy`. It helps the player to di
 ### 5.8 Ledger (reference §5.7)
 
 - Same record types and views (sales, purchases, other income and expenses, expired, cancelled, resale).
-- **CSV export** of any view, in a documented column format.
+- **CSV export** of the filtered ledger, in a documented column format (built; see the Ledger page design, point 9).
 - `SaleRate` per item from your own sold and expired counts (§4).
 - Retention: full records for 180 days, then daily sums (configurable). See the ledger design below.
 - The ledger also records the source of each money or item change, and the money that comes in from each source (decided 2026-10-15).
@@ -772,7 +772,27 @@ The user approved points 1 to 10 on 2026-10-15. They are binding. The idea is si
    - A row of a post or purchase has a detail line (or a tooltip) with the matching log record: action and reason. The match uses `ctx`.
    - A dry run has no trade. Its log record is a row of its own in the Auctions tab, with the mark "dry run".
    - A row older than the log retention has no detail line.
-   - CSV export stays in scope (build step 7 PR8, with a documented column format).
+   - **CSV export (built, PR8, decided 2026-11-07).** The button "Export CSV" in the filter row (left of the graph button) opens a window with the CSV text selected for Ctrl+C. WoW cannot write files, so the user pastes the text into a file. The text follows the character filter (and the server filter on TBC) and the date range. It holds all record types and the daily sums in one flat file, oldest first. Decision log records (type `log`) are not exported. The code is `Shared/Services/LedgerCsv.lua` (pure formatter) and `LedgerPage.CsvText`.
+     - Format: comma delimiter, RFC 4180 quoting (a cell with a comma, a quote or a line break is in double quotes, and a quote inside is doubled), a header row, CR LF line ends (also after the last line). Time is UTC as `YYYY-MM-DD HH:MM:SS`. Money is copper: money in is positive and money out is negative. A type with no money flow (post, expired, cancelled) has an empty money cell. An empty cell means that the field does not apply.
+     - Columns, in this order (the same for every record type):
+
+       | Column | Content |
+       | --- | --- |
+       | `time_utc` | Time of the record. A daily sum has 00:00:00 of its UTC day |
+       | `character` | `Name-Realm` key |
+       | `type` | Record type (`sale`, `purchase`, `post`, `income`, `expense`, `loot`, `expired`, `cancelled`), or `daily` for a daily sum |
+       | `source` | Source of the record (for example `ahSale`, `vendorSale`, `loot`) |
+       | `item_key` | Item key (D20), or empty |
+       | `item_name` | Item name, if the record has one |
+       | `quantity` | Item quantity |
+       | `money_copper` | Signed money in copper. A daily sum has money in minus money out |
+       | `records` | 1 for a record. The record count of a daily sum |
+       | `counterparty` | Buyer, seller or other party |
+       | `bid`, `buyout`, `deposit`, `cut` | Auction fields in copper, if the record has them |
+       | `value` | Vendor value of a looted item in copper |
+       | `loot_source` | The `mob` text of a loot record |
+       | `place` | The place of the record, if it has one |
+       | `note` | The note of the user |
    - Page design (PR7, `LedgerPage`). The page loads the ledger each time it opens (`LedgerLoader:Ensure`). It shows "Loading ledger..." until the ledger is loaded, or the reason of a failed load. It reads data only.
    - Filters: the character (All characters, then the current character, then the others) and the date range (Today, 7 days, 30 days, 180 days, All). A range counts whole UTC ledger days and ends today. The default is the current character and 30 days. Flipside saves the last choice in the character scope (`ledger.view.char`, `ledger.view.range`). The graph uses the saved date range when the page opens.
    - **Server and character filter (TBC only, decided 2026-10-18, user request).** The flavour value `ledgerRealmFilter` is true on TBC Anniversary and false on Forever. The reason is that TBC mail does not cross servers. If it is false, the page has the character filter above and nothing changes. If it is true, two dropdowns replace the character dropdown. The Server dropdown lists each realm that has ledger records and the current realm, even with no records. The current realm is first and the realm "Unknown" is last. The Character dropdown lists "All" and each character of the selected server that has records, by name only. The default is the current server and All. A change of server resets the character to All. The selection filters the rows, the totals and the balance graph, like the date range. "All" means every character of the selected server. Flipside saves the choice in the character scope (`ledger.view.realm`, `ledger.view.char`). If the saved server or character has no records, the page uses the defaults. Owner data: the ledger stores no separate realm field. Each record has `char` as "Name-Realm", which is also the key in `FlipsideLedgerDB`. The page takes the realm from the text after the first "-". A key with no "-" (an old record with no owner data) shows under the server "Unknown". The change adds no field to `LedgerRecord` and does not change the layout of the ledger DB (D25). A filter change writes a debug line in the log (category "ledger").
@@ -1303,7 +1323,7 @@ As in the reference §8.2 (pairing, single-writer rows, timestamp versioning, th
 - **MVP (feedback decision 2026-10-14):** export and import of groups, with their sub-groups, items, the operations they use and the custom sources those operations use. Keep-stock rules stay Phase 2. Mailing operations are in the MVP export (§5.5). The import rules are in §5.2. D13 still applies: no TSM strings.
 - A version header and a human-readable preview before import, with item and operation deselection (reference §9.2). In the MVP the import shows a summary and asks before it changes anything.
 - Plain item lists accepted, as in the reference §9.3.
-- Ledger CSV export (§5.8).
+- Ledger CSV export (§5.8, built).
 - Optional external price file in the import slot (D2).
 
 ### 7.5 Diagnostics log (added 2026-10-17)
@@ -1392,7 +1412,7 @@ The MVP is done when a player on WoW: Forever can scan, see prices in tooltips, 
 
 **Build order inside the MVP**
 
-Status of 2026-11-06: steps 0 to 6 are built. Step 7 is built except the ledger CSV export (PR8, no code found); the mailing part is built. PR9 is not confirmed: the record type `log` exists in `LedgerRecord`, but the Buying and Selling tabs have no code that writes it. Vendoring left step 7 and moved to Phase 2 (user decision of 2026-11-06). In-game checklists are still open for several parts (see Needs scoping).
+Status of 2026-11-06: steps 0 to 6 are built. Step 7 is built, including the ledger CSV export (PR8, built 2026-11-07); the mailing part is built. PR9 is not confirmed: the record type `log` exists in `LedgerRecord`, but the Buying and Selling tabs have no code that writes it. Vendoring left step 7 and moved to Phase 2 (user decision of 2026-11-06). In-game checklists are still open for several parts (see Needs scoping).
 
 0. Spike 0: the `ScanTest` addon (above). Built, passed.
 1. Framework: settings DB with scopes, event bus, coroutine scheduler, item-string normaliser, item info cache. Built.
@@ -1413,7 +1433,7 @@ Status of 2026-11-06: steps 0 to 6 are built. Step 7 is built except the ledger 
 | PR5 | Vendor and repair | PR0, PR1, PR2 |
 | PR6 | Trade and quest | PR0, PR1, PR2 |
 | PR7 | Ledger page with the inner tabs (Sales, Purchases, Auctions, Loot, Expenses; "Income by source" removed in PR3) and the filters | PR1; the tabs show the sources of PR2 to PR6 that exist |
-| PR8 | CSV export | PR7 |
+| PR8 | CSV export (built 2026-11-07) | PR7 |
 | PR9 | Decision logs of Buying and Selling saved in the ledger, and shown as the detail of the Auctions rows (dry run rows included) | PR1, PR2, PR7 and the step 6 tabs |
 
 PR3 to PR6 can go in any order after PR2.

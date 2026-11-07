@@ -68,6 +68,7 @@ Shared\Services\LedgerRecord.lua
 Shared\Services\LootSource.lua
 Shared\Services\LedgerBuffer.lua
 Shared\Services\LedgerStore.lua
+Shared\Services\LedgerCsv.lua
 Shared\Services\LedgerLoader.lua
 Shared\Services\LedgerMoney.lua
 Shared\Services\LedgerMail.lua
