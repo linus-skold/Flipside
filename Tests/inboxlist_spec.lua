@@ -565,6 +565,7 @@ describe("InboxList", function()
             shift, openAll.running = true, true
             barList:Click(1)
             assert.are.same({}, looted)
+            assert.are.equal("Wait for Open all to end", barList.statusLabel:GetText())
         end)
     end)
 end)

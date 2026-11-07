@@ -13,6 +13,10 @@ ns.MailOpenAll = MailOpenAll
 local OWNER = "Flipside.MailOpenAll"
 -- The default of the client error text if the global ERR_INV_FULL is missing.
 MailOpenAll.FULL_FALLBACK = "Inventory is full."
+-- While a client mail command is in flight, the run asks again after PENDING_WAIT seconds, at most PENDING_MAX times
+-- in a row (3 s); then it goes on, so that the run cannot hang.
+local PENDING_WAIT = 0.15
+local PENDING_MAX = 20
 -- The red of the client error messages (UIErrorsFrame calls in the client source).
 local ERROR_COLOR = { 1, 0.1, 0.1, 1 }
 
@@ -67,7 +71,8 @@ local function plural(count, one, many)
     return count == 1 and one or many
 end
 
--- deps: api = { numItems(), header(index), autoLoot(index), freeSlots() (optional) }, bus, after(seconds, fn),
+-- deps: api = { numItems(), header(index), autoLoot(index), freeSlots() (optional), commandPending() (optional,
+-- C_Mail.IsCommandPending) }, bus, after(seconds, fn),
 -- take (a MailTake: Begin(), IsActive()), formatMoney(copper), fullText (the client text of the full bags error,
 -- ERR_INV_FULL), showError(text) (shows the red client message), say(text) (one chat line), blocked() (optional;
 -- gives a text if the run must not start now, for example while a mailing run goes), onChange() (optional; called
@@ -85,23 +90,15 @@ function MailOpenAll.New(deps)
         end
     end
 
-    -- The number of mails from index down to 1 that the run would take.
-    local function countLeft(from)
-        local count = 0
-        for index = math.min(from, api.numItems() or 0), 1, -1 do
-            if not skipReason(readMail(api, index)) then
-                count = count + 1
-            end
-        end
-        return count
-    end
-
     local function summary(prefix)
         local opened = run.opened
         local text = string.format("%sOpened %d %s, took %s", prefix, opened, plural(opened, "mail", "mails"),
             deps.formatMoney(run.money))
         if run.skipped > 0 then
             text = text .. string.format(", skipped %d", run.skipped)
+        end
+        if run.failed > 0 then
+            text = text .. string.format(", not taken %d", run.failed)
         end
         return text
     end
@@ -112,8 +109,9 @@ function MailOpenAll.New(deps)
         deps.bus:Unsubscribe("UI_ERROR_MESSAGE", OWNER)
     end
 
-    -- reason: "done", "stopped", "closed" or "full". left is the number of mails that stay (for "full").
-    local function finish(reason, left)
+    -- reason: "done", "stopped", "closed" or "full". For "full" the error shows, and run.fullSkipped is the number
+    -- of item mails that stay.
+    local function finish(reason)
         self.running, self.stopping, run.pending = false, false, nil
         stopListening()
         local prefix = ""
@@ -127,14 +125,20 @@ function MailOpenAll.New(deps)
         local text = summary(prefix)
         log(reason == "full" and "warn" or "info", "open all ended (" .. reason .. "): " .. text)
         if reason == "full" then
-            local count = left or 0
+            local count = run.fullSkipped
             deps.showError(deps.fullText)
             deps.say(string.format("%s %d %s left to open", deps.fullText, count, plural(count, "mail", "mails")))
         end
         setStatus(text)
     end
 
-    -- Takes the next mail, or ends the run. Works from run.index down to 1.
+    -- The run ended by itself: with the full bags error if item mails stayed, else normally.
+    local function finishDone()
+        finish(run.fullSkipped > 0 and "full" or "done")
+    end
+
+    -- Takes the next mail, or ends the run. Works from run.index down to 1. While the client has a mail command in
+    -- flight (api.commandPending), it waits, up to PENDING_MAX times.
     local function step()
         while true do
             if self.stopping then
@@ -142,7 +146,7 @@ function MailOpenAll.New(deps)
             end
             run.index = math.min(run.index, api.numItems() or 0)
             if run.index < 1 then
-                return finish("done")
+                return finishDone()
             end
             local index = run.index
             local mail = readMail(api, index)
@@ -151,20 +155,49 @@ function MailOpenAll.New(deps)
                 run.skipped = run.skipped + 1
                 log("info", string.format("open all skipped mail %d from %s: %s", index, mail.sender, why))
             end
+            if not why and mail.items > 0 and api.freeSlots and api.freeSlots() == 0 then
+                -- No free slot: the item mail stays; a mail with only money is still taken.
+                run.fullSkipped = run.fullSkipped + 1
+                log("warn", string.format("open all left mail %d from %s: bags are full", index, mail.sender))
+                why = "full"
+            end
             if not why then
-                if mail.items > 0 and api.freeSlots and api.freeSlots() == 0 then
-                    return finish("full", countLeft(index))
+                if api.commandPending and api.commandPending() and run.waits < PENDING_MAX then
+                    run.waits = run.waits + 1
+                    deps.after(PENDING_WAIT, function()
+                        if self.running then
+                            step()
+                        end
+                    end)
+                    return
                 end
+                run.waits = 0
                 log("info", string.format("open all takes mail %d from %s: %d items, money %d", index, mail.sender,
                     mail.items, mail.money))
                 run.pending = mail
+                setStatus(string.format("Opening mails: %d opened", run.opened))
                 deps.take.Begin()
                 api.autoLoot(index)
-                setStatus(string.format("Opening mails: %d opened", run.opened))
                 return
             end
             run.index = index - 1
         end
+    end
+
+    -- Counts the taken mail. A mail that is still at its index with the same money and items was not taken.
+    local function settle(mail)
+        local now = mail.index <= (api.numItems() or 0) and readMail(api, mail.index) or nil
+        local money = mail.money
+        if now and now.sender == mail.sender then
+            money = math.max(0, mail.money - now.money)
+            if money == 0 and now.items >= mail.items then
+                run.failed = run.failed + 1
+                log("warn", string.format("open all: mail %d from %s was not taken", mail.index, mail.sender))
+                return
+            end
+        end
+        run.opened = run.opened + 1
+        run.money = run.money + money
     end
 
     -- The take of the pending mail ended. The next step runs after a short delay, so that MAIL_CLOSED, which also
@@ -175,8 +208,11 @@ function MailOpenAll.New(deps)
             return
         end
         run.pending = nil
-        run.opened = run.opened + 1
-        run.money = run.money + mail.money
+        if mail.bagsFull then
+            run.fullSkipped = run.fullSkipped + 1
+        else
+            settle(mail)
+        end
         run.index = mail.index - 1
         deps.after(0, function()
             if self.running then
@@ -185,10 +221,10 @@ function MailOpenAll.New(deps)
         end)
     end
 
+    -- The client error for full bags during a take: the mail stays, the run goes on with the money-only mails.
     local function onError(_, _, message)
         if self.running and run.pending and deps.fullText and message == deps.fullText then
-            local index = run.pending.index
-            finish("full", countLeft(index))
+            run.pending.bagsFull = true
         end
     end
 
@@ -214,7 +250,7 @@ function MailOpenAll.New(deps)
         if (api.numItems() or 0) == 0 then
             return false, "The inbox is empty"
         end
-        run = { opened = 0, money = 0, skipped = 0, index = api.numItems(), pending = nil }
+        run = { opened = 0, money = 0, skipped = 0, failed = 0, fullSkipped = 0, waits = 0, index = api.numItems() }
         self.running, self.stopping = true, false
         deps.bus:Subscribe("Flipside.MailTakeEnded", OWNER, onTakeEnded)
         deps.bus:Subscribe("MAIL_CLOSED", OWNER, onClosed)

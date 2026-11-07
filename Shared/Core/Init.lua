@@ -1393,6 +1393,8 @@ local function createInboxList(page, blocked)
             return IsModifiedClick("MAILAUTOLOOTTOGGLE")
         end,
         autoLoot = AutoLootMailItem,
+        -- True while the client has a mail command in flight (the Forever Open All button waits for it).
+        commandPending = C_Mail and C_Mail.IsCommandPending,
         freeSlots = function()
             local free = 0
             for bag = 0, _G.NUM_BAG_SLOTS or 4 do
@@ -1562,7 +1564,8 @@ local function openMailing()
                     end,
                     -- The send slots are one buffer: the page and the mailing run must not use it together.
                     isRunning = function()
-                        return host.view and host.view.run:IsRunning() or false
+                        return host.view and host.view.run:IsRunning()
+                            or (host.inbox and host.inbox:IsOpenAllRunning()) or false
                     end,
                     windowShown = function()
                         return host.window and host.window.frame:IsShown() or false

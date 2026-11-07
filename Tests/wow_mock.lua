@@ -11,7 +11,7 @@ local GLOBAL_NAMES = {
     "SLASH_SCANTEST1", "ScanTestDB", "SlashCmdList",
     "StaticPopupDialogs", "StaticPopup_Show", "UnitName", "UnitClass", "WOW_PROJECT_ID", "date", "debugprofilestop",
     "time",
-    "UISpecialFrames", "UIParent", "GameTooltip", "UIErrorsFrame", "GetMoneyString", "GetMoney", "issecretvalue",
+    "UISpecialFrames", "UIParent", "GameTooltip", "UIErrorsFrame", "C_Mail", "GetMoneyString", "GetMoney", "issecretvalue",
     "PanelTemplates_SetNumTabs", "PlaySound", "SOUNDKIT",
     "PanelTemplates_SetTab", "PanelTemplates_TabResize", "InCombatLockdown", "ScrollUtil", "CreateDataProvider",
     "CreateScrollBoxListLinearView", "CreateTreeDataProvider", "CreateScrollBoxListTreeListView", "MenuUtil",
@@ -692,6 +692,12 @@ function M.reset(options)
         end,
     }
     -- The client error frame: AddMessage(text, r, g, b, a) and AddExternalErrorMessage(text) (Forever).
+    M.mailPending = false -- result of C_Mail.IsCommandPending()
+    _G.C_Mail = {
+        IsCommandPending = function()
+            return M.mailPending
+        end,
+    }
     M.uiErrors = {}
     _G.UIErrorsFrame = {
         AddMessage = function(_, text, r, g, b, a)

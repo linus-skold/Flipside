@@ -489,8 +489,12 @@ end
 -- as InboxFrame_OnModifiedClick does. A normal click only opens the mail.
 function InboxList:Click(index)
     local api = self.deps.api
-    if api.isModified and api.autoLoot and api.isModified() and not self:IsOpenAllRunning() then
-        self:TakeAll(index)
+    if api.isModified and api.autoLoot and api.isModified() then
+        if self:IsOpenAllRunning() then
+            self:SetStatus("Wait for Open all to end")
+        else
+            self:TakeAll(index)
+        end
     end
     self:Open(index)
 end

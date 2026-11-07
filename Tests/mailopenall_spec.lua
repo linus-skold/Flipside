@@ -3,12 +3,15 @@ local mock = require("Tests.wow_mock")
 
 describe("MailOpenAll", function()
     local ns, bus, timers, take, run, mails, looted, free, said, changes, blockedText, removeOnTake, ended
+    local noEffect, onLoot, seq
 
     local FULL = "Inventory is full."
 
     -- A mail: items, money, cod and gm are optional.
     local function mail(fields)
-        return { items = fields.items or 0, money = fields.money or 0, cod = fields.cod or 0, gm = fields.gm }
+        seq = seq + 1
+        return { items = fields.items or 0, money = fields.money or 0, cod = fields.cod or 0, gm = fields.gm,
+            sender = "Sender" .. seq }
     end
 
     -- Runs the timers that exist now, once. A timer that a callback adds waits for the next call.
@@ -34,7 +37,7 @@ describe("MailOpenAll", function()
         end
         bus = ns.EventBus.New({})
         timers, looted, free, said, changes, blockedText, removeOnTake, ended = {}, {}, 10, {}, 0, nil, true, 0
-        mails = {}
+        mails, noEffect, onLoot, seq = {}, false, nil, 0
         take = ns.MailTake.New({
             bus = bus,
             after = function(seconds, fn)
@@ -51,15 +54,24 @@ describe("MailOpenAll", function()
                 end,
                 header = function(index)
                     local m = mails[index]
-                    return "pkg", "stat", "Sender" .. index, "Subject", m.money, m.cod, 10, m.items, false, false,
+                    return "pkg", "stat", m.sender, "Subject", m.money, m.cod, 10, m.items, false, false,
                         false, true, m.gm
                 end,
                 autoLoot = function(index)
                     looted[#looted + 1] = index
+                    if onLoot then
+                        onLoot()
+                    end
+                    if noEffect then
+                        return
+                    end
                     if removeOnTake then
                         table.remove(mails, index)
+                    else
+                        mails[index].items, mails[index].money = 0, 0
                     end
                 end,
+                commandPending = C_Mail.IsCommandPending,
                 freeSlots = function()
                     return free
                 end,
@@ -272,12 +284,13 @@ describe("MailOpenAll", function()
             run.Start()
             assert.are.same({ 2 }, looted)
             bus:Emit("UI_ERROR_MESSAGE", 1, FULL)
+            assert.is_true(run.IsRunning())
+            free = 0
+            nextMail()
             assert.is_false(run.IsRunning())
             assert.are.equal(1, #mock.uiErrors)
             assert.are.same({ FULL .. " 2 mails left to open" }, said)
             assert.are.equal("Bags are full. Opened 0 mails, took 0c", run.Status())
-            pump()
-            pump()
             assert.are.same({ 2 }, looted)
         end)
 
@@ -291,6 +304,17 @@ describe("MailOpenAll", function()
             assert.are.same({}, mock.uiErrors)
         end)
 
+        it("skips the item mails and still takes a money-only mail that comes later in the order", function()
+            mails = { mail({ money = 9 }), mail({ items = 1 }), mail({ items = 2 }) }
+            free = 0
+            run.Start()
+            assert.are.same({ 1 }, looted)
+            nextMail()
+            assert.is_false(run.IsRunning())
+            assert.are.equal("Bags are full. Opened 1 mail, took 9c", run.Status())
+            assert.are.same({ FULL .. " 2 mails left to open" }, said)
+            assert.are.equal(1, #mock.uiErrors)
+        end)
         it("takes a mail with only money when the bags are full", function()
             mails = { mail({ items = 1 }), mail({ money = 9 }) }
             free = 0
@@ -304,6 +328,78 @@ describe("MailOpenAll", function()
         end)
     end)
 
+    describe("mail commands", function()
+        it("asks again after a short delay and takes the mail when the command ends", function()
+            mails = { mail({ items = 1 }), mail({ items = 1 }) }
+            mock.mailPending = true
+            run.Start()
+            assert.are.same({}, looted)
+            assert.are.equal(0.15, timers[1].seconds)
+            pump()
+            assert.are.same({}, looted)
+            mock.mailPending = false
+            pump()
+            assert.are.same({ 2 }, looted)
+        end)
+
+        it("goes on after the upper limit, so that the run cannot hang", function()
+            mails = { mail({ items = 1 }) }
+            mock.mailPending = true
+            run.Start()
+            for _ = 1, 19 do
+                pump()
+            end
+            assert.are.same({}, looted)
+            pump()
+            assert.are.same({ 1 }, looted)
+        end)
+
+        it("stops while it waits for the command", function()
+            mails = { mail({ items = 1 }) }
+            mock.mailPending = true
+            run.Start()
+            run.Stop()
+            assert.is_false(run.IsRunning())
+            pump()
+            assert.are.same({}, looted)
+        end)
+
+        it("does not count a mail that is still there with the same contents", function()
+            noEffect = true
+            mails = { mail({ items = 1, money = 50 }) }
+            run.Start()
+            nextMail()
+            assert.is_false(run.IsRunning())
+            assert.are.equal("Opened 0 mails, took 0c, not taken 1", run.Status())
+        end)
+
+        it("counts the money that is really gone", function()
+            mails = { mail({ money = 50 }), mail({ money = 70 }) }
+            run.Start()
+            nextMail()
+            nextMail()
+            assert.are.equal("Opened 2 mails, took 120c", run.Status())
+        end)
+
+        it("shows the progress before the take call, so that a summary is not overwritten", function()
+            local seen
+            onLoot = function()
+                seen = run.Status()
+            end
+            mails = { mail({ items = 1 }) }
+            run.Start()
+            assert.are.equal("Opening mails: 0 opened", seen)
+            run.Stop()
+            nextMail()
+            onLoot = function()
+                bus:Emit("MAIL_CLOSED")
+            end
+            mails = { mail({ items = 1 }) }
+            run.Start()
+            assert.is_false(run.IsRunning())
+            assert.is_truthy(run.Status():find("^Mailbox closed%."))
+        end)
+    end)
     describe("status", function()
         it("sums the mails and the money of the run", function()
             mails = { mail({ money = 100 }), mail({ items = 1, money = 250 }), mail({ items = 4 }) }
