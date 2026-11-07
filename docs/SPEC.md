@@ -17,7 +17,7 @@ Start with Spike 0 (§8), then follow the MVP build order. Everything below appl
    - Unit tests with busted and a mocked WoW API, for the pure logic: formula compiler, market-value algorithm, selling decisions, keep-stock maths, deposit-aware maths.
    - Packaging for CurseForge and Wago via a release workflow. The release has two addon folders: `Flipside` and `Flipside_Ledger`. The TOC of `Flipside_Ledger` has `## LoadOnDemand: 1` and `## Dependencies: Flipside`.
 4. **Libraries.** Decide in the first task whether to use common libraries (e.g. Ace3, LibSerialize, LibDeflate) or write our own; check each licence is compatible with MIT (D12) and list them in the README. The decision is made: see D18.
-5. **Repo CLAUDE.md** containing: the link to this spec; the build order; "Decisions D1–D25 are binding — ask before changing one"; "When something gets scoped, update the Needs scoping table"; the definition of done below.
+5. **Repo CLAUDE.md** containing: the link to this spec; the build order; "Decisions D1–D26 are binding — ask before changing one"; "When something gets scoped, update the Needs scoping table"; the definition of done below.
 6. **Definition of done per feature.** Unit tests pass; luacheck is clean; the feature's in-game checklist passes on WoW: Forever; the spec section is updated if behaviour changed; the Phase dropdown and Needs scoping status reflect reality.
 7. **Open questions** at the end of this tab are not decided. If a task depends on one, stop and ask.
 
@@ -67,7 +67,7 @@ Start with Spike 0 (§8), then follow the MVP build order. Everything below appl
 | D22 | Scan data is keyed by region and ruleset (refines D15). The region comes from the client. Each stored record also has a ruleset field that has one fixed value in the MVP; real rulesets (for example hardcore or self-found) can come later without a rewrite of stored data | — | 2026-10-14 |
 | D23 | Flavour separation. Each flavour has its own TOC: `Flipside.toc` for Forever and `Flipside_TBC.toc` for TBC Anniversary. One release zip holds both TOCs. Shared code lives in `Shared/` (`Shared/Core`, `Shared/Services`, `Shared/Features`, `Shared/UI`, `Shared/UI/Kit`, `Shared/UI/Pages`). Flavour code lives in `Core_<Flavour>/` (flavour config `Flavour.lua`, tooltip hook) and `AH_<Flavour>/` (all auction API calls and the AH tab host). Only AuctionClient backends call the auction API. Shared code reads `ns.Flavour` and never checks the flavour name. The TOC selects the flavour folders | One TOC with flavour checks in shared code | 2026-10-14 |
 | D24 | TBC scan data is keyed by region, realm and ruleset. The ruleset value is "tbc-anniversary" (refines D15 and D22). Forever stays region + "standard". The realm part can be removed later if a test shows that TBC auctions are shared across realms | Region and ruleset only | 2026-10-14 |
-| D25 | TBC uses its own SavedVariables names: `FlipsideDB_TBC` and `FlipsideScanDB_TBC`. These are the names in `Flipside.toc` plus `_TBC`. The ledger is a separate load-on-demand addon, `Flipside_Ledger`, with the SavedVariables `FlipsideLedgerDB` (TBC: `FlipsideLedgerDB_TBC`). It is no longer a part of the Main DB. See §5.8 | Shared SavedVariables | 2026-10-14 (changed 2026-10-15) |
+| D25 | TBC uses its own SavedVariables names: `FlipsideDB_TBC` and `FlipsideScanDB_TBC`. These are the names in `Flipside.toc` plus `_TBC`. The log DB is an exception: both TOC files use `FlipsideLogDB` (added 2026-10-17, §7.5). The ledger is a separate load-on-demand addon, `Flipside_Ledger`, with the SavedVariables `FlipsideLedgerDB` (TBC: `FlipsideLedgerDB_TBC`). It is no longer a part of the Main DB. See §5.8 | Shared SavedVariables | 2026-10-14 (changed 2026-10-15) |
 | D26 | Buying and Selling make one protected AH call for each click. Every buy asks for confirmation in v1 and shows the final server price. Flipside never buys without a click | Automatic buying of listed rows | 2026-10-14 |
 
 ### Improvements over TSM
@@ -101,25 +101,25 @@ Nine features come from your list, twelve are ones TSM users rely on that are ea
 | Full scan | Captures every AH listing and builds local price history | Replaces AuctionDB downloads (D1) | You | MVP |
 | Buying | Search the AH, buy below a max price, restock materials | Same as Shopping; adds "% of market" and data-age columns | You | MVP |
 | Vendor flips | The Buying tab source "Vendor": items that the AH sells below their vendor sell price (point 24a, 2026-10-28) | New in Flipside; the list needs no group | You | MVP |
-| Selling | Post and cancel by rules with min / max / normal prices | Same as Auctioning; adds dry run and decision log | You | MVP |
+| Selling | Post and cancel by rules with min / max / normal prices | Same as Auctioning; adds a decision log (the Selling tab has no dry run, removed 2026-10-15; the Buying tab has one) | You | MVP |
 | Item groups | Organise items into a tree that rules apply to | Same model; adds starter groups and auto profession groups (later; not in build step 4) | You | MVP |
 | Mailing | Send grouped items to a named character: the mailing operation of a group (replaces the mail list, decided 2026-10-16) | Same as Mailing operations; the mailing view runs the mail groups at the mailbox | You | MVP |
 | Keep stock | Hold target quantities per character and location | Unifies TSM restock settings from Mailing, Banking and Shopping | You | Phase 2 |
-| Vendoring | Sell junk and low-value items, buy vendor reagents | Same as Vendoring; adds "never vendor above X" safety | You | MVP |
+| Vendoring | Sell junk and low-value items, buy vendor reagents | Same as Vendoring; adds "never vendor above X" safety. Moved from the MVP to Phase 2 on 2026-11-06, with Keep stock. Not built | You | Phase 2 |
 | Ledger | Record sales, purchases, fees and failures; show profit | Same as Accounting; adds documented CSV export | You | MVP |
 | Sniper | Repeat searches to catch underpriced new listings | Same as Sniper; uses local scan prices for thresholds | You | Phase 2 |
 | Operations and price formulas | Reusable rules with a formula language | Same language; new local price sources; live formula preview | Added | MVP |
 | Tooltips | Prices, counts and history on every item (the history chart is Phase 2) | Shows prices as a Min/Avg/Max/Market table by window (1d, 14d, 30d, 60d) with no header line; the data age is an option | Added | MVP |
 | Inventory tracking | Counts per character, bank, mail, AH, guild (guild bank later; equipped items later) | Same | Added | MVP |
-| Decision log and dry run | Shows why each item was posted, skipped or cancelled | New | Added | MVP |
-| Crafting and queue | Profit per recipe, restock queue, craft next | Same | Added | Phase 2 |
+| Decision log and dry run | Shows why each item was posted, skipped or cancelled. Dry run: Buying tab only | New | Added | MVP |
+| Crafting and queue | Profit per recipe, restock queue, craft next. Built so far: the craft cost block in the profession window (§5.14a). The ranking and the queue are not built | Same | Added | Phase 2 |
 | Banking | Move groups between bags, bank and warband bank | Folded into Keep stock rules | Added | Phase 2 |
 | Profiles | Swap rule sets per character | Same | Added | Phase 2 |
 | Import and export | Share groups and operations as text (MVP, mailing operations included); keep-stock rules later (Phase 2) | Open, documented format | Added | MVP |
 | Dashboard | Gold over time and profit summary | Same, from local ledger only | Added | Phase 2 |
-| Account sync | Share inventory, ledger and scan data across accounts | Also shares scan history (fills gaps) | Added | Phase 3 |
+| Account sync | Share inventory, ledger and scan data across accounts. Guild price sharing is built (§3.5, off by default); account sync is not | Also shares scan history (fills gaps) | Added | Phase 3 |
 | Task List | Step-by-step guide through a crafting session | Same | Added | Phase 3 |
-| Destroying | Disenchant, mill and prospect in bulk | Same | Added | Phase 3 |
+| Destroying | Disenchant, mill and prospect in bulk. Built early (§5.7a, `/flip destroy`) | Same | Added | Phase 3 |
 | Great Deals | Lists underpriced items right after every full scan | New for free; premium-only in TSM | Improvement | MVP |
 | Price history chart | 60+ days of an item's prices and volume in game | New | Improvement | Phase 2 |
 | Deposit-aware posting | Skips posts whose expected deposit loss outweighs expected profit | New | Improvement | Phase 2 |
@@ -135,7 +135,7 @@ All prices come from three kinds of in-game scans, folded into a compact daily h
 | Scan | Blizzard API (Retail) | Returns | Limit | Use |
 | --- | --- | --- | --- | --- |
 | Full scan | `C_AuctionHouse.ReplicateItems` | Every listing with price and quantity | 15 min account-wide cooldown (assumed; not yet measured on Forever) | Primary data source, one button |
-| Summary scan | Browse query + "request more results" | Lowest price and total quantity per item | Search throttle, no cooldown | Fallback when full scan is on cooldown or fails |
+| Summary scan | Browse query + "request more results" | Lowest price and total quantity per item | Search throttle, no cooldown | Fallback when full scan is on cooldown or fails. **Not built** (no summary scan mode in the code) |
 | Passive capture | Any search done by Buying, Selling or Sniper | Full depth for searched items | None extra | Keeps watched items fresh between full scans; searches in Blizzard's own AH window are captured too |
 
 Full-scan facts that shape the design ([Warcraft Wiki](https://warcraft.wiki.gg/wiki/API:C_AuctionHouse.ReplicateItems)):
@@ -276,7 +276,7 @@ check(
 13. Custom sources (step 4): a loop between custom sources is refused when saved, and gives invalid at run time.
 14. Not in version one: a source for another item (item arguments) and `convert()`. They come with crafting (Phase 2).
 15. No TSM source names as aliases (for example no `dbmarket`), in line with D13.
-16. The MVP vendoring safety check uses `ScanMarket` only. `Destroy` comes in Phase 3.
+16. The vendoring safety check (Phase 2 since 2026-11-06) uses `ScanMarket` only. `Destroy` comes in Phase 3.
 17. The default selling minimum ships as written. `first` and `avg` skip the missing crafting value.
 18. A vendor sell price of 0 means the vendor does not buy the item. `vendorsell` is then invalid.
 
@@ -290,7 +290,7 @@ Each feature lists only what differs from, or is unspecified in, the TSM referen
 
 ### 5.1 Full scan
 
-A *Full Scan* button sits on the Flipside tab of the Auction House frame with a cooldown countdown (§3.1). When the AH opens and the cooldown is clear, an optional setting starts the scan automatically. Result summary after each scan: items seen, new items, prices changed by more than 30%, and duration.
+A *Full Scan* button sits on the Flipside tab of the Auction House frame with a cooldown countdown (§3.1). When the AH opens and the cooldown is clear, an optional setting starts the scan automatically. **Not built:** no such setting exists in the code, and the scan starts only from a button or `/flip scan`. Result summary after each scan: items seen, new items, prices changed by more than 30%, and duration.
 
 The scan buttons also show on the start page of the Blizzard Auction House: a small bar with the same scan buttons, a Stop button and one status text. On Forever the bar sits in the bottom strip of the Buy page. On TBC Anniversary it sits in the top strip of the Browse page. It follows the Blizzard page. The profile setting `ui.startPageScanBar` (default on) hides it. A check box on the Flipside tab changes the setting.
 
@@ -464,7 +464,7 @@ The user decided points 1 to 4. Points 5 to 9 are defaults from the study recomm
     - Decided 2026-10-15: the estimate stays at 5%. The ledger does not use the estimate. It uses the real cut from the sale invoice: payout = bid + deposit - consignment (Forever `MailFrame.lua` lines 827-831). The cut is the `consignment` value (§5.8).
     - A negative value shows in red. Each row shows Net. The details pane does not show Net (changed 2026-10-16); the Post warning shows it (point 26). The tab shows no queue total of Net or vs vendor (changed 2026-10-15).
 19. **Selling tab layout (user request, 2026-10-15; own design).** The panel has four parts, from top to bottom (sizes for the 800 x 538 Forever Auction House frame; the panel needs about 780 x 440):
-    - Toolbar (24 px): "Stop" (it shows while searches run) and the status message. The toolbar row takes no space while the message is empty and "Stop" is hidden (the tab shows no "pick a group or an item" hint there, changed 2026-10-15): the action row, the details pane and the list move up 28 px and the list bottom stays. The tab shows no "search finished" text. The tab has no "Refresh bags", "Dry run" or "Log" (removed 2026-10-15). It reads the bags by itself (point 26).
+    - Toolbar (24 px): "Stop" only (it shows while searches run). The tab has no status message (see the "Status text rule" below; the older status message of 2026-10-15 is gone). The toolbar row takes no space while "Stop" is hidden: the action row, the details pane and the list move up 28 px and the list bottom stays. The tab shows no "pick a group or an item" hint and no "search finished" text there. The tab has no "Refresh bags", "Dry run" or "Log" (removed 2026-10-15). It reads the bags by itself (point 26).
     - Action row (changed 2026-10-16): the row is gone. "Post" and "Skip" sit in the details pane (next point), each 140 px wide, one under the other (changed 2026-10-16: "Post all" and "Skip item" removed, "Post" and "Skip" use their place). The progress text "Posting 3 of 60" sits in the pane under the operation name on Forever. On TBC it sits in the header band (see the layout rule below). The panel shows no deposit, queue Net or vs vendor text outside the pane. The list reaches the bottom of the panel.
     - **TBC layout (user request, 2026-10-16; Selling and Buying, the host in `AH_TBC/AuctionTabHost.lua`).** Three parts of the Bids art stay free of dead space. (a) Header band: the band between the frame top and the panel (y 22 to 52, right of the portrait, left of the close button) holds the Stop button and the progress text of the Selling tab (`api.band`), so the pane never moves for Stop. A cover texture (client atlas `auctionhouse-background-index`) hides the Bids header art there. The portrait and the close button stay free. (b) Right column: the panel right inset is 12 px (was 34), so the panel reaches the border art of the frame and the mismatched tiles do not show. (c) Bottom right: the two empty button slots of the Bids art (right of the gold display) are in the art itself. A cover frame hides them while a Buying or Selling tab shows. The tab click hook of the host hides the cover for every other tab, so Blizzard art returns. The Flipside tab does not use the cover. Forever has no band: its Stop button stays in the top row of the panel as before.
     - Skip is for the current run only (changed 2026-10-16). A skipped item stays in the tree. A click on it selects it again and makes it a normal item: Skip and the old vendor answer are cleared, the sale slot fills (TBC), and Post is on. An item that the rule skips goes back to the rule skip, so the Post click still asks first (price box, vendor box). After a reselect, the item is normal, and Post posts it when the item is the selection.
@@ -646,7 +646,7 @@ Decision of 2026-10-16: mailing is a fourth operation type, "mailing", on groups
 
 **Export.** The rules export lists the mailing operation like any other operation. The recipient is exported as typed (no placeholder in this step).
 
-**Inbox (unchanged).** Open by type, with a running gold total. There is no open-all button in the MVP. When the user opens the mail, Flipside reads the invoices and feeds the ledger (§5.8, decided 2026-10-15).
+**Inbox.** Flipside adds no open-all button of its own. The client button "Open All" stays in the client Inbox tab (TBC and the Blizzard state on Forever). The compact inbox has Shift-click take all for one mail, and the running gold total shows as the "Gold collected" line after the mailbox closes. **MB2 is not built yet:** the Inbox reading pane, take all and take gold buttons, the filter and the search of the Flipside mailbox window come in MB2 (see "Pages" above). When the user opens the mail, Flipside reads the invoices and feeds the ledger (§5.8, decided 2026-10-15).
 ### 5.6 Keep stock (new, unifies reference restock settings)
 
 Keep stock is one rule type that says *how many of an item should be where*. Other features read it instead of each having their own restock fields.
@@ -663,10 +663,12 @@ How features use it: Banking moves to and from the bank; Mailing sends shortfall
 
 **Precedence (D8).** Keep stock beats every outgoing rule — selling, mailing, vendoring and excess moves. Example: a selling rule says "sell all Runecloth" and a keep-stock rule says "keep 2 stacks of Runecloth". Selling posts everything above 2 stacks and logs "kept for stock: 2 stacks" in the decision log. Going below the target needs an explicit **Override stock** button, which applies to that one run only and is recorded in the decision log.
 
-### 5.7 Vendoring (reference §5.5)
+### 5.7 Vendoring (reference §5.5) (Phase 2, moved from the MVP on 2026-11-06)
+
+**Status: not built.** The user moved Vendoring to Phase 2 on 2026-11-06, together with Keep stock. Only the operation type "vendoring" exists today (`OperationSchema.TYPES`, with its fields on the Operations page). No code sells to a vendor, no vendor safety check runs, and the source `vendorbuy` is not available yet (`FormulaSources.lua`).
 
 - Sell junk and groups marked for vendor; buy vendor reagents up to Keep stock targets.
-- **Safety:** never auto-vendor an item whose `ScanMarket` or `Destroy` value (MVP: ScanMarket only; Destroy from Phase 3) is more than a set multiple of its vendor price (default 2×); such items are listed for review instead.
+- **Safety:** never auto-vendor an item whose `ScanMarket` or `Destroy` value (first build: ScanMarket only; Destroy from Phase 3) is more than a set multiple of its vendor price (default 2×); such items are listed for review instead.
 - Buyback tab with one-click undo of the last sale batch.
 - **Keep in bags:** the operation has a number for each item (default 0). Vendoring leaves that many units of the item in the bags (see the feedback decisions in §5.2).
 
@@ -747,7 +749,7 @@ The user approved points 1 to 10 on 2026-10-15. They are binding. The idea is si
    - Looted money is recorded with its source. The item records of the same loot window will use the same `mob` and `src` (they share `ctx`) when the loot item records are built (PR4); no item record exists yet.
    - The item value in the record is the vendor price at loot time. The `ScanMarket` value is computed when the user views the page. It is never stored.
 5. **Mail.**
-   - Flipside reads the invoices when the user opens the mail. There is no open-all button in the MVP (§5.5).
+   - Flipside reads the invoices when the user opens the mail. Flipside adds no open-all button (§5.5); the client "Open All" button is not changed.
    - The mail indexes shift when mail leaves the inbox. A mail is therefore never found again by its index.
    - Each mail gets a fingerprint: sender, subject, money, attached item keys and quantities, and the invoice values. Two equal mails in one read get an occurrence number.
    - Flipside saves the fingerprints for 31 days. A fingerprint that is already saved is not recorded again.
@@ -1000,7 +1002,7 @@ Operations and formulas (§4.2–4.3), tooltips and inventory tracking (referenc
 10. **Combat and missing data.** Tooltip lines show in combat too. Items without data show "invalid price".
 11. **Budget.** At most 1 ms per tooltip once the data is loaded. This is measured in game.
 12. **Dashboard.** Phase 2, as in the feature list. The scan time and cooldown stay on the AH tab.
-13. **Forget character.** A function removes only the inventory of that character. The button comes later.
+13. **Forget character.** A function removes only the inventory of that character. The slash command `/flip forget <Name-Realm>` calls it (§7.6). A button is not built.
 14. **Min, max and average.** Superseded by point 15 for the default tooltip. The formula sources `ScanLow`, `ScanHigh` and `ScanMarket` (§4) still mean the last 14 days.
 
 15. **Price table (decided 2026-10-14).** The tooltip shows the prices as a table. There is no title line (decided 2026-10-21): a blank line separates the table from the client text. With Alt and a stack, all cells are multiplied by the stack count.
@@ -1081,6 +1083,7 @@ A small block sits inside the profession window, under the reagents of the selec
 - **Refresh:** on `TRADE_SKILL_SHOW` (show), `TRADE_SKILL_CLOSE` (hide), `TRADE_SKILL_UPDATE` (TBC), `TRADE_SKILL_LIST_UPDATE` and `TRADE_SKILL_DATA_SOURCE_CHANGED` (Forever), `Flipside.ScanFinished` and `Flipside.PriceCaptured`. The block also reads the selected recipe every 0.2 s in an OnUpdate of its own frame, and draws again only when it changes. In the same check it reads the anchor again, because the client lays out its reagents after the selection changes. The block hides with the profession window, and shows no content when no recipe is selected.
 - **API:** TBC uses `GetTradeSkillSelectionIndex`, `GetTradeSkillInfo`, `GetTradeSkillItemLink`, `GetTradeSkillNumMade`, `GetTradeSkillNumReagents`, `GetTradeSkillReagentInfo` and `GetTradeSkillReagentItemLink`. Forever uses `ProfessionsFrame.CraftingPage.SchematicForm:GetRecipeInfo()` and `C_TradeSkillUI.GetRecipeSchematic`. A missing API gives "Not supported on this client".
 - Files: `Shared/Services/CraftCost.lua` (no frame code), `Shared/Features/Crafting/CraftClient.lua` (client adapter), `Shared/Features/Crafting/CraftPanel.lua` (block).
+- **Search AH button (WoW: Forever only).** `Core_Forever/RecipeSearch.lua` adds a "Search AH" button (100 x 22) to `ProfessionsFrame.CraftingPage`, above the Create All button. The button shows only while a recipe is selected and the Auction House is open. A click saves the basic reagents of the selected recipe as a search list named "Recipe: <name>" (modifying, finishing and automatic slots give none; a slot with quality tiers gives each tier) and opens that list in the Buying tab (§5.3). If the recipe has no basic reagent, a chat error says so. The button is a child of the crafting page. It adds no secure code and only reads Blizzard frames. TBC has no such button.
 - Follow-up (not built): the `crafting` and `matprice` formula sources, the ranking in 5.14, and quality tiers.
 
 ### 5.15 Presets and undo (new)
@@ -1183,6 +1186,16 @@ The whole "outside the game" layer from the reference (§2) is gone: no servers,
 
 Features sit on shared services, which sit on the framework; the scan engine is a service, so every feature reads the same prices and freshness data.
 
+### Code layout and modules (added 2026-11-06)
+
+The folders of D23 exist now: `Shared/`, `Core_Forever/`, `Core_TBC/`, `AH_Forever/` and `AH_TBC/`. These modules are not named in the sections above.
+
+- **Kit modules** in `Shared/UI/Kit/` (D19): Theme, Window, Widgets, Prompt, MoneyInput, Tabs, List, Tree, Combat, Graph, MinimapButton and Columns. `Columns.lua` gives real columns for lists and trees: one column definition makes the header and every row cell have the same x offset and width. `Combat.lua` has `Kit.AfterCombat(fn)`: it runs `fn` at once, or at `PLAYER_REGEN_ENABLED` if the player is in combat.
+- **`Shared/Services/BagSnapshot.lua`** is a cache of the container reads of the client. The inventory capture, the auto rules and the mailing view read the bags after the same `BAG_UPDATE_DELAYED` burst. They read through one snapshot, so the client gets one call for each bag and slot in a burst. The cache clears at `BAG_UPDATE_DELAYED` and `ITEM_LOCK_CHANGED`.
+- **`Core_Forever/RecipeSearch.lua`** is the "Search AH" button of the profession window (§5.14a). It is in the Forever TOC only.
+- **Mailbox feature** in `Shared/Features/Mailbox/`: `MailboxWindow.lua` and `SendPage.lua` (§5.5). The mailing view and the compact inbox are in `Shared/Features/Mailing/`.
+- **Probe addons** (throwaway, not shipped, each with its own TOC): `ScanTest/` (Spike 0, §8; it has a TBC TOC), `MailTest/` (the mail send probe, §5.5; Forever and TBC TOC files, README) and `LedgerTest/` (the ledger probe: it logs money, loot, vendor, quest, trade, mail and Auction House events to `LedgerTestDB`; build step 7 PR0).
+
 ## Visual style
 
 Flipside looks like the WoW: Forever UI: the classic stone, parchment and gold-trim frames of the original UI, with no tint and no own art (D17).
@@ -1261,10 +1274,9 @@ The reference model (§7–9) is kept: one account-wide SavedVariable, flat scop
 | Main DB | Settings, profiles, groups, operations, keep-stock rules, inventory, the small ledger buffer (§5.8) | Small; changes every session |
 | Scan DB | Daily price history per region and ruleset (§3.3) | Large; can be reset or shared without touching settings |
 | Ledger DB (`FlipsideLedgerDB`, addon `Flipside_Ledger`, changed 2026-10-15) | Ledger records and daily sums (§5.8) | Large; loads only on demand; can be reset without touching settings |
-
 | Log DB (`FlipsideLogDB`, added 2026-10-17) | The diagnostics log (§7.5) | Small ring buffer; can be cleared in the log window |
 
-A corrupted or oversized scan DB or ledger DB can be wiped from settings without losing configuration. All three carry a schema version with migrations on load. The Main DB holds only the ledger buffer (at most the cap in §5.8), not the ledger.
+The SavedVariables names in the TOC files are: `Flipside.toc` has `FlipsideDB`, `FlipsideScanDB` and `FlipsideLogDB`. `Flipside_TBC.toc` has `FlipsideDB_TBC`, `FlipsideScanDB_TBC` and `FlipsideLogDB` (the log has no `_TBC` suffix). The ledger TOC files have `FlipsideLedgerDB` and `FlipsideLedgerDB_TBC`. A corrupted or oversized scan DB or ledger DB can be wiped from settings without losing configuration. The Main DB, the Scan DB and the Ledger DB carry a schema version with migrations on load. The Main DB holds only the ledger buffer (at most the cap in §5.8), not the ledger.
 
 **Main DB design (decided 2026-10-14)**
 
@@ -1298,7 +1310,7 @@ As in the reference §8.2 (pairing, single-writer rows, timestamp versioning, th
 
 Flipside keeps a log of what it does, so that the user can see what happened and share it.
 
-- Storage: its own SavedVariable `FlipsideLogDB` in both TOC files. The data is in `WTF/Account/<account>/SavedVariables/Flipside.lua` (Forever) or `Flipside_TBC.lua` (TBC Anniversary). The log survives `/reload` and logout.
+- Storage: its own SavedVariable `FlipsideLogDB` in both TOC files (the same name on both clients; there is no `_TBC` suffix). The data is in `WTF/Account/<account>/SavedVariables/Flipside.lua` (Forever) or `Flipside_TBC.lua` (TBC Anniversary). The log survives `/reload` and logout.
 - Entry: time (whole seconds and milliseconds), level, category and one line of text. The level is `debug`, `info`, `warn` or `error`. A category is a short word: `core`, `scan`, `mail`, `ledger`, `buying`, `selling`, `auction` or `event`.
 - Ring buffer: the default cap is 3000 entries (100 to 20000). The oldest entries go first. Debug entries are off by default. The `info`, `warn` and `error` entries are always stored.
 - Session marker: each login writes one `info` entry with the addon version, the flavour, the client version, build and interface number, the realm and the character.
@@ -1318,14 +1330,40 @@ In-game checklist (diagnostics log):
 8. Switch "Event trace" on and open the Auction House. The log shows events of category `event`.
 9. Use `/reload`. The entries are still there. Check that `FlipsideLogDB` is in the SavedVariables file.
 
+### 7.6 Slash commands (added 2026-11-06)
 
-The MVP is done when a player on WoW: Forever can scan, see prices in tooltips, buy and sell by group rules, vendor junk safely and see profit in the ledger. Phases follow the Phase column in the feature list; changing a dropdown there moves a feature.
+D16 names the commands `/flipside` and `/flip`. Both do the same. The handler is `ns.HandleSlash` in `Shared/Core/Init.lua`. Both clients have the same list. The list below comes from that file.
+
+| Command | What it does |
+| --- | --- |
+| `/flip` | Opens the Flipside window |
+| `/flip version` | Prints the version |
+| `/flip scan` | Starts a full scan after one confirm. Where the client has scan modes, `/flip scan fast` and `/flip scan page` start those modes |
+| `/flip scan stop` | Stops a running scan |
+| `/flip scan reset` | Clears the scan cooldown (the server can still refuse) |
+| `/flip price <item>` | Prints the prices of an item (name, ID, link or key) |
+| `/flip formula <formula> [item]` | Live preview of a price formula (Formula language design, point 7) |
+| `/flip tooltipstats` | Prints the number of tooltip builds and the maximum and average build time in ms (the 1 ms tooltip budget, see Needs scoping) |
+| `/flip forget <Name-Realm>` | Removes the saved inventory of one character (§5.10 point 13). On Forever it also takes `Name Surname` if only one character matches |
+| `/flip sync` | Prints the state of guild price sharing (§3.5) |
+| `/flip sync request` | Asks the guild for prices |
+| `/flip ledgerdebug` | Prints the counters of the money tracker and of the mail reader (diagnostics) |
+| `/flip log` | Opens the log window (§7.5) |
+| `/flip destroy` | Opens the Destroy window (§5.7a) |
+| `/flip mailbox` | Switches between the Flipside mailbox window and the Blizzard mailbox (§5.5). On TBC it prints that the window is not available |
+| `/flip minimap` | Shows or hides the minimap button and saves the choice |
+| `/flip resetpos` | Puts the Flipside window back in the centre and forgets the saved position |
+
+Any other text prints a short help with the profile name, the version and the scan state.
+
+
+The MVP is done when a player on WoW: Forever can scan, see prices in tooltips, buy and sell by group rules and see profit in the ledger. Vendoring moved to Phase 2 on 2026-11-06. Phases follow the Phase column in the feature list; changing a dropdown there moves a feature.
 
 | Phase | Goal | Features | Done when |
 | --- | --- | --- | --- |
-| MVP | Scan → price → buy / sell → profit, one realm | Full scan, groups, operations and formulas, tooltips, inventory tracking, buying, selling (dry run and decision log: Buying tab and ledger only), vendoring, mailing (the mailing operation and the mail view, §5.5), ledger, Great Deals, export and import of groups and operations | A week of daily use on one realm with no errors, under 5 s of scan processing on a mid-size realm (Flipside processing time; see §3.2 scan engine design) |
-| Phase 2 | Run a multi-character business | Keep stock, banking, crafting and queue, sniper, profiles, import/export of keep-stock rules, dashboard, price history chart, deposit-aware posting, craft profit ranking, presets and undo | A crafter-and-seller pair of alts restocks and sells through one session without manual moves |
-| Phase 3 | Multi-account and polish | Account sync (incl. scan data), Task List, destroying, guild scan sharing (guild part built 2026-10-20, §3.5; party and friends later), then Retail | Two accounts on one realm share inventory, ledger and prices |
+| MVP | Scan → price → buy / sell → profit, one realm | Full scan, groups, operations and formulas, tooltips, inventory tracking, buying (with dry run), selling (decision log and ledger; no dry run), mailing (the mailing operation and the mail view, §5.5), ledger, Great Deals, export and import of groups and operations | A week of daily use on one realm with no errors, under 5 s of scan processing on a mid-size realm (Flipside processing time; see §3.2 scan engine design) |
+| Phase 2 | Run a multi-character business | Keep stock, vendoring (moved from the MVP, 2026-11-06), banking, crafting and queue, sniper, profiles, import/export of keep-stock rules, dashboard, price history chart, deposit-aware posting, craft profit ranking, presets and undo | A crafter-and-seller pair of alts restocks and sells through one session without manual moves |
+| Phase 3 | Multi-account and polish | Account sync (incl. scan data), Task List, destroying (the Destroy window is built early, §5.7a), guild scan sharing (guild part built 2026-10-20, §3.5; party and friends later), then Retail | Two accounts on one realm share inventory, ledger and prices |
 
 **Spike 0: full-scan test (build first).** A throwaway addon, *ScanTest*, that answers whether the full scan works on WoW: Forever before the scan engine is built.
 
@@ -1354,13 +1392,16 @@ The MVP is done when a player on WoW: Forever can scan, see prices in tooltips, 
 
 **Build order inside the MVP**
 
-1. Framework: settings DB with scopes, event bus, coroutine scheduler, item-string normaliser, item info cache.
-2. Full scan and the snapshot pipeline, then scan price sources.
-3. Formula compiler (tokenise → tree → evaluate), with live preview.
-4. Groups and operations UI.
-5. Tooltips and inventory tracking. The tooltip price lines are configurable with the same formula language as operations. The player can show min, max and average values.
-6. AH tabs in Blizzard's Auction House frame: Buying, then Selling with dry run and decision log. Two new tabs, Selling and Buying (similar to the well-known Auctionator layout, in our own design), work from the player's groups and their operations.
-7. Mailbox parsing and the ledger; then Vendoring; then Mailing (the mailing operation and planner first, §5.5; the send run and the mail view after an in-game probe). The ledger design is in §5.8. The work is split into pull requests (decided 2026-10-15):
+Status of 2026-11-06: steps 0 to 6 are built. Step 7 is built except the ledger CSV export (PR8, no code found); the mailing part is built. PR9 is not confirmed: the record type `log` exists in `LedgerRecord`, but the Buying and Selling tabs have no code that writes it. Vendoring left step 7 and moved to Phase 2 (user decision of 2026-11-06). In-game checklists are still open for several parts (see Needs scoping).
+
+0. Spike 0: the `ScanTest` addon (above). Built, passed.
+1. Framework: settings DB with scopes, event bus, coroutine scheduler, item-string normaliser, item info cache. Built.
+2. Full scan and the snapshot pipeline, then scan price sources. Built.
+3. Formula compiler (tokenise → tree → evaluate), with live preview. Built.
+4. Groups and operations UI. Built.
+5. Tooltips and inventory tracking. The tooltip price lines are configurable with the same formula language as operations. The player can show min, max and average values. Built.
+6. AH tabs in Blizzard's Auction House frame: Buying (with dry run), then Selling with the decision log (the Selling tab has no dry run, §5.4). Built, on both clients. Two new tabs, Selling and Buying (similar to the well-known Auctionator layout, in our own design), work from the player's groups and their operations.
+7. Mailbox parsing and the ledger; then Mailing (Vendoring moved to Phase 2 on 2026-11-06; the mailing operation and planner first, §5.5; the send run and the mail view after an in-game probe). The ledger design is in §5.8. The work is split into pull requests (decided 2026-10-15):
 
 | PR | Content | Depends on |
 | --- | --- | --- |
@@ -1386,7 +1427,7 @@ TSM behaviours this spec doesn't cover yet. Change the status as each one gets s
 | Area | What to specify | TSM reference | Status |
 | --- | --- | --- | --- |
 | UI and flow | Windows, AH tabs, settings layout, contextual frames | §6 | Partly scoped (2026-10-14: AH tabs, Flipside window, size, entry points; page layouts open; Groups and Operations pages: build step 4) |
-| TBC AH tabs | Buying tab and Selling tab in the TBC `AuctionFrame`: done (Buying 2026-10-16; Selling 2026-10-16; TBC multisell posting of several stacks in one click, with the Stack size and Max stacks fields, 2026-10-16, in this pull request; in-game checklists open, see §3 items 7 and 14a) | §3, §6 | Scoped (in-game checks open) |
+| TBC AH tabs | Buying tab and Selling tab in the TBC `AuctionFrame`: done (Buying 2026-10-16; Selling 2026-10-16; TBC multisell posting of several stacks in one click, with the Stack size and Max stacks fields, 2026-10-16; in-game checklists open, see §3 items 7 and 14a) | §3, §6 | Scoped (in-game checks open) |
 | Vendor flips | The Buying tab source "Vendor": AH items below their vendor sell price, max price formula `buying.vendorFormula` (§5.3 point 24a) | - | Scoped (2026-10-28; in-game checks open) |
 | Mailing | The mailing operation, the planner and the mail view (§5.5) | §5.4 | Partly scoped (2026-10-17: operation, planner, rules, view and send run built; the view sits in a wider `MailFrame` (wide layout, rules list; a tab layout needs only a new `MailHost.LAYOUTS` entry); item filters (rarity range, many item types) and the built-in All bag items group built 2026-10-17; rules list with Run and Run all (2026-10-18, replaces the group tree) and the compact inbox list (2026-10-18); send mode decided: one confirm, then all mails in sequence, confirmed in game on TBC only; 2026-11-06: on Forever a Flipside mailbox window replaces `MailFrame` with a toggle to the Blizzard mailbox; MB1 and MB3 of 3 built (window, Inbox and Mailing rules pages, toggle, setting `mail.window`; MB3 is the Send page, `MailCompose` and `SendPage`, 2026-11-06; MB2 is the inbox reader, take all, filter and search, not built); open: the Forever probe (`MailTest` second round) and the in-game checklist on both clients, the checklist of the window and the checklist of the Send page) |
 | Auto rules for groups | Rules that add new bag items to groups by name pattern, rarity and item type (§5.2a) | - | Partly scoped (2026-10-17: rules, runner, tab and Apply now built; the name pattern uses Shared/Services/NameRegex.lua; in-game checklist open; open: export of rules, a bank or mail trigger) |
@@ -1401,11 +1442,12 @@ TSM behaviours this spec doesn't cover yet. Change the status as each one gets s
 | Ledger | Storage, retention, record types, money tracking, loot, mail, page, build step 7 PR split | §5.7 | Scoped (2026-10-15; §5.8; Phase stays MVP). 2026-10-17: item detail for mail sends, vendor sales and buys, repairs and AH buys, with four read-only post-hooks (user decision). 2026-10-18: server and character filter on the TBC Ledger page. 2026-10-18: counterparty (buyer, seller, trade partner) and new money sources: flight path, training, bank slot, stable, barber, talent reset, guild bank. 2026-10-18: edit and revert of one full record from the Ledger page (§5.8; in-game checklist open). 2026-11-05: source of looted money (mob, object, item, fishing, "[other player]"; §5.8 point 4; in-game checklist open) |
 | Retail crafting details | Quality tiers and optional reagents in item identity and crafting cost | §5.3 | Needs scoping |
 | Forever surname | Character surname on Forever (no real server name): saved at login, shown as `Name Surname`, alias in mailing recipients, full name to `SendMail` (§5.5 "Character names on Forever") | - | Scoped (2026-11-05; in-game checks open: the separator constant, the surname at login, and that the plain name reaches the right character when names are unique only with the surname) |
-| Smaller settings | Forget character (function in step 5, button later), ignore guilds, sale and purchase sounds, chat output, slash commands | §5.11, §8.3 | Needs scoping |
+| Vendoring | Sell junk and low-value items to a vendor, vendor safety check, Buyback undo, buy vendor reagents (§5.7) | §5.5 | Phase 2 (moved from the MVP, user decision 2026-11-06; not built; only the operation type exists) |
+| Smaller settings | Forget character (the slash command `/flip forget <Name-Realm>` is built, §7.6; no button yet), ignore guilds, sale and purchase sounds, chat output. The list of slash commands is in §7.6 | §5.11, §8.3 | Partly scoped (slash commands built; the rest needs scoping) |
 | Performance budgets | Memory, SavedVariables size, login time, tooltip speed (tooltip: 1 ms, decided 2026-10-14), scan processing | §10.3 | Needs scoping |
-| Combat lockdown | What is deferred or disabled in combat | §3 | Needs scoping |
+| Combat lockdown | What is deferred or disabled in combat | §3 | Partly scoped (built: `Kit.Window` hides an unprotected window in combat and keeps the client path for a protected one; the Destroy button is off in combat and the Destroy window cannot open the first time in combat, §5.7a; the ledger addon load waits for `PLAYER_REGEN_ENABLED`. `Kit.AfterCombat` (`Shared/UI/Kit/Combat.lua`) exists and has a test, but no Flipside code calls it. Open: a rule for the other features) |
 | Localisation | String tables, number and money formats, client languages (decimal separator in formulas decided: dot only) | §10.3 | Needs scoping |
-| Diagnostics log | In-game log with a window, filters and copy; instrumentation of scan, mailing, ledger, buying and the event bus (§7.5) | - | Scoped (2026-10-17; in-game checklist open; open: log lines for Selling, a title-bar button, the global error handler) |
+| Diagnostics log | In-game log with a window, filters and copy; instrumentation of scan, mailing, ledger, buying and the event bus (§7.5) | - | Scoped (2026-10-17; in-game checklist open; 2026-11-06: the Selling tab writes log lines in the category `selling`; open: a title-bar button, the global error handler) |
 | Error handling and recovery | Failed posts and buys, disconnects mid-scan, corrupted data | §7.6 | Partly scoped (2026-10-14: a buy is confirmed with the final server price, D26; failures open) |
 | Later flavours | Retail differences: AH API, professions, banks, commodities. TBC Anniversary is in scope (D11, D23–D25); its open points are the TBC spike results | §3 | Partly scoped |
 
