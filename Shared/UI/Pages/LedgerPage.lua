@@ -469,6 +469,32 @@ function LedgerPage.Rows(store, tab, filter, now)
     return rows
 end
 
+-- Returns the CSV text of the records and daily sums that the filter shows, all types together (SPEC 5.8).
+-- filter: { char, range, realm }, as for Rows.
+function LedgerPage.CsvText(store, filter, now)
+    local options = storeOptions(filter, now)
+    local records = {}
+    for _, record in ipairs(store:Records(options)) do
+        if options.char or inRealm(filter, record.char) then
+            records[#records + 1] = record
+        end
+    end
+    local sums = {}
+    local chars = options.char and { options.char } or store:Characters()
+    for _, char in ipairs(chars) do
+        if options.char or inRealm(filter, char) then
+            for _, sum in ipairs(store:Sums({ char = char, fromTime = options.fromTime })) do
+                local copy = { char = char }
+                for name, value in pairs(sum) do
+                    copy[name] = value
+                end
+                sums[#sums + 1] = copy
+            end
+        end
+    end
+    return ns.LedgerCsv.Build(records, sums)
+end
+
 -- Returns money in, money out and net of rows.
 function LedgerPage.Totals(rows)
     local totalIn, totalOut = 0, 0
@@ -793,6 +819,25 @@ function LedgerPage.Build(content, deps)
         page.DrawGraph()
     end)
     page.graphToggle:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, 0)
+    -- Export CSV: a window with the text of the shown filter (character and date range), selected for Ctrl+C.
+    function page.ExportCsv()
+        local ledger = store()
+        if not ledger then
+            return
+        end
+        local dialog = Kit.EditorDialog("FlipsideLedgerCsv", {
+            width = 640,
+            height = 440,
+            readOnly = true,
+            help = "Press Ctrl+C to copy the text. Then paste it into a file with the ending .csv.",
+        })
+        dialog:Open("Ledger CSV", LedgerPage.CsvText(ledger, page.filter, now(deps)))
+        return dialog
+    end
+    page.exportButton = Kit.Button(content, "Export CSV", 100, function()
+        page.ExportCsv()
+    end)
+    page.exportButton:SetPoint("TOPRIGHT", content, "TOPRIGHT", -104, 0)
     layoutBody()
     local flavour = ns.Flavour or {}
     page.topTabs = Kit.CreateTopTabs(body, LedgerPage.TABS, {

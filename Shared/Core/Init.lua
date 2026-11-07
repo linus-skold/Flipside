@@ -2501,7 +2501,7 @@ function ns.HandleSlash(msg)
     if ns.ToggleMailbox then
         printLine("/flip mailbox switches between the Flipside mailbox and the Blizzard mailbox")
     end
-    printLine("No feature exists yet.")
+    printLine("more commands: tooltipstats, forget <Name-Realm>, sync [request], ledgerdebug, log, minimap, resetpos")
 end
 
 SLASH_FLIPSIDE1 = "/flipside"

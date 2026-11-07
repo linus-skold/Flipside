@@ -79,6 +79,18 @@ describe("ScanCapture", function()
             assert.are.equal(150, store:Get("7").latest.min)
         end)
 
+        it("skips a page of more than 50 rows and saves a page of exactly 50", function()
+            local rows = {}
+            for i = 1, 51 do
+                rows[i] = pageRow(7, 1, 100, gear(7, 0))
+            end
+            capture:OnPageResults(rows, true)
+            assert.is_nil(store:Get("7#b0"))
+            rows[51] = nil
+            capture:OnPageResults(rows, true)
+            assert.are.equal(100, store:Get("7#b0").latest.min)
+        end)
+
         it("saves a partial page as the lowest price only and does nothing during a scan", function()
             capture:OnPageResults({ pageRow(7, 1, 100, nil) }, false)
             assert.is_nil(store:Get("7"))
