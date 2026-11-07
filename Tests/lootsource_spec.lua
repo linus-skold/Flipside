@@ -102,6 +102,26 @@ describe("LootSource", function()
             assert.is_nil((source:Resolve(false)))
         end)
 
+        it("raises no error and keeps no cast for a secret target or a secret unit", function()
+            local secret = setmetatable({}, {
+                __eq = function() error("compare of a secret value") end,
+                __lt = function() error("compare of a secret value") end,
+                __le = function() error("compare of a secret value") end,
+            })
+            secrets[secret] = true
+            local source = make()
+            source:OnCast("player", "Silverleaf")
+            assert.has_no.errors(function()
+                source:OnCast("player", secret)
+            end)
+            assert.is_nil((source:Resolve(false)))
+            source:OnCast("player", "Silverleaf")
+            assert.has_no.errors(function()
+                source:OnCast(secret, "Silverleaf")
+            end)
+            assert.is_nil((source:Resolve(false)))
+        end)
+
         it("uses a cast only once", function()
             local source = make()
             source:OnCast("player", "Silverleaf")

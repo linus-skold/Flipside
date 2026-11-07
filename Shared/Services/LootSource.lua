@@ -49,12 +49,16 @@ end
 
 -- UNIT_SPELLCAST_SENT: the target name of an own cast. A gather or open spell names its node or chest.
 function Source:OnCast(unit, target)
+    -- A comparison on a secret value raises an error: check for a secret value first.
+    if self:_Secret(unit) or self:_Secret(target) then
+        self._cast = nil
+        return
+    end
     if unit ~= "player" then
         return
     end
     -- A cast on the player (a self buff) names no loot source.
-    if type(target) == "string" and target ~= "" and not self:_Secret(target)
-        and target ~= self:_Read("playerName") then
+    if type(target) == "string" and target ~= "" and target ~= self:_Read("playerName") then
         self._cast = { name = target, time = self._deps.now() }
     else
         self._cast = nil
