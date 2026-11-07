@@ -223,24 +223,24 @@ describe("BuyingTab totals, amount and columns", function()
             frame.scripts.OnSizeChanged(frame, width, 18)
         end
 
-        it("gives Unit Price and Quantity 50% each, right-aligned", function()
+        it("gives Unit Price and Quantity one quarter each, right-aligned", function()
             search()
             local edge = ui.rowsList.contentInsets
-            local room = 400 - edge.left - edge.right - 6
+            local room = 400 - edge.left - edge.right - 18
             resize(ui.levelHeader.frame, 400)
-            assert.are.same({ room / 2, room / 2 }, widths(ui.levelHeader.labels, { "unitPrice", "quantity" }))
+            assert.are.same({ room / 4, room / 4 }, widths(ui.levelHeader.labels, { "unitPrice", "quantity" }))
             assert.are.equal("RIGHT", ui.levelHeader.labels.unitPrice.justifyH)
             assert.are.equal("RIGHT", ui.levelHeader.labels.quantity.justifyH)
         end)
 
-        it("gives three columns one third each for items", function()
+        it("gives five columns one fifth each for items", function()
             ns.Flavour.hasCommodityMarket = false
             search()
             local edge = ui.rowsList.contentInsets
-            local room = 400 - edge.left - edge.right - 12
+            local room = 400 - edge.left - edge.right - 24
             resize(ui.levelHeader.frame, 400)
             local w = widths(ui.levelHeader.labels, { "unitPrice", "stackPrice", "quantity" })
-            assert.are.same({ room / 3, room / 3, room / 3 }, w)
+            assert.are.same({ room / 5, room / 5, room / 5 }, w)
             assert.are.equal("RIGHT", ui.levelHeader.labels.stackPrice.justifyH)
         end)
 

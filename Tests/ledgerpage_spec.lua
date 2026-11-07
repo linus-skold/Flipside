@@ -4,7 +4,7 @@ local mock = require("Tests.wow_mock")
 local KIT = { "Theme", "Window", "Widgets", "MoneyInput", "Tabs", "List", "Columns", "Combat", "Graph" }
 local CORE = {
     "EventBus", "ItemString", "SettingsDB", "LedgerRecord", "LedgerBuffer", "LedgerStore", "LedgerLoader",
-    "LedgerBalance",
+    "LedgerBalance", "LedgerCsv",
 }
 
 local DAY = 86400
@@ -598,6 +598,24 @@ describe("LedgerPage", function()
         before_each(function()
             setup()
             build()
+        end)
+
+        it("exports the records of the filter as one CSV text", function()
+            local store = loader:Store()
+            local mine = ns.LedgerPage.CsvText(store, { char = ME, range = "all" }, NOW)
+            assert.is_truthy(mine:find("^time_utc,character,type,"))
+            assert.is_nil(mine:find(ALT, 1, true))
+            assert.is_truthy(mine:find(",vendorPurchase,", 1, true))
+            assert.is_nil(mine:find(",log,", 1, true))
+            local everyone = ns.LedgerPage.CsvText(store, { char = "all", range = "all" }, NOW)
+            assert.is_truthy(everyone:find(ALT, 1, true))
+            local recent = ns.LedgerPage.CsvText(store, { char = ME, range = "7" }, NOW)
+            assert.is_nil(recent:find(",101,", 1, true))
+        end)
+
+        it("opens the CSV window from the Export CSV button", function()
+            assert.is_function(page.ExportCsv)
+            assert.is_not_nil(page.exportButton)
         end)
 
         it("sorts the rows newest first", function()

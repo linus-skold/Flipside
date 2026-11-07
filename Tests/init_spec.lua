@@ -182,7 +182,8 @@ describe("Init", function()
                 "Flipside: /flip opens the Flipside window",
                 "Flipside: client 1.60.1, build 70009, interface 16001",
                 "Flipside: /flip destroy opens the Destroy window",
-                "Flipside: No feature exists yet.",
+                "Flipside: more commands: tooltipstats, forget <Name-Realm>, sync [request], "
+                    .. "ledgerdebug, log, minimap, resetpos",
             }, mock.messages)
         end)
 
@@ -320,7 +321,8 @@ describe("Init", function()
                 "Flipside: profile Default",
                 "Flipside: client 1.60.1, build 70009, interface 16001",
                 "Flipside: /flip destroy opens the Destroy window",
-                "Flipside: No feature exists yet.",
+                "Flipside: more commands: tooltipstats, forget <Name-Realm>, sync [request], "
+                    .. "ledgerdebug, log, minimap, resetpos",
             }, mock.messages)
         end)
     end)

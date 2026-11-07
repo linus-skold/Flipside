@@ -9,7 +9,7 @@ Flipside is a World of Warcraft: Forever auction house addon. Lua 5.1. Licence M
 ## Rules
 - Clean room: build from the spec only. Never copy TSM code, assets, names or string formats.
 - API source of truth: check each Blizzard API in the Forever client source (Ketho/wow-ui-source-forever, branch `forever`) and on warcraft.wiki.gg. If they disagree, the Forever source wins.
-- Decisions D1–D25 are binding — ask before changing one
+- Decisions D1–D26 are binding — ask before changing one
 - When something gets scoped, update the Needs scoping table
 - If a task depends on an open question in the spec, stop and ask.
 
@@ -20,8 +20,9 @@ Flipside is a World of Warcraft: Forever auction house addon. Lua 5.1. Licence M
 3. Formula compiler, with live preview.
 4. Groups and operations UI.
 5. Tooltips and inventory tracking; tooltip price lines configurable with formulas (min, max, average).
-6. AH tabs in Blizzard's Auction House frame: Buying, then Selling with dry run and decision log. Selling and Buying tabs in Blizzard's AH frame that use the groups.
-7. Mailbox parsing and the ledger; then Vendoring.
+6. AH tabs in Blizzard's Auction House frame: Buying (with dry run), then Selling with decision log (no dry run on Selling). Selling and Buying tabs in Blizzard's AH frame that use the groups.
+7. Mailbox parsing and the ledger; then Mailing. Vendoring moved to Phase 2 on 2026-11-06.
+Status of 2026-11-06: steps 0 to 6 are built. Step 7 is built except the ledger CSV export (PR8). Vendoring is not built (Phase 2).
 
 ## Definition of done
 Unit tests pass and luacheck is clean. This means that the CI checks of the pull request are green. The feature's in-game checklist passes on WoW: Forever; the spec section is updated if behaviour changed; the Phase dropdown and Needs scoping status reflect reality.
@@ -45,24 +46,27 @@ Decision of 2026-10-15: use GitHub stacked PRs (`gh-stack`) for all new work, so
 - Do not rebase a pushed branch. Never force-push. Never push to `main`.
 
 ## Layout
-Per D23 the layout moves to `Shared/`, `Core_<Flavour>/` and `AH_<Flavour>/` in a later pull request. The lists below show the current layout.
-`Shared/Core/` framework, `Shared/Services/`, `Shared/Features/<Name>/`, `Shared/UI/`, `Shared/UI/Kit/`, `Shared/UI/Pages/`, `Shared/Libs/` (empty, no third-party library), `Shared/Locales/`, `Tests/` (busted specs and `wow_mock.lua`), `ScanTest/` (throwaway Spike 0 addon), `Flipside_Ledger/` (load-on-demand ledger addon, `FlipsideLedgerDB`, D25 and spec §5.8; comes with step 7).
+D23 layout is in place. Shared code is in `Shared/`. Flavour code is in `Core_Forever/`, `Core_TBC/`, `AH_Forever/` and `AH_TBC/`. `Flipside.toc` loads the Forever folders and `Flipside_TBC.toc` loads the TBC folders.
+- `Core_<Flavour>/`: `Flavour.lua` (flavour config) and `TooltipHook.lua` in both. `Core_Forever/RecipeSearch.lua` is the "Search AH" button of the profession window (Forever only, SPEC 5.14a).
+- `AH_<Flavour>/`: `AuctionTabHost.lua` in both. `AH_Forever/ForeverBackend.lua` and `AH_TBC/LegacyBackend.lua` are the AuctionClient backends (the only code that calls the auction API).
+- Probe addons (throwaway, not shipped): `ScanTest/` (Spike 0), `MailTest/` (mail send probe) and `LedgerTest/` (ledger event probe).
+`Shared/Core/` framework, `Shared/Services/`, `Shared/Features/<Name>/`, `Shared/UI/`, `Shared/UI/Kit/`, `Shared/UI/Pages/`, `Shared/Libs/` (empty, no third-party library), `Shared/Locales/`, `Tests/` (busted specs and `wow_mock.lua`), `Flipside_Ledger/` (load-on-demand ledger addon, `FlipsideLedgerDB`, D25 and spec §5.8).
 - `Shared/UI/Kit/`: reusable style kit, no Flipside logic (D19).
-- Kit modules in Shared/UI/Kit/: Theme, Window, Widgets, Prompt, MoneyInput, Tabs, List, Tree, Combat, Graph, MinimapButton. They take all input as arguments and use no Flipside name, 
+- Kit modules in Shared/UI/Kit/: Theme, Window, Widgets, Prompt, MoneyInput, Tabs, List, Tree, Combat, Graph, MinimapButton, Columns. They take all input as arguments and use no Flipside name, 
 s service or chat output (D19).
 - No third-party library is used (D18).
 - Core modules: `Log` (diagnostics log, `FlipsideLogDB`, spec 7.5; `Shared/UI/LogWindow.lua` is its window), `EventBus`, `Scheduler`, `ItemString`, `SettingsDB`, `ItemInfoCache`, `Init`. Core files start with `local _, ns = ...` and write no globals (`Init` also reads the addon name and sets the slash globals). Other modules write log lines through a local `log` helper that skips the call when `ns.Log` is nil.
 - Scan modules in `Shared/Services/`: `ScanClock`, `ScanRecord`, `ScanMarket`, `ScanKey`, `ScanCooldown`, `ScanBucket`, `ScanStore`, `ScanRows`, `ScanItemLoad`, `ScanSources`, `ScanEngine`, `ScanCapture`.
 - Formula modules in `Shared/Services/`: `FormulaParse`, `FormulaFunctions`, `FormulaSources`, `FormulaLookup`, 
 `FormulaEval`, `FormulaRun`.
-- Tooltip and inventory modules in `Shared/Services/`: `Holdings`, `HoldingsRead`, `TooltipConfig`, `TooltipLines`. `Shared/Features/Inventory/InventoryCapture.lua` reads bags, bank, mail and own auctions into the holdings. `Shared/Features/Tooltip/Tooltip.lua` adds the lines; `Core_Forever/TooltipHook.lua` installs the client hook. `Shared/UI/Pages/TooltipPage.lua` is the Tooltip tab. Slash: `/flip tooltipstats`, `/flip forget <Name-Realm>`.
+- Tooltip and inventory modules in `Shared/Services/`: `Holdings`, `HoldingsRead`, `TooltipConfig`, `TooltipLines`. `Shared/Services/BagSnapshot.lua` is a cache of container reads that the inventory capture, the auto rules and the mailing view share (cleared at `BAG_UPDATE_DELAYED` and `ITEM_LOCK_CHANGED`). `Shared/Features/Inventory/InventoryCapture.lua` reads bags, bank, mail and own auctions into the holdings. `Shared/Features/Tooltip/Tooltip.lua` adds the lines; `Core_Forever/TooltipHook.lua` installs the client hook. `Shared/UI/Pages/TooltipPage.lua` is the Tooltip tab. Slash: `/flip tooltipstats`, `/flip forget <Name-Realm>`.
 - Ledger modules in `Shared/Services/`: `LedgerRecord`, `LedgerBuffer`, `LedgerStore`, `LedgerLoader`. The load-on-demand addon `Flipside_Ledger/` (repo root) has only TOC files (`Flipside_Ledger.toc`, `Flipside_Ledger_TBC.toc`) and no Lua code (SPEC 5.8).
 - Destroy modules: `Shared/Services/DestroyRules.lua` (rules and ignore list, no frame code) and `Shared/Features/Destroy/DestroyWindow.lua` (window, slash `/flip destroy`, SPEC 5.7a).
 - Rules modules in `Shared/Services/`: `ItemNameIndex`, `OperationSchema`, `GroupTree`, `BagItems`, `RulesStore`, `CustomSources`, `AHNameSearch`, `RulesExport`.
 - Crafting modules: `Shared/Services/CraftCost.lua` (cost and profit, no frame code), `Shared/Features/Crafting/CraftClient.lua` (profession API adapter for both clients), `Shared/Features/Crafting/CraftPanel.lua` (block inside the profession window, under the reagents; SPEC 5.14a).
 - Guild sharing modules in `Shared/Services/`: `GuildSyncCodec`, `GuildPriceStore`, `GuildSyncQueue`, `GuildSync` (SPEC 3.5). Setting `sync.guildEnabled` (account, default off), toggle on the About page. Slash: `/flip sync`, `/flip sync request`.
 - Mailing modules in `Shared/Services/`: `MailingPlan`, `MailClient`, `MailCompose` (rules of the Send page, no frame code), `MailContacts` (contact list of the Send page: merge, add, remove, client reads; no frame code), `MailingRun`, `MailingLedger`. `Shared/Features/Mailing/` has `MailingView` (a self-contained view: parent frame in, no place) and `MailHost` (one host for both flavours; its `LAYOUTS` table places the view: `wide` on TBC (`MailFrame` gets wider and holds the view), `window` and `plain` on Forever, SPEC 5.5). `Shared/Features/Mailbox/MailboxWindow.lua` is the Forever Flipside mailbox window that covers `MailFrame` (pages Inbox, Send, Mailing rules; toggle to the Blizzard mailbox; setting `mail.window`; gate `ns.Flavour.mailboxWindow`). `Shared/Features/Mailbox/SendPage.lua` is the Send page (Forever TOC only, SPEC 5.5 "Send page").
-- `Shared/UI/MainWindow.lua`, `Shared/UI/Pages/` (`GroupsPage`, `OperationsPage`, `FormulaPage`, `LedgerPage`, `RulesImport`), `Shared/Features/AuctionTab/` (panel); `AH_Forever/AuctionTabHost.lua` owns AuctionHouseFrame. Flavour folders `Core_<Flavour>/` and `AH_<Flavour>/` come later (D23).
+- `Shared/UI/MainWindow.lua`, `Shared/UI/Pages/` (`GroupsPage`, `OperationsPage`, `FormulaPage`, `LedgerPage`, `RulesImport`), `Shared/Features/AuctionTab/` (panel); `AH_Forever/AuctionTabHost.lua` owns AuctionHouseFrame (`AH_TBC/AuctionTabHost.lua` owns the TBC `AuctionFrame`).
 - UI: Flipside tabs inside Blizzard's AuctionHouseFrame, plus the Flipside window (800 x 540 minimum, resizable); only client assets.
 - Item keys follow D20; no battle pets in the MVP (D21); scan data is keyed by region and ruleset (D22).
 
