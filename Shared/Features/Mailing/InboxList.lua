@@ -58,6 +58,13 @@ local EMPTY_BAR_COLOR = { 1, 1, 1, 0.04 }
 -- The row separator line: a lighter brown, so that it shows on the dark background.
 local SEPARATOR_COLOR = { 0.45, 0.3, 0.15, 0.7 }
 local EMPTY_ROW = { empty = true }
+-- The bottom bar of the Open all button (only with deps.openAll): the button size, the gap and the bar height.
+local OPEN_ALL_TEXT = "Open all"
+local STOP_TEXT = "Stop"
+local BAR_BUTTON_WIDTH = 90
+local BAR_BUTTON_HEIGHT = 22
+local BAR_PAD = 4
+InboxList.BAR_HEIGHT = BAR_BUTTON_HEIGHT + 2 * BAR_PAD
 
 local function log(level, text)
     if ns.Log and ns.Log.Write then
@@ -315,13 +322,31 @@ local function initRow(view, row, mail)
     row.days:SetText(InboxList.DaysText(mail.days))
 end
 
+-- Builds the bottom bar: the status line on the left, the Open all button on the right.
+local function buildBar(view, parent)
+    view.openAllButton = Kit.Button(parent, OPEN_ALL_TEXT, BAR_BUTTON_WIDTH, function()
+        view:ToggleOpenAll()
+    end)
+    view.openAllButton:SetPoint("BOTTOMRIGHT", parent, "BOTTOMRIGHT", -BAR_PAD, BAR_PAD)
+    view.statusLabel = Kit.Label(parent, "", "small")
+    view.statusLabel:SetJustifyH("LEFT")
+    setNoWrap(view.statusLabel)
+    view.statusLabel:SetPoint("LEFT", parent, "BOTTOMLEFT", BAR_PAD, BAR_PAD + BAR_BUTTON_HEIGHT / 2)
+    view.statusLabel:SetPoint("RIGHT", view.openAllButton, "LEFT", -BAR_PAD, 0)
+    view:UpdateOpenAll()
+end
+
 -- deps: api = { numItems() (GetInboxNumItems), header(index) (GetInboxHeaderInfo), open(index), openID()
 -- (the index of the open mail or 0), isModified() (optional, the Shift-click test), autoLoot(index) (optional,
 -- AutoLootMailItem), freeSlots() (optional, the free bag slots) }, notify(text) (optional, a short status),
 -- onTake() (optional, called when a take starts),
 -- formatMoney(copper), blizzard() (the client frames to hide while the list shows),
 -- openMail() (the open-mail frame or nil),
--- place(frame) (anchors the list), skin (optional).
+-- place(frame) (anchors the list), skin (optional),
+-- showError(text) (optional, shows a red client error message), fullText (optional, the client text of the full
+-- bags error),
+-- openAll (optional, a MailOpenAll): the list adds a bottom bar in the parent with the Open all button and one
+-- status line. place must then leave InboxList.BAR_HEIGHT free at the bottom.
 function InboxList.Create(parent, deps)
     local view = { deps = deps, mails = {}, openID = 0, hidden = nil }
     view.list = Kit.CreateList(parent, {
@@ -347,7 +372,51 @@ function InboxList.Create(parent, deps)
     if deps.place then
         deps.place(view.frame)
     end
-    return setmetatable(view, { __index = InboxList })
+    setmetatable(view, { __index = InboxList })
+    if deps.openAll then
+        buildBar(view, parent)
+    end
+    return view
+end
+
+-- Shows a text on the status line of the bottom bar (nothing if the list has no bar).
+function InboxList:SetStatus(text)
+    if self.statusLabel then
+        self.statusLabel:SetText(text or "")
+    end
+end
+
+-- True while an Open all run goes.
+function InboxList:IsOpenAllRunning()
+    local openAll = self.deps.openAll
+    return openAll ~= nil and openAll.IsRunning()
+end
+
+-- Sets the button text ("Stop" while the run goes) and the button state (off when the inbox is empty). It also shows
+-- the status of the run, unless withStatus is false.
+function InboxList:UpdateOpenAll(withStatus)
+    local openAll = self.deps.openAll
+    if not (openAll and self.openAllButton) then
+        return
+    end
+    local running = openAll.IsRunning()
+    self.openAllButton:SetText(running and STOP_TEXT or OPEN_ALL_TEXT)
+    self.openAllButton:SetEnabled(running or (self.deps.api.numItems() or 0) > 0)
+    local text = openAll.Status()
+    if withStatus ~= false and text ~= "" then
+        self:SetStatus(text)
+    end
+end
+
+-- A click on the button: Stop while the run goes, else start the run.
+function InboxList:ToggleOpenAll()
+    local openAll = self.deps.openAll
+    if openAll.IsRunning() then
+        openAll.Stop()
+    else
+        openAll.Start()
+    end
+    self:UpdateOpenAll()
 end
 
 -- Reads all mails again and shows them. The scroll position stays.
@@ -371,6 +440,7 @@ function InboxList:Refresh()
         end
     end
     self.list:SetData(data)
+    self:UpdateOpenAll(false)
 end
 
 -- The number of rows that fit in the list now. It is 0 while the frame has no size.
@@ -398,6 +468,12 @@ function InboxList:TakeAll(index)
     if mail.items > 0 and api.freeSlots and api.freeSlots() == 0 then
         log("warn", string.format("take stopped for mail %d: bags are full", index))
         tell("Bags are full")
+        -- The same display as the Open all run: a red client message and the status line.
+        local text = self.deps.fullText or "Bags are full"
+        if self.deps.showError then
+            self.deps.showError(text)
+        end
+        self:SetStatus(text)
         return false
     end
     log("info", string.format("take all from mail %d from %s: %d items, money %d", index, mail.sender, mail.items,
@@ -414,7 +490,11 @@ end
 function InboxList:Click(index)
     local api = self.deps.api
     if api.isModified and api.autoLoot and api.isModified() then
-        self:TakeAll(index)
+        if self:IsOpenAllRunning() then
+            self:SetStatus("Wait for Open all to end")
+        else
+            self:TakeAll(index)
+        end
     end
     self:Open(index)
 end

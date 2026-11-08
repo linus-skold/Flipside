@@ -47,7 +47,7 @@ local PAGES = {
 -- refuses the switch: it would hide the Stop button. say(text) prints a short line. Returns true if it switched.
 function MailboxWindow.Apply(db, host, on, say)
     if host.IsBusy() then
-        say("Wait for the mailing run to end, then switch the mailbox")
+        say("Wait for the mailing run or Open all to end, then switch the mailbox")
         return false
     end
     if not MailboxWindow.SetOn(db, on) then
