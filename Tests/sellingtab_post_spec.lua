@@ -781,12 +781,13 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
                 for _ = 1, 4 do
                     click(ui.postNext)
                 end
-                assert.are.equal("g2", tab.selectedId)
+                -- Every item is posted, so the list drops the group and the selection clears as before.
+                assert.is_nil(tab.selectedId)
             end)
 
             it("moves past the subgroups of the group", function()
                 withMisc()
-                pick("g2")
+                selectCloth()
                 for _ = 1, 3 do
                     click(ui.skip)
                 end
