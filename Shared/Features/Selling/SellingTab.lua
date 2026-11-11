@@ -1330,15 +1330,77 @@ function Tab:_Advance(entry, posted, count)
             pcall(client.RefreshOwned)
         end
         following = self.selectedId == "i" .. entry.key and self:_EntriesAfter(entry) or nil
+        -- Find the next group before the rebuild drops the current group.
+        local nextGroupId = self:_NextGroupId()
         -- A real post puts the item on the AH: the list drops it now.
         if entry.status == "done" and entry.real then
             self:_RebuildNodes()
+        end
+        local nextGroup = nextGroupId and findNode(self.nodes, nextGroupId)
+        if nextGroup then
+            self:_SelectGroup(nextGroup)
         end
     end
     if following then
         self:_MoveOn(following)
     end
     self:_AfterStep()
+end
+
+-- True if the entry can still be worked on.
+local function isWorkable(entry)
+    local status = entry.status
+    return status == "waiting" or status == "searching" or status == "ready" or status == "skip"
+end
+
+-- Add the group nodes of a node list to out, in tree order.
+local function flattenGroups(nodes, out)
+    for _, node in ipairs(nodes) do
+        if node.kind == "group" then
+            out[#out + 1] = node
+            flattenGroups(node.children or {}, out)
+        end
+    end
+    return out
+end
+
+-- The id of the next group to select. The selection is a group with no work left: the answer is the first group
+-- after its subtree that has work. Returns nil in all other cases.
+function Tab:_NextGroupId()
+    local current = self.selectedId and findNode(self.nodes, self.selectedId)
+    if not current or current.kind ~= "group" or self.awaiting or self.multi then
+        return nil
+    end
+    for _, each in ipairs(SellingTab.CollectEntries(current, {})) do
+        if isWorkable(each) then
+            return nil
+        end
+    end
+    local groups = flattenGroups(self.nodes, {})
+    local first
+    for index, node in ipairs(groups) do
+        if node == current then
+            first = index + #flattenGroups(current.children or {}, {}) + 1
+            break
+        end
+    end
+    for index = first or (#groups + 1), #groups do
+        for _, each in ipairs(SellingTab.CollectEntries(groups[index], {})) do
+            if isWorkable(each) then
+                return groups[index].id
+            end
+        end
+    end
+    return nil
+end
+
+-- Select a group node as _MoveOn does for an item: no click, so no protected call.
+function Tab:_SelectGroup(node)
+    if self.ui then
+        self.ui.tree.selected = node.id
+        self.ui.tree:Refresh()
+    end
+    self:SelectNode(node)
 end
 
 -- The entries below an entry in tree order.

@@ -744,6 +744,60 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
             assert.are.equal("g2", tab.selectedId)
         end)
 
+        describe("a group selection with no work left", function()
+            -- Misc (group 6) gets the operation too, so that item 13 can be worked on.
+            local function withMisc()
+                rules.EffectiveOperation = function(_, id)
+                    if id == 2 or id == 3 or id == 6 then
+                        return 7
+                    end
+                end
+                tab = mount()
+                ui = tab.ui
+            end
+
+            it("moves to the next group with work after the last post of the group", function()
+                withMisc()
+                selectCloth()
+                for _ = 1, 4 do
+                    click(ui.postNext)
+                end
+                assert.are.equal("g6", tab.selectedId)
+                assert.are.equal("g6", ui.tree.selected)
+                assert.are.equal(4, #client.posts)
+            end)
+
+            it("stays on the group while it has work", function()
+                withMisc()
+                selectCloth()
+                for _ = 1, 3 do
+                    click(ui.postNext)
+                end
+                assert.are.equal("g2", tab.selectedId)
+            end)
+
+            it("keeps the selection when no later group has work", function()
+                selectCloth()
+                for _ = 1, 4 do
+                    click(ui.postNext)
+                end
+                -- Every item is posted, so the list drops the group and the selection clears as before.
+                assert.is_nil(tab.selectedId)
+            end)
+
+            it("moves past the subgroups of the group", function()
+                withMisc()
+                selectCloth()
+                for _ = 1, 3 do
+                    click(ui.skip)
+                end
+                assert.are.equal("g2", tab.selectedId)
+                click(ui.skip)
+                assert.are.equal("g6", tab.selectedId)
+                assert.are.equal(0, #client.posts)
+            end)
+        end)
+
         it("makes the post call only in a click", function()
             selectCloth()
             pick("i10")
