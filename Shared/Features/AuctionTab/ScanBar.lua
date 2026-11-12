@@ -35,6 +35,9 @@ local function refusalText(reason, detail)
     return REFUSALS[reason] or tostring(reason)
 end
 
+-- The text of a scan refusal (the reason and detail of ScanEngine:CanStart).
+ScanBar.RefusalText = refusalText
+
 -- Return the fraction (0 to 1) of a progress table, or nil when the count is unknown.
 function ScanBar.ProgressFraction(progress)
     if progress and progress.done and progress.total and progress.total > 0 then
