@@ -553,6 +553,9 @@ function Tab:_VendorFailed(message)
     self.vendorList = self.vendorList or {}
     self.vendorFailed = true
     self.vendorDirty = true
+    if self.walk and self.walk:IsWaitingForList() then
+        self:WalkStop("the list could not be built, scan and buy stopped")
+    end
     if self.ui then
         self:_Update()
     end
@@ -610,6 +613,7 @@ function Tab:_BuildVendor()
         if self.source == "vendor" then
             self:RefreshList()
         end
+        self:_WalkListReady()
         self:_PumpVendor()
     end
     if deps.runJob then
@@ -693,11 +697,165 @@ function Tab:_ScheduleVendor(delay, keep)
 end
 
 -- A scan ended: the Vendor list is old now.
-function Tab:_OnVendorScan()
+function Tab:_OnVendorScan(summary)
     self.vendorDirty = true
+    local walk = self.walk
+    local verdict, text = nil, nil
+    if walk then
+        verdict, text = walk:OnScanFinished(summary)
+    end
+    if verdict == "stop" then
+        self:_Say(text)
+    elseif verdict == "list" then
+        -- Scan and buy: build the list again at once (a build that runs is old), then walk over it.
+        self:_BuildVendor()
+        self:_WalkListReady()
+    end
     if self.active and self.source == "vendor" then
         self:RefreshList()
     end
+end
+
+-- Scan and buy waits for the Vendor list. When the build ends, start the walk over the rows.
+function Tab:_WalkListReady()
+    local walk = self.walk
+    if not (walk and walk:IsWaitingForList()) or self.vendorBuilding then
+        return
+    end
+    local keys = {}
+    for _, entry in ipairs(self.vendorList or {}) do
+        keys[#keys + 1] = entry.key
+    end
+    self:_BeginWalk(keys)
+end
+
+-- Start the walk over a list of item keys. An empty list ends it with the state text of the list.
+function Tab:_BeginWalk(keys)
+    local key, text = self.walk:Begin(keys)
+    if not key then
+        self:_Say(self:_VendorState() or text)
+        self:_Update()
+        return
+    end
+    self:_WalkGo(key)
+end
+
+-- Select the row of a key and start its live search with the rules of a click (one search at a time, ready
+-- gating, the rate guard). A key that has no row is skipped. After the last row, the walk ends with a text.
+-- The walk never buys: Buy and the confirm stay the clicks of the user (D26).
+function Tab:_WalkGo(key, text)
+    local walk = self.walk
+    while key do
+        local entry = self:_Entry(key)
+        if entry then
+            self:_OnTreeSelect({ kind = "item", entry = entry })
+            self.walkNeedSearch = self.pending == nil and self.nextSearchKey == nil
+            self:_Update()
+            return
+        end
+        key, text = walk:Advance()
+    end
+    self.walkNeedSearch = false
+    self:_CloseConfirm()
+    self:_Say(text or ns.BuyWalk.TEXT.done)
+    self:_Update()
+end
+
+-- The Skip button: go to the next row at once.
+function Tab:WalkSkip()
+    local walk = self.walk
+    if walk and walk:IsWalking() then
+        self:_WalkGo(walk:Advance())
+    end
+end
+
+-- The Stop button, and the end of the walk when the source changes, the Auction House closes, the tab is left or
+-- the scan does not finish. Returns true if a walk was active.
+function Tab:WalkStop(text)
+    local walk = self.walk
+    self.walkNeedSearch = false
+    if walk and walk:Stop() then
+        self:_Say(text or ns.BuyWalk.TEXT.stopped)
+        self:_Update()
+        return true
+    end
+    return false
+end
+
+-- The search of the current row ended or got no answer. If no level is left at or below the max price, go on.
+function Tab:_WalkCheck(key)
+    local walk = self.walk
+    if not (walk and walk:IsWalking() and walk:Current() == key) then
+        return
+    end
+    if self.pending or self.buy or self.refreshEntry or self.continueKey or self.chainRetry then
+        return
+    end
+    local _, level, _, reason = self:_NextBuy()
+    if ns.BuyWalk.NoneLeft(level, reason) then
+        self:_WalkGo(walk:Advance())
+    end
+end
+
+-- The Scan and buy button. With no cooldown, it asks the same confirm as the scan button and starts a full scan; the
+-- walk starts when the scan ends. On cooldown, it skips the scan and walks over the current list if that list comes
+-- from a full scan. Returns true, or false and a text.
+function Tab:ScanAndBuy()
+    local deps, walk = self.deps, self.walk
+    local engine = deps.scanEngine
+    if not (walk and engine and deps.confirmScan) or self.source ~= "vendor" then
+        return false, "scan and buy is not available"
+    end
+    if walk:IsActive() then
+        return false, "scan and buy is running"
+    end
+    if not deps.client.CanLiveSearch() then
+        self:_Say("Live search is not available.")
+        return false, "live search is not available"
+    end
+    local last, partial = nil, false
+    if deps.lastScan then
+        last, partial = deps.lastScan()
+    end
+    local canStart, reason, detail = engine:CanStart()
+    local action, text = ns.BuyWalk.Decide({
+        canStart = canStart, reason = reason, state = self:_VendorState(), partial = partial == true or not last,
+    })
+    if action == "scan" then
+        deps.confirmScan(function()
+            local ok, why, more = engine:CanStart()
+            if not ok then
+                local refusal = ns.ScanBar and ns.ScanBar.RefusalText
+                self:_Say("full scan not started: " .. (refusal and refusal(why, more) or tostring(why)))
+            elseif walk:IsActive() or self.source ~= "vendor" then
+                return
+            else
+                walk:BeginScan()
+                if engine:Start() then
+                    self:_Say("scanning, the buy walk starts when the scan ends")
+                else
+                    walk:Stop()
+                end
+            end
+            self:_Update()
+        end)
+        return true
+    elseif action == "walk" then
+        local keys = {}
+        for _, entry in ipairs(self.vendorList or {}) do
+            keys[#keys + 1] = entry.key
+        end
+        self:_BeginWalk(keys)
+        self:_Say(ns.BuyWalk.TEXT.cooldown)
+        return true
+    elseif action == "empty" then
+        self:_Say(text)
+        return false, text
+    end
+    local refusal = ns.ScanBar and ns.ScanBar.RefusalText
+    text = "full scan not started: " .. (refusal and refusal(reason, detail) or tostring(reason))
+    self:_Say(text)
+    return false, text
 end
 
 -- Item data arrived for an item that the Vendor list asked for. Ask for the next items. Build the list again when
@@ -747,6 +905,9 @@ function Tab:SetSource(source)
     if source ~= "groups" and not (source == "lists" and deps.searchLists)
         and not (source == "vendor" and deps.scanStore) then
         return false
+    end
+    if source ~= self.source then
+        self:WalkStop()
     end
     self:_DropSearch()
     self.source = source
@@ -948,6 +1109,7 @@ end
 
 -- Show the items of a name search in the list. keep is true for a later update of the same search.
 function Tab:_ShowSearch(text, items, keep)
+    self:WalkStop()
     if not self.searchResults then
         self.preSearchKey = self.selectedKey
     end
@@ -1132,6 +1294,10 @@ function Tab:_Arm(pending)
             self:_Update()
             self:_RunHeldSearch()
             self:_Next()
+            -- Scan and buy: the search found nothing, so the walk goes on.
+            if self.walk and self.walk:Current() == entry.key and not self.pending then
+                self:_WalkGo(self.walk:Advance())
+            end
         end
     end)
 end
@@ -1303,6 +1469,7 @@ function Tab:_Complete(pending, rows)
     end
     self:_RunHeldSearch()
     self:_Next()
+    self:_WalkCheck(pending.entry.key)
 end
 
 -- Send the query of the next page of a read. It waits for the client throttle and tries again on the ready event.
@@ -1457,6 +1624,15 @@ function Tab:_OnReady()
     if retry and not self.pending and not self.buy then
         self.continueKey = retry
         self:_ContinueBuy()
+    end
+    -- Scan and buy: the search of the current row was refused. Start it again.
+    local walk = self.walk
+    if self.walkNeedSearch and walk and walk:IsWalking() and not self.pending
+        and walk:Current() == self.selectedKey then
+        self.walkNeedSearch = false
+        if not self:Search() and not self.pending then
+            self.walkNeedSearch = true
+        end
     end
     local selected = self:_Selected()
     if selected and not self.pending then
@@ -2578,6 +2754,12 @@ function Tab:_UpdateLeft()
         if self.vendorError then
             ui.vendorStatus:SetTextColor(RED[1], RED[2], RED[3])
         end
+        local walk, deps = self.walk, self.deps
+        local active = walk ~= nil and walk:IsActive()
+        ui.scanBuy:SetShown(walk ~= nil and deps.scanEngine ~= nil and deps.confirmScan ~= nil)
+        ui.scanBuy:SetEnabled(not active)
+        ui.walkSkip:SetShown(walk ~= nil and walk:IsWalking())
+        ui.walkStop:SetShown(active)
     end
     if isLists then
         local items = {}
@@ -2593,7 +2775,7 @@ function Tab:_UpdateLeft()
     if self.placedFor ~= mode then
         self.placedFor = mode
         ui.tree.frame:ClearAllPoints()
-        local top = ({ lists = 122, vendor = 94, groups = 44 })[mode] + SEARCH_SHIFT
+        local top = ({ lists = 122, vendor = 120, groups = 44 })[mode] + SEARCH_SHIFT
         ui.tree.frame:SetPoint("TOPLEFT", ui.leftTop, "TOPLEFT", 0, -top)
         ui.tree.frame:SetPoint("BOTTOMLEFT", ui.content, "BOTTOMLEFT", 0, 0)
     end
@@ -2754,6 +2936,7 @@ end
 
 -- Hide the panel; the host or Blizzard's own code takes over.
 function Tab:Deselect()
+    self:WalkStop()
     self:_CancelQuote("the tab was left")
     self:_CancelRead("read stopped")
     self.active = false
@@ -2859,6 +3042,16 @@ function Tab:_BuildLeft(content)
     ui.vendorStatus = vendorControl(Kit.Label(content, "", "small"), 6, -70 - SEARCH_SHIFT)
     ui.vendorStatus:SetJustifyH("LEFT")
     ui.vendorStatus:SetWidth(LIST_WIDTH - 12)
+    -- Scan and buy: a full scan, then a walk over the rows. Skip and Stop show while it runs.
+    ui.scanBuy = vendorControl(Kit.Button(content, "Scan and buy", 110, function()
+        self:ScanAndBuy()
+    end), 6, -92 - SEARCH_SHIFT)
+    ui.walkSkip = vendorControl(Kit.Button(content, "Skip", 56, function()
+        self:WalkSkip()
+    end), 122, -92 - SEARCH_SHIFT)
+    ui.walkStop = vendorControl(Kit.Button(content, "Stop", 56, function()
+        self:WalkStop()
+    end), 184, -92 - SEARCH_SHIFT)
     -- The name search row: find any item on the Auction House, also an item in no group.
     ui.searchInput = place(Kit.Input(content, 206, function(text)
         self:SearchName(text)
@@ -3065,6 +3258,7 @@ function Tab:Mount(parent, api)
     local closeEvent = client.CloseEvent()
     if closeEvent then
         bus:Subscribe(closeEvent, OWNER, function()
+            self:WalkStop("the Auction House closed, scan and buy stopped")
             self:_CancelQuote("the Auction House closed")
         end)
         self.events[#self.events + 1] = closeEvent
@@ -3082,8 +3276,8 @@ function Tab:Mount(parent, api)
     end)
     self.events[#self.events + 1] = "ITEM_DATA_LOAD_RESULT"
     if self.deps.scanStore then
-        bus:Subscribe("Flipside.ScanFinished", OWNER, function()
-            self:_OnVendorScan()
+        bus:Subscribe("Flipside.ScanFinished", OWNER, function(_, summary)
+            self:_OnVendorScan(summary)
         end)
         self.events[#self.events + 1] = "Flipside.ScanFinished"
     end
@@ -3092,6 +3286,9 @@ end
 
 -- Undo a failed Mount: hide the panel and keep no half-built state.
 function Tab:Unmount()
+    if self.walk then
+        self.walk:Stop()
+    end
     self:_CancelQuote("the tab was removed")
     self.vendorToken = self.vendorToken + 1
     if self.vendorJob and self.vendorJob.Cancel then
@@ -3111,7 +3308,8 @@ end
 -- Create the Buying core. The host mounts it and shows it.
 -- deps: bus, rules, formulaRun, after(seconds, fn); optional client, plan, log, itemInfo, db (the settings DB),
 -- itemLink(itemID) (link, quality), scanStore, itemCache, lastScan() (time of the last full scan, and true if a
--- partial scan came after it) and runJob(name, fn) (the Vendor source),
+-- partial scan came after it) and runJob(name, fn) (the Vendor source), scanEngine and confirmScan(onAccept)
+-- (the Scan and buy button of the Vendor source; the button shows only with both),
 -- searchLists, itemNameIndex, ahNameSearch, keyFor(link) and isAuctionHouseOpen()
 -- (search lists and the item box), and getRecord(key) with now() (the % of market and data age columns).
 function BuyingTab.New(deps)
@@ -3139,6 +3337,8 @@ function BuyingTab.New(deps)
         itemCache = deps.itemCache,
         lastScan = deps.lastScan,
         runJob = deps.runJob,
+        scanEngine = deps.scanEngine,
+        confirmScan = deps.confirmScan,
         searchLists = deps.searchLists or nil,
         itemNameIndex = deps.itemNameIndex,
         ahNameSearch = deps.ahNameSearch,
@@ -3151,7 +3351,7 @@ function BuyingTab.New(deps)
     return setmetatable({
         deps = resolved, list = {}, results = {}, events = {}, active = false, token = 0, dryRun = false,
         source = "groups", amount = DEFAULT_AMOUNT, requested = {},
-        vendorToken = 0, vendorWaiting = {},
+        vendorToken = 0, vendorWaiting = {}, walk = ns.BuyWalk and ns.BuyWalk.New() or nil,
     }, Tab)
 end
 
