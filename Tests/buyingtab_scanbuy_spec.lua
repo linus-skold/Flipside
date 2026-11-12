@@ -11,7 +11,7 @@ local function loadModules()
 end
 
 describe("BuyingTab Scan and buy", function()
-    local ns, bus, client, tab, ui, db, records, sell, lastScan, lastPartial, engine, accept, ready
+    local ns, bus, client, tab, ui, db, records, sell, lastScan, lastPartial, engine, accept, ready, timers, states
 
     local SCAN = 1000
 
@@ -72,18 +72,24 @@ describe("BuyingTab Scan and buy", function()
                 Get = function(_, key) return records[key] end,
             },
             itemCache = {
-                GetState = function(_, itemID) return sell[itemID] and "loaded" or "unknown" end,
+                GetState = function(_, itemID)
+                    return sell[itemID] and "loaded" or states[itemID] or "unknown"
+                end,
                 Get = function(_, itemID)
                     if sell[itemID] then
                         return { sellPrice = sell[itemID] }, "loaded"
                     end
-                    return nil, "unknown"
+                    return nil, states[itemID] or "unknown"
                 end,
-                Request = function() end,
+                Request = function(_, itemID)
+                    if not sell[itemID] then
+                        states[itemID] = "requested"
+                    end
+                end,
             },
             lastScan = function() return lastScan, lastPartial end,
             isAuctionHouseOpen = function() return true end,
-            after = function() end,
+            after = function(seconds, fn) timers[#timers + 1] = { seconds = seconds, fn = fn } end,
             itemInfo = function(id) return "item " .. id, 1 end,
             scanEngine = engine,
             confirmScan = function(onAccept) accept = onAccept end,
@@ -91,6 +97,18 @@ describe("BuyingTab Scan and buy", function()
         local core = ns.BuyingTab.New(deps)
         core:Mount(CreateFrame("Frame", nil, UIParent), { Enter = function() end, Leave = function() end })
         return core
+    end
+
+    -- Run the timers of one length. The other timers stay.
+    local function runTimers(seconds)
+        local due, rest = {}, {}
+        for _, timer in ipairs(timers) do
+            table.insert(timer.seconds == seconds and due or rest, timer)
+        end
+        timers = rest
+        for _, timer in ipairs(due) do
+            timer.fn()
+        end
     end
 
     local function fire(event, ...)
@@ -111,6 +129,7 @@ describe("BuyingTab Scan and buy", function()
         bus = ns.EventBus.New({})
         db = ns.SettingsDB.New({}, { character = "Alice-Realm", schemaVersion = 1 })
         records, sell, lastScan, lastPartial, accept, ready = {}, {}, SCAN, false, nil, true
+        timers, states = {}, {}
         engine = {
             canStart = true, reason = nil, started = 0,
             CanStart = function(self) return self.canStart, self.reason end,
@@ -122,6 +141,7 @@ describe("BuyingTab Scan and buy", function()
         client = makeClient()
         ns.BuyingPlan.Log:Clear()
         tab = mount()
+        tab.active = true
         ui = tab.ui
         fillRecords()
         tab:SetSource("vendor")
@@ -160,6 +180,33 @@ describe("BuyingTab Scan and buy", function()
             assert.are.same({ 200 }, client.searches)
             assert.is_true(ui.walkSkip:IsShown())
             assert.is_true(ui.walkStop:IsShown())
+        end)
+
+        it("waits for item data and walks over the whole list in profit order", function()
+            -- Item 300 has the most profit but its data is not loaded when the scan ends.
+            records["300"] = record(50)
+            tab:ScanAndBuy()
+            accept()
+            fire("Flipside.ScanFinished", { result = "ok", mode = "full" })
+            assert.is_true(tab.walk:IsWaitingForList())
+            assert.are.same({}, client.searches)
+            sell[300], states[300] = 1000, nil
+            fire("ITEM_DATA_LOAD_RESULT", 300)
+            runTimers(0)
+            assert.is_true(tab.walk:IsWalking())
+            assert.are.equal("300", tab.selectedKey)
+            assert.are.same({ 300 }, client.searches)
+        end)
+
+        it("starts after the fallback time when item data stays open", function()
+            records["300"] = record(50)
+            tab:ScanAndBuy()
+            accept()
+            fire("Flipside.ScanFinished", { result = "ok", mode = "full" })
+            assert.is_true(tab.walk:IsWaitingForList())
+            runTimers(6)
+            assert.is_true(tab.walk:IsWalking())
+            assert.are.equal("200", tab.selectedKey)
         end)
 
         it("stops with a message when the scan is partial", function()
@@ -320,6 +367,16 @@ describe("BuyingTab Scan and buy", function()
         fire("READY")
         assert.are.same({ 200 }, client.searches)
         assert.is_false(tab.walkNeedSearch)
+    end)
+
+    it("tries the search again after a delay when the client refuses it", function()
+        ready = false
+        engine.canStart, engine.reason = false, "cooldown"
+        tab:ScanAndBuy()
+        assert.are.same({}, client.searches)
+        ready = true
+        runTimers(5)
+        assert.are.same({ 200 }, client.searches)
     end)
 
     it("does not show the button without the scan engine", function()

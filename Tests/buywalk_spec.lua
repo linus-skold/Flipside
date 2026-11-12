@@ -2,6 +2,7 @@ local manifest = require("Tests.manifest")
 
 local function loadWalk()
     local ns = {}
+    assert(loadfile(manifest.path("BuyingPlan")))("Flipside", ns)
     assert(loadfile(manifest.path("BuyWalk")))("Flipside", ns)
     return ns.BuyWalk
 end
@@ -61,8 +62,9 @@ describe("BuyWalk", function()
             })
             assert.are.equal("empty", action)
             assert.are.equal("Run a full scan first.", text)
-            action = BuyWalk.Decide({ canStart = false, reason = "cooldown", partial = true })
+            action, text = BuyWalk.Decide({ canStart = false, reason = "cooldown", partial = true })
             assert.are.equal("empty", action)
+            assert.are.equal("The last scan was partial. Run a full scan.", text)
         end)
 
         it("refuses for another reason", function()
@@ -111,6 +113,13 @@ describe("BuyWalk", function()
             assert.is_true(walk:IsWaitingForList())
             assert.are.equal("a", (walk:Begin({ "a" })))
             assert.is_true(walk:IsWalking())
+        end)
+
+        it("waits for the list with no scan", function()
+            local walk = BuyWalk.New()
+            walk:BeginList()
+            assert.is_true(walk:IsWaitingForList())
+            assert.are.equal("a", (walk:Begin({ "a" })))
         end)
 
         it("stops when the scan is partial or fails", function()

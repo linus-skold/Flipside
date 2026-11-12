@@ -13,22 +13,18 @@ BuyWalk.TEXT = {
     done = "scan and buy done",
     stopped = "scan and buy stopped",
     empty = "no items to buy",
-}
-
--- The reasons of Tab:_NextBuy that mean that the item has no level left to buy at or below the max price.
-local NONE_LEFT = {
-    ["nothing left to buy"] = true,
-    ["above max price"] = true,
-    ["own listing"] = true,
-    ["own listing below the selected level"] = true,
+    partialList = "The last scan was partial. Run a full scan.",
 }
 
 -- True if the item has no buyable level left. level is the next level (or nil), reason is the buy refusal (or nil).
+-- The refusal texts that mean "none left" are BuyingPlan.REASON (the texts of Tab:_NextBuy).
 function BuyWalk.NoneLeft(level, reason)
     if level == nil and reason == nil then
         return true
     end
-    return reason ~= nil and NONE_LEFT[reason] == true
+    local texts = ns.BuyingPlan and ns.BuyingPlan.REASON or {}
+    return reason ~= nil and (reason == texts.none or reason == texts.above or reason == texts.own
+        or reason == texts.ownBelow)
 end
 
 -- True if a finished scan is a full scan that saved its data. summary is the payload of Flipside.ScanFinished.
@@ -53,7 +49,10 @@ function BuyWalk.Decide(input)
         if input.state == nil and not input.partial then
             return "walk"
         end
-        return "empty", input.state or BuyWalk.TEXT.empty
+        if input.state == nil then
+            return "empty", BuyWalk.TEXT.partialList
+        end
+        return "empty", input.state
     end
     return "refuse", input.reason
 end
@@ -86,6 +85,11 @@ end
 -- The key of the current row, or nil.
 function Walk:Current()
     return self.phase == "walk" and self.keys[self.pos] or nil
+end
+
+-- Wait for the Vendor list (the cooldown path: no scan runs).
+function Walk:BeginList()
+    self.phase, self.keys, self.pos = "list", {}, 0
 end
 
 -- Wait for a scan that the tab started.
@@ -125,8 +129,9 @@ function Walk:Advance()
     return key
 end
 
--- The scan ended. Only a walk that waits for a scan reacts. Returns "list" when a full scan saved its data (the walk now
--- waits for the Vendor list), "stop" and a text for a failed or partial scan, or nil when the walk did not wait for a scan.
+-- The scan ended. Only a walk that waits for a scan reacts. Returns "list" when a full scan saved its data (the
+-- walk now waits for the Vendor list), "stop" and a text for a failed or partial scan, or nil when the walk did not
+-- wait for a scan.
 function Walk:OnScanFinished(summary)
     if self.phase ~= "scan" then
         return nil

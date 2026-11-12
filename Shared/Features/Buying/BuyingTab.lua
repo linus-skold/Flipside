@@ -28,6 +28,7 @@ local VENDOR_SETTLE = 5 -- most seconds that the Vendor list waits for item data
 local VENDOR_BATCH = 100 -- most item data requests of the Vendor list that are open at one time
 local VENDOR_SCAN_CAP = 500 -- most queue items that one step asks for
 local RED = { 1, 0.2, 0.2 }
+local REASON = ns.BuyingPlan.REASON -- the refusal texts that BuyWalk reads
 -- The text for the amount box when the input is not a positive whole number.
 -- The units that a buy takes at first: one.
 local DEFAULT_AMOUNT = 1
@@ -613,8 +614,8 @@ function Tab:_BuildVendor()
         if self.source == "vendor" then
             self:RefreshList()
         end
-        self:_WalkListReady()
         self:_PumpVendor()
+        self:_WalkListReady()
     end
     if deps.runJob then
         local job = deps.runJob("buying-vendor", work)
@@ -709,19 +710,47 @@ function Tab:_OnVendorScan(summary)
     elseif verdict == "list" then
         -- Scan and buy: build the list again at once (a build that runs is old), then walk over it.
         self:_BuildVendor()
-        self:_WalkListReady()
+        self:_WaitForList()
     end
     if self.active and self.source == "vendor" then
         self:RefreshList()
     end
 end
 
--- Scan and buy waits for the Vendor list. When the build ends, start the walk over the rows.
-function Tab:_WalkListReady()
+-- True if the Vendor list has all that it can have: no build runs, no item data is asked for or open, and no item
+-- that loaded is missing from the list.
+function Tab:_VendorSettled()
+    return not self.vendorBuilding and not self.vendorDirty and not self.vendorPending
+        and (self.vendorPos or 1) > #(self.vendorQueue or {}) and next(self.vendorWaiting) == nil
+end
+
+-- Scan and buy waits for the Vendor list. It starts the walk when the list is settled, or after VENDOR_SETTLE seconds
+-- (force), so that the walk covers the items whose data loaded late.
+function Tab:_WaitForList()
     local walk = self.walk
+    self.walkListToken = (self.walkListToken or 0) + 1
+    local token = self.walkListToken
+    self.deps.after(VENDOR_SETTLE + 1, function()
+        if token == self.walkListToken and walk:IsWaitingForList() then
+            self:_WalkListReady(true)
+        end
+    end)
+    self:_WalkListReady()
+end
+
+-- Start the walk over the rows when the list is settled (or force is true). A build that runs calls this again.
+function Tab:_WalkListReady(force)
+    local walk = self.walk
+    if force then
+        self.walkForce = true
+    end
     if not (walk and walk:IsWaitingForList()) or self.vendorBuilding then
         return
     end
+    if not (self.walkForce or self:_VendorSettled()) then
+        return
+    end
+    self.walkForce = nil
     local keys = {}
     for _, entry in ipairs(self.vendorList or {}) do
         keys[#keys + 1] = entry.key
@@ -750,6 +779,9 @@ function Tab:_WalkGo(key, text)
         if entry then
             self:_OnTreeSelect({ kind = "item", entry = entry })
             self.walkNeedSearch = self.pending == nil and self.nextSearchKey == nil
+            if self.walkNeedSearch then
+                self:_WalkRetry()
+            end
             self:_Update()
             return
         end
@@ -759,6 +791,35 @@ function Tab:_WalkGo(key, text)
     self:_CloseConfirm()
     self:_Say(text or ns.BuyWalk.TEXT.done)
     self:_Update()
+end
+
+-- Start the search of the current row again if it was refused. Returns nothing.
+function Tab:_WalkTrySearch()
+    local walk = self.walk
+    if self.walkNeedSearch and walk and walk:IsWalking() and not self.pending
+        and walk:Current() == self.selectedKey then
+        self.walkNeedSearch = false
+        if not self:Search() and not self.pending then
+            self.walkNeedSearch = true
+            self:_WalkRetry()
+        end
+    end
+end
+
+-- A refused search of the walk tries again at the ready event and after RETRY_SECONDS (TBC has no ready event for a
+-- refused search).
+function Tab:_WalkRetry()
+    if self.walkRetrying then
+        return
+    end
+    self.walkRetrying = true
+    self.deps.after(RETRY_SECONDS, function()
+        self.walkRetrying = false
+        self:_WalkTrySearch()
+        if self.walkNeedSearch and self.walk and self.walk:IsWalking() then
+            self:_WalkRetry()
+        end
+    end)
 end
 
 -- The Skip button: go to the next row at once.
@@ -792,6 +853,11 @@ function Tab:_WalkCheck(key)
         return
     end
     local _, level, _, reason = self:_NextBuy()
+    -- Sorted pages that are not read yet (TBC) can still hold a level: only a level above the max price ends the item.
+    local done = self.results[key]
+    if done and done.more and reason ~= REASON.above then
+        return
+    end
     if ns.BuyWalk.NoneLeft(level, reason) then
         self:_WalkGo(walk:Advance())
     end
@@ -841,11 +907,10 @@ function Tab:ScanAndBuy()
         end)
         return true
     elseif action == "walk" then
-        local keys = {}
-        for _, entry in ipairs(self.vendorList or {}) do
-            keys[#keys + 1] = entry.key
-        end
-        self:_BeginWalk(keys)
+        -- The list may still load item data: the walk waits until the list is settled.
+        walk:BeginList()
+        self:RefreshList()
+        self:_WaitForList()
         self:_Say(ns.BuyWalk.TEXT.cooldown)
         return true
     elseif action == "empty" then
@@ -1626,14 +1691,7 @@ function Tab:_OnReady()
         self:_ContinueBuy()
     end
     -- Scan and buy: the search of the current row was refused. Start it again.
-    local walk = self.walk
-    if self.walkNeedSearch and walk and walk:IsWalking() and not self.pending
-        and walk:Current() == self.selectedKey then
-        self.walkNeedSearch = false
-        if not self:Search() and not self.pending then
-            self.walkNeedSearch = true
-        end
-    end
+    self:_WalkTrySearch()
     local selected = self:_Selected()
     if selected and not self.pending then
         self:_EnsureLive(selected)
@@ -1845,16 +1903,16 @@ function Tab:_NextBuy()
     if not (entry.maxPrice or entry.noMax) then
         reason = "no max price"
     elseif not level then
-        reason = "nothing left to buy"
+        reason = REASON.none
     elseif level.own then
-        reason = "own listing"
+        reason = REASON.own
     elseif not withinMax(entry, level.unitPrice) then
-        reason = "above max price"
+        reason = REASON.above
     elseif not cover or not cover.last then
-        reason = "nothing left to buy"
+        reason = REASON.none
     elseif cover.own then
         -- The API cannot skip own units: a purchase takes the cheapest units of the market.
-        reason = "own listing below the selected level"
+        reason = REASON.ownBelow
     elseif not isItem and self.amountBad then
         reason = AMOUNT_TEXT
     elseif not self.dryRun and not self.deps.client.CanBuy() then
