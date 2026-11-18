@@ -18,7 +18,9 @@ end
 
 -- Returns the cost in copper of the cheapest needed units of the levels, or nil if the levels hold fewer units.
 -- levels: { { unitPrice, quantity, own } }, cheapest first. A level that is yours does not count.
--- The last level counts for the units that are needed from it only.
+-- A commodity level counts for the units that are needed from it only. A stack level (it has stackSize and stacks)
+-- is bought in whole stacks: the walk takes ceil(left / stackSize) stacks, at most the stacks of the level, and the
+-- cost counts every unit of these stacks, also the units above the need.
 function CraftListMargin.WalkLevels(levels, needed)
     if type(needed) ~= "number" or needed < 1 then
         return nil
@@ -26,7 +28,13 @@ function CraftListMargin.WalkLevels(levels, needed)
     local left, cost = needed, 0
     for _, level in ipairs(levels or {}) do
         if not level.own and type(level.unitPrice) == "number" then
-            local take = math.min(left, level.quantity or 1)
+            local take
+            if level.stackSize and level.stackSize > 0 then
+                local stacks = math.min(math.ceil(left / level.stackSize), level.stacks or 1)
+                take = stacks * level.stackSize
+            else
+                take = math.min(left, level.quantity or 1)
+            end
             cost = cost + take * level.unitPrice
             left = left - take
             if left <= 0 then

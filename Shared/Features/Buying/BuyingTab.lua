@@ -395,6 +395,16 @@ function Tab:_RowText(entry)
     return name
 end
 
+-- The units that the amount box starts with for an entry: its count, or 1. A material of a craft list needs
+-- count x crafts units.
+function Tab:_StartAmount(entry)
+    local base = entry and entry.count or DEFAULT_AMOUNT
+    if entry and entry.listIndex and self.crafts and not self.searchResults and self:_CraftList() then
+        return base * self.crafts
+    end
+    return base
+end
+
 function Tab:_ItemName(entry)
     local name = self.deps.itemInfo(entry.itemID or 0)
     if not name or name:match("^item %d+$") then
@@ -1504,6 +1514,11 @@ function Tab:SetCrafts(text)
         return false
     end
     self.crafts = number
+    -- The selected material needs a new amount. The buy still asks for the confirmation.
+    local selected = self:_Selected()
+    if selected then
+        self.amount, self.amountBad, self.amountEdit = self:_StartAmount(selected), false, false
+    end
     self:_Update()
     return true
 end
@@ -1657,7 +1672,7 @@ function Tab:Select_(key)
         self.levelSel = nil
         -- An item with a count starts with that amount. The buy still asks for confirmation.
         local entry = key and self:_Entry(key)
-        self.amount, self.amountBad, self.amountEdit = entry and entry.count or DEFAULT_AMOUNT, false, false
+        self.amount, self.amountBad, self.amountEdit = self:_StartAmount(entry), false, false
     end
     self.selectedKey = key
     self:_Update()
@@ -2159,7 +2174,7 @@ function Tab:SelectLevel(price)
         return false, "pick an item first"
     end
     self.levelSel = (self.levelSel ~= price) and price or nil
-    self.amount, self.amountBad, self.amountEdit = self:_Selected().count or DEFAULT_AMOUNT, false, false
+    self.amount, self.amountBad, self.amountEdit = self:_StartAmount(self:_Selected()), false, false
     self:_Update()
     if self.levelSel then
         -- A group on another page needs that page in the client list before a buy.

@@ -59,6 +59,21 @@ describe("CraftListMargin", function()
             assert.is_nil(Margin.WalkLevels(nil, 1))
             assert.is_nil(Margin.WalkLevels(levels, 0))
         end)
+
+        it("buys a stack level in whole stacks and counts the units above the need", function()
+            local stacks = {
+                { unitPrice = 5, stackSize = 5, stacks = 3, quantity = 15, own = true },
+                { unitPrice = 10, stackSize = 5, stacks = 2, quantity = 10 },
+                { unitPrice = 12, stackSize = 20, stacks = 1, quantity = 20 },
+            }
+            -- 7 units need 2 stacks of 5: 10 units are paid.
+            assert.are.equal(10 * 10, Margin.WalkLevels(stacks, 7))
+            -- 12 units: the 2 stacks (10 units), then 1 stack of 20 for the last 2 units.
+            assert.are.equal(10 * 10 + 20 * 12, Margin.WalkLevels(stacks, 12))
+            -- The level holds at most its stacks.
+            assert.is_nil(Margin.WalkLevels(stacks, 31))
+            assert.are.equal(10 * 10 + 20 * 12, Margin.WalkLevels(stacks, 30))
+        end)
     end)
 
     describe("Compute", function()

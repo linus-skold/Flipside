@@ -295,6 +295,20 @@ describe("SearchLists", function()
             assert.are.equal(4, lists:Get(id).results[1].min)
         end)
 
+        it("addresses the results by the place that Get shows, after a damaged entry", function()
+            local data = db:Get("profile", "searchLists")
+            data.lists[id].results = { { itemID = 5, min = 3, max = 1 }, { itemID = 6, min = 1, max = 2 },
+                { itemID = 7, min = 1, max = 1 } }
+            db:Set("profile", "searchLists", data)
+            assert.are.equal(6, lists:Get(id).results[1].itemID)
+            assert.is_true(lists:SetResult(id, 1, 2, 4))
+            assert.are.equal(4, lists:Get(id).results[1].max)
+            assert.are.equal(6, lists:Get(id).results[1].itemID)
+            assert.is_true(lists:RemoveResult(id, 1))
+            assert.are.equal(1, #lists:Get(id).results)
+            assert.are.equal(7, lists:Get(id).results[1].itemID)
+        end)
+
         it("removes a result", function()
             lists:AddResult(id, { itemID = 5, min = 1, max = 1 })
             lists:AddResult(id, { itemID = 6, min = 1, max = 1 })

@@ -352,7 +352,8 @@ local function craftList(data, id)
     if list.kind ~= "craft" then
         return nil, "The list is not a craft list."
     end
-    list.results = list.results or {}
+    -- Clean the results first, so that an index is the place that Get shows (it drops a damaged entry).
+    list.results = cleanResults(list.results)
     return list
 end
 
