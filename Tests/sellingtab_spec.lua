@@ -899,7 +899,8 @@ describe("SellingTab", function()
             confirms[2].onAccept()
             assert.are.equal(1, #client.confirmed)
             assert.are.equal("item", client.confirmed[1].kind)
-            assert.are.same({ 1, 1, 24, 20, nil, 119 * 20 }, { client.confirmed[1][1], client.confirmed[1][2],
+            -- No multisell here: the buyout is the price of one item.
+            assert.are.same({ 1, 1, 24, 20, nil, 119 }, { client.confirmed[1][1], client.confirmed[1][2],
                 client.confirmed[1][3], client.confirmed[1][4], client.confirmed[1][5], client.confirmed[1][6] })
         end)
 

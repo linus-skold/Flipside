@@ -1023,7 +1023,8 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
             assert.are.equal(1, #client.posts)
             assert.are.equal(1, held)
             local post = client.posts[1]
-            assert.are.same({ 1, 1, 24, 20, 2380 }, { post.bag, post.slot, post.duration, post.quantity, post.buyout })
+            -- This client has no multisell (ns.Flavour is not TBC): the buyout is the price of one item.
+            assert.are.same({ 1, 1, 24, 20, 119 }, { post.bag, post.slot, post.duration, post.quantity, post.buyout })
             assert.is_false(post.guarded)
             assert.are.equal(1, #warns)
         end)
