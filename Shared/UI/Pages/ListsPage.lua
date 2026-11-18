@@ -705,12 +705,12 @@ function ListsPage.Build(content, deps)
         local grid = margin and ListsPage.MarginTable(margin, saved, nameOf) or { cost = "", rows = {} }
         page.tableCost.text:SetText(grid.cost)
         for slot, row in ipairs(page.tableRows) do
-            local data = grid.rows[slot]
-            row.label:SetText(data and data.label or "")
+            local line = grid.rows[slot]
+            row.label:SetText(line and line.label or "")
             for column = 1, 3 do
                 local cell = row[column]
-                cell:SetText(data and data.cells[column] or "")
-                cell:SetFontObject(Kit.Font(data and data.tones[column] or "small"))
+                cell:SetText(line and line.cells[column] or "")
+                cell:SetFontObject(Kit.Font(line and line.tones[column] or "small"))
             end
         end
         if margin and not page.craftsInput:HasFocus() then
