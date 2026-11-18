@@ -385,6 +385,17 @@ function GroupsPage.Build(content, deps)
 
     page.bagsLabel = Kit.Label(itemsPanel, "Bags", "highlight")
     placeIn(itemsPanel, page.bagsLabel, 0, 28)
+    -- Items that are in a group are hidden by default. The value lasts for the session.
+    page.showGrouped = false
+    page.showGroupedCheck = Kit.Check(itemsPanel, "Show grouped items", function(checked)
+        page.showGrouped = checked
+        page.RefreshBags()
+    end)
+    page.showGroupedCheck:SetSize(22, 22)
+    placeIn(itemsPanel, page.showGroupedCheck, 44, 22)
+    page.bagsEmptyLabel = Kit.Label(itemsPanel, "All bag items are in groups", "small")
+    placeIn(itemsPanel, page.bagsEmptyLabel, 8, LIST_Y + 8)
+    page.bagsEmptyLabel:Hide()
     page.itemsLabel = Kit.Label(itemsPanel, "Items", "highlight")
     page.itemsLabel:SetPoint("TOPLEFT", middle, "TOPRIGHT", 4, -28)
 
@@ -410,7 +421,7 @@ function GroupsPage.Build(content, deps)
                 entry.count or 1)
             local groupID = rules:GroupOf(entry.key)
             if groupID ~= BASE_ID then
-                text = text .. " (in " .. tostring(rules:Name(groupID)) .. ")"
+                text = text .. " |cff999999(in " .. tostring(rules:Name(groupID)) .. ")|r"
             end
             row.text:SetText(text)
             setQualityColor(row.text, qualityOf(entry.itemID))
@@ -509,15 +520,19 @@ function GroupsPage.Build(content, deps)
     page.removeSelectedButton:SetPoint("CENTER", middle, "CENTER", 0, -20)
     Kit.Tooltip(page.removeSelectedButton, "Remove from group", { "Removes the selected items from the group." })
 
-    -- Read the bags again. Items that are already in the selected group are hidden.
+    -- Read the bags again. Items that are in the selected group are hidden. Items in any other group (not Base)
+    -- are hidden too, unless "Show grouped items" is on.
     local function refreshBags()
         local entries, shown = deps.readBags and deps.readBags() or {}, {}
         for _, entry in ipairs(entries) do
-            if page.selected == BASE_ID or rules:GroupOf(entry.key) ~= page.selected then
+            local groupID = rules:GroupOf(entry.key)
+            local inSelected = page.selected ~= BASE_ID and groupID == page.selected
+            if not inSelected and (page.showGrouped or groupID == BASE_ID) then
                 shown[#shown + 1] = entry
             end
         end
         page.bagList:SetData(shown)
+        page.bagsEmptyLabel:SetShown(#entries > 0 and #shown == 0 and not page.showGrouped)
     end
     page.RefreshBags = refreshBags
     itemsPanel:SetScript("OnShow", refreshBags)
