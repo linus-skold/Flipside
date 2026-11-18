@@ -6,7 +6,7 @@ local function loadModules()
     for _, name in ipairs({ "EventBus", "ItemString", "BuyingPlan",
         "BuyFlow", "Theme", "Widgets", "Window", "List", "Tree",
         "Tabs",
-        "Columns", "AuctionTabs", "BuyingTab" }) do
+        "Columns", "AuctionTabs", "BuyDialog", "BuyingTab" }) do
         assert(loadfile(manifest.path(name)))("Flipside", ns)
     end
     return ns
@@ -684,6 +684,33 @@ describe("BuyingTab", function()
             assert.is_true(shown)
             assert.is_false(warning:IsShown())
             assert.are.same({}, client.violations)
+        end)
+
+        it("makes no AH call on Keep buying while a Selling buy is open", function()
+            local warning = atJump()
+            ns.BuyFlow.Register("selling", function() return true end)
+            local before = #client.calls
+            click(warning.yesButton)
+            assert.are.equal(before, #client.calls)
+            assert.is_nil(tab.buy)
+            assert.are.same({}, client.violations)
+        end)
+
+        it("ends the price jump box when the tab is left", function()
+            local warning = atJump()
+            tab:Deselect()
+            assert.is_false(warning:IsShown())
+            assert.is_nil(tab.run)
+        end)
+
+        it("leaves the confirm box open when it ends and the Selling tab has a buy open", function()
+            searchItem({ row(50, 3) })
+            click(ui.buyNext)
+            fire("QUOTE", 50, 150)
+            local confirm = dialog("FlipsideBuyConfirm")
+            ns.BuyFlow.Register("selling", function() return true end)
+            tab:_CloseConfirm()
+            assert.is_true(confirm:IsShown())
         end)
 
         it("hides the box and raises the error again when Keep buying fails", function()

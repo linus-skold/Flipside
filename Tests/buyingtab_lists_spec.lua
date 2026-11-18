@@ -7,7 +7,7 @@ local function loadModules()
         "BuyFlow",
         "SearchLists", "CraftListMargin", "Theme",
         "Widgets", "Window", "Prompt", "List", "Tree", "Tabs", "Columns", "AuctionTabs",
-        "BuyingTab" }) do
+        "BuyDialog", "BuyingTab" }) do
         assert(loadfile(manifest.path(name)))("Flipside", ns)
     end
     return ns

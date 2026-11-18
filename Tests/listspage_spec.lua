@@ -663,7 +663,7 @@ describe("ListsPage", function()
 
         before_each(function()
             for _, name in ipairs({ "ItemNameIndex", "BuyingPlan", "BuyFlow", "Tree", "Tabs", "Columns", "AuctionTabs",
-                "BuyingTab" }) do
+                "BuyDialog", "BuyingTab" }) do
                 assert(loadfile(manifest.path(name)))("Flipside", ns)
             end
             client = { rows = {} }

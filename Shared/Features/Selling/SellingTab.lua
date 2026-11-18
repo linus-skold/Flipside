@@ -9,6 +9,7 @@ local SellingTab = {}
 ns.SellingTab = SellingTab
 
 local BuyFlow = ns.BuyFlow -- the parts of a buy that the Buying tab shares
+local BuyDialog = ns.BuyDialog -- the confirm box of a buy
 
 local OWNER = "Flipside.SellingTab"
 local DIALOG = "FLIPSIDE_CONFIRM_POST"
@@ -1217,6 +1218,7 @@ end
 -- The client made an auction. It ends a one-stack post that waits for it (_EndMulti). A multi-stack post
 -- counts its stacks from the multisell events.
 function Tab:_OnPosted()
+    self.live = nil -- a post changes the AH list
     local m = self.multi
     if m and m.stacks == 1 and m.created < 1 then
         m.created = 1
@@ -2080,7 +2082,7 @@ end
 -- End a multi-stack post: log each stack that the client made. A failure marks the entry failed with the count.
 function Tab:_EndMulti(failure)
     local m = self.multi
-    self.multi = nil
+    self.multi, self.live = nil, nil
     local entry = m.entry
     entry.postText = nil
     local created = math.min(m.created, m.stacks)
@@ -2280,7 +2282,7 @@ function Tab:_ShowBuyConfirm()
     local source = buy.source
     local text, over, jumped = BuyFlow.QuoteText(buy, self:_ItemLink(source) or tostring(self:_Name(source)))
     local options = BuyFlow.ConfirmOptions(buy, over, jumped, false)
-    BuyFlow.Dialog(CONFIRM_BOX):Open(options.title, text, {
+    BuyDialog.Get(CONFIRM_BOX):Open(options.title, text, {
         yes = options.yes, no = options.no, red = options.red, keep = options.keep,
         onYes = function()
             self:_ConfirmBuy()
@@ -2291,10 +2293,10 @@ function Tab:_ShowBuyConfirm()
     })
 end
 
--- Close the confirm box of this tab. Call it only while self.buy is a buy of this tab.
-function Tab._CloseBuyBox()
-    local box = BuyFlow.OpenDialog(CONFIRM_BOX)
-    if box then
+-- Close the confirm box. It stays open if the Buying tab has a buy open: the box is theirs then.
+local function closeBuyBox()
+    local box = BuyDialog.Find(CONFIRM_BOX)
+    if box and not BuyFlow.OtherOpen("selling") then
         box:Close()
     end
 end
@@ -2377,6 +2379,16 @@ function Tab:_ConfirmBuy()
     end)
 end
 
+-- End a buy that has not gone out: close the box, drop the quote and log it. It starts no search.
+function Tab:_AbortBuy(buy, why)
+    self.buy = nil
+    closeBuyBox()
+    if not buy.isItem then
+        pcall(self.deps.client.CancelCommodityPurchase)
+    end
+    self.deps.buyLog:Add(buy.entry, "buy cancelled", why)
+end
+
 -- Cancel an open quote or confirm box. A buy that went out stays; its box closes.
 function Tab:_CancelBuy(why)
     local buy = self.buy
@@ -2384,15 +2396,10 @@ function Tab:_CancelBuy(why)
         return
     end
     if buy.phase == "confirming" then
-        self._CloseBuyBox()
+        closeBuyBox()
         return
     end
-    self.buy = nil
-    self._CloseBuyBox()
-    if not buy.isItem then
-        pcall(self.deps.client.CancelCommodityPurchase)
-    end
-    self.deps.buyLog:Add(buy.entry, "buy cancelled", why)
+    self:_AbortBuy(buy, why)
     if self.active then
         self:_AfterStep()
     end
@@ -2406,7 +2413,7 @@ function Tab:_BuySucceed(buy)
     log("info", string.format("bought %s of item %s, total %s", buy.quantity, buy.itemID, buy.total))
     self.deps.buyLog:Add(buy.entry, string.format("bought %d at %s", buy.quantity, BuyFlow.Money(buy.level.unitPrice)),
         "total " .. BuyFlow.Money(buy.total))
-    self._CloseBuyBox()
+    closeBuyBox()
     self:_AfterStep()
     self:_Research(buy.source)
     self:_Update()
@@ -2416,7 +2423,7 @@ end
 -- The buy failed. The list is stale, so the item is searched again.
 function Tab:_BuyFail(buy, reason)
     self.buy, self.live = nil, nil
-    self._CloseBuyBox()
+    closeBuyBox()
     log("warn", string.format("buy of item %s failed: %s", buy.itemID, reason))
     self.deps.buyLog:Add(buy.entry, "buy failed", reason)
     self:_AfterStep()
@@ -2884,7 +2891,7 @@ function Tab:_RefreshPost()
     end
     local open = self:_GateOpen()
     ui.postNext:SetText(self:PostLabel())
-    ui.postNext:SetEnabled(self.deps.client.CanPost() and self.multi == nil and self.lock == nil
+    ui.postNext:SetEnabled(self.deps.client.CanPost() and self.multi == nil and self.lock == nil and self.buy == nil
         and not self:_Scanning() and open and (self.awaiting ~= nil or self:_Focus() ~= nil))
     local events = self.deps.client.ThrottleEvents
     if open or not self.active or self.gateWatch or (events and events()) then
@@ -2909,7 +2916,7 @@ function Tab:_Update()
     self:_Layout()
     ui.tree:Refresh()
     ui.postNext:SetText(self:PostLabel())
-    local busy = self.multi ~= nil
+    local busy = self.multi ~= nil or self.buy ~= nil
     self:_RefreshPost()
 
     self:_RefreshBuy()
@@ -3219,7 +3226,11 @@ function Tab:Mount(parent, api)
         bus:Subscribe(closeEvent, OWNER, function()
             -- A scan cannot go on without the AH: end it so that Post is not locked for ever.
             self.queue, self.pending = nil, nil
-            self:_CancelBuy("the Auction House closed")
+            -- An open buy ends with no retry and no search: the AH is closed. The wait timers see no buy.
+            if self.buy then
+                self:_AbortBuy(self.buy, "the Auction House closed")
+            end
+            self.live = nil
             self:_Release()
             self:_Update()
         end)

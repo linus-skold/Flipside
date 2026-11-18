@@ -229,7 +229,16 @@ local function defaultItemLink(itemID)
     return link, quality
 end
 
-local makeDialog = BuyFlow.Dialog
+local BuyDialog = ns.BuyDialog
+local makeDialog = BuyDialog.Get
+
+-- Close the confirm box. It stays open if the Selling tab has a buy open: the box is theirs then.
+local function closeConfirmBox()
+    local box = BuyDialog.Find("FlipsideBuyConfirm")
+    if box and not BuyFlow.OtherOpen("buying") then
+        box:Close()
+    end
+end
 
 local Tab = {}
 Tab.__index = Tab
@@ -2048,6 +2057,11 @@ end
 
 -- Start the buy of one level. Call it only from a click. A commodity asks for a quote; an item goes to the confirm.
 function Tab:_StartBuy(entry, cover, jump)
+    -- Every path to a buy ends here, also the "Keep buying" click of the price jump box. One buy for both tabs.
+    if BuyFlow.OtherOpen("buying") then
+        self:_Say("a buy is open on the Selling tab")
+        return false, "a buy is open on the Selling tab"
+    end
     local level = cover.last
     local first = level.rows[1]
     if first.isCommodity == false then
@@ -2208,10 +2222,7 @@ end
 -- Close the confirm box and stop the move to the next row. A purchase in flight stays.
 function Tab:_CloseConfirm()
     self.continueKey, self.chain, self.boxNote, self.chainGroup = nil, nil, nil, nil
-    local box = BuyFlow.OpenDialog("FlipsideBuyConfirm")
-    if box then
-        box:Close()
-    end
+    closeConfirmBox()
 end
 
 -- Cancel an open quote or confirm box. A purchase in flight stays.
@@ -2223,10 +2234,7 @@ function Tab:_CancelQuote(why)
     end
     self.continueKey, self.chain, self.boxNote, self.chainGroup = nil, nil, nil, nil
     self.buy = nil
-    local box = BuyFlow.OpenDialog("FlipsideBuyConfirm")
-    if box then
-        box:Close()
-    end
+    closeConfirmBox()
     if not buy.isItem then
         pcall(self.deps.client.CancelCommodityPurchase)
     end
@@ -2434,7 +2442,7 @@ end
 function Tab:_ContinueBuy()
     local key = self.continueKey
     self.continueKey = nil
-    local box = BuyFlow.OpenDialog("FlipsideBuyConfirm")
+    local box = BuyDialog.Find("FlipsideBuyConfirm")
     if not key or key ~= self.selectedKey or not (box and box:IsShown()) then
         self:_CloseConfirm()
         return
@@ -3077,6 +3085,11 @@ end
 function Tab:Deselect()
     self:WalkStop()
     self:_CancelQuote("the tab was left")
+    -- The price jump box ends with the tab. A hide runs its Stop answer (the run ends).
+    local jumpBox = BuyDialog.Find("FlipsideBuyJump")
+    if jumpBox then
+        jumpBox:Hide()
+    end
     self:_CancelRead("read stopped")
     self.active = false
     if self.content then

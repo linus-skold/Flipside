@@ -4,7 +4,8 @@ local mock = require("Tests.wow_mock")
 local function loadModules()
     local ns = { ReportError = function() end }
     for _, name in ipairs({ "EventBus", "ItemString", "ScanKey", "BagItems", "SellingPlan", "BuyingPlan", "BuyFlow",
-        "Theme", "Widgets", "MoneyInput", "Window", "List", "Columns", "Tree", "AuctionTabs", "SellingTab" }) do
+        "Theme", "Widgets", "MoneyInput", "Window", "List", "Columns", "Tree", "AuctionTabs", "BuyDialog",
+        "SellingTab" }) do
         assert(loadfile(manifest.path(name)))("Flipside", ns)
     end
     return ns
@@ -376,6 +377,86 @@ describe("SellingTab Buy lowest", function()
             assert.is_nil(tab.buy)
             local list = ns.BuyingPlan.Log:List()
             assert.are.equal("buy failed", list[#list].decision)
+        end)
+    end)
+
+    describe("while a buy is open", function()
+        it("turns Post and Skip off", function()
+            choose(11, { crow(150, 5) })
+            assert.is_true(ui.postNext.enabled)
+            assert.is_true(ui.skip.enabled)
+            click(ui.buyLowest)
+            assert.is_false(ui.postNext.enabled)
+            assert.is_false(ui.skip.enabled)
+            bus:Emit("QUOTE", 150, 750)
+            click(box().noButton)
+            assert.is_true(ui.postNext.enabled)
+            assert.is_true(ui.skip.enabled)
+        end)
+
+        it("leaves the box open when it ends and the Buying tab has a buy open", function()
+            choose(11, { crow(150, 5) })
+            click(ui.buyLowest)
+            bus:Emit("QUOTE", 150, 750)
+            local shown = box()
+            ns.BuyFlow.Register("buying", function() return true end)
+            tab:_AbortBuy(tab.buy, "test")
+            assert.is_true(shown:IsShown())
+        end)
+    end)
+
+    describe("the AH closes", function()
+        local timers
+
+        before_each(function()
+            timers = {}
+            client.CloseEvent = function() return "CLOSE" end
+            tab:Unmount()
+            tab = mount({ after = function(_, fn) timers[#timers + 1] = fn end })
+            ui = tab.ui
+        end)
+
+        it("ends an open quote with no search and no buy call", function()
+            choose(11, { crow(150, 5) })
+            click(ui.buyLowest)
+            bus:Emit("QUOTE", 150, 750)
+            local before = #client.searches
+            bus:Emit("CLOSE")
+            assert.is_nil(tab.buy)
+            assert.is_false(box():IsShown())
+            assert.are.same({ "start", "cancel" }, names())
+            assert.are.equal(before, #client.searches)
+        end)
+
+        it("ends a buy that went out, and the wait timer does nothing", function()
+            choose(10, { arow(150, 2) })
+            click(ui.buyLowest)
+            click(box().yesButton)
+            local before = #client.searches
+            bus:Emit("CLOSE")
+            assert.is_nil(tab.buy)
+            for _, fn in ipairs(timers) do
+                fn()
+            end
+            assert.are.equal(before, #client.searches)
+            local list = ns.BuyingPlan.Log:List()
+            assert.are.equal("buy cancelled", list[#list].decision)
+        end)
+
+        it("forgets the rows of the last search", function()
+            choose(11, { crow(150, 5) })
+            assert.is_not_nil(tab.live)
+            bus:Emit("CLOSE")
+            assert.is_nil(tab.live)
+        end)
+    end)
+
+    describe("a post", function()
+        it("forgets the rows of the last search", function()
+            choose(11, { crow(150, 5) })
+            assert.is_not_nil(tab.live)
+            bus:Emit("CREATED")
+            assert.is_nil(tab.live)
         end)
     end)
 
