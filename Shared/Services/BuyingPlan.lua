@@ -103,6 +103,14 @@ function BuyingPlan.ListEntries(items, deps)
 end
 
 BuyingPlan.VENDOR_FORMULA = "vendorsell"
+
+-- The refusal texts of Tab:_NextBuy that mean that the item has no level left to buy. BuyWalk reads them too.
+BuyingPlan.REASON = {
+    none = "nothing left to buy",
+    above = "above max price",
+    own = "own listing",
+    ownBelow = "own listing below the selected level",
+}
 BuyingPlan.VENDOR_PATH = "Vendor"
 
 -- The items that the AH sells below their max price. deps: store (ScanStore-like: Keys, Get), itemCache

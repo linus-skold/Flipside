@@ -60,6 +60,7 @@ Shared\Services\MailOpenAll.lua
 Shared\Services\MailingRun.lua
 Shared\Services\MailingLedger.lua
 Shared\Services\BuyingPlan.lua
+Shared\Services\BuyWalk.lua
 Shared\Services\SearchLists.lua
 Shared\Services\SellingPlan.lua
 Shared\Services\Holdings.lua

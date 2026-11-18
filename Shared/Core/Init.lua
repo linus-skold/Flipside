@@ -2107,6 +2107,8 @@ openUI = function()
             scanStore = ns.scanStore,
             itemCache = ns.itemCache,
             runJob = ns.StartJob,
+            scanEngine = ns.scanEngine,
+            confirmScan = confirmScan,
             -- Time of the last full scan of this scan scope, and true if a partial scan came after it.
             lastScan = function()
                 if not ns.scanStore then
