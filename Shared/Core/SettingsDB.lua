@@ -245,6 +245,55 @@ function DB:ResetCharacter(character)
     return true
 end
 
+-- Moves the character-scope settings and the profile choice of the character `from` to the character `to`, and
+-- removes `from`. A setting that `to` has stays: the old value of `from` is dropped. The profile choice of `to`
+-- counts as not set while it is the Default profile. valueKeys (optional) lists character-scope settings whose value
+-- is a character name: a value `from` in any character becomes `to`. Returns the number of settings that moved,
+-- or 0 (also if the DB is read-only).
+function DB:MoveCharacter(from, to, valueKeys)
+    CheckName(from, "character")
+    CheckName(to, "character")
+    if from == to or self._readOnly then
+        return 0
+    end
+    local fromPrefix, toPrefix = "c/" .. from .. "/", "c/" .. to .. "/"
+    local old = {}
+    for k in pairs(self._saved) do
+        if type(k) == "string" and StartsWith(k, fromPrefix) then
+            old[#old + 1] = k
+        end
+    end
+    local moved = 0
+    for _, k in ipairs(old) do
+        local target = toPrefix .. k:sub(#fromPrefix + 1)
+        if self._saved[target] == nil then
+            self._saved[target] = self._saved[k]
+            moved = moved + 1
+        end
+        self._saved[k] = nil
+    end
+    local map, list = self._saved[MAP_KEY], self._saved[LIST_KEY]
+    if type(map) == "table" and map[from] ~= nil then
+        if map[to] == nil or map[to] == DEFAULT_PROFILE then
+            map[to] = map[from]
+            moved = moved + 1
+        end
+        map[from] = nil
+        if type(list) == "table" then
+            list[map[to]] = true
+        end
+    end
+    for _, name in ipairs(valueKeys or {}) do
+        local suffix = "/" .. name
+        for k, v in pairs(self._saved) do
+            if v == from and type(k) == "string" and StartsWith(k, "c/") and k:sub(-#suffix) == suffix then
+                self._saved[k] = to
+            end
+        end
+    end
+    return moved
+end
+
 -- Runs migrations on a copy; returns the copy, or nil and a message.
 local function Migrate(saved, from, to, migrations)
     local data = DeepCopy(saved)

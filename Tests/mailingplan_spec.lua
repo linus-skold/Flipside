@@ -209,6 +209,54 @@ describe("MailingPlan", function()
             assert.equal(1, #planFor("Alt Smith").mails)
         end)
 
+        describe("two own characters with the same first name", function()
+            local A, B = "Player-1-0000000A", "Player-1-0000000B"
+
+            before_each(function()
+                load("CharacterKey")
+                local account, saved = {}, { [A .. "/surname"] = "Smith", [B .. "/surname"] = "Jones" }
+                local db = {
+                    Get = function(_, _, key)
+                        return account[key]
+                    end,
+                    Set = function(_, _, key, value)
+                        account[key] = value
+                        return true
+                    end,
+                    IsReadOnly = function()
+                        return false
+                    end,
+                    GetFor = function(_, key, name)
+                        return saved[key .. "/" .. name]
+                    end,
+                }
+                ns.CharacterKey.Setup({ db = db })
+                ns.CharacterName.Setup({ db = db })
+                ns.CharacterKey.SaveMeta(A, "Bob", "Realm")
+                ns.CharacterKey.SaveMeta(B, "Bob", "Realm")
+            end)
+
+            local function plan(recipient, selfKey)
+                return P.Build({
+                    groups = { { items = { "100" }, operation = op(recipient) } },
+                    slots = { slot("100", 0, 1, 3) }, self = selfKey, characters = { A, B },
+                })
+            end
+
+            it("is not self for a name that both have, on both characters", function()
+                for _, text in ipairs({ "Bob", "Bob-Realm" }) do
+                    assert.equal(1, #plan(text, A).mails)
+                    assert.equal(1, #plan(text, B).mails)
+                end
+            end)
+
+            it("is self only for the exact Name Surname", function()
+                assert.same({ "recipient is self" }, reasons(plan("Bob Smith", A)))
+                assert.equal(1, #plan("Bob Smith", B).mails)
+                assert.same({ "recipient is self" }, reasons(plan("bob JONES", B)))
+            end)
+        end)
+
         it("does not take Name Surname as an alias on TBC", function()
             ns.Flavour = { usesSurname = false }
             assert.equal(1, #planFor("Me Smith").mails)

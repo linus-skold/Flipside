@@ -161,6 +161,23 @@ function Buffer:SetOnCap(fn)
     self._onCap = fn
 end
 
+-- Changes the field char of the buffered records of the character key `from` to `to` (a move of legacy data to a
+-- GUID key, CharacterKey). Returns the number of records that changed. db is the settings DB.
+function LedgerBuffer.RenameCharacter(db, from, to)
+    local list = db:Get("account", KEY)
+    if type(list) ~= "table" or db:IsReadOnly() then
+        return 0
+    end
+    local changed = 0
+    for _, record in ipairs(list) do
+        if record.char == from then
+            record.char = to
+            changed = changed + 1
+        end
+    end
+    return changed
+end
+
 -- db is the settings DB. options: warn(message), onCap().
 function LedgerBuffer.New(db, options)
     if type(db) ~= "table" then

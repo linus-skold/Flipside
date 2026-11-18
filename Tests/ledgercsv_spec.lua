@@ -63,6 +63,22 @@ describe("LedgerCsv", function()
             assert.are.equal(expected, out[2])
         end)
 
+        it("writes the text that charText gives for a character key, not the key", function()
+            local guid = "Player-1-0000000A"
+            local record = { time = 5, char = guid, type = "sale", source = "ahSale", money = 1 }
+            local sum = {
+                char = guid, day = 1, source = "ahSale", item = "7", count = 2, qty = 3, moneyIn = 4, moneyOut = 0,
+            }
+            local out = lines(ns.LedgerCsv.Build({ record }, { sum }, function(key)
+                return key == guid and "Bob Smith" or key
+            end))
+            assert.are.equal(3, #out)
+            for index = 2, 3 do
+                assert.matches(",Bob Smith,", out[index])
+                assert.is_nil(out[index]:find("Player-", 1, true))
+            end
+        end)
+
         it("writes the money out as a negative number", function()
             local out = lines(ns.LedgerCsv.Build({
                 { time = 5, char = "A-R", type = "purchase", source = "ahPurchase", item = "7", qty = 1, money = 200 },

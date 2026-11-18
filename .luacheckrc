@@ -102,6 +102,7 @@ read_globals = {
     "StaticPopup_Show",
     "UIParent",
     "UnitName",
+    "UnitGUID",
     "NumTaxiNodes",
     "TaxiNodeCost",
     "TaxiNodeGetType",

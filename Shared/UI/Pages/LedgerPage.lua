@@ -378,13 +378,20 @@ local function sumRow(tab, sum, char)
     }
 end
 
--- Returns the realm part of a "Name-Realm" key, or UNKNOWN_REALM if the key has no realm (an old record).
+-- Returns the realm of a character key, or UNKNOWN_REALM if the key has no realm (an old record).
+-- A GUID key (Forever) has its realm in the saved metadata (CharacterKey).
 function LedgerPage.RealmOf(char)
+    if ns.CharacterKey then
+        return ns.CharacterKey.Realm(char) or UNKNOWN_REALM
+    end
     return type(char) == "string" and char:match("^[^-]+%-(.+)$") or UNKNOWN_REALM
 end
 
--- Returns the name part of a "Name-Realm" key. A key with no realm is returned as it is.
+-- Returns the name part of a character key. A key with no realm is returned as it is.
 function LedgerPage.NameOf(char)
+    if ns.CharacterKey then
+        return ns.CharacterKey.Name(char)
+    end
     return type(char) == "string" and char:match("^([^-]+)%-") or tostring(char)
 end
 
@@ -492,7 +499,7 @@ function LedgerPage.CsvText(store, filter, now)
             end
         end
     end
-    return ns.LedgerCsv.Build(records, sums)
+    return ns.LedgerCsv.Build(records, sums, LedgerPage.CharText)
 end
 
 -- Returns money in, money out and net of rows.
@@ -582,7 +589,8 @@ function LedgerPage.Build(content, deps)
     local function logFilter()
         if ns.Log then
             ns.Log.Write("ledger", "debug", "filter realm=" .. tostring(page.filter.realm) .. " char="
-                .. tostring(page.filter.char) .. " range=" .. tostring(page.filter.range))
+                .. (page.filter.char == ALL and ALL or LedgerPage.CharText(page.filter.char))
+                .. " range=" .. tostring(page.filter.range))
         end
     end
 
@@ -1139,7 +1147,7 @@ function LedgerPage.Build(content, deps)
             return message
         end
         if #names > 0 then
-            logEdit("edit " .. data.char .. " " .. id .. ": " .. table.concat(names, ", "))
+            logEdit("edit " .. LedgerPage.CharText(data.char) .. " " .. id .. ": " .. table.concat(names, ", "))
         end
         page.Draw()
         return nil
@@ -1152,7 +1160,7 @@ function LedgerPage.Build(content, deps)
         end
         local ok = current:RevertRecord(data.char, id)
         if ok then
-            logEdit("revert " .. data.char .. " " .. id)
+            logEdit("revert " .. LedgerPage.CharText(data.char) .. " " .. id)
             page.Draw()
         end
         return ok

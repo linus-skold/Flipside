@@ -24,12 +24,21 @@ local function Trim(text)
 end
 
 -- True if the recipient is the own character. A name without a realm matches the name part only. On Forever the
--- recipient can also be "Name Surname" (CharacterName).
-local function IsSelf(recipient, selfName)
+-- recipient can also be "Name Surname" (CharacterName). With the list of all own characters, a name that more than
+-- one own character has ("Name" or "Name-Realm" of two characters with different surnames) is not self: it is
+-- ambiguous, and the character with the exact "Name Surname" is self only. Without the list only selfName counts.
+local function IsSelf(recipient, selfName, characters)
     if not selfName or selfName == "" then
         return false
     end
-    return ns.CharacterName.Resolve(recipient, { selfName }) ~= nil
+    if not characters then
+        return ns.CharacterName.Resolve(recipient, { selfName }) ~= nil
+    end
+    local list = { selfName }
+    for _, key in ipairs(characters) do
+        list[#list + 1] = key
+    end
+    return ns.CharacterName.Resolve(recipient, list) == selfName
 end
 
 -- Returns the settings of a mailing operation as a recipient and two whole numbers, or nil without a recipient.
@@ -179,7 +188,8 @@ local function PlanItem(slots, keep, maxSend, picked, skipped)
 end
 
 -- Input: { groups = { { items = { key, ... }, operation = { recipient, keep, maxSend } or nil }, ... },
---          slots = { { key, bag, slot, count, soulbound, quest, unmailable, quality, class }, ... }, self = "Name" }.
+--          slots = { { key, bag, slot, count, soulbound, quest, unmailable, quality, class }, ... }, self = "Name",
+--          characters = { own character keys } (optional; see IsSelf) }.
 -- A group lists its own items and has the effective mailing operation (inherited from its parents).
 -- The operation can also have minQuality, maxQuality and itemClasses; an item must pass them (SPEC 5.5).
 -- An allBags group lists no item: it takes every bag item for which isGrouped(key) is false.
@@ -215,7 +225,7 @@ function MailingPlan.Build(input)
                     for _, slot in ipairs(slots) do
                         skipped[#skipped + 1] = SkipEntry(slot, REASONS.noRecipient)
                     end
-                elseif IsSelf(recipient, input.self) then
+                elseif IsSelf(recipient, input.self, input.characters) then
                     for _, slot in ipairs(slots) do
                         skipped[#skipped + 1] = SkipEntry(slot, REASONS.self)
                     end

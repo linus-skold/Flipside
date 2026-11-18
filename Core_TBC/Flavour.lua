@@ -37,6 +37,7 @@ ns.Flavour = {
     hasMailInvoices = true, -- GetInboxInvoiceInfo has the Forever field order (classic_anniversary MailFrame.lua 514)
     ledgerRealmFilter = true, -- the Ledger page has a server and character filter (mail does not cross servers)
     usesSurname = false, -- TBC has real servers: character names show as Name-Realm
+    characterGuidKey = false, -- TBC keeps Name-Realm as the character key
     -- Tab templates from the TBC client. Bottom tabs look like the Character and Auction House frame tabs.
     pageTabTemplate = "CharacterFrameTabButtonTemplate",
     topTabTemplate = "PanelTopTabButtonTemplate",

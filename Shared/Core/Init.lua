@@ -79,14 +79,21 @@ ns.bus:Subscribe("ITEM_DATA_LOAD_RESULT", ns.itemCache, function(_, itemID, succ
     ns.itemCache:OnLoadResult(itemID, success)
 end)
 
--- Character key Name-Realm, or nil if the client gives no name or realm.
-local function characterKey()
-    local name = UnitName("player")
-    local realm = GetNormalizedRealmName()
-    if type(name) ~= "string" or name == "" or type(realm) ~= "string" or realm == "" then
-        return nil
+-- Character key (CharacterKey): the player GUID on Forever, Name-Realm on TBC. It is Name-Realm for a session in
+-- which the client gives no usable GUID (nil, not a string or a secret value). It is nil if the client gives no
+-- name or realm. The second result is the legacy key Name-Realm, only if the key is a GUID.
+local function characterKeys()
+    -- No boolean test of the GUID here: it can be a secret value.
+    local guid
+    if type(UnitGUID) == "function" then
+        guid = UnitGUID("player")
     end
-    return name .. "-" .. realm
+    return ns.CharacterKey.Compute(UnitName("player"), GetNormalizedRealmName(), guid,
+        type(issecretvalue) == "function" and issecretvalue or nil)
+end
+
+local function characterKey()
+    return (characterKeys())
 end
 
 -- Open the settings DB; leave ns.db nil and print one line if that is not possible.
@@ -153,6 +160,30 @@ local function openSettingsDB()
         ns.Kit.SetSoundGate(uiSoundsEnabled)
     end
     ns.bus:Emit("Flipside.DBReady")
+end
+
+-- Character key (SPEC 5.5, "Character names on Forever"), Forever only: the key is a GUID.
+-- Save the name and the realm of this character as metadata. The first character that logs in with a name and a
+-- realm claims the legacy Name-Realm data (settings, holdings, balance, ledger buffer). The ledger addon store
+-- moves its legacy data when it opens (openLedger). A session with no usable GUID moves nothing.
+local function openCharacterKey()
+    local CharacterKey = ns.CharacterKey
+    CharacterKey.Setup({ db = ns.db })
+    local key, legacy = characterKeys()
+    -- A read-only DB takes no write (no metadata, no claim, no move): a write would print a second warning.
+    if not (ns.db and key and legacy) or ns.db:IsReadOnly() then
+        return
+    end
+    CharacterKey.SaveMeta(key, UnitName("player"), GetNormalizedRealmName())
+    if CharacterKey.Claim(legacy, key) ~= key then
+        return
+    end
+    local moved = ns.db:MoveCharacter(legacy, key, CharacterKey.VALUE_KEYS)
+    local buffered = ns.LedgerBuffer and ns.LedgerBuffer.RenameCharacter(ns.db, legacy, key) or 0
+    if moved > 0 or buffered > 0 then
+        log("core", "info", "moved the data of %s to the GUID key: %d settings, %d buffered records", legacy, moved,
+            buffered)
+    end
 end
 
 -- Character names (SPEC 5.5, "Character names on Forever").
@@ -919,11 +950,19 @@ local function openLedger()
                 if type(_G[name]) ~= "table" then
                     _G[name] = {}
                 end
-                return ns.LedgerStore.New(_G[name], {
+                local store = ns.LedgerStore.New(_G[name], {
                     region = region,
                     ruleset = ns.Flavour.ruleset,
                     onWarning = ns.ReportError,
                 })
+                -- Legacy Name-Realm data goes to the GUID key that claimed the name at login (CharacterKey).
+                for legacy, key in pairs(ns.db:IsReadOnly() and {} or ns.CharacterKey.Claims()) do
+                    local moved = store:MoveCharacter(legacy, key)
+                    if moved > 0 then
+                        log("ledger", "info", "moved %d ledger entries of %s to the GUID key", moved, legacy)
+                    end
+                end
+                return store
             end,
         })
         ns.ledgerLoader = loader
@@ -1719,6 +1758,7 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
         pcall(writeSessionMarker)
         trackAuctionHouse()
         openSettingsDB()
+        openCharacterKey()
         openCharacterName()
         if ns.db then
             openScan()
@@ -2458,8 +2498,9 @@ local function forgetCommand(character)
             or "usage: /flip forget <Name-Realm>")
         return
     end
-    -- An exact key wins. Forever then accepts the name that the client shows (Name Surname), with no regard to
-    -- case, but only if one character matches. With more than one match nothing is removed.
+    -- An exact key wins. Forever then accepts the name that the client shows (Name Surname), the Name-Realm text
+    -- and the name alone (the keys are GUIDs there), with no regard to case, but only if one character matches.
+    -- With more than one match nothing is removed.
     local characters = ns.holdings:Characters()
     local known = false
     for _, name in ipairs(characters) do
@@ -2469,25 +2510,30 @@ local function forgetCommand(character)
         end
     end
     if not known and surnames then
-        local matches, wanted = {}, character:lower()
+        local matches, found, wanted = {}, nil, character:lower()
         for _, name in ipairs(characters) do
             local shown = ns.CharacterName.Display(name)
-            if shown:lower() == wanted then
-                matches[#matches + 1] = shown .. " (" .. name .. ")"
-                character = name
-                known = true
+            if shown:lower() == wanted or ns.CharacterKey.FullName(name):lower() == wanted
+                or ns.CharacterName.Plain(name):lower() == wanted then
+                matches[#matches + 1] = shown .. " (" .. ns.CharacterKey.FullName(name) .. ")"
+                found = name
             end
         end
         if #matches > 1 then
             printLine("more than one saved character matches " .. wanted .. ": " .. table.concat(matches, ", ")
-                .. ". Type the exact Name-Realm.")
+                .. ". Type the name with the surname, or the exact Name-Realm.")
             return
         end
+        if found then
+            character, known = found, true
+        end
     end
+    local shownName = ns.CharacterName and ns.CharacterName.Display(character) or character
     if not known then
         printLine("no saved character " .. character)
     elseif ns.holdings:Forget(character) then
-        printLine("forgot the inventory of " .. character)
+        -- The metadata stays: the ledger records and the balance of the character still need its name.
+        printLine("forgot the inventory of " .. shownName)
     else
         printLine("settings are read-only; the inventory was not removed")
     end

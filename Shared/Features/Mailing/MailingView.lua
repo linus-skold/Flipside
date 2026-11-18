@@ -346,7 +346,9 @@ function MailingView:_BuildRule(entry, slots, characters)
     elseif count == 0 then
         rule.reason = "no groups"
     else
-        local plan = ns.MailingPlan.Build({ groups = groups, slots = slots, self = deps.selfName() })
+        local plan = ns.MailingPlan.Build({
+            groups = groups, slots = slots, self = deps.selfName(), characters = characters,
+        })
         rule.mails, rule.items = #plan.mails, unitsOf(plan.mails)
         rule.unknown = not MailingView.IsKnownCharacter(rule.recipient, characters)
     end
@@ -409,6 +411,7 @@ function MailingView:Plan(chosen)
     for _, rule in ipairs(chosen) do
         local part = ns.MailingPlan.Build({
             groups = ns.MailingPlan.GroupsForOperation(deps.rules, rule.id), slots = slots, self = deps.selfName(),
+            characters = deps.characters and deps.characters() or nil,
         })
         for _, mail in ipairs(part.mails) do
             plan.mails[#plan.mails + 1] = mail
