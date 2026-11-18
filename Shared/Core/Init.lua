@@ -170,7 +170,8 @@ local function openCharacterKey()
     local CharacterKey = ns.CharacterKey
     CharacterKey.Setup({ db = ns.db })
     local key, legacy = characterKeys()
-    if not (ns.db and key and legacy) then
+    -- A read-only DB takes no write (no metadata, no claim, no move): a write would print a second warning.
+    if not (ns.db and key and legacy) or ns.db:IsReadOnly() then
         return
     end
     CharacterKey.SaveMeta(key, UnitName("player"), GetNormalizedRealmName())
@@ -955,7 +956,7 @@ local function openLedger()
                     onWarning = ns.ReportError,
                 })
                 -- Legacy Name-Realm data goes to the GUID key that claimed the name at login (CharacterKey).
-                for legacy, key in pairs(ns.CharacterKey.Claims()) do
+                for legacy, key in pairs(ns.db:IsReadOnly() and {} or ns.CharacterKey.Claims()) do
                     local moved = store:MoveCharacter(legacy, key)
                     if moved > 0 then
                         log("ledger", "info", "moved %d ledger entries of %s to the GUID key", moved, legacy)

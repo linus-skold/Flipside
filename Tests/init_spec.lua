@@ -299,6 +299,8 @@ describe("Init", function()
             assert.are.equal(99, _G.FlipsideDB._schema)
             assert.are.equal(1, #mock.messages)
             assert.is_true(mock.messages[1]:find("^Flipside: ") ~= nil)
+            -- A read-only DB moves nothing and saves no metadata or claim.
+            assert.are.same({ _schema = 99 }, _G.FlipsideDB)
         end)
 
         it("prints one line and leaves ns.db nil if SettingsDB.New fails", function()
