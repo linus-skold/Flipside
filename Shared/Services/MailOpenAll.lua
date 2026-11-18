@@ -17,6 +17,9 @@ MailOpenAll.FULL_FALLBACK = "Inventory is full."
 -- in a row (3 s); then it goes on, so that the run cannot hang.
 local PENDING_WAIT = 0.15
 local PENDING_MAX = 20
+-- The quiet time of one take of this run. It is shorter than MailTake.QUIET_SECONDS, which the other readers use.
+local QUIET_SECONDS = 0.2
+MailOpenAll.QUIET_SECONDS = QUIET_SECONDS
 -- The red of the client error messages (UIErrorsFrame calls in the client source).
 local ERROR_COLOR = { 1, 0.1, 0.1, 1 }
 
@@ -176,7 +179,7 @@ function MailOpenAll.New(deps)
                     mail.items, mail.money))
                 run.pending = mail
                 setStatus(string.format("Opening mails: %d opened", run.opened))
-                deps.take.Begin()
+                deps.take.Begin(QUIET_SECONDS)
                 api.autoLoot(index)
                 return
             end

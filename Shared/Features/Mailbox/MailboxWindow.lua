@@ -13,11 +13,12 @@ local NAME = "FlipsideMailboxWindow"
 -- The size in pixels if MailFrame has no size yet. The window has the height of MailFrame and its width plus
 -- MailHost.EXTRA_WIDTH, so it covers MailFrame and reaches to the right as the old wide layout did.
 local MIN_WIDTH, MIN_HEIGHT = 420, 520
-local PAD = 8
--- The space from the top edge to the tabs, and the bottom row that holds the toggle button.
+local PAD = 14
+-- The space from the top edge to the tabs. The toggle button sits in the header, so there is no bottom row.
 local BODY_TOP = 28
-local BAR_HEIGHT = 28
-local TOGGLE_WIDTH = 120
+local TOGGLE_WIDTH = 90
+-- The toggle level is above the header art of the window template (level 510).
+local TOGGLE_LEVEL = 520
 -- The toggle button on MailFrame: right of the tabs under the frame. The level is above the highest client child
 -- level (the title and the close button have 510).
 local MAILFRAME_TOGGLE = { width = 110, height = 22, tabGap = 10, level = 520 }
@@ -100,7 +101,7 @@ function MailboxWindow.Create(deps)
     self.frame = frame
     local body = CreateFrame("Frame", nil, frame)
     body:SetPoint("TOPLEFT", frame, "TOPLEFT", PAD, -BODY_TOP)
-    body:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -PAD, PAD + BAR_HEIGHT)
+    body:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -PAD, PAD)
     self.tabs = Kit.CreateTopTabs(body, PAGES, {
         onSelect = function(key)
             if deps.onTab then
@@ -112,15 +113,17 @@ function MailboxWindow.Create(deps)
     for _, page in ipairs(PAGES) do
         self.pages[page.key] = self.tabs:GetContent(page.key)
     end
-    local note = Kit.Label(self.pages.send, "Sending mail in this window comes next. Use the Blizzard mailbox to send.",
+    local note = Kit.Label(self.pages.send, "Sending mail in this window comes next. Use the Blizzard UI to send.",
         "normal")
     note:SetPoint("CENTER", self.pages.send, "CENTER", 0, 0)
     -- The host hides the note when it puts the Send page in (SendPage).
     self.sendNote = note
-    self.toggle = Kit.Button(frame, "Blizzard mailbox", TOGGLE_WIDTH, function()
+    -- The toggle sits in the header, left of the X button, above the header art.
+    self.toggle = Kit.Button(frame, "Blizzard UI", TOGGLE_WIDTH, function()
         deps.onToggle()
     end)
-    self.toggle:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", PAD, PAD)
+    self.toggle:SetPoint("RIGHT", frame.CloseButton or frame, "LEFT", -4, 0)
+    self.toggle:SetFrameLevel(frame:GetFrameLevel() + TOGGLE_LEVEL)
     -- The X button and ESC hide the window: that ends the mail session. A hide by the host does not.
     frame:HookScript("OnHide", function()
         -- Also after the X button or ESC: MailFrame shows again at once, if the client keeps it.

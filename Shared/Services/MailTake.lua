@@ -15,6 +15,7 @@ MailTake.QUIET_SECONDS = 0.5
 function MailTake.New(deps)
     local take = { active = false }
     local token = 0
+    local quiet
 
     local function finish()
         if not take.active then
@@ -28,15 +29,17 @@ function MailTake.New(deps)
     local function touch()
         token = token + 1
         local mine = token
-        deps.after(MailTake.QUIET_SECONDS, function()
+        deps.after(quiet or MailTake.QUIET_SECONDS, function()
             if mine == token then
                 finish()
             end
         end)
     end
 
-    function take.Begin()
+    -- seconds (optional): the quiet time of this take only. Without it, QUIET_SECONDS applies.
+    function take.Begin(seconds)
         take.active = true
+        quiet = seconds
         touch()
     end
 
