@@ -3222,7 +3222,7 @@ function Tab:_BuildContent()
         self:_InitLevelRow(row, data)
     end })
     ui.rowsList.frame:SetPoint("TOPLEFT", content, "TOPLEFT", rightX, -38)
-    ui.rowsList.frame:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", 0, 78)
+    ui.rowsList.frame:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", 0, 44)
     -- The column titles over the price level list.
     local edge = ui.rowsList.contentInsets or { left = 0, right = 0 }
     ui.levelHeader = Kit.CreateColumnHeader(content, LEVEL_COLUMNS,
@@ -3233,8 +3233,8 @@ function Tab:_BuildContent()
     -- The totals row: same columns as the list, below the list. It is not a list row, so it is not selectable.
     local options = { gap = LEVEL_OPTIONS.gap, left = edge.left, right = edge.right, role = "highlight" }
     ui.totals = CreateFrame("Frame", nil, content)
-    ui.totals:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", rightX, 58)
-    ui.totals:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", 0, 58)
+    ui.totals:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", rightX, 24)
+    ui.totals:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", 0, 24)
     ui.totals:SetHeight(18)
     ui.totals:EnableMouse(true)
     ui.totalsBackground = ui.totals:CreateTexture(nil, "BACKGROUND")
@@ -3248,7 +3248,7 @@ function Tab:_BuildContent()
     ui.totals:Hide()
     -- The amount box: units to buy for a commodity. Empty means all units up to the level.
     ui.amountLabel = Kit.Label(content, "Amount", "small")
-    ui.amountLabel:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", rightX, 34)
+    ui.amountLabel:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", rightX, 0)
     ui.amount = Kit.Input(content, 70, nil, nil, { placeholder = "all" })
     ui.amount:SetNumeric(true)
     ui.amount:SetPoint("LEFT", ui.amountLabel, "RIGHT", 8, 0)
