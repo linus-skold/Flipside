@@ -731,7 +731,7 @@ describe("ListsPage", function()
             bus:Emit("COMMODITY_RESULTS", 100)
             page.Refresh()
             assert.are.equal("1200c", page.margin.data[2].right)
-            assert.are.equal("1200c", page.margin.data[3].right)
+            assert.are.equal("1200c", page.tableCost.text:GetText())
         end)
 
         it("opens from the Edit lists button of the tab with the shown list", function()
