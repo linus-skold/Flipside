@@ -662,7 +662,7 @@ describe("ListsPage", function()
         end
 
         before_each(function()
-            for _, name in ipairs({ "ItemNameIndex", "BuyingPlan", "Tree", "Tabs", "Columns", "AuctionTabs",
+            for _, name in ipairs({ "ItemNameIndex", "BuyingPlan", "BuyFlow", "Tree", "Tabs", "Columns", "AuctionTabs",
                 "BuyingTab" }) do
                 assert(loadfile(manifest.path(name)))("Flipside", ns)
             end
