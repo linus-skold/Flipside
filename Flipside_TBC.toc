@@ -57,6 +57,7 @@ Shared\Services\MailTake.lua
 Shared\Services\MailingRun.lua
 Shared\Services\MailingLedger.lua
 Shared\Services\BuyingPlan.lua
+Shared\Services\BuyFlow.lua
 Shared\Services\BuyWalk.lua
 Shared\Services\SearchLists.lua
 Shared\Services\SellingPlan.lua
@@ -106,6 +107,7 @@ Shared\UI\MainWindow.lua
 Shared\Features\AuctionTab\AuctionTabs.lua
 Shared\Features\AuctionTab\ScanBar.lua
 Shared\Features\AuctionTab\AuctionTab.lua
+Shared\Features\Buying\BuyDialog.lua
 Shared\Features\Buying\BuyingTab.lua
 Shared\Features\Selling\SellingTab.lua
 AH_TBC\AuctionTabHost.lua

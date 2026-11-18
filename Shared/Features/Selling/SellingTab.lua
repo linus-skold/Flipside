@@ -2,9 +2,14 @@ local _, ns = ...
 
 -- The Selling tab of the Auction House: it reads the bags, searches each item, decides the post and posts it.
 -- The post calls are protected (D26): only a click handler calls them, one post for each click.
+-- The Buy lowest button buys the cheapest auction that is not yours, after the same confirm as the Buying tab
+-- (ns.BuyFlow). Its protected calls run in a click handler too, one for each click (D26).
 -- A host (ns.AuctionTabHost) owns the Blizzard frame and the tab button.
 local SellingTab = {}
 ns.SellingTab = SellingTab
+
+local BuyFlow = ns.BuyFlow -- the parts of a buy that the Buying tab shares
+local BuyDialog = ns.BuyDialog -- the confirm box of a buy
 
 local OWNER = "Flipside.SellingTab"
 local DIALOG = "FLIPSIDE_CONFIRM_POST"
@@ -17,6 +22,11 @@ local POST_TIMEOUT = 5 -- seconds after which the post lock ends, with or withou
 local BUSY_TEXT = "The auction house is busy. Wait a moment."
 local GATE_POLL_SECONDS =0.25 -- seconds between two checks of the throttle gate while it is closed
 local NAME_REFRESH_DELAY = 0.2 -- seconds that item name events wait before one redraw
+local QUOTE_WAIT = 10 -- seconds that a commodity buy waits for its quote
+local CONFIRM_WAIT = 15 -- seconds that a buy waits for the result of the server
+local DEAL_PERCENT = 30 -- a lowest price this many percent under the market value shows as a deal
+local CONFIRM_BOX = "FlipsideBuyConfirm" -- the box of the Buying tab: one buy box for both tabs
+local BUY_TEXT = "Buy lowest"
 
 -- Write a line to the log. The logger can be missing.
 local function log(level, text)
@@ -48,6 +58,7 @@ local VENDOR_SKIP = "vendor pays more than the AH"
 local WHITE = { 1, 1, 1 }
 local GREY = { 0.5, 0.5, 0.5 }
 local ORANGE = { 1, 0.6, 0.2 }
+local GREEN = { 0.4, 1, 0.4 }
 local MAX_PRICE = 100000000000
 local SYNC_INTERVAL = 1
 
@@ -57,7 +68,7 @@ local COLUMNS = {
     { key = "item", title = "Item", width = ITEM_WIDTH, owned = true },
     { key = "price", title = "Your price", width = 78, number = true },
     { key = "operation", title = "Operation", width = 80 },
-    { key = "lowest", title = "Lowest on AH", width = 92, number = true },
+    { key = "lowest", title = "Lowest on AH", width = 124, number = true },
     { key = "net", title = "Net", width = 78, number = true },
     { key = "info", title = "Info" },
 }
@@ -678,6 +689,8 @@ function Tab:_Decide(entry, rows)
         maxStack = deps.maxStack(itemID),
     })
     entry.decision = decision
+    entry.marketValue = self:_Market(entry)
+    entry.deal = SellingTab.DealText(decision.competitor, entry.marketValue)
     entry.market = { commodity = okCommodity and commodity == true, maxStack = deps.maxStack(itemID) }
     entry.units, entry.next = {}, 1
     if decision.action == "post" then
@@ -718,6 +731,7 @@ function Tab:_Start(entry)
     end
     self.token = self.token + 1
     local token = self.token
+    self.live = nil -- the client list is new now
     entry.status = "searching"
     self.pending = { entry = entry, itemID = candidate.itemID, token = token }
     self.deps.after(SEARCH_TIMEOUT, function()
@@ -778,6 +792,9 @@ function Tab:RefreshBags()
     end
     if self.awaiting then
         return false, "confirm or skip the open post first"
+    end
+    if self.buy then
+        return false, "end the open buy first"
     end
     local deps = self.deps
     self.queue = nil
@@ -900,7 +917,7 @@ end
 -- Read the bags again after a post, with no wait for a tab switch. It keeps the decisions of the entries.
 -- An item that is posted leaves the list. If part of the stack stays in the bags, the rest shows as a new entry.
 function Tab:SyncBags()
-    if self.awaiting or self.multi or not self.ui or not self.loaded then
+    if self.awaiting or self.multi or self.buy or not self.ui or not self.loaded then
         return false
     end
     local bagItems = self.deps.readBags()
@@ -1134,7 +1151,7 @@ end
 -- sale slot and stays there (a protected step), and the slot item of the old selection goes back. Other calls make no
 -- protected call.
 function Tab:SelectNode(node, fromClick)
-    if self.awaiting or self.multi then
+    if self.awaiting or self.multi or self.buy then
         if self.ui then
             self.ui.tree.selected = self.selectedId
             self.ui.tree:Refresh()
@@ -1185,7 +1202,10 @@ function Tab:_OnResult(arg)
         return
     end
     self.pending = nil
-    self:_Decide(pending.entry, self.deps.client.LiveRows(pending.itemID))
+    local rows = self.deps.client.LiveRows(pending.itemID)
+    -- The rows stay for the Buy lowest button. The client list belongs to this item until the next search.
+    self.live = { itemID = pending.itemID, rows = rows }
+    self:_Decide(pending.entry, rows)
     self:_Next()
 end
 
@@ -1198,6 +1218,7 @@ end
 -- The client made an auction. It ends a one-stack post that waits for it (_EndMulti). A multi-stack post
 -- counts its stacks from the multisell events.
 function Tab:_OnPosted()
+    self.live = nil -- a post changes the AH list
     local m = self.multi
     if m and m.stacks == 1 and m.created < 1 then
         m.created = 1
@@ -1233,7 +1254,7 @@ end
 
 function Tab:_RunSync()
     self.lastSync = self.deps.time()
-    if not self:SyncBags() and (self.awaiting or self.multi) then
+    if not self:SyncBags() and (self.awaiting or self.multi or self.buy) then
         self.syncAgain = true
     end
 end
@@ -1247,7 +1268,7 @@ function Tab:_OnRules()
     end
     if not self.active then
         self.stale = true
-    elseif self.awaiting or self.multi then
+    elseif self.awaiting or self.multi or self.buy then
         self.reloadAgain = true
     else
         self:_Reload()
@@ -1291,7 +1312,7 @@ end
 
 -- Update the view. If the selection has no post left and no search runs, say so and read the bags again.
 function Tab:_AfterStep()
-    if not (self.awaiting or self.multi) then
+    if not (self.awaiting or self.multi or self.buy) then
         if self.reloadAgain then
             self:_Reload()
             return
@@ -2061,7 +2082,7 @@ end
 -- End a multi-stack post: log each stack that the client made. A failure marks the entry failed with the count.
 function Tab:_EndMulti(failure)
     local m = self.multi
-    self.multi = nil
+    self.multi, self.live = nil, nil
     local entry = m.entry
     entry.postText = nil
     local created = math.min(m.created, m.stacks)
@@ -2113,11 +2134,348 @@ function Tab:SkipItem(entry, reason)
     self:_Advance(entry, false)
 end
 
+-- Buy lowest. The state of a buy is self.buy, as in the Buying tab (see BuyFlow): phase quoting (a commodity waits for
+-- the quote), quoted (the box shows the price), confirming (the buy call went out).
+
+-- The market value of an entry (ScanMarket, from the scan record), or nil.
+function Tab:_Market(entry)
+    local deps = self.deps
+    local record = deps.getRecord and entry.key and deps.getRecord(entry.key)
+    local now = deps.now and deps.now()
+    if type(record) ~= "table" or type(now) ~= "number" or not (ns.ScanSources and ns.ScanSources.Compute) then
+        return nil
+    end
+    local ok, values = pcall(ns.ScanSources.Compute, record, now)
+    return ok and type(values) == "table" and values.scanMarket or nil
+end
+
+-- The buy of the lowest auction that is not yours, for the item that the pane shows.
+-- Returns entry, cover and nil, or entry, nil, a reason and stale. cover is the cover plan (BuyFlow.CoverPlan).
+-- stale is true if the client list is for another item: a click then reads the prices again and buys nothing.
+function Tab:_BuyTarget()
+    local entry = self:_Focus()
+    if not entry then
+        return nil, nil, "pick an item first"
+    end
+    local client = self.deps.client
+    if type(client.CanBuy) ~= "function" or client.CanBuy() ~= true then
+        return entry, nil, "buying is not available"
+    elseif self.buy or BuyFlow.OtherOpen("selling") then
+        return entry, nil, "a buy is open"
+    elseif self.awaiting or self.multi or self.lock then
+        return entry, nil, "a post is open"
+    elseif self.pending or self.queue then
+        return entry, nil, "a search is running"
+    elseif not client.IsReady() then
+        return entry, nil, "waiting for the Auction House"
+    end
+    local live = self.live
+    if not (live and live.itemID == entry.item.itemID) then
+        if entry.next > 1 then
+            return entry, nil, "finish the post first"
+        end
+        return entry, nil, "search first", true
+    end
+    local levels = ns.BuyingPlan.PriceLevels(live.rows)
+    local level = BuyFlow.CheapestFree(levels)
+    if not level then
+        return entry, nil, #levels > 0 and ns.BuyingPlan.REASON.own or ns.BuyingPlan.REASON.none
+    end
+    local isItem = live.rows[1].isCommodity == false
+    local cover = BuyFlow.CoverPlan(levels, isItem and level or levels[1], level, level.quantity, isItem)
+    if cover.own then
+        -- The API cannot skip own units: a purchase takes the cheapest units of the market.
+        return entry, nil, ns.BuyingPlan.REASON.ownBelow
+    end
+    return entry, cover
+end
+
+-- Set the Buy lowest button: on only when a click can buy or read the prices. The label shows the deal mark.
+function Tab:_RefreshBuy()
+    local ui = self.ui
+    if not (ui and ui.buyLowest) then
+        return
+    end
+    local entry, cover, _, stale = self:_BuyTarget()
+    ui.buyLowest:SetEnabled(cover ~= nil or stale == true)
+    local deal = cover and SellingTab.DealText(cover.last.unitPrice, entry.marketValue)
+    ui.buyLowest:SetText(deal and (BUY_TEXT .. " " .. deal) or BUY_TEXT)
+end
+
+-- Search the item of an entry again, so that its decision and its post price use the new lowest price.
+-- Nothing happens while a search runs or after a part of the post.
+function Tab:_Research(entry)
+    if self.pending or entry.next > 1 or not entry.candidate then
+        return
+    end
+    local listed = false
+    for _, each in ipairs(self.entries) do
+        listed = listed or each == entry
+    end
+    local status = entry.status
+    if not listed or (status ~= "ready" and status ~= "skip" and status ~= "waiting") then
+        return
+    end
+    entry.status = "waiting"
+    self.queue = { list = { entry }, pos = 0 }
+    self:_Next()
+end
+
+-- The click on Buy lowest. A commodity asks for the quote now (a protected call). An item opens the confirm box.
+-- Each case makes at most one protected call (D26). Returns true, or false and a reason.
+function Tab:BuyLowest()
+    local entry, cover, reason, stale = self:_BuyTarget()
+    if stale then
+        -- The list is for another item: this click only reads the prices. The next click buys.
+        self:_Research(entry)
+        self:_ShowBusy("Prices are read. Click " .. BUY_TEXT .. " again.")
+        return false, reason
+    end
+    if not cover then
+        self:_ShowBusy(reason or "")
+        return false, reason
+    end
+    return self:_StartBuy(entry, cover)
+end
+
+function Tab:_StartBuy(entry, cover)
+    local candidate, level = entry.candidate or {}, cover.last
+    local itemID = entry.item.itemID
+    local buyEntry = { key = entry.key, itemID = itemID, groupPath = candidate.groupPath,
+        operationName = candidate.operationName, noMax = true }
+    if level.rows[1].isCommodity == false then
+        local row = BuyFlow.FirstFree(level)
+        self.buy = {
+            entry = buyEntry, source = entry, level = level, row = row, isItem = true, phase = "quoted",
+            itemID = itemID, auctionID = row.auctionID, quantity = row.quantity or 1, unit = row.unitPrice,
+            total = BuyFlow.BuyoutOf(row), stacks = level.stacks,
+        }
+        self:_ShowBuyConfirm()
+        self:_Update()
+        return true
+    end
+    local buy = { entry = buyEntry, source = entry, level = level, row = level.rows[1], phase = "quoting",
+        itemID = itemID, quantity = cover.quantity, complete = cover.complete }
+    local ok, err = pcall(self.deps.client.StartCommodityPurchase, itemID, buy.quantity)
+    if not ok then
+        self.deps.buyLog:Add(buyEntry, "buy failed", tostring(err))
+        self:_ShowBusy("the quote was refused")
+        return false, "the quote was refused"
+    end
+    self.buy = buy
+    self.deps.after(QUOTE_WAIT, function()
+        if self.buy == buy and buy.phase == "quoting" then
+            self:_CancelBuy("no quote came")
+        end
+    end)
+    self:_Update()
+    self:_ShowBusy("waiting for the quote of " .. tostring(self:_Name(entry)))
+    return true
+end
+
+-- Show the confirm box with the price of the quote (a commodity) or the buyout (an item).
+function Tab:_ShowBuyConfirm()
+    local buy = self.buy
+    if not buy then
+        return
+    end
+    local source = buy.source
+    local text, over, jumped = BuyFlow.QuoteText(buy, self:_ItemLink(source) or tostring(self:_Name(source)))
+    local options = BuyFlow.ConfirmOptions(buy, over, jumped, false)
+    BuyDialog.Get(CONFIRM_BOX):Open(options.title, text, {
+        yes = options.yes, no = options.no, red = options.red, keep = options.keep,
+        onYes = function()
+            self:_ConfirmBuy()
+        end,
+        onNo = function()
+            self:_CancelBuy("cancelled")
+        end,
+    })
+end
+
+-- Close the confirm box. It stays open if the Buying tab has a buy open: the box is theirs then.
+local function closeBuyBox()
+    local box = BuyDialog.Find(CONFIRM_BOX)
+    if box and not BuyFlow.OtherOpen("selling") then
+        box:Close()
+    end
+end
+
+-- Show the seconds that the quote has left, each second, until the quote ends.
+function Tab:_TickQuote(buy)
+    self.deps.after(1, function()
+        if self.buy ~= buy or buy.phase ~= "quoted" then
+            return
+        end
+        local left = self.deps.client.QuoteSecondsLeft()
+        if left == 0 then
+            self:_CancelBuy("the quote ended")
+            return
+        end
+        buy.left = left
+        self:_ShowBuyConfirm()
+        self:_TickQuote(buy)
+    end)
+end
+
+-- The server quote came: show it in the confirm box.
+function Tab:_OnBuyQuote(unit, total)
+    local buy = self.buy
+    if not BuyFlow.QuoteApplies(buy) then
+        return
+    end
+    local first = buy.phase == "quoting"
+    buy.phase = "quoted"
+    buy.unit, buy.total = unit, total
+    buy.left = self.deps.client.QuoteSecondsLeft()
+    self:_ShowBuyConfirm()
+    if first then
+        self:_TickQuote(buy)
+    end
+    self:_Update()
+end
+
+function Tab:_OnBuyQuoteUnavailable()
+    local buy = self.buy
+    if BuyFlow.QuoteApplies(buy) then
+        self:_CancelBuy("the price is not available")
+        self:_Research(buy.source)
+    end
+end
+
+-- Click 2: buy at the quote or at the buyout. Call it only from a click.
+function Tab:_ConfirmBuy()
+    local buy = self.buy
+    if not buy or buy.phase ~= "quoted" then
+        return
+    end
+    local client = self.deps.client
+    buy.phase = "confirming"
+    log("info", string.format("buy click: item %s, quantity %s, total %s, %s", buy.itemID, buy.quantity, buy.total,
+        buy.isItem and "item auction" or "commodity"))
+    local ok, err
+    if buy.isItem then
+        -- The list indexes can shift. Find an identical auction in the list again before the call.
+        local index = BuyFlow.Refind(client.LiveRows(buy.itemID), buy)
+        if not index then
+            self:_BuyFail(buy, "the auction is gone")
+            return
+        end
+        buy.auctionID = index
+        ok, err = pcall(client.BuyItemAuction, buy.auctionID, buy.total)
+    else
+        ok, err = pcall(client.ConfirmCommodityPurchase, buy.itemID, buy.quantity)
+    end
+    if not ok then
+        self:_BuyFail(buy, tostring(err))
+        return
+    end
+    self:_Update()
+    self:_ShowBusy("buying " .. tostring(self:_Name(buy.source)))
+    self.deps.after(CONFIRM_WAIT, function()
+        if self.buy == buy and buy.phase == "confirming" then
+            self:_BuyFail(buy, "no response")
+        end
+    end)
+end
+
+-- End a buy that has not gone out: close the box, drop the quote and log it. It starts no search.
+function Tab:_AbortBuy(buy, why)
+    self.buy = nil
+    closeBuyBox()
+    if not buy.isItem then
+        pcall(self.deps.client.CancelCommodityPurchase)
+    end
+    self.deps.buyLog:Add(buy.entry, "buy cancelled", why)
+end
+
+-- Cancel an open quote or confirm box. A buy that went out stays; its box closes.
+function Tab:_CancelBuy(why)
+    local buy = self.buy
+    if not buy then
+        return
+    end
+    if buy.phase == "confirming" then
+        closeBuyBox()
+        return
+    end
+    self:_AbortBuy(buy, why)
+    if self.active then
+        self:_AfterStep()
+    end
+    self:_Update()
+    self:_ShowBusy(why)
+end
+
+-- The buy worked. The item is searched again, so that the post price uses the new lowest price.
+function Tab:_BuySucceed(buy)
+    self.buy, self.live = nil, nil
+    log("info", string.format("bought %s of item %s, total %s", buy.quantity, buy.itemID, buy.total))
+    self.deps.buyLog:Add(buy.entry, string.format("bought %d at %s", buy.quantity, BuyFlow.Money(buy.level.unitPrice)),
+        "total " .. BuyFlow.Money(buy.total))
+    closeBuyBox()
+    self:_AfterStep()
+    self:_Research(buy.source)
+    self:_Update()
+    self:_ShowBusy("bought " .. buy.quantity .. " x " .. tostring(self:_Name(buy.source)))
+end
+
+-- The buy failed. The list is stale, so the item is searched again.
+function Tab:_BuyFail(buy, reason)
+    self.buy, self.live = nil, nil
+    closeBuyBox()
+    log("warn", string.format("buy of item %s failed: %s", buy.itemID, reason))
+    self.deps.buyLog:Add(buy.entry, "buy failed", reason)
+    self:_AfterStep()
+    self:_Research(buy.source)
+    self:_Update()
+    self:_ShowBusy("buy failed: " .. reason)
+end
+
+function Tab:_OnBuyCommodityResult(ok)
+    local buy = self.buy
+    if BuyFlow.CommodityResultApplies(buy) then
+        if ok then
+            self:_BuySucceed(buy)
+        else
+            self:_BuyFail(buy, "the server refused the purchase")
+        end
+    end
+end
+
+function Tab:_OnBuyItemDone(auctionID)
+    local buy = self.buy
+    if BuyFlow.ItemDoneApplies(buy, auctionID) then
+        self:_BuySucceed(buy)
+    end
+end
+
+function Tab:_OnBuyItemError(code)
+    local buy = self.buy
+    if BuyFlow.ItemErrorApplies(buy) then
+        self:_BuyFail(buy, "error " .. tostring(code))
+    end
+end
+
 local function paint(label, color)
     label:SetTextColor(color[1], color[2], color[3])
 end
 
+-- The deal mark of a price: "-70%" when the price is DEAL_PERCENT or more under the market value (ScanMarket).
+-- Nil if the price is not that low or if there is no market value.
+function SellingTab.DealText(price, market)
+    if type(price) ~= "number" or type(market) ~= "number" or market <= 0 then
+        return nil
+    end
+    local below = math.floor((1 - price / market) * 100 + 0.5)
+    if below < DEAL_PERCENT then
+        return nil
+    end
+    return "-" .. below .. "%"
+end
+
 -- The cells of one item row: the price, operation, lowest, net and info texts and the colour of the net.
+-- The lowest cell has the deal mark of the entry (entry.deal) and cells.deal is true.
 function SellingTab.Cells(entry, vendorPrice)
     local candidate, decision = entry.candidate, entry.decision
     local cells = { price = "-", operation = candidate and candidate.operationName or "-", lowest = "-", net = "-",
@@ -2135,6 +2493,10 @@ function SellingTab.Cells(entry, vendorPrice)
         cells.price = "~" .. money(candidate.normalPrice)
     elseif decision and decision.action == "skip" and decision.competitor then
         cells.lowest = money(decision.competitor)
+    end
+    if entry.deal and decision and decision.competitor and entry.status ~= "waiting" then
+        cells.lowest = cells.lowest .. " " .. entry.deal
+        cells.deal = true
     end
     return cells
 end
@@ -2230,6 +2592,9 @@ function Tab:_InitTreeRow(row, node, depth, isCollapsed, hasChildren)
     end
     if cells.netNegative then
         paint(parts.cells.net, RED)
+    end
+    if cells.deal then
+        paint(parts.cells.lowest, GREEN)
     end
     local dim = entry.status == "noop" or entry.status == "done" or entry.status == "skipped"
         or entry.status == "failed"
@@ -2526,7 +2891,7 @@ function Tab:_RefreshPost()
     end
     local open = self:_GateOpen()
     ui.postNext:SetText(self:PostLabel())
-    ui.postNext:SetEnabled(self.deps.client.CanPost() and self.multi == nil and self.lock == nil
+    ui.postNext:SetEnabled(self.deps.client.CanPost() and self.multi == nil and self.lock == nil and self.buy == nil
         and not self:_Scanning() and open and (self.awaiting ~= nil or self:_Focus() ~= nil))
     local events = self.deps.client.ThrottleEvents
     if open or not self.active or self.gateWatch or (events and events()) then
@@ -2551,9 +2916,10 @@ function Tab:_Update()
     self:_Layout()
     ui.tree:Refresh()
     ui.postNext:SetText(self:PostLabel())
-    local busy = self.multi ~= nil
+    local busy = self.multi ~= nil or self.buy ~= nil
     self:_RefreshPost()
 
+    self:_RefreshBuy()
     ui.skip:SetEnabled(not busy and (self.awaiting ~= nil or self:_Focus() ~= nil))
     ui.progress:SetText(self:ProgressText())
     self:_UpdateDetails()
@@ -2566,6 +2932,8 @@ end
 -- Hide the panel; the host or Blizzard's own code takes over.
 function Tab:Deselect()
     self.active = false
+    -- A quote or a confirm box that is open ends with the tab.
+    self:_CancelBuy("the tab was left")
     -- A Blizzard tab or a hide takes over: its sale slot must not hold our item.
     self:_Release()
     if self.content then
@@ -2745,6 +3113,14 @@ function Tab:_BuildContent()
         self:Skip()
     end)
     ui.skip:SetPoint("TOPLEFT", pane, "TOPRIGHT", -312, -72)
+    -- Buy lowest buys the cheapest auction that is not yours. The click starts the buy (D26).
+    ui.buyLowest = Kit.Button(pane, BUY_TEXT, 156, nil)
+    ui.buyLowest:SetPoint("TOPLEFT", pane, "TOPRIGHT", -164, -76)
+    ui.buyLowest:SetScript("OnClick", function()
+        self:BuyLowest()
+    end)
+    Kit.Tooltip(ui.buyLowest, BUY_TEXT, { "Buys the cheapest auction that is not yours.",
+        "A box asks you to confirm the final price first." })
     local depositLabel = rline("small", 164, 6, 156)
     depositLabel:SetText("Deposit:")
     d.deposit = rline("highlight", 164, 22, 156)
@@ -2796,6 +3172,32 @@ function Tab:Mount(parent, api)
         end)
         self.events[#self.events + 1] = ready
     end
+    -- The buy events reach the Buying tab too. Each tab acts only on the buy that it started (see BuyFlow).
+    local buyEvents = client.BuyEvents and client.BuyEvents()
+    if buyEvents then
+        local function listen(event, fn)
+            bus:Subscribe(event, OWNER, fn)
+            self.events[#self.events + 1] = event
+        end
+        listen(buyEvents.priceUpdated, function(_, unit, total)
+            self:_OnBuyQuote(unit, total)
+        end)
+        listen(buyEvents.priceUnavailable, function()
+            self:_OnBuyQuoteUnavailable()
+        end)
+        listen(buyEvents.commoditySucceeded, function()
+            self:_OnBuyCommodityResult(true)
+        end)
+        listen(buyEvents.commodityFailed, function()
+            self:_OnBuyCommodityResult(false)
+        end)
+        listen(buyEvents.itemCompleted, function(_, auctionID)
+            self:_OnBuyItemDone(auctionID)
+        end)
+        listen(buyEvents.itemError, function(_, code)
+            self:_OnBuyItemError(code)
+        end)
+    end
     local posted = client.PostedEvent()
     if posted then
         bus:Subscribe(posted, OWNER, function()
@@ -2824,6 +3226,11 @@ function Tab:Mount(parent, api)
         bus:Subscribe(closeEvent, OWNER, function()
             -- A scan cannot go on without the AH: end it so that Post is not locked for ever.
             self.queue, self.pending = nil, nil
+            -- An open buy ends with no retry and no search: the AH is closed. The wait timers see no buy.
+            if self.buy then
+                self:_AbortBuy(self.buy, "the Auction House closed")
+            end
+            self.live = nil
             self:_Release()
             self:_Update()
         end)
@@ -2900,10 +3307,16 @@ function SellingTab.New(deps)
         syncInterval = deps.syncInterval or SYNC_INTERVAL,
     }
     resolved.log = deps.log or resolved.plan.Log
-    return setmetatable({
+    -- The buy lines go to the log of the Buying tab: same lines as a purchase there.
+    resolved.buyLog = deps.buyLog or ns.BuyingPlan.Log
+    local tab = setmetatable({
         deps = resolved, entries = {}, selection = {}, events = {}, active = false, token = 0, postedCount = 0,
         requested = {}, waiting = {},
     }, Tab)
+    BuyFlow.Register("selling", function()
+        return tab.buy ~= nil
+    end)
+    return tab
 end
 
 ns.AuctionTabs.Register({

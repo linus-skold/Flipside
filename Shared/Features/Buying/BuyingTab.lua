@@ -47,9 +47,8 @@ local function money(copper)
     return GetMoneyString(math.floor((copper or 0) + 0.5))
 end
 
-local function isOwn(row)
-    return row.isOwn == true or row.ownerItem == true
-end
+local BuyFlow = ns.BuyFlow -- the parts of a buy that the Selling tab shares
+local isOwn = BuyFlow.IsOwn
 
 -- True if the price is inside the limit of the entry. An entry with no max price has no limit.
 local function withinMax(entry, price)
@@ -65,28 +64,10 @@ local function hasCommodityMarket()
 end
 
 -- The key of a level: the group key of a stack group, else the unit price.
-local function levelId(level)
-    return level.id or level.unitPrice
-end
-
-local function buyoutOf(row)
-    return row.buyout or math.floor(row.unitPrice * (row.quantity or 1) + 0.5)
-end
-
--- True if two auctions are the same stack for sale: same item, seller, buyout and stack size.
-local function sameAuction(a, b)
-    return ns.BuyingPlan.GroupKey(a) == ns.BuyingPlan.GroupKey(b)
-end
-
--- The first auction of a stack group that is not yours, or nil.
-local function firstFree(level)
-    for _, row in ipairs(level.rows) do
-        if not isOwn(row) then
-            return row
-        end
-    end
-    return nil
-end
+local levelId = BuyFlow.LevelId
+local buyoutOf = BuyFlow.BuyoutOf
+local sameAuction = BuyFlow.SameAuction
+local firstFree = BuyFlow.FirstFree
 
 -- The time left codes 1 to 4 of the legacy client list rows.
 local TIME_LEFT = { "Short", "Medium", "Long", "Very long" }
@@ -248,109 +229,15 @@ local function defaultItemLink(itemID)
     return link, quality
 end
 
-local dialogs = {}
+local BuyDialog = ns.BuyDialog
+local makeDialog = BuyDialog.Get
 
--- A small dialog with a text and two buttons, made from the Kit window. One dialog for each name.
--- dialog:Open(title, text, options): options.yes and options.no are the button labels, onYes and onNo run in the click.
--- Escape or the close button counts as "no". options.red shows the text in red.
--- options.keep keeps the box open after yes, with the yes button off, until the next Open.
-local function makeDialog(name)
-    if dialogs[name] then
-        return dialogs[name]
+-- Close the confirm box. It stays open if the Selling tab has a buy open: the box is theirs then.
+local function closeConfirmBox()
+    local box = BuyDialog.Find("FlipsideBuyConfirm")
+    if box and not BuyFlow.OtherOpen("buying") then
+        box:Close()
     end
-    local Kit = ns.Kit
-    local pad = Kit.Theme.padding
-    local dialog = Kit.CreateWindow(name, { width = 380, height = 190, square = true })
-    dialogs[name] = dialog
-    dialog:SetFrameStrata("FULLSCREEN_DIALOG")
-    dialog:SetToplevel(true)
-    -- The text sits in a frame that takes hyperlinks, so an item link shows the item tooltip.
-    local textWidth = 380 - 2 * pad - 16
-    dialog.textFrame = CreateFrame("Frame", nil, dialog)
-    dialog.textFrame:SetPoint("TOP", dialog, "TOP", 0, -40)
-    dialog.textFrame:SetSize(textWidth, 20)
-    dialog.textFrame:SetHyperlinksEnabled(true)
-    dialog.textFrame:SetScript("OnHyperlinkEnter", function(frame, link)
-        GameTooltip:SetOwner(frame, "ANCHOR_CURSOR")
-        GameTooltip:SetHyperlink(link)
-        GameTooltip:Show()
-    end)
-    dialog.textFrame:SetScript("OnHyperlinkLeave", function()
-        GameTooltip:Hide()
-    end)
-    dialog.text = Kit.Label(dialog.textFrame, "", "normal")
-    dialog.text:SetPoint("TOP", dialog.textFrame, "TOP", 0, 0)
-    dialog.text:SetWidth(textWidth)
-    dialog.text:SetJustifyH("CENTER")
-    local function press(key)
-        local callback = dialog[key]
-        if key == "onYes" and dialog.keep then
-            -- The box stays open. The yes button is off until the next Open.
-            dialog.onYes = nil
-            dialog.yesButton:SetEnabled(false)
-            if callback then
-                callback()
-            end
-            return
-        end
-        -- Run the callback first, in the click, then close the box (as the Selling box does). A callback that
-        -- opens the box again keeps it.
-        dialog.onYes, dialog.onNo = nil, nil
-        local ok, err = true, nil
-        if callback then
-            ok, err = pcall(callback)
-        end
-        if not (dialog.onYes or dialog.onNo) then
-            dialog:Hide()
-        end
-        if not ok then
-            error(err, 0)
-        end
-    end
-    dialog.yesButton = Kit.Button(dialog, "", 130, function()
-        press("onYes")
-    end)
-    dialog.yesButton:SetPoint("BOTTOM", dialog, "BOTTOM", -70, pad + 4)
-    dialog.noButton = Kit.Button(dialog, "", 100, function()
-        press("onNo")
-    end)
-    dialog.noButton:SetPoint("BOTTOM", dialog, "BOTTOM", 70, pad + 4)
-    dialog:HookScript("OnHide", function()
-        local callback = dialog.onNo
-        dialog.onYes, dialog.onNo = nil, nil
-        if callback then
-            callback()
-        end
-    end)
-
-    function dialog:Open(title, text, options)
-        self.onYes, self.onNo = options.onYes, options.onNo
-        self.keep = options.keep == true
-        self.yesButton:SetEnabled(true)
-        if self.SetTitle then
-            self:SetTitle(title or "")
-        end
-        self.text:SetText(text or "")
-        -- Size the box so that the text fits above the buttons.
-        local textHeight = self.text.GetStringHeight and self.text:GetStringHeight() or 14
-        self.textFrame:SetHeight(textHeight)
-        self:SetHeight(math.max(150, 40 + textHeight + 20 + 22 + pad + 8))
-        if options.red then
-            self.text:SetTextColor(RED[1], RED[2], RED[3])
-        else
-            self.text:SetTextColor(1, 1, 1)
-        end
-        self.yesButton:SetText(options.yes or "OK")
-        self.noButton:SetText(options.no or "Cancel")
-        self:Show()
-        self:Raise()
-    end
-    -- Hide with no callback.
-    function dialog:Close()
-        self.onYes, self.onNo = nil, nil
-        self:Hide()
-    end
-    return dialog
 end
 
 local Tab = {}
@@ -2068,34 +1955,6 @@ function Tab:SelectLevel(price)
     return true
 end
 
--- The units that one purchase covers. For a commodity, the purchase takes the cheapest units first: from the level
--- first up to the level target, and at most amount units (nil means all). For an item, it is one stack of target.
--- Returns { quantity, cost, covered = { [unitPrice] = true }, last = the highest level reached, levels = count,
--- complete = true if the last level is taken whole, own = true if a level in the range is yours }.
-local function coverPlan(levels, first, target, amount, isItem)
-    local plan = { quantity = 0, cost = 0, covered = {}, levels = 0, complete = true, own = false, isItem = isItem }
-    if isItem then
-        local size = target.stackSize or target.quantity
-        plan.quantity, plan.cost = size, target.unitPrice * size
-        plan.covered[levelId(target)], plan.last, plan.levels = true, target, 1
-        return plan
-    end
-    local left = amount or math.huge
-    for _, level in ipairs(levels) do
-        if level.unitPrice >= first.unitPrice and level.unitPrice <= target.unitPrice and left > 0 then
-            local take = math.min(level.quantity, left)
-            left = left - take
-            plan.quantity = plan.quantity + take
-            plan.cost = plan.cost + take * level.unitPrice
-            plan.covered[level.unitPrice] = true
-            plan.last, plan.levels = level, plan.levels + 1
-            plan.complete = take == level.quantity
-            plan.own = plan.own or level.own
-        end
-    end
-    return plan
-end
-
 -- Find the level that Buy next or Buy buys. With a selected level, it is that level.
 -- Returns entry, level, levels, a reason if the level cannot be bought, and the cover plan of the purchase.
 function Tab:_NextBuy()
@@ -2109,6 +1968,9 @@ function Tab:_NextBuy()
     end
     if self.buy then
         return entry, nil, nil, "a buy is open"
+    end
+    if BuyFlow.OtherOpen("buying") then
+        return entry, nil, nil, "a buy is open on the Selling tab"
     end
     if self.pending then
         return entry, nil, nil, self:_Reading() and "reading the pages" or "a search is running"
@@ -2130,7 +1992,8 @@ function Tab:_NextBuy()
     end
     local level = chosen or nextLevel
     local reason
-    local cover = level and (isItem or nextLevel) and coverPlan(levels, nextLevel, level, self.amount, isItem) or nil
+    local cover = level and (isItem or nextLevel)
+        and BuyFlow.CoverPlan(levels, nextLevel, level, self.amount, isItem) or nil
     if not (entry.maxPrice or entry.noMax) then
         reason = "no max price"
     elseif not level then
@@ -2194,6 +2057,11 @@ end
 
 -- Start the buy of one level. Call it only from a click. A commodity asks for a quote; an item goes to the confirm.
 function Tab:_StartBuy(entry, cover, jump)
+    -- Every path to a buy ends here, also the "Keep buying" click of the price jump box. One buy for both tabs.
+    if BuyFlow.OtherOpen("buying") then
+        self:_Say("a buy is open on the Selling tab")
+        return false, "a buy is open on the Selling tab"
+    end
     local level = cover.last
     local first = level.rows[1]
     if first.isCommodity == false then
@@ -2265,38 +2133,7 @@ end
 local function quoteText(self, buy)
     local link = self:_ItemLink(buy.entry, buy.row)
     buy.linkMissing = link == nil
-    local lines = {
-        string.format("Buy %d x %s", buy.quantity, link or self:_ItemName(buy.entry)),
-        string.format("Unit price: %s   Total: %s", money(buy.unit), money(buy.total)),
-    }
-    if buy.isItem then
-        lines[1] = string.format("Buy one stack: %d x %s", buy.quantity, link or self:_ItemName(buy.entry))
-        local owner, left = buy.row.owner, ns.Flavour and ns.Flavour.hasCommodityMarket == false
-            and TIME_LEFT[buy.row.timeLeft or 0] or nil
-        if owner or left then
-            lines[#lines + 1] = string.format("Seller: %s   Time left: %s", owner or "?", left or "?")
-        end
-        lines[#lines + 1] = "Available: " .. ns.BuyingPlan.AvailableText(buy.stacks or 1, buy.quantity)
-        if self.boxNote then
-            table.insert(lines, 1, self.boxNote)
-        end
-    end
-    if not buy.isItem and buy.left then
-        lines[#lines + 1] = "Quote time left: " .. buy.left .. " s"
-    end
-    local limit = nil
-    if not buy.entry.noMax then
-        limit = (buy.entry.maxPrice or 0) * buy.quantity
-    end
-    local over = limit ~= nil and buy.total > limit
-    if over then
-        lines[#lines + 1] = "Above your max price: " .. money(limit)
-    end
-    if buy.jump then
-        lines[#lines + 1] = string.format("Price jumps from %s to %s (+%.0f%%)", money(buy.jump.prev),
-            money(buy.unit), buy.jump.percent)
-    end
-    return table.concat(lines, "\n"), over, buy.jump ~= nil
+    return BuyFlow.QuoteText(buy, link or self:_ItemName(buy.entry), self.boxNote)
 end
 
 -- Show the confirm box with the server quote.
@@ -2320,12 +2157,9 @@ function Tab:_ShowConfirm()
     if preview then
         text = text .. "\nThis is an estimate. Get the quote first."
     end
-    local yes = preview and "Get quote" or (over and "Buy anyway" or "Confirm")
-    if buy.isItem then
-        yes = self.chain and "Buy next" or "Buy"
-    end
-    makeDialog("FlipsideBuyConfirm"):Open(preview and "Next purchase" or "Confirm purchase", text, {
-        yes = yes, no = "Cancel", red = over or jumped, keep = true,
+    local options = BuyFlow.ConfirmOptions(buy, over, jumped, self.chain)
+    makeDialog("FlipsideBuyConfirm"):Open(options.title, text, {
+        yes = options.yes, no = options.no, red = options.red, keep = options.keep,
         onYes = function()
             if preview then
                 if not self:_RequestQuote(buy) then
@@ -2362,7 +2196,7 @@ end
 -- The server quote came: show it in the confirm box.
 function Tab:_OnQuote(unit, total)
     local buy = self.buy
-    if not buy or buy.isItem or (buy.phase ~= "quoting" and buy.phase ~= "quoted") then
+    if not BuyFlow.QuoteApplies(buy) then
         return
     end
     local first = buy.phase == "quoting"
@@ -2379,7 +2213,7 @@ end
 
 function Tab:_OnQuoteUnavailable()
     local buy = self.buy
-    if buy and not buy.isItem and (buy.phase == "quoting" or buy.phase == "quoted") then
+    if BuyFlow.QuoteApplies(buy) then
         self:_CancelQuote("the price is not available")
         self:_Refresh(buy.entry)
     end
@@ -2388,9 +2222,7 @@ end
 -- Close the confirm box and stop the move to the next row. A purchase in flight stays.
 function Tab:_CloseConfirm()
     self.continueKey, self.chain, self.boxNote, self.chainGroup = nil, nil, nil, nil
-    if dialogs.FlipsideBuyConfirm then
-        dialogs.FlipsideBuyConfirm:Close()
-    end
+    closeConfirmBox()
 end
 
 -- Cancel an open quote or confirm box. A purchase in flight stays.
@@ -2402,9 +2234,7 @@ function Tab:_CancelQuote(why)
     end
     self.continueKey, self.chain, self.boxNote, self.chainGroup = nil, nil, nil, nil
     self.buy = nil
-    if dialogs.FlipsideBuyConfirm then
-        dialogs.FlipsideBuyConfirm:Close()
-    end
+    closeConfirmBox()
     if not buy.isItem then
         pcall(self.deps.client.CancelCommodityPurchase)
     end
@@ -2497,16 +2327,7 @@ end
 -- The index in the current list of an auction like buy.row (same item, stack size, buyout and seller), or nil.
 -- It never gives your own auction or an auction of another price or stack size. The shown auction comes first.
 function Tab:_Refind(buy)
-    local found
-    for _, row in ipairs(self.deps.client.LiveRows(buy.itemID) or {}) do
-        if not isOwn(row) and sameAuction(row, buy.row) then
-            if row.auctionID == buy.row.auctionID then
-                return row.auctionID
-            end
-            found = found or row.auctionID
-        end
-    end
-    return found
+    return BuyFlow.Refind(self.deps.client.LiveRows(buy.itemID), buy)
 end
 
 function Tab:_Succeed(buy)
@@ -2621,7 +2442,7 @@ end
 function Tab:_ContinueBuy()
     local key = self.continueKey
     self.continueKey = nil
-    local box = dialogs.FlipsideBuyConfirm
+    local box = BuyDialog.Find("FlipsideBuyConfirm")
     if not key or key ~= self.selectedKey or not (box and box:IsShown()) then
         self:_CloseConfirm()
         return
@@ -2726,7 +2547,7 @@ end
 
 function Tab:_OnCommodityResult(ok)
     local buy = self.buy
-    if buy and buy.phase == "confirming" and not buy.isItem then
+    if BuyFlow.CommodityResultApplies(buy) then
         if ok then
             self:_Succeed(buy)
         else
@@ -2737,14 +2558,14 @@ end
 
 function Tab:_OnItemCompleted(auctionID)
     local buy = self.buy
-    if buy and buy.phase == "confirming" and buy.isItem and auctionID == buy.auctionID then
+    if BuyFlow.ItemDoneApplies(buy, auctionID) then
         self:_Succeed(buy)
     end
 end
 
 function Tab:_OnItemError(code)
     local buy = self.buy
-    if buy and buy.phase == "confirming" and buy.isItem then
+    if BuyFlow.ItemErrorApplies(buy) then
         self:_Fail(buy, "error " .. tostring(code), true)
     end
 end
@@ -3264,6 +3085,11 @@ end
 function Tab:Deselect()
     self:WalkStop()
     self:_CancelQuote("the tab was left")
+    -- The price jump box ends with the tab. A hide runs its Stop answer (the run ends).
+    local jumpBox = BuyDialog.Find("FlipsideBuyJump")
+    if jumpBox then
+        jumpBox:Hide()
+    end
     self:_CancelRead("read stopped")
     self.active = false
     if self.content then
@@ -3718,6 +3544,10 @@ function BuyingTab.New(deps)
         source = "groups", amount = DEFAULT_AMOUNT, requested = {},
         vendorToken = 0, vendorWaiting = {}, walk = ns.BuyWalk and ns.BuyWalk.New() or nil,
     }, Tab)
+    local tab = current
+    BuyFlow.Register("buying", function()
+        return tab.buy ~= nil
+    end)
     return current
 end
 
