@@ -1454,47 +1454,59 @@ local function signedMoney(copper)
     return copper < 0 and ("-" .. money(-copper)) or money(copper)
 end
 
--- The one compact margin line of the craft strip for a CraftListMargin result: the cost of the materials, the value
--- after the cut at average yield and the margin at average yield. The full breakdown is on the Lists page.
+-- The one compact margin line of the craft strip for a CraftListMargin result: the cost of the materials and the
+-- profit (value after the cut minus the cost) at average yield. The full table is on the Lists page.
 function BuyingTab.MarginLine(margin)
     local cost = margin.costKnown and money(margin.cost) or ("? (" .. money(margin.cost) .. " priced)")
     local text = "Cost " .. cost .. (margin.estimate and " (est.)" or "")
     if #margin.results == 0 then
         return text .. "  Add results on the Lists page."
     end
-    local label = margin.resultMode == "oneOf" and "  Value (one result, avg) " or "  Value "
-    text = text .. label .. (margin.valueKnown and money(margin.value.avg) or "?")
     if margin.margin then
         local percent = margin.percent and string.format(" (%.0f%%)", margin.percent.avg) or ""
-        return text .. "  Margin " .. signedMoney(margin.margin.avg) .. percent
+        return text .. "  Profit avg " .. signedMoney(margin.margin.avg) .. percent
     end
-    return text .. "  Margin ?"
+    return text .. "  Profit avg ?"
 end
 
--- The tooltip lines of the margin line: the value and the margin at min, average and max yield.
--- In mode "oneOf" the min and max lines name the result that sets the value.
+-- The tooltip of the margin line: the table of the Lists page as lines { left, right } (right can be nil). The
+-- header is "Min / Avg / Max". Mode "oneOf" adds the row "Yield" with the result that sets the min and the max.
 function BuyingTab.MarginTip(margin)
     local lines = {}
     if #margin.results == 0 then
         return lines
     end
-    if margin.resultMode == "oneOf" then
-        lines[1] = "Only one result drops."
-    end
-    for _, name in ipairs({ "min", "avg", "max" }) do
-        local value = margin.valueKnown and money(margin.value[name]) or "?"
-        local diff = margin.margin and signedMoney(margin.margin[name]) or "?"
-        local text = string.format("%s: value %s, margin %s", name, value, diff)
-        local pick = margin.resultMode == "oneOf" and margin.valueKnown and name ~= "avg"
-            and margin.results[margin.pick[name]] or nil
-        if pick then
-            text = text .. string.format(" (%d× %s)", pick[name], pick.name or ("item " .. pick.itemID))
+    local names = { "min", "avg", "max" }
+    local function row(label, cell)
+        local cells = {}
+        for index, name in ipairs(names) do
+            cells[index] = cell(name)
         end
-        lines[#lines + 1] = text
+        lines[#lines + 1] = { label, table.concat(cells, " / ") }
+    end
+    lines[1] = { "Min / Avg / Max" }
+    if margin.resultMode == "oneOf" then
+        row("Yield", function(name)
+            local pick = name ~= "avg" and margin.valueKnown and margin.results[margin.pick[name]] or nil
+            if name == "avg" then
+                return "mean"
+            end
+            return pick and string.format("%d× %s", pick[name], pick.name or ("item " .. pick.itemID)) or "?"
+        end)
+    end
+    row("Value", function(name)
+        return margin.valueKnown and money(margin.value[name]) or "?"
+    end)
+    row("Profit", function(name)
+        return margin.margin and signedMoney(margin.margin[name]) or "?"
+    end)
+    if margin.percent then
+        row("Profit %", function(name)
+            return string.format("%.0f%%", margin.percent[name])
+        end)
     end
     return lines
 end
-
 -- True if the text is an item link, an item ID or an item key. Other text is a name.
 function BuyingTab.IsItemRef(text)
     text = tostring(text or ""):match("^%s*(.-)%s*$")
@@ -3395,9 +3407,13 @@ function Tab:_BuildLeft(content)
         local lines = self.marginTip
         if lines and #lines > 0 then
             GameTooltip:SetOwner(frame, "ANCHOR_RIGHT")
-            GameTooltip:SetText("Margin after the 5% cut")
+            GameTooltip:SetText("Profit after the 5% cut")
             for _, line in ipairs(lines) do
-                GameTooltip:AddLine(line, 1, 1, 1, true)
+                if line[2] then
+                    GameTooltip:AddDoubleLine(line[1], line[2], 1, 1, 1, 1, 1, 1)
+                else
+                    GameTooltip:AddLine(line[1], 1, 1, 1, true)
+                end
             end
             GameTooltip:Show()
         end

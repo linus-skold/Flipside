@@ -21,6 +21,11 @@ local ITEMS_HEIGHT = 118
 local RESULTS_HEIGHT = 84
 local MAX_MATCHES = 8
 local YIELDS = { "min", "avg", "max" }
+local TABLE_ROW = 16
+local TABLE_ROWS = 5
+local TABLE_HEIGHT = (TABLE_ROWS + 1) * TABLE_ROW
+local TABLE_LABEL = 52
+local TABLE_COLUMN = 82
 
 local function trim(text)
     return (tostring(text or ""):match("^%s*(.-)%s*$"))
@@ -106,9 +111,9 @@ function ListsPage.ResolveItem(input, deps)
     return nil, "type an item link, ID or key"
 end
 
--- The rows of the margin breakdown for a CraftListMargin result: one row for each material, one for each result and
--- the totals. saved is the list (its items and results are in the order of the margin). nameOf(entry) gives a name.
--- Returns { { kind = "head" | "item" | "total", left, right } }.
+-- The rows of the margin breakdown for a CraftListMargin result: one row for each material and one for each
+-- result. saved is the list (its items and results are in the order of the margin). nameOf(entry) gives a name.
+-- Returns { { kind = "head" | "item", left, right } }.
 function ListsPage.MarginRows(margin, saved, nameOf)
     local rows = {}
     local function add(kind, left, right)
@@ -125,8 +130,6 @@ function ListsPage.MarginRows(margin, saved, nameOf)
     if #margin.materials == 0 then
         add("item", "No materials yet")
     end
-    local cost = margin.costKnown and money(margin.cost) or ("? (" .. money(margin.cost) .. " priced)")
-    add("total", "Total cost", cost .. (margin.estimate and " (est.)" or ""))
     local oneOf = margin.resultMode == "oneOf"
     add("head", (oneOf and "One of these results" or "Results") .. " (value after the 5% cut)")
     if #margin.results == 0 then
@@ -137,24 +140,50 @@ function ListsPage.MarginRows(margin, saved, nameOf)
         add("item", rangeText(line.min, line.max) .. "× " .. nameOf(saved.results[index]),
             line.net and ("avg " .. money(line.net.avg)) or "no price")
     end
-    for _, name in ipairs(YIELDS) do
-        local left = "Value at " .. name .. " yield"
-        if oneOf and margin.valueKnown then
-            local pick = name ~= "avg" and margin.results[margin.pick[name]] or nil
-            left = pick and (name == "min" and "Min: " or "Max: ") .. pick[name] .. "× "
-                .. nameOf(saved.results[margin.pick[name]]) or "Avg: mean of the results"
-        end
-        add("total", left, margin.valueKnown and money(margin.value[name]) or "?")
-    end
-    for _, name in ipairs(YIELDS) do
-        local right = "?"
-        if margin.margin then
-            right = signedMoney(margin.margin[name])
-                .. (margin.percent and string.format(" (%.0f%%)", margin.percent[name]) or "")
-        end
-        add("total", "Margin at " .. name .. " yield", right)
-    end
     return rows
+end
+
+-- The table under the breakdown: the cost once, then the columns Min, Avg and Max. Returns
+-- { cost = text, rows = { { label, cells = { min, avg, max }, tones = { min, avg, max } } } }; rows is empty with no
+-- result. A row is the header, "Yield" (mode "oneOf" only: the result that sets the min and the max), "Value",
+-- "Profit" (a tone "good" or "bad" for each cell) and the percent of the profit (if the cost is above 0).
+function ListsPage.MarginTable(margin, saved, nameOf)
+    local cost = margin.costKnown and money(margin.cost) or ("? (" .. money(margin.cost) .. " priced)")
+    local out = { cost = cost .. (margin.estimate and " (est.)" or ""), rows = {} }
+    if #margin.results == 0 then
+        return out
+    end
+    local function add(label, cells, tones)
+        out.rows[#out.rows + 1] = { label = label, cells = cells, tones = tones or {} }
+    end
+    add("", { "Min", "Avg", "Max" })
+    if margin.resultMode == "oneOf" then
+        local cells = { "?", "mean", "?" }
+        if margin.valueKnown then
+            for index, name in ipairs(YIELDS) do
+                local pick = name ~= "avg" and margin.results[margin.pick[name]] or nil
+                if pick then
+                    cells[index] = pick[name] .. "× " .. nameOf(saved.results[margin.pick[name]])
+                end
+            end
+        end
+        add("Yield", cells)
+    end
+    local value, profit, percent, tones = {}, {}, {}, {}
+    for index, name in ipairs(YIELDS) do
+        value[index] = margin.valueKnown and money(margin.value[name]) or "?"
+        profit[index] = margin.margin and signedMoney(margin.margin[name]) or "?"
+        if margin.margin then
+            tones[index] = margin.margin[name] > 0 and "good" or (margin.margin[name] < 0 and "bad" or nil)
+            percent[index] = margin.percent and string.format("(%.0f%%)", margin.percent[name]) or nil
+        end
+    end
+    add("Value", value)
+    add("Profit", profit, tones)
+    if margin.percent then
+        add("", percent, tones)
+    end
+    return out
 end
 
 -- Build the page in the content frame.
@@ -374,8 +403,31 @@ function ListsPage.Build(content, deps)
             row.right:SetText(data.right)
         end })
     page.margin.frame:SetPoint("TOPLEFT", content, "TOPLEFT", MARGIN_X, -44)
-    page.margin.frame:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", 0, 26)
+    page.margin.frame:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", 0, 26 + TABLE_HEIGHT + 4)
     craftWidget(page.margin.frame)
+
+    -- The table: the cost once, then the rows Min/Avg/Max (header), Yield, Value, Profit and the percent. The slots
+    -- are in this order from the top. A row that the list does not need is hidden. Each cell has a fixed width.
+    local function slotCell(slot, x, width, justify)
+        local cell = craftWidget(Kit.Label(content, "", "small"))
+        cell:SetWidth(width)
+        cell:SetJustifyH(justify)
+        if cell.SetWordWrap then
+            cell:SetWordWrap(false)
+        end
+        cell:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", MARGIN_X + x, 26 + (TABLE_ROWS - slot) * TABLE_ROW)
+        return cell
+    end
+    page.tableCost = { label = slotCell(0, 0, TABLE_LABEL, "LEFT"), text = slotCell(0, TABLE_LABEL, 240, "LEFT") }
+    page.tableCost.label:SetText("Cost")
+    page.tableRows = {}
+    for slot = 1, TABLE_ROWS do
+        local row = { label = slotCell(slot, 0, TABLE_LABEL, "LEFT") }
+        for column = 1, 3 do
+            row[column] = slotCell(slot, TABLE_LABEL + (column - 1) * TABLE_COLUMN, TABLE_COLUMN, "RIGHT")
+        end
+        page.tableRows[slot] = row
+    end
     page.marginNote = Kit.Label(content,
         "(est.) = scan market value. No live search of this session.", "small")
     page.marginNote:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", MARGIN_X, 6)
@@ -650,6 +702,17 @@ function ListsPage.Build(content, deps)
         local margin = page.Margin()
         page.marginNote:SetShown(margin ~= nil and margin.estimate == true)
         page.margin:SetData(margin and ListsPage.MarginRows(margin, saved, nameOf) or {})
+        local grid = margin and ListsPage.MarginTable(margin, saved, nameOf) or { cost = "", rows = {} }
+        page.tableCost.text:SetText(grid.cost)
+        for slot, row in ipairs(page.tableRows) do
+            local data = grid.rows[slot]
+            row.label:SetText(data and data.label or "")
+            for column = 1, 3 do
+                local cell = row[column]
+                cell:SetText(data and data.cells[column] or "")
+                cell:SetFontObject(Kit.Font(data and data.tones[column] or "small"))
+            end
+        end
         if margin and not page.craftsInput:HasFocus() then
             page.craftsInput:SetText(tostring(page.crafts))
         end
