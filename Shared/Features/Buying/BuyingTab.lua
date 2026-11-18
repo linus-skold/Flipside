@@ -385,6 +385,15 @@ function Tab:_Selected()
     return self.selectedKey and self:_Entry(self.selectedKey) or nil
 end
 
+-- The text of a row of the flat list: the name, with the count in front ("4× Name") if the item has one.
+function Tab:_RowText(entry)
+    local name = self:_ItemName(entry)
+    if entry.count and name then
+        return entry.count .. "× " .. name
+    end
+    return name
+end
+
 function Tab:_ItemName(entry)
     local name = self.deps.itemInfo(entry.itemID or 0)
     if not name or name:match("^item %d+$") then
@@ -422,6 +431,8 @@ function Tab:RefreshList()
         if not saved then
             self.listID = nil
         end
+        -- An unsaved list (self.temp: { name, items }) shows while no saved list is selected.
+        saved = saved or self.temp
         self.list = saved and deps.plan.ListEntries(saved.items, {
             rules = deps.rules, formulaRun = deps.formulaRun, label = "Search list: " .. saved.name,
         }) or {}
@@ -935,7 +946,7 @@ function Tab:SetSource(source)
     self.selectedKey = nil
     self.levelSel = nil
     self.run = nil
-    if source == "lists" and not self.listID then
+    if source == "lists" and not self.listID and not self.temp then
         local first = self.deps.searchLists:List()[1]
         self.listID = first and first.id or nil
     end
@@ -955,6 +966,7 @@ function Tab:SelectList(id)
     end
     self:_DropSearch()
     self.listID = id
+    self.temp = nil
     self.source = "lists"
     self.selectedKey = nil
     self.levelSel = nil
@@ -975,7 +987,57 @@ function Tab:NewList(name)
     return true
 end
 
+-- Show a list that is not saved (for example the reagents of a recipe). Nothing is stored until SaveTemp.
+-- items: { { itemID, key?, name?, count? } }. Start the search if autoSearch is true. Returns true, or false.
+function Tab:OpenTemp(name, items, autoSearch)
+    if not self.deps.searchLists or type(items) ~= "table" or #items == 0 then
+        return false
+    end
+    local copy = {}
+    for index, item in ipairs(items) do
+        copy[index] = {
+            itemID = item.itemID, key = item.key or string.format("%d", item.itemID), name = item.name,
+            count = item.count,
+        }
+    end
+    self:_DropSearch()
+    self.temp = { name = tostring(name or ""), items = copy }
+    self.listID = nil
+    self.source = "lists"
+    self.selectedKey = nil
+    self.levelSel = nil
+    self.run = nil
+    self:RefreshList()
+    if autoSearch == true and self.deps.client.CanLiveSearch() then
+        self:SearchAll()
+    end
+    return true
+end
+
+-- The event "Flipside.SearchListTemp".
+function Tab:_OnTempList(name, items, autoSearch)
+    if self.deps.isAuctionHouseOpen() then
+        self:OpenTemp(name, items, autoSearch)
+    end
+end
+
+-- Save the unsaved list with the name, with the counts, and show the saved list. Returns true, or false and a text.
+function Tab:SaveTemp(name)
+    local temp, lists = self.temp, self.deps.searchLists
+    if not (temp and lists) then
+        return false, "there is no unsaved list"
+    end
+    local id, err = lists:Create(name, temp.items)
+    if not id then
+        self:_Say(err)
+        return false, err
+    end
+    self:SelectList(id)
+    return true
+end
+
 local NEW_LIST_PROMPT = "FlipsideBuyingNewListPrompt"
+local SAVE_LIST_PROMPT = "FlipsideBuyingSaveListPrompt"
 local RENAME_LIST_PROMPT = "FlipsideBuyingRenameListPrompt"
 
 -- Ask for the name of a new search list.
@@ -985,6 +1047,22 @@ function Tab:PromptNewList()
         label = "Name",
         onOK = function(name)
             local ok, err = self:NewList(name)
+            return not ok and err or nil
+        end,
+    })
+end
+
+-- Ask for the name of the unsaved list. The start text is its default name.
+function Tab:PromptSaveList()
+    if not self.temp then
+        return
+    end
+    ns.Kit.Prompt(SAVE_LIST_PROMPT):Open({
+        title = "Save search list",
+        label = "Name",
+        text = self.temp.name,
+        onOK = function(name)
+            local ok, err = self:SaveTemp(name)
             return not ok and err or nil
         end,
     })
@@ -1040,6 +1118,14 @@ end
 
 -- Remove one item of the selected search list by its place in the list.
 function Tab:RemoveListItem(index)
+    if self.temp and not self.listID then
+        if not self.temp.items[index] then
+            return false
+        end
+        table.remove(self.temp.items, index)
+        self:RefreshList()
+        return true
+    end
     local lists = self.deps.searchLists
     if not (lists and self.listID) then
         return false
@@ -1050,6 +1136,36 @@ function Tab:RemoveListItem(index)
         return false, err
     end
     self:RefreshList()
+    return true
+end
+
+-- Store the amount of the box as the count of the selected item of the shown list. It is the way to set or change a
+-- count: type the amount while the item is selected, then press Enter. An empty box clears the count. A saved list
+-- stores it. An unsaved list keeps it until Save. Returns true, or false.
+function Tab:SetItemCount()
+    local entry = self:_Selected()
+    if not (entry and entry.listIndex and self.source == "lists" and not self.searchResults and self.amountEdit
+        and not self.amountBad) then
+        return false
+    end
+    if self.temp and not self.listID then
+        local item = self.temp.items[entry.listIndex]
+        if not item then
+            return false
+        end
+        item.count = self.amount
+        self:RefreshList()
+        return true
+    end
+    local lists = self.deps.searchLists
+    if not (lists and self.listID) then
+        return false
+    end
+    local ok, err = lists:SetCount(self.listID, entry.listIndex, self.amount)
+    if not ok then
+        self:_Say(err)
+        return false
+    end
     return true
 end
 
@@ -1196,6 +1312,20 @@ end
 -- Add a resolved item to the selected search list. With no list, it uses the list "Quick search".
 function Tab:_AddResolved(item)
     local lists = self.deps.searchLists
+    if self.temp and not self.listID then
+        for _, existing in ipairs(self.temp.items) do
+            if existing.key == item.key then
+                self:_Say("The item is in the list.")
+                return false, "The item is in the list."
+            end
+        end
+        self.temp.items[#self.temp.items + 1] = { itemID = item.itemID, key = item.key, name = item.name }
+        self:_DropSearch()
+        self.source = "lists"
+        self:RefreshList()
+        self:Select_(item.key)
+        return true
+    end
     if not self.listID then
         local id
         for _, saved in ipairs(lists:List()) do
@@ -1297,7 +1427,9 @@ function Tab:Select_(key)
         end
         self.run = nil
         self.levelSel = nil
-        self.amount, self.amountBad, self.amountEdit = DEFAULT_AMOUNT, false, false
+        -- An item with a count starts with that amount. The buy still asks for confirmation.
+        local entry = key and self:_Entry(key)
+        self.amount, self.amountBad, self.amountEdit = entry and entry.count or DEFAULT_AMOUNT, false, false
     end
     self.selectedKey = key
     self:_Update()
@@ -1799,7 +1931,7 @@ function Tab:SelectLevel(price)
         return false, "pick an item first"
     end
     self.levelSel = (self.levelSel ~= price) and price or nil
-    self.amount, self.amountBad, self.amountEdit = DEFAULT_AMOUNT, false, false
+    self.amount, self.amountBad, self.amountEdit = self:_Selected().count or DEFAULT_AMOUNT, false, false
     self:_Update()
     if self.levelSel then
         -- A group on another page needs that page in the client list before a buy.
@@ -2810,10 +2942,18 @@ function Tab:_UpdateLeft()
         for _, saved in ipairs(lists:List()) do
             items[#items + 1] = { value = saved.id, text = saved.name .. " (" .. saved.count .. ")" }
         end
+        if self.temp and not self.listID then
+            table.insert(items, 1, { value = "unsaved", text = self.temp.name .. " (unsaved)" })
+        end
         ui.picker:SetItems(items)
-        ui.picker:SetValue(self.listID)
+        ui.picker:SetValue(self.listID or (self.temp and "unsaved") or nil)
         ui.rename:SetEnabled(self.listID ~= nil)
         ui.delete:SetEnabled(self.listID ~= nil)
+        -- An unsaved list shows a Save button in place of Rename and Delete.
+        local unsaved = self.temp ~= nil and self.listID == nil
+        ui.save:SetShown(unsaved)
+        ui.rename:SetShown(not unsaved)
+        ui.delete:SetShown(not unsaved)
     end
     local mode = isLists and "lists" or (isVendor and "vendor" or "groups")
     if self.placedFor ~= mode then
@@ -2855,7 +2995,7 @@ function Tab:_Update()
         -- The name search, the Lists view and the Vendor view are a flat list of items. Only Groups has a tree.
         self.nodes = {}
         for index, entry in ipairs(self.list) do
-            self.nodes[index] = { id = "i" .. entry.key, kind = "item", entry = entry, text = self:_ItemName(entry) }
+            self.nodes[index] = { id = "i" .. entry.key, kind = "item", entry = entry, text = self:_RowText(entry) }
         end
     else
         self.nodes = BuyingTab.BuildNodes(self.deps.rules, self.list, function(entry)
@@ -3058,6 +3198,9 @@ function Tab:_BuildLeft(content)
             end)
         end
     end), 286, -44 - SEARCH_SHIFT - LIST_GAP)
+    ui.save = control(Kit.Button(content, "Save", 64, function()
+        self:PromptSaveList()
+    end), 218, -44 - SEARCH_SHIFT - LIST_GAP)
     -- The Vendor source: the max price formula and the state of the list.
     ui.vendorControls = {}
     local function vendorControl(widget, x, y)
@@ -3201,6 +3344,9 @@ function Tab:_BuildContent()
     ui.amount:HookScript("OnTextChanged", function(box)
         self:SetAmount(box:GetText())
     end)
+    ui.amount:HookScript("OnEnterPressed", function()
+        self:SetItemCount()
+    end)
     -- The Buy button sits on the amount row, at a fixed offset from the amount box.
     ui.buyNext = Kit.Button(content, "Buy", 100, function()
         self:BuyNext()
@@ -3259,7 +3405,11 @@ function Tab:Mount(parent, api)
                 self:RefreshList()
             end
         end)
+        bus:Subscribe("Flipside.SearchListTemp", OWNER, function(_, name, items, autoSearch)
+            self:_OnTempList(name, items, autoSearch)
+        end)
         self.events[#self.events + 1] = "Flipside.SearchListOpen"
+        self.events[#self.events + 1] = "Flipside.SearchListTemp"
         self.events[#self.events + 1] = "Flipside.SearchListsChanged"
     end
     -- A shift-click on an item link puts the link into the input box while it has focus.

@@ -74,7 +74,7 @@ function BuyingPlan.ShoppingList(deps)
     return list
 end
 
--- The items of a search list as entries. items: { { itemID, key?, name? } }. deps as for ShoppingList.
+-- The items of a search list as entries. items: { { itemID, key?, name?, count? } }. deps as for ShoppingList.
 -- An item uses the buying operation of its group (or of Base). With none, it uses the built-in Default settings.
 -- deps.label is the text for groupPath of an item that is in no group.
 function BuyingPlan.ListEntries(items, deps)
@@ -95,6 +95,7 @@ function BuyingPlan.ListEntries(items, deps)
             local path = groupID and groupID ~= BASE_ID and rules:Path(groupID) or deps.label
             local entry = MakeEntry(run, key, groupID, path, opID, op)
             entry.name = item.name
+            entry.count = item.count
             entry.listIndex = index
             entries[#entries + 1] = entry
         end
