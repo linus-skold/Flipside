@@ -335,6 +335,43 @@ describe("SearchLists", function()
             assert.are.equal("craft", again:Get(id).kind)
         end)
 
+        it("has the result mode all by default, also for an old list and a search list", function()
+            assert.are.equal("all", lists:Get(id).resultMode)
+            assert.are.equal("all", lists:Get(lists:Create("Plain", {})).resultMode)
+            db:Set("profile", "searchLists", {
+                version = 1, nextID = 2, lists = { [1] = { name = "Old", items = {} } },
+            })
+            assert.are.equal("all", lists:Get(1).resultMode)
+        end)
+
+        it("sets the result mode, sends the changed event and keeps it after a reload", function()
+            local before = changes
+            assert.is_true(lists:SetResultMode(id, "oneOf"))
+            assert.are.equal(before + 1, changes)
+            assert.are.equal("oneOf", lists:Get(id).resultMode)
+            assert.are.equal("oneOf", ns.SearchLists.New(open(saved)):Get(id).resultMode)
+            assert.is_true(lists:SetResultMode(id, "all"))
+            assert.are.equal("all", lists:Get(id).resultMode)
+        end)
+
+        it("refuses a result mode that is not valid, and a search list", function()
+            assert.is_nil(lists:SetResultMode(id, "some"))
+            assert.is_nil(lists:SetResultMode(id, nil))
+            assert.are.equal("all", lists:Get(id).resultMode)
+            local plain = lists:Create("Plain", {})
+            local ok, err = lists:SetResultMode(plain, "oneOf")
+            assert.is_nil(ok)
+            assert.matches("not a craft list", err)
+            assert.is_nil(lists:SetResultMode(99, "oneOf"))
+        end)
+
+        it("keeps the result mode when Upsert replaces the materials", function()
+            lists:SetResultMode(id, "oneOf")
+            assert.are.equal(id, lists:Upsert("Pants", { { itemID = 8 } }))
+            assert.are.equal("oneOf", lists:Get(id).resultMode)
+            assert.are.equal(8, lists:Get(id).items[1].itemID)
+        end)
+
         it("drops a damaged result when it loads", function()
             local data = db:Get("profile", "searchLists")
             data.lists[id].results = { { itemID = 5, min = 3, max = 1 }, "junk", { itemID = 6, min = 1, max = 2 } }

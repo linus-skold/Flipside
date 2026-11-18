@@ -62,7 +62,8 @@ function CraftListMargin.ScanResultPrice(values)
     return values.scanMarket or values.scanMin
 end
 
--- list: { materials = { { key, itemID, count } }, results = { { key, itemID, min, max } } }.
+-- list: { materials = { { key, itemID, count } }, results = { { key, itemID, name, min, max } },
+--   resultMode = "all" (default) or "oneOf" }.
 -- A material with no count needs 1 unit. options:
 --   crafts: the number of crafts (a whole number, default 1). It scales the materials and the results.
 --   materialPrice(material, needed): the total cost in copper of the needed units, and true if it is an estimate.
@@ -76,7 +77,11 @@ end
 --   results: one entry for each result { key, itemID, min, max, avg, unit, net = { min, avg, max } }. net is the
 --     value after the cut for the units of the three yields, for all crafts. unit and net are nil without a price.
 --   valueKnown: false if a result has no price.
---   value: { min, avg, max }: the sum of the net values of the priced results.
+--   value: { min, avg, max }: the sum of the net values of the priced results. In mode "oneOf" (list.resultMode) it is:
+--     min = the lowest net value at the min yield of one result, max = the highest net value at the max yield of one
+--     result, avg = the mean of the avg-yield net values (each result has the same chance).
+--   resultMode: "all" or "oneOf". pick = { min, max }: in "oneOf" mode, the place in results of the result that sets
+--     the min and of the result that sets the max (the first one wins a tie).
 --   margin: { min, avg, max } = value - cost, or nil if the cost or the value is not known for all.
 --   percent: { min, avg, max } = margin / cost * 100, or nil if the margin is nil or the cost is 0.
 function CraftListMargin.Compute(list, options)
@@ -85,9 +90,11 @@ function CraftListMargin.Compute(list, options)
         crafts = 1
     end
     local cut = options.cut or CraftListMargin.Cut
+    local oneOf = list.resultMode == "oneOf"
     local out = {
         crafts = crafts, materials = {}, cost = 0, costKnown = true, estimate = false,
         results = {}, valueKnown = true, value = { min = 0, avg = 0, max = 0 },
+        resultMode = oneOf and "oneOf" or "all", pick = { min = 1, max = 1 },
     }
     for index, material in ipairs(list.materials or {}) do
         local needed = (material.count or 1) * crafts
@@ -106,8 +113,8 @@ function CraftListMargin.Compute(list, options)
     for index, result in ipairs(list.results or {}) do
         local avg = (result.min + result.max) / 2
         local unit = options.resultPrice(result)
-        local line = { key = result.key, itemID = result.itemID, min = result.min, max = result.max, avg = avg,
-            unit = unit }
+        local line = { key = result.key, itemID = result.itemID, name = result.name, min = result.min,
+            max = result.max, avg = avg, unit = unit }
         if unit == nil then
             out.valueKnown = false
         else
@@ -115,10 +122,25 @@ function CraftListMargin.Compute(list, options)
             for name, yield in pairs({ min = result.min, avg = avg, max = result.max }) do
                 local gross = round(unit * yield * crafts)
                 line.net[name] = gross - cut(gross)
-                out.value[name] = out.value[name] + line.net[name]
+                if not oneOf then
+                    out.value[name] = out.value[name] + line.net[name]
+                end
             end
         end
         out.results[index] = line
+    end
+    if oneOf and out.valueKnown and #out.results > 0 then
+        local low, high, sum = out.results[1], out.results[1], 0
+        for index, line in ipairs(out.results) do
+            sum = sum + line.net.avg
+            if line.net.min < low.net.min then
+                low, out.pick.min = line, index
+            end
+            if line.net.max > high.net.max then
+                high, out.pick.max = line, index
+            end
+        end
+        out.value = { min = low.net.min, avg = sum / #out.results, max = high.net.max }
     end
     if out.costKnown and out.valueKnown then
         out.margin, out.percent = {}, out.cost > 0 and {} or nil

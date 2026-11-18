@@ -754,6 +754,25 @@ describe("BuyingTab search lists", function()
             assert.matches("Value %?", ui.craftMargin:GetText())
         end)
 
+        it("follows the result mode in the margin line and in the tooltip", function()
+            searchMaterial()
+            scan["400"] = { scanMarket = 100 }
+            lists:AddResult(id, { itemID = 400, name = "Cheap", min = 2, max = 3 })
+            assert.matches("Value 1662c", ui.craftMargin:GetText())
+            lists:SetResultMode(id, "oneOf")
+            -- Min: Cheap 2 x 100 x 95% = 190. Max: Dust 2 x 1000 x 95% = 1900. Avg: (1425 + 237) / 2 = 831.
+            assert.are.equal("Cost 1250c (est.)  Value (one result, avg) 831c  Margin -419c (-34%)",
+                ui.craftMargin:GetText())
+            local tip = tab.marginTip
+            assert.are.equal("Only one result drops.", tip[1])
+            assert.matches("^min: value 190c, margin %-1060c %(2× Cheap%)$", tip[2])
+            assert.matches("^avg: value 831c, margin %-419c$", tip[3])
+            assert.matches("^max: value 1900c, margin 650c %(2× Dust%)$", tip[4])
+            lists:SetResultMode(id, "all")
+            assert.matches("Value 1662c", ui.craftMargin:GetText())
+            assert.are.equal(3, #tab.marginTip)
+        end)
+
         it("prices a material from the live levels, and the others from the market value as an estimate", function()
             searchMaterial()
             local margin = tab:CraftMargin()

@@ -7,6 +7,7 @@ local _, ns = ...
 -- A list has a kind: "search" (the default; an old list has no kind field) or "craft". The items of a craft list are
 -- the materials. A craft list also has results: { { itemID, key, name, min, max } }, the items that the craft makes by
 -- hand-typed amounts (min and max are whole numbers, 0 <= min <= max). It holds each result once (compared by key).
+-- A craft list has an optional resultMode: "oneOf" (exactly one result drops). No field means "all" (each drops).
 
 local SearchLists = {}
 ns.SearchLists = SearchLists
@@ -207,6 +208,7 @@ end
 
 -- Returns { id, name, kind, items, results } (a copy), or nil. An item is { itemID, key, name, count }; count can
 -- be nil. kind is "search" or "craft". results is { { itemID, key, name, min, max } }, always empty for a search list.
+-- resultMode is "all" (default) or "oneOf" (a craft list only; a search list gives "all").
 function Store:Get(id)
     local list = self:_Data().lists[id]
     if not list then
@@ -218,7 +220,8 @@ function Store:Get(id)
     end
     local kind = kindOf(list)
     return { id = id, name = list.name, kind = kind, items = items,
-        results = kind == "craft" and cleanResults(list.results) or {} }
+        results = kind == "craft" and cleanResults(list.results) or {},
+        resultMode = kind == "craft" and list.resultMode == "oneOf" and "oneOf" or "all" }
 end
 
 -- Make a list. kind is "craft" for a craft list; any other value makes a search list.
@@ -394,6 +397,21 @@ function Store:SetResult(id, index, min, max)
             return nil, "The list has no result at this place."
         end
         list.results[index].min, list.results[index].max = lowest, highest
+        return true
+    end)
+end
+
+-- Set how the results drop: "all" (each result drops, the default) or "oneOf" (exactly one result drops).
+function Store:SetResultMode(id, mode)
+    if mode ~= "all" and mode ~= "oneOf" then
+        return nil, "The result mode must be all or oneOf."
+    end
+    return self:_Change(function(data)
+        local list, err = craftList(data, id)
+        if not list then
+            return nil, err
+        end
+        list.resultMode = mode ~= "all" and mode or nil
         return true
     end)
 end

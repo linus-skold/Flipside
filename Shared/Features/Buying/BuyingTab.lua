@@ -1438,7 +1438,8 @@ function Tab:CraftMargin()
     if not craft then
         return nil
     end
-    return ns.CraftListMargin.Compute({ materials = craft.items, results = craft.results }, {
+    return ns.CraftListMargin.Compute({ materials = craft.items, results = craft.results,
+        resultMode = craft.resultMode }, {
         crafts = self.crafts,
         materialPrice = function(material, needed)
             return self:_MaterialPrice(material, needed)
@@ -1461,7 +1462,8 @@ function BuyingTab.MarginLine(margin)
     if #margin.results == 0 then
         return text .. "  Add results on the Lists page."
     end
-    text = text .. "  Value " .. (margin.valueKnown and money(margin.value.avg) or "?")
+    local label = margin.resultMode == "oneOf" and "  Value (one result, avg) " or "  Value "
+    text = text .. label .. (margin.valueKnown and money(margin.value.avg) or "?")
     if margin.margin then
         local percent = margin.percent and string.format(" (%.0f%%)", margin.percent.avg) or ""
         return text .. "  Margin " .. signedMoney(margin.margin.avg) .. percent
@@ -1470,15 +1472,25 @@ function BuyingTab.MarginLine(margin)
 end
 
 -- The tooltip lines of the margin line: the value and the margin at min, average and max yield.
+-- In mode "oneOf" the min and max lines name the result that sets the value.
 function BuyingTab.MarginTip(margin)
     local lines = {}
     if #margin.results == 0 then
         return lines
     end
+    if margin.resultMode == "oneOf" then
+        lines[1] = "Only one result drops."
+    end
     for _, name in ipairs({ "min", "avg", "max" }) do
         local value = margin.valueKnown and money(margin.value[name]) or "?"
         local diff = margin.margin and signedMoney(margin.margin[name]) or "?"
-        lines[#lines + 1] = string.format("%s: value %s, margin %s", name, value, diff)
+        local text = string.format("%s: value %s, margin %s", name, value, diff)
+        local pick = margin.resultMode == "oneOf" and margin.valueKnown and name ~= "avg"
+            and margin.results[margin.pick[name]] or nil
+        if pick then
+            text = text .. string.format(" (%d× %s)", pick[name], pick.name or ("item " .. pick.itemID))
+        end
+        lines[#lines + 1] = text
     end
     return lines
 end
