@@ -413,6 +413,179 @@ describe("BuyingTab search lists", function()
         end)
     end)
 
+    describe("an unsaved list and the counts of items", function()
+        local started, confirmed
+
+        local function dialog(name)
+            for _, frame in ipairs(mock.frames) do
+                if frame.name == name then
+                    return frame
+                end
+            end
+        end
+
+        local function emitTemp()
+            bus:Emit("Flipside.SearchListTemp", "Recipe: Potion", {
+                { itemID = 100, name = "Peacebloom", count = 4 }, { itemID = 200, count = 2 }, { itemID = 300 },
+            }, false)
+        end
+
+        local function submit(box, text)
+            box.input:SetText(text)
+            box.input.scripts.OnTextChanged(box.input)
+            box.okButton.scripts.OnClick(box.okButton)
+        end
+
+        before_each(function()
+            started, confirmed = {}, {}
+            -- A new bus, a new list object and a client that can buy. The tab of the outer before_each is not used.
+            bus = ns.EventBus.New({})
+            lists = ns.SearchLists.New(db, { bus = bus, isAuctionHouseOpen = function() return ahOpen end })
+            client = makeClient()
+            client.BuyEvents = function()
+                return { priceUpdated = "QUOTE", priceUnavailable = "NOQUOTE", commoditySucceeded = "BOUGHT",
+                    commodityFailed = "NOTBOUGHT", itemCompleted = "ITEMBOUGHT", itemError = "ITEMERR" }
+            end
+            client.StartCommodityPurchase = function(itemID, quantity)
+                started[#started + 1] = { itemID, quantity }
+            end
+            client.ConfirmCommodityPurchase = function(itemID, quantity)
+                confirmed[#confirmed + 1] = { itemID, quantity }
+            end
+            client.CancelCommodityPurchase = function() end
+            client.QuoteSecondsLeft = function() return 30 end
+            tab = mount()
+            ui = tab.ui
+        end)
+
+        it("shows the list with the counts and stores nothing", function()
+            emitTemp()
+            assert.are.equal("lists", tab.source)
+            assert.are.equal(3, #tab.list)
+            assert.are.same({}, lists:List())
+            assert.are.equal("4× Peacebloom", tab.nodes[1].text)
+            assert.are.equal("2× item 200", tab.nodes[2].text)
+            assert.are.equal("item 300", tab.nodes[3].text)
+        end)
+
+        it("ignores the list while the Auction House is closed", function()
+            ahOpen = false
+            emitTemp()
+            assert.is_nil(tab.temp)
+            assert.are.equal("groups", tab.source)
+        end)
+
+        it("shows Save in place of Rename and Delete for an unsaved list only", function()
+            emitTemp()
+            assert.is_true(ui.save:IsShown())
+            assert.is_false(ui.rename:IsShown())
+            assert.is_false(ui.delete:IsShown())
+            local id = lists:Create("Own", {})
+            tab:SelectList(id)
+            assert.is_false(ui.save:IsShown())
+            assert.is_true(ui.rename:IsShown())
+        end)
+
+        it("saves the list with the counts through a prompt that starts with the default name", function()
+            emitTemp()
+            ui.save.scripts.OnClick(ui.save)
+            local box = ns.Kit.Prompt("FlipsideBuyingSaveListPrompt")
+            assert.is_true(box:IsShown())
+            assert.are.equal("Recipe: Potion", box.input:GetText())
+            submit(box, "Potion reagents")
+            assert.is_false(box:IsShown())
+            local saved = lists:Get(tab.listID)
+            assert.are.equal("Potion reagents", saved.name)
+            assert.are.equal(4, saved.items[1].count)
+            assert.are.equal(2, saved.items[2].count)
+            assert.is_nil(saved.items[3].count)
+            assert.is_nil(tab.temp)
+            assert.is_false(ui.save:IsShown())
+        end)
+
+        it("keeps the prompt open with the error for a name in use", function()
+            lists:Create("Taken", {})
+            emitTemp()
+            ui.save.scripts.OnClick(ui.save)
+            local box = ns.Kit.Prompt("FlipsideBuyingSaveListPrompt")
+            submit(box, "taken")
+            assert.is_true(box:IsShown())
+            assert.is_not.equal("", box.error:GetText())
+            assert.is_not_nil(tab.temp)
+            assert.are.equal(1, #lists:List())
+        end)
+
+        it("starts the amount box with the count of the selected item", function()
+            emitTemp()
+            tab:Select_("100")
+            assert.are.equal(4, tab.amount)
+            tab:Select_("300")
+            assert.are.equal(1, tab.amount)
+        end)
+
+        it("starts the amount box with the count of an item of a saved list, and not for an old list", function()
+            local id = lists:Create("Saved", { { itemID = 100, count = 6 }, { itemID = 200 } })
+            tab:SelectList(id)
+            tab:Select_("100")
+            assert.are.equal(6, tab.amount)
+            tab:Select_("200")
+            assert.are.equal(1, tab.amount)
+            assert.are.equal("item 200", tab.nodes[2].text)
+        end)
+
+        it("buys the count after the normal confirmation", function()
+            emitTemp()
+            client.rows[100] = { row(300, 9) }
+            tab:Select_("100")
+            tab:Search()
+            bus:Emit("COMMODITY_RESULTS", 100)
+            assert.are.equal("4", ui.amount:GetText())
+            ui.buyNext.scripts.OnClick(ui.buyNext)
+            assert.are.same({ { 100, 4 } }, started)
+            bus:Emit("QUOTE", 300, 1200)
+            local confirm = dialog("FlipsideBuyConfirm")
+            assert.is_true(confirm:IsShown())
+            assert.matches("Buy 4 x", confirm.text.text)
+            assert.are.same({}, confirmed)
+            confirm.yesButton.scripts.OnClick(confirm.yesButton)
+            assert.are.same({ { 100, 4 } }, confirmed)
+        end)
+
+        it("stores the typed amount as the count of the selected item of a saved list on Enter", function()
+            local id = lists:Create("Saved", { { itemID = 100 } })
+            tab:SelectList(id)
+            tab:Select_("100")
+            ui.amount:SetText("6")
+            ui.amount.scripts.OnTextChanged(ui.amount)
+            assert.is_nil(lists:Get(id).items[1].count)
+            ui.amount.scripts.OnEnterPressed(ui.amount)
+            assert.are.equal(6, lists:Get(id).items[1].count)
+            assert.are.equal("6× item 100", tab.nodes[1].text)
+            ui.amount:SetText("")
+            ui.amount.scripts.OnTextChanged(ui.amount)
+            ui.amount.scripts.OnEnterPressed(ui.amount)
+            assert.is_nil(lists:Get(id).items[1].count)
+        end)
+
+        it("keeps the typed amount on the item of an unsaved list until Save", function()
+            emitTemp()
+            tab:Select_("300")
+            ui.amount:SetText("9")
+            ui.amount.scripts.OnTextChanged(ui.amount)
+            ui.amount.scripts.OnEnterPressed(ui.amount)
+            assert.are.equal(9, tab.temp.items[3].count)
+            assert.are.same({}, lists:List())
+        end)
+
+        it("does not store a count when the user typed nothing", function()
+            local id = lists:Create("Saved", { { itemID = 100 } })
+            tab:SelectList(id)
+            tab:Select_("100")
+            ui.amount.scripts.OnEnterPressed(ui.amount)
+            assert.is_nil(lists:Get(id).items[1].count)
+        end)
+    end)
+
     describe("Flipside.SearchListOpen", function()
         local id
         before_each(function()

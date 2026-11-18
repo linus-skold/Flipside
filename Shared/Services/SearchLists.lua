@@ -2,7 +2,8 @@ local _, ns = ...
 
 -- Saved named search lists: a list is a name and an array of items for a multi-item live search.
 -- The lists are saved in the profile (key "searchLists"), next to the groups and the operations.
--- Item: { itemID, key (optional), name (optional) }. A list holds each item once (compared by key).
+-- Item: { itemID, key (optional), name (optional), count (optional) }. A list holds each item once (compared by key).
+-- count is a whole number above 0 (the units to buy). A list saved before count existed has none.
 
 local SearchLists = {}
 ns.SearchLists = SearchLists
@@ -14,6 +15,8 @@ local READ_ONLY = "Settings are read-only; the change is not saved."
 
 SearchLists.EVENT_OPEN = "Flipside.SearchListOpen"
 SearchLists.EVENT_CHANGED = "Flipside.SearchListsChanged"
+-- Open a list that is not saved: (name, items, autoSearch). The Buying tab shows it with a Save button.
+SearchLists.EVENT_TEMP = "Flipside.SearchListTemp"
 
 local Store = {}
 Store.__index = Store
@@ -23,7 +26,15 @@ local function trim(text)
 end
 
 local function copyItem(item)
-    return { itemID = item.itemID, key = item.key, name = item.name }
+    return { itemID = item.itemID, key = item.key, name = item.name, count = item.count }
+end
+
+-- Returns count if it is a whole number above 0, else nil.
+local function cleanCount(count)
+    if type(count) == "number" and count >= 1 and count % 1 == 0 then
+        return count
+    end
+    return nil
 end
 
 -- Returns a clean copy of an item, or nil and a text.
@@ -46,7 +57,7 @@ local function cleanItem(item)
     end
     key = key or string.format("%d", itemID)
     local name = type(item.name) == "string" and item.name ~= "" and item.name or nil
-    return { itemID = itemID, key = key, name = name }
+    return { itemID = itemID, key = key, name = name, count = cleanCount(item.count) }
 end
 
 local function cleanItems(items)
@@ -144,7 +155,7 @@ function Store:List()
     return out
 end
 
--- Returns { id, name, items } (a copy), or nil.
+-- Returns { id, name, items } (a copy), or nil. An item is { itemID, key, name, count }; count can be nil.
 function Store:Get(id)
     local list = self:_Data().lists[id]
     if not list then
@@ -242,6 +253,21 @@ function Store:AddItem(id, item)
             end
         end
         list.items[#list.items + 1] = clean
+        return true
+    end)
+end
+
+-- Set the count of the item at a place of a list. A count that is not a whole number above 0 clears it.
+function Store:SetCount(id, index, count)
+    return self:_Change(function(data)
+        local list = data.lists[id]
+        if not list then
+            return nil, "The list does not exist."
+        end
+        if type(index) ~= "number" or not list.items[index] then
+            return nil, "The list has no item at this place."
+        end
+        list.items[index].count = cleanCount(count)
         return true
     end)
 end

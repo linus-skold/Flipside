@@ -1,7 +1,7 @@
 local manifest = require("Tests.manifest")
 
 describe("RecipeSearch", function()
-    local ns, bus, deps, calls, said, page, form, recipeInfo, schematic, button, lists, buying, ahOpen, hooks, built
+    local ns, bus, deps, calls, said, page, form, recipeInfo, schematic, button, buying, ahOpen, hooks, built
 
     -- A Blizzard frame fake: writing a field raises an error (taint rule).
     local function guarded(fields)
@@ -42,7 +42,7 @@ describe("RecipeSearch", function()
                 return schematic
             end,
             itemName = function(id) return "Item" .. id end,
-            lists = function() return lists end,
+            craftAmount = function() return 1 end,
             buyingTab = function() return buying end,
             isAuctionHouseOpen = function() return ahOpen end,
             openEvent = "AH_OPEN",
@@ -64,12 +64,12 @@ describe("RecipeSearch", function()
         return d
     end
 
-    local function slot(reagentType, ids)
+    local function slot(reagentType, ids, quantity)
         local reagents = {}
         for _, id in ipairs(ids) do
             reagents[#reagents + 1] = { itemID = id }
         end
-        return { reagentType = reagentType, reagents = reagents }
+        return { reagentType = reagentType, reagents = reagents, quantityRequired = quantity }
     end
 
     before_each(function()
@@ -82,8 +82,8 @@ describe("RecipeSearch", function()
         recipeInfo = { recipeID = 100, name = "Healing Potion", isRecraft = false }
         schematic = {
             reagentSlotSchematics = {
-                slot(1, { 11 }),
-                slot(1, { 21, 22, 23 }),
+                slot(1, { 11 }, 2),
+                slot(1, { 21, 22, 23 }, 3),
                 slot(0, { 31 }),
                 slot(2, { 41 }),
                 slot(1, { 11 }),
@@ -92,20 +92,26 @@ describe("RecipeSearch", function()
         }
         form = guarded({ GetRecipeInfo = function() return recipeInfo end })
         page = guarded({ SchematicForm = form, CreateAllButton = guarded({}) })
-        lists = {
-            Upsert = function(_, name, items)
-                calls[#calls + 1] = { "upsert", name, items }
-                return "L1"
-            end,
-        }
         buying = { Select = function() calls[#calls + 1] = { "select" } end }
-        bus:Subscribe("Flipside.SearchListOpen", "spec", function(event, id, flag)
-            calls[#calls + 1] = { "emit", event, id, flag }
+        bus:Subscribe("Flipside.SearchListTemp", "spec", function(event, name, items, flag)
+            calls[#calls + 1] = { "emit", event, name, items, flag }
+        end)
+        bus:Subscribe("Flipside.SearchListOpen", "spec", function()
+            calls[#calls + 1] = { "open" }
         end)
     end)
 
     local function click()
         button.scripts.OnClick()
+    end
+
+    local function emitted()
+        for _, call in ipairs(calls) do
+            if call[1] == "emit" then
+                return call
+            end
+        end
+        return nil
     end
 
     describe("Reagents", function()
@@ -117,6 +123,21 @@ describe("RecipeSearch", function()
             end
             assert.are.same({ 11, 21, 22, 23 }, ids)
             assert.are.equal("N21", items[2].name)
+        end)
+
+        it("gives each item the count of its slot, and adds the counts of an item in two slots (2 and 1)", function()
+            local items = ns.RecipeSearch.Reagents(schematic, nil, 1)
+            assert.are.same({ 3, 3, 3, 3 }, { items[1].count, items[2].count, items[3].count, items[4].count })
+        end)
+
+        it("multiplies the counts by the craft amount", function()
+            local items = ns.RecipeSearch.Reagents(schematic, nil, 5)
+            assert.are.same({ 15, 15, 15, 15 }, { items[1].count, items[2].count, items[3].count, items[4].count })
+        end)
+
+        it("uses 1 for a slot with no quantity and for a bad amount", function()
+            local items = ns.RecipeSearch.Reagents({ reagentSlotSchematics = { slot(1, { 5 }) } }, nil, "x")
+            assert.are.equal(1, items[1].count)
         end)
 
         it("uses a placeholder name when the name is not known", function()
@@ -208,18 +229,26 @@ describe("RecipeSearch", function()
 
     describe("click", function()
         before_each(function()
-            deps = makeDeps()
-            ns.RecipeSearch.Attach(deps)
+            deps = ns.RecipeSearch.Attach(makeDeps())
         end)
 
-        it("saves the list, emits the open event and opens the Buying tab", function()
+        it("stores nothing, emits the unsaved list with the counts and opens the Buying tab", function()
             click()
             assert.are.same({ "schematic", 100, false }, calls[1])
-            assert.are.equal("upsert", calls[2][1])
-            assert.are.equal("Recipe: Healing Potion", calls[2][2])
-            assert.are.equal(4, #calls[2][3])
-            assert.are.same({ "emit", "Flipside.SearchListOpen", "L1", true }, calls[3])
-            assert.are.same({ "select" }, calls[4])
+            local call = emitted()
+            assert.are.equal("Flipside.SearchListTemp", call[2])
+            assert.are.equal("Recipe: Healing Potion", call[3])
+            assert.are.equal(4, #call[4])
+            assert.are.equal(3, call[4][1].count)
+            assert.are.equal(3, call[4][2].count)
+            assert.is_true(call[5])
+            assert.are.same({ "select" }, calls[#calls])
+        end)
+
+        it("multiplies the counts by the craft amount of the page", function()
+            deps.craftAmount = function() return 5 end
+            click()
+            assert.are.equal(15, emitted()[4][1].count)
         end)
 
         it("passes the recraft flag", function()
@@ -228,12 +257,13 @@ describe("RecipeSearch", function()
             assert.are.same({ "schematic", 100, true }, calls[1])
         end)
 
-        it("saves the list but does not open the tab when the Auction House is closed", function()
+        it("does not open the tab when the Auction House is closed", function()
             ahOpen = false
             click()
-            assert.are.equal("upsert", calls[2][1])
-            assert.are.equal("emit", calls[3][1])
-            assert.is_nil(calls[4])
+            assert.is_not_nil(emitted())
+            for _, call in ipairs(calls) do
+                assert.is_not.equal("select", call[1])
+            end
         end)
 
         it("shows the tooltip text", function()
@@ -243,22 +273,15 @@ describe("RecipeSearch", function()
             assert.is_false(deps.tooltip.shown)
         end)
 
-        it("prints one line and does nothing when the list module is missing", function()
-            lists = nil
-            click()
-            assert.are.equal(1, #said)
-            assert.are.equal(1, #calls)
-        end)
-
         it("prints one line when the recipe has no reagent", function()
             schematic = { reagentSlotSchematics = {} }
             click()
             assert.are.equal(1, #said)
-            assert.is_nil(calls[2])
+            assert.is_nil(emitted())
         end)
 
-        it("reports an error from the list module", function()
-            lists = { Upsert = function() error("boom") end }
+        it("reports an error from the schematic read", function()
+            deps.getSchematic = function() error("boom") end
             click()
             assert.is_truthy(said[1]:find("boom"))
         end)
@@ -267,6 +290,7 @@ describe("RecipeSearch", function()
             recipeInfo = nil
             click()
             assert.are.equal(0, #calls)
+            assert.is_nil(emitted())
             assert.are.equal(0, #said)
         end)
     end)

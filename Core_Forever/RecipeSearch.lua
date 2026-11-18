@@ -1,7 +1,8 @@
 local _, ns = ...
 
 -- WoW: Forever profession helper. It adds a "Search AH" button to the Blizzard crafting page.
--- The click saves the basic reagents of the selected recipe as a search list and opens it in the Buying tab.
+-- The click opens the basic reagents of the selected recipe, with their amounts, as an unsaved list in the Buying tab.
+-- The click stores nothing. The user saves the list in the Buying tab (Save button).
 -- It only reads Blizzard frames (taint). The button is a child of the crafting page and anchors to it.
 local RecipeSearch = {}
 ns.RecipeSearch = RecipeSearch
@@ -9,7 +10,7 @@ ns.RecipeSearch = RecipeSearch
 local OWNER = "Flipside.RecipeSearch"
 local ADDON = "Blizzard_Professions"
 local LIST_PREFIX = "Recipe: "
-local OPEN_EVENT = "Flipside.SearchListOpen"
+local TEMP_EVENT = "Flipside.SearchListTemp"
 local BUTTON_TEMPLATE = "UIPanelButtonTemplate"
 local BASIC = 1 -- Enum.CraftingReagentType.Basic (ProfessionConstantsDocumentation.lua:203)
 -- The button sits above the Create All button of the crafting page (Blizzard_ProfessionsCrafting.lua:268).
@@ -17,10 +18,12 @@ local BASIC = 1 -- Enum.CraftingReagentType.Basic (ProfessionConstantsDocumentat
 local LAYOUT = { width = 100, height = 22, x = 0, y = 4 }
 local TEXT = "Search the reagents of this recipe on the Auction House"
 
--- Returns the basic reagent items of a schematic as a list of { itemID, name }, without duplicates.
+-- Returns the basic reagent items of a schematic as a list of { itemID, name, count }, without duplicates.
 -- Modifying, finishing and automatic slots give none. A slot with quality tiers gives each tier.
+-- count is quantityRequired of the slot times amount (a whole number, 1 if missing). An item in two slots adds up.
 -- itemName(itemID) is optional and returns the name or nil.
-function RecipeSearch.Reagents(schematic, itemName)
+function RecipeSearch.Reagents(schematic, itemName, amount)
+    amount = (type(amount) == "number" and amount >= 1) and math.floor(amount) or 1
     local items, seen = {}, {}
     local slots = type(schematic) == "table" and schematic.reagentSlotSchematics or nil
     if type(slots) ~= "table" then
@@ -29,12 +32,19 @@ function RecipeSearch.Reagents(schematic, itemName)
     local basic = Enum and Enum.CraftingReagentType and Enum.CraftingReagentType.Basic or BASIC
     for _, slot in ipairs(slots) do
         if slot.reagentType == basic and type(slot.reagents) == "table" then
+            local required = type(slot.quantityRequired) == "number" and slot.quantityRequired >= 1
+                and math.floor(slot.quantityRequired) or 1
             for _, reagent in ipairs(slot.reagents) do
                 local itemID = reagent.itemID
-                if type(itemID) == "number" and not seen[itemID] then
-                    seen[itemID] = true
-                    local name = itemName and itemName(itemID) or nil
-                    items[#items + 1] = { itemID = itemID, name = name or ("item:" .. itemID) }
+                if type(itemID) == "number" then
+                    if seen[itemID] then
+                        seen[itemID].count = seen[itemID].count + required * amount
+                    else
+                        local name = itemName and itemName(itemID) or nil
+                        local item = { itemID = itemID, name = name or ("item:" .. itemID), count = required * amount }
+                        seen[itemID] = item
+                        items[#items + 1] = item
+                    end
                 end
             end
         end
@@ -43,13 +53,13 @@ function RecipeSearch.Reagents(schematic, itemName)
 end
 
 -- Returns the list name and the items of a recipe info, or nil when the recipe has no ID.
-function RecipeSearch.Collect(recipeInfo, getSchematic, itemName)
+function RecipeSearch.Collect(recipeInfo, getSchematic, itemName, amount)
     if type(recipeInfo) ~= "table" or type(recipeInfo.recipeID) ~= "number" then
         return nil
     end
     local schematic = getSchematic(recipeInfo.recipeID, recipeInfo.isRecraft == true)
     local name = LIST_PREFIX .. tostring(recipeInfo.name or recipeInfo.recipeID)
-    return name, RecipeSearch.Reagents(schematic, itemName)
+    return name, RecipeSearch.Reagents(schematic, itemName, amount)
 end
 
 local function defaultItemName(itemID)
@@ -70,8 +80,13 @@ local function defaultDeps()
             return C_TradeSkillUI.GetRecipeSchematic(recipeID, isRecraft)
         end,
         itemName = defaultItemName,
-        lists = function()
-            return ns.searchLists
+        -- The craft amount of the profession window (the box next to Create All). 1 if the page gives none.
+        craftAmount = function(page)
+            local box = page and page.CreateMultipleInputBox
+            local ok, value = pcall(function()
+                return box and box:GetValue()
+            end)
+            return ok and type(value) == "number" and value >= 1 and value or 1
         end,
         buyingTab = function()
             return ns.auctionTabs and ns.auctionTabs.buying or nil
@@ -92,9 +107,9 @@ local function defaultDeps()
     }
 end
 
--- Save the list of the selected recipe and open it. Returns the list ID, or nil.
-local function search(deps, recipeInfo)
-    local name, items = RecipeSearch.Collect(recipeInfo, deps.getSchematic, deps.itemName)
+-- Open the list of the selected recipe, unsaved. Returns true, or nil.
+local function search(deps, recipeInfo, amount)
+    local name, items = RecipeSearch.Collect(recipeInfo, deps.getSchematic, deps.itemName, amount)
     if not name then
         return nil
     end
@@ -102,20 +117,14 @@ local function search(deps, recipeInfo)
         deps.say("this recipe has no reagent to search for")
         return nil
     end
-    local lists = deps.lists()
-    if not lists then
-        deps.say("search lists are not available this session")
-        return nil
-    end
-    local id = lists:Upsert(name, items)
-    deps.bus:Emit(OPEN_EVENT, id, true)
+    deps.bus:Emit(TEMP_EVENT, name, items, true)
     if deps.isAuctionHouseOpen() then
         local tab = deps.buyingTab()
         if tab and tab.Select then
             tab:Select()
         end
     end
-    return id
+    return true
 end
 
 local function build(deps, page)
@@ -139,7 +148,7 @@ local function build(deps, page)
         button:SetShown(info ~= nil and type(info.recipeID) == "number" and deps.isAuctionHouseOpen() == true)
     end
     button:SetScript("OnClick", function()
-        local ok, err = pcall(search, deps, recipeInfo())
+        local ok, err = pcall(search, deps, recipeInfo(), deps.craftAmount and deps.craftAmount(page) or 1)
         if not ok then
             deps.say("recipe search failed: " .. tostring(err))
         end
