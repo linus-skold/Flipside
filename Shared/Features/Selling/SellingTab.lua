@@ -89,6 +89,7 @@ local LEVEL_WIDTH = { wide = 270, tight = 200 }
 local LEVEL_MAX = 40 -- most rows of the level list
 local COMPACT = { itemWidth = 190, lowestWidth = 110 }
 local SELECT_TEXT = "Buy selected"
+local JUMP_PERCENT = 10 -- a quote this many percent above the list estimate shows as a price jump
 local LEVEL_COLUMNS = {
     { key = "price", title = "Unit price", width = 84, number = true },
     { key = "available", title = "Available", width = 56, number = true },
@@ -607,7 +608,7 @@ function Tab:_Layout()
     end
 end
 
--- The width of the level list: wide when the content is wide (Forever), else tight (TBC).
+-- The width of the level list: wide when the content is 760 px or more (Forever and TBC), else tight (a fallback).
 function Tab:_LevelWidth()
     local content = self.content
     local width = content and content.GetWidth and content:GetWidth() or 0
@@ -628,6 +629,7 @@ function Tab:_ApplyColumns()
     end
     LEVEL_OPTIONS.gap = set.gap
     self.colVersion = (self.colVersion or 0) + 1
+    self.appliedWidth = self:_LevelWidth()
     local ui = self.ui
     if ui and ui.headers then
         ui.levelHeaderOptions.gap = set.gap
@@ -656,9 +658,7 @@ function Tab:SetLevels(on)
         self.ui.levels:SetText(on and "Hide" or "Levels")
         self.ui.levelHeader.frame:SetShown(on)
         self.ui.levelList.frame:SetShown(on)
-        self:_Layout()
-        self.ui.tree:Refresh()
-        self:_Update()
+        self:_Update() -- it places the frames and draws the tree again
     end
 end
 
@@ -2428,7 +2428,7 @@ function Tab:BuyLowest()
     if stale then
         -- The list is for another item: this click only reads the prices. The next click buys.
         self:_Research(entry)
-        self:_ShowBusy("Prices are read. Click " .. BUY_TEXT .. " again.")
+        self:_ShowBusy("Prices are read. Click " .. (self.levelSel ~= nil and SELECT_TEXT or BUY_TEXT) .. " again.")
         return false, reason
     end
     if not cover then
@@ -2455,7 +2455,7 @@ function Tab:_StartBuy(entry, cover)
         return true
     end
     local buy = { entry = buyEntry, source = entry, level = level, row = level.rows[1], phase = "quoting",
-        itemID = itemID, quantity = cover.quantity, complete = cover.complete }
+        itemID = itemID, quantity = cover.quantity, complete = cover.complete, estimate = cover.cost }
     local ok, err = pcall(self.deps.client.StartCommodityPurchase, itemID, buy.quantity)
     if not ok then
         self.deps.buyLog:Add(buyEntry, "buy failed", tostring(err))
@@ -2527,6 +2527,11 @@ function Tab:_OnBuyQuote(unit, total)
     local first = buy.phase == "quoting"
     buy.phase = "quoted"
     buy.unit, buy.total = unit, total
+    -- A quote more than 10% above the estimate from the list shows as a price jump (the box turns red).
+    buy.jump = nil
+    if buy.estimate and buy.estimate > 0 and total > buy.estimate * (1 + JUMP_PERCENT / 100) then
+        buy.jump = { prev = buy.estimate / buy.quantity, percent = (total / buy.estimate - 1) * 100 }
+    end
     buy.left = self.deps.client.QuoteSecondsLeft()
     self:_ShowBuyConfirm()
     if first then
@@ -2611,7 +2616,9 @@ end
 function Tab:_BuySucceed(buy)
     self.buy, self.live, self.levelSel = nil, nil, nil
     log("info", string.format("bought %s of item %s, total %s", buy.quantity, buy.itemID, buy.total))
-    self.deps.buyLog:Add(buy.entry, string.format("bought %d at %s", buy.quantity, BuyFlow.Money(buy.level.unitPrice)),
+    -- The price is the unit price of the server quote (a commodity buy can cover many levels), or the auction price.
+    local unit = buy.unit or buy.level.unitPrice
+    self.deps.buyLog:Add(buy.entry, string.format("bought %d at %s", buy.quantity, BuyFlow.Money(unit)),
         "total " .. BuyFlow.Money(buy.total))
     closeBuyBox()
     self:_AfterStep()
@@ -3373,7 +3380,10 @@ function Tab:_BuildContent()
     ui.buyLowest:SetScript("OnClick", function()
         self:BuyLowest()
     end)
-    Kit.Tooltip(ui.buyLowest, BUY_TEXT, { "Buys the cheapest auction that is not yours.",
+    Kit.Tooltip(ui.buyLowest, BUY_TEXT .. " / " .. SELECT_TEXT, {
+        BUY_TEXT .. " buys the cheapest auction that is not yours.",
+        "With a level selected in the Levels list, the button reads " .. SELECT_TEXT .. ".",
+        "A commodity buy then takes all units up to that level.",
         "A box asks you to confirm the final price first." })
     local depositLabel = rline("small", 164, 6, 156)
     depositLabel:SetText("Deposit:")
@@ -3415,7 +3425,8 @@ function Tab:_BuildContent()
     ui.levelList.frame:Hide()
     if content.HookScript then
         content:HookScript("OnSizeChanged", function()
-            if self.levelsOn then
+            -- Only a change of the wide or tight choice needs new columns; the anchors follow the size.
+            if self.levelsOn and self:_LevelWidth() ~= self.appliedWidth then
                 self:_ApplyColumns()
                 self:_Layout()
                 self:_Update()
