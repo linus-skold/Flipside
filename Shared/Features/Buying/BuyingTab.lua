@@ -3548,7 +3548,13 @@ function Tab:Mount(parent, api)
         end)
         bus:Subscribe("Flipside.SearchListsChanged", OWNER, function()
             if self.source == "lists" then
-                self:RefreshList()
+                if self.listID and not self.deps.searchLists:Get(self.listID) then
+                    -- The shown list was deleted somewhere else: show the first list, as after a delete here.
+                    self.listID = nil
+                    self:SetSource("lists")
+                else
+                    self:RefreshList()
+                end
             end
         end)
         bus:Subscribe("Flipside.SearchListTemp", OWNER, function(_, name, items, autoSearch)
@@ -3565,7 +3571,11 @@ function Tab:Mount(parent, api)
         if ui and ui.searchInput and ui.searchInput:HasFocus() and type(text) == "string" then
             ui.searchInput:Insert(text)
         elseif type(text) == "string" then
-            self:SearchLink(text)
+            -- Another edit box (for example the add box of the Lists page) has the focus: it takes the link.
+            local focus = _G.GetCurrentKeyBoardFocus and _G.GetCurrentKeyBoardFocus()
+            if focus == nil then
+                self:SearchLink(text)
+            end
         end
     end
     if hooksecurefunc and not self.linkHooked then

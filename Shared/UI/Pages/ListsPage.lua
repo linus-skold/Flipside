@@ -358,8 +358,8 @@ function ListsPage.Build(content, deps)
     page.margin.frame:SetPoint("TOPLEFT", content, "TOPLEFT", MARGIN_X, -44)
     page.margin.frame:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", 0, 26)
     craftWidget(page.margin.frame)
-    page.marginNote = craftWidget(Kit.Label(content,
-        "(est.) = scan market value. No live search of this session.", "small"))
+    page.marginNote = Kit.Label(content,
+        "(est.) = scan market value. No live search of this session.", "small")
     page.marginNote:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", MARGIN_X, 6)
 
     -- Actions. Each one changes the store; the change event (or the Refresh at the end) draws the page again.
@@ -385,21 +385,25 @@ function ListsPage.Build(content, deps)
         return true
     end
 
-    function page.Rename(name)
-        if not page.selected then
+    -- Rename a list: the list with this id, or the selected list.
+    function page.Rename(name, id)
+        id = id or page.selected
+        if not id then
             return report(nil, "pick a list first")
         end
-        local ok, err = report(store:Rename(page.selected, name))
+        local ok, err = report(store:Rename(id, name))
         page.Refresh()
         return ok, err
     end
 
-    function page.Delete()
-        if not page.selected then
+    -- Delete a list: the list with this id, or the selected list.
+    function page.Delete(id)
+        id = id or page.selected
+        if not id then
             return report(nil, "pick a list first")
         end
-        local ok, err = report(store:Delete(page.selected))
-        if ok then
+        local ok, err = report(store:Delete(id))
+        if ok and id == page.selected then
             page.selected, page.itemSel, page.resultSel = nil, nil, nil
         end
         page.Refresh()
@@ -430,7 +434,7 @@ function ListsPage.Build(content, deps)
             label = "New name",
             text = saved.name,
             onOK = function(name)
-                local ok, err = page.Rename(name)
+                local ok, err = page.Rename(name, saved.id)
                 return not ok and err or nil
             end,
         })
@@ -443,7 +447,7 @@ function ListsPage.Build(content, deps)
             return
         end
         Kit.Confirm(DELETE_DIALOG, "Delete the list " .. saved.name .. "?", function()
-            page.Delete()
+            page.Delete(saved.id)
         end)
     end
 
@@ -612,6 +616,7 @@ function ListsPage.Build(content, deps)
             page.resultInput:SetText(rangeText(result.min, result.max))
         end
         local margin = page.Margin()
+        page.marginNote:SetShown(margin ~= nil and margin.estimate == true)
         page.margin:SetData(margin and ListsPage.MarginRows(margin, saved, nameOf) or {})
         if margin and not page.craftsInput:HasFocus() then
             page.craftsInput:SetText(tostring(page.crafts))

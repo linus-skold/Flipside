@@ -895,6 +895,27 @@ describe("BuyingTab search lists", function()
             assert.are.equal(2, tab.crafts)
         end)
 
+        it("leaves a shift-clicked link to another edit box that has the focus", function()
+            local hooked
+            _G.ChatEdit_InsertLink = function() end
+            _G.hooksecurefunc = function(name, fn)
+                hooked = hooked or (name == "ChatEdit_InsertLink" and fn) or nil
+            end
+            local other = mount()
+            local searched = 0
+            other.SearchLink = function()
+                searched = searched + 1
+            end
+            local link = "|cff1eff00|Hitem:2589::::::::60:::::|h[Linen Cloth]|h|r"
+            _G.GetCurrentKeyBoardFocus = function() return {} end
+            hooked(link)
+            assert.are.equal(0, searched)
+            _G.GetCurrentKeyBoardFocus = function() return nil end
+            hooked(link)
+            assert.are.equal(1, searched)
+            _G.GetCurrentKeyBoardFocus, _G.ChatEdit_InsertLink = nil, nil
+        end)
+
         it("gives the live price of this session to the Lists page", function()
             assert.is_nil(ns.BuyingTab.LivePrice("100", 4))
             searchMaterial()

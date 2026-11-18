@@ -1311,7 +1311,7 @@ Gold, silver and copper coin amounts keep the game's own coin colours so money r
   - The account setting `ui.minimapHidden` (default false) hides the button. `/flip minimap` changes the setting and prints the new state.
   - The button is a Kit widget, `Kit.CreateMinimapButton`. It takes the icon, the tooltip lines and the callbacks as arguments. It uses no library (D18).
 - **Window pages.** The order of the tabs is Ledger, Groups, Operations, Lists, Tooltip, Formulas, About (changed 2026-11-18; the Lists page is point 24c of section 5.3). The Ledger page is the first page. Formulas and About were in a Settings view behind a cog button. The cog and the Settings view are removed. The seven tabs fit in the 800 px minimum width on both clients (the Kit shrinks them evenly if they do not).
-- In-game checklist (window tabs): the title bar has no cog. The tab row shows six tabs. Formulas and About open as pages. Check this on both clients at the minimum width; no tab overlaps another.
+- In-game checklist (window tabs): the title bar has no cog. The tab row shows seven tabs. Formulas and About open as pages. Check this on both clients at the minimum width; no tab overlaps another.
 - **Window position.** The window keeps its last place on the screen.
   - The Kit window takes the option `savePosition = { get, set }`. When a drag stops, it calls `set` with `{ point, relativePoint, x, y }`. On create, it reads the value with `get`.
   - The account setting `ui.windowPosition` holds the value. Flipside does not use the client layout cache for this.
