@@ -195,6 +195,59 @@ describe("CraftListMargin", function()
         end)
     end)
 
+    describe("Compute with the mode oneOf", function()
+        local list
+        before_each(function()
+            -- A: 1-2 for 100 each. B: 2-3 for 1000 each. The materials cost 450.
+            prices.result = { ["9"] = 100, ["8"] = 1000 }
+            list = {
+                materials = { { key = "1", itemID = 1, count = 4 }, { key = "2", itemID = 2 } },
+                results = { { key = "9", itemID = 9, name = "A", min = 1, max = 2 },
+                    { key = "8", itemID = 8, name = "B", min = 2, max = 3 } },
+                resultMode = "oneOf",
+            }
+        end)
+
+        it("takes the lowest min of one result, the highest max of one result and the mean of the avg", function()
+            local out = Margin.Compute(list, options())
+            assert.are.equal("oneOf", out.resultMode)
+            assert.same({ min = 95, avg = 1258.5, max = 2850 }, out.value)
+            assert.same({ min = 1, max = 2 }, out.pick)
+            assert.same({ min = -355, avg = 808.5, max = 2400 }, out.margin)
+            assert.are.equal("B", out.results[out.pick.max].name)
+        end)
+
+        it("names the result that sets the min or the max, whichever it is", function()
+            prices.result = { ["9"] = 1000, ["8"] = 100 }
+            local out = Margin.Compute(list, options())
+            assert.same({ min = 2, max = 1 }, out.pick)
+            assert.same({ min = 190, avg = 831, max = 1900 }, out.value)
+        end)
+
+        it("scales with the crafts", function()
+            local out = Margin.Compute(list, options({ crafts = 2 }))
+            assert.same({ min = 190, avg = 2517.5, max = 5700 }, out.value)
+            assert.are.equal(900, out.cost)
+        end)
+
+        it("gives no value and no margin if a result has no price", function()
+            prices.result["8"] = nil
+            local out = Margin.Compute(list, options())
+            assert.is_false(out.valueKnown)
+            assert.is_nil(out.margin)
+            assert.is_nil(out.percent)
+        end)
+
+        it("keeps the sum of the results in the mode all, and for a list with no mode", function()
+            for _, mode in ipairs({ "all", "none" }) do
+                list.resultMode = mode ~= "none" and mode or nil
+                local out = Margin.Compute(list, options())
+                assert.are.equal("all", out.resultMode)
+                assert.same({ min = 95 + 1900, avg = 142 + 2375, max = 190 + 2850 }, out.value)
+            end
+        end)
+    end)
+
     describe("the scan prices", function()
         it("prices the needed units of a material at ScanMarket, as an estimate", function()
             assert.are.same({ 1200, true }, { Margin.ScanMaterialPrice({ scanMarket = 300 }, 4) })

@@ -127,7 +127,8 @@ function ListsPage.MarginRows(margin, saved, nameOf)
     end
     local cost = margin.costKnown and money(margin.cost) or ("? (" .. money(margin.cost) .. " priced)")
     add("total", "Total cost", cost .. (margin.estimate and " (est.)" or ""))
-    add("head", "Results (value after the 5% cut)")
+    local oneOf = margin.resultMode == "oneOf"
+    add("head", (oneOf and "One of these results" or "Results") .. " (value after the 5% cut)")
     if #margin.results == 0 then
         add("item", "Add a result to see the margin")
         return rows
@@ -137,7 +138,13 @@ function ListsPage.MarginRows(margin, saved, nameOf)
             line.net and ("avg " .. money(line.net.avg)) or "no price")
     end
     for _, name in ipairs(YIELDS) do
-        add("total", "Value at " .. name .. " yield", margin.valueKnown and money(margin.value[name]) or "?")
+        local left = "Value at " .. name .. " yield"
+        if oneOf and margin.valueKnown then
+            local pick = name ~= "avg" and margin.results[margin.pick[name]] or nil
+            left = pick and (name == "min" and "Min: " or "Max: ") .. pick[name] .. "× "
+                .. nameOf(saved.results[margin.pick[name]]) or "Avg: mean of the results"
+        end
+        add("total", left, margin.valueKnown and money(margin.value[name]) or "?")
     end
     for _, name in ipairs(YIELDS) do
         local right = "?"
@@ -155,7 +162,7 @@ end
 -- and livePrice(key, needed) (a live AH cost from this session; default ns.BuyingTab.LivePrice), all optional.
 -- Returns the page: Refresh(), Select(id), New(name, kind), Rename(name), Delete(), AddItem(text),
 -- SetCount(index, text), RemoveItem(index), AddResult(text, amount), SetResult(index, text), RemoveResult(index),
--- SetCrafts(text) and Margin().
+-- SetCrafts(text), SetResultMode(mode) and Margin().
 function ListsPage.Build(content, deps)
     local Kit = ns.Kit
     local store = deps.searchLists
@@ -239,7 +246,8 @@ function ListsPage.Build(content, deps)
         if not (saved and saved.kind == "craft") then
             return nil
         end
-        return ns.CraftListMargin.Compute({ materials = saved.items, results = saved.results }, {
+        return ns.CraftListMargin.Compute({ materials = saved.items, results = saved.results,
+            resultMode = saved.resultMode }, {
             crafts = page.crafts, materialPrice = materialPrice, resultPrice = resultPrice,
         }), saved
     end
@@ -331,6 +339,16 @@ function ListsPage.Build(content, deps)
         page.RemoveResult(page.resultSel)
     end), EDIT_X + 156, 348))
 
+    page.oneOfCheck = craftWidget(place(Kit.Check(content, "Only one result drops", function(checked)
+        page.SetResultMode(checked and "oneOf" or "all")
+    end), EDIT_X - 4, 372))
+    Kit.Tooltip(page.oneOfCheck, "Only one result drops", {
+        "Use this if a craft gives exactly one of the results, not all of them.",
+        "The min value is the lowest value that one result gives at its min amount.",
+        "The max value is the highest value that one result gives at its max amount.",
+        "The avg value is the mean of the avg values of the results.",
+    })
+
     page.status = Kit.Label(content, "", "small")
     page.status:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", EDIT_X, 4)
     page.status:SetWidth(EDIT_WIDTH)
@@ -372,6 +390,17 @@ function ListsPage.Build(content, deps)
         say("")
         page.Refresh()
         return true
+    end
+
+    -- Set how the results of the selected craft list drop: "all" or "oneOf". Returns true, or false and a text.
+    function page.SetResultMode(mode)
+        local saved = current()
+        if not saved then
+            return report(false, "pick a list first")
+        end
+        local ok, err = store:SetResultMode(saved.id, mode)
+        page.Refresh()
+        return report(ok, err)
     end
 
     -- Make a list. kind is "craft" for a craft list, else a search list. Returns true, or false and a text.
@@ -588,6 +617,9 @@ function ListsPage.Build(content, deps)
         page.addInput:SetEnabled(enabled)
         page.addItem:SetEnabled(enabled)
         page.addResult:SetEnabled(enabled and craft)
+        local oneOf = craft and saved.resultMode == "oneOf"
+        page.oneOfCheck:SetChecked(oneOf)
+        page.resultsLabel:SetText(oneOf and "One of these results" or "Results (amount made for each craft)")
         local items, results = {}, {}
         for index, item in ipairs(saved and saved.items or {}) do
             items[index] = { index = index, text = (item.count and (item.count .. "× ") or "") .. nameOf(item) }
