@@ -199,7 +199,8 @@ describe("BuyingTab search lists", function()
         end)
 
         it("shows a list that the Lists page deleted or renamed", function()
-            local id = lists:Create("Herbs", { { itemID = 100 } })
+            -- Item 200 is in no group, so its row shows the label of the list (item 100 shows its group path).
+            local id = lists:Create("Herbs", { { itemID = 200 } })
             tab:SelectList(id)
             lists:Rename(id, "Flowers")
             assert.are.equal(1, #tab.list)
