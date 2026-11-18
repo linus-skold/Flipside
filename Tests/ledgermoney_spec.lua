@@ -366,11 +366,15 @@ describe("LedgerMoney", function()
         end)
 
         it("records one item at its price when one item of a Silver Rod row of 40 is bought", function()
+            -- A new bus, so that the tracker of the outer before_each does not see the money change too.
+            bus = ns.EventBus.New({})
+            timers, records = {}, {}
             tracker = attach({
                 auctionInfo = function()
                     return { itemLink = "silverrod", buyoutAmount = 449, quantity = 40 }
                 end,
             })
+            bus:Emit("AUCTION_HOUSE_SHOW")
             calls("BuyItemAuction", 9, 449)
             tracker:OnBid(9)
             bus:Emit("AUCTION_HOUSE_PURCHASE_COMPLETED", 9)
