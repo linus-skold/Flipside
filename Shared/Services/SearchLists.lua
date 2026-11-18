@@ -25,16 +25,16 @@ local function trim(text)
     return (tostring(text or ""):gsub("^%s+", ""):gsub("%s+$", ""))
 end
 
-local function copyItem(item)
-    return { itemID = item.itemID, key = item.key, name = item.name, count = item.count }
-end
-
 -- Returns count if it is a whole number above 0, else nil.
 local function cleanCount(count)
     if type(count) == "number" and count >= 1 and count % 1 == 0 then
         return count
     end
     return nil
+end
+
+local function copyItem(item)
+    return { itemID = item.itemID, key = item.key, name = item.name, count = cleanCount(item.count) }
 end
 
 -- Returns a clean copy of an item, or nil and a text.

@@ -21,6 +21,7 @@ local TEXT = "Search the reagents of this recipe on the Auction House"
 -- Returns the basic reagent items of a schematic as a list of { itemID, name, count }, without duplicates.
 -- Modifying, finishing and automatic slots give none. A slot with quality tiers gives each tier.
 -- count is quantityRequired of the slot times amount (a whole number, 1 if missing). An item in two slots adds up.
+-- Only the first tier of a slot has the count. The other tiers have none, because the user buys one tier.
 -- itemName(itemID) is optional and returns the name or nil.
 function RecipeSearch.Reagents(schematic, itemName, amount)
     amount = (type(amount) == "number" and amount >= 1) and math.floor(amount) or 1
@@ -34,14 +35,17 @@ function RecipeSearch.Reagents(schematic, itemName, amount)
         if slot.reagentType == basic and type(slot.reagents) == "table" then
             local required = type(slot.quantityRequired) == "number" and slot.quantityRequired >= 1
                 and math.floor(slot.quantityRequired) or 1
-            for _, reagent in ipairs(slot.reagents) do
+            for tier, reagent in ipairs(slot.reagents) do
                 local itemID = reagent.itemID
+                local count = tier == 1 and required * amount or nil
                 if type(itemID) == "number" then
                     if seen[itemID] then
-                        seen[itemID].count = seen[itemID].count + required * amount
+                        if count then
+                            seen[itemID].count = (seen[itemID].count or 0) + count
+                        end
                     else
                         local name = itemName and itemName(itemID) or nil
-                        local item = { itemID = itemID, name = name or ("item:" .. itemID), count = required * amount }
+                        local item = { itemID = itemID, name = name or ("item:" .. itemID), count = count }
                         seen[itemID] = item
                         items[#items + 1] = item
                     end

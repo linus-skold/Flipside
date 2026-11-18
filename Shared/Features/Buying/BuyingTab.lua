@@ -995,7 +995,9 @@ function Tab:OpenTemp(name, items, autoSearch)
     end
     local copy = {}
     for index, item in ipairs(items) do
-        copy[index] = { itemID = item.itemID, key = item.key, name = item.name, count = item.count }
+        copy[index] = {
+            itemID = item.itemID, key = item.key or string.format("%d", item.itemID), name = item.name, count = item.count,
+        }
     end
     self:_DropSearch()
     self.temp = { name = tostring(name or ""), items = copy }
@@ -1141,7 +1143,8 @@ end
 -- stores it. An unsaved list keeps it until Save. Returns true, or false.
 function Tab:SetItemCount()
     local entry = self:_Selected()
-    if not (entry and entry.listIndex and self.source == "lists" and self.amountEdit and not self.amountBad) then
+    if not (entry and entry.listIndex and self.source == "lists" and not self.searchResults and self.amountEdit
+        and not self.amountBad) then
         return false
     end
     if self.temp and not self.listID then
