@@ -320,6 +320,8 @@ On TBC Anniversary the Flipside tab uses the Bids art of the Blizzard frame (ful
 10. Vendoring: never sell to a vendor an item whose `ScanMarket` is more than 2× its vendor price. Such items are listed for review. Buying default: maximum price = `scanmarket`.
 11. Group names have 1-40 characters after trimming, and are unique among sibling groups (case-insensitive). A tree has at most 8 levels below the Base group. The Base group cannot be renamed or deleted.
 12. Items are added from bags (select rows in the bag pane, then use the right-arrow button), by name search, or by link. Adding from AH search results comes with build step 6.
+    - **Grouped items are hidden (2026-11-18).** The bag pane hides each item that is in a group. An item is in a group if `GroupOf(key)` is not the Base group (same item key as the groups use, D20). Items that are only in Base do not count, because Base holds all items without a group. The pane also hides the items of the selected group. The check box "Show grouped items" (default off, a session value) shows the items of other groups again, each with the group name in grey, so the player can move them. The pane refreshes after each add, move or remove. If the bags hold items and all are hidden, the pane shows "All bag items are in groups".
+    - In-game check: put an item in a group. The item leaves the bag pane. Turn on "Show grouped items". The item comes back with the group name in grey. Add a bag item to the group with the right arrow. The row leaves the pane at once. Remove it with the left arrow. The row comes back.
 13. Profiles stay "Default" only in build step 4 (profile switching is Phase 2). Rules live in the profile scope.
 
 **Feedback decisions (2026-10-14)**
