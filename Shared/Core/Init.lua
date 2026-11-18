@@ -1914,6 +1914,7 @@ local function withMainWindow(action)
             itemCache = ns.itemCache,
             itemNameIndex = ns.itemNameIndex,
             ahNameSearch = ns.ahNameSearch,
+            searchLists = ns.searchLists,
             compile = function(text)
                 if not ns.formulaRun then
                     return nil, { message = "formulas are not available" }
@@ -1955,6 +1956,13 @@ end
 function ns.OpenMainWindow()
     withMainWindow(function(window)
         window:Toggle()
+    end)
+end
+
+-- Show the Flipside window on the Lists page, with the list id selected (id is optional).
+function ns.OpenListsPage(id)
+    withMainWindow(function(window)
+        window:OpenLists(id)
     end)
 end
 
@@ -2158,6 +2166,7 @@ openUI = function()
             end,
             readBags = ns.readBagStacks,
             searchLists = ns.searchLists,
+            openLists = ns.OpenListsPage,
             itemNameIndex = ns.itemNameIndex,
             ahNameSearch = ns.ahNameSearch,
             keyFor = ns.keyFor,

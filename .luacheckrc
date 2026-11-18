@@ -7,7 +7,7 @@ read_globals = {
     "ACCEPT",
     "CLOSE",
     "SAVE",
-    "GetCursorPosition",
+    "GetCursorPosition", "GetCurrentKeyBoardFocus",
     "AuctionHouseFrame",
     "hooksecurefunc",
     "PlaySound",

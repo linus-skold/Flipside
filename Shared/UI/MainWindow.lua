@@ -1,6 +1,6 @@
 local _, ns = ...
 
--- The Flipside window: page tabs along the bottom edge (Ledger, Groups, Operations, Tooltip, Formulas, About).
+-- The Flipside window: page tabs along the bottom edge (Ledger, Groups, Operations, Lists, Tooltip, Formulas, About).
 
 local MainWindow = {}
 ns.MainWindow = MainWindow
@@ -90,8 +90,8 @@ local function buildAbout(content, deps)
 end
 
 -- Create the window once. deps: rules, customSources, readBags, keyFor, subscribe, formulaRun, formulaSources,
--- itemCache, itemNameIndex, getVersionLine, guildSync ({ isEnabled, setEnabled }), windowPosition and windowSize
--- ({ get, set } for the saved place and size).
+-- itemCache, itemNameIndex, searchLists (the Lists page), getVersionLine, guildSync ({ isEnabled, setEnabled }),
+-- windowPosition and windowSize ({ get, set } for the saved place and size).
 function MainWindow.Create(deps)
     if instance then
         return instance
@@ -111,7 +111,7 @@ function MainWindow.Create(deps)
             set = deps.windowSize and deps.windowSize.set,
         },
     })
-    local tooltipPage, ledgerPage, justBuilt
+    local tooltipPage, ledgerPage, listsPage, justBuilt
     local pages = {}
     if ns.LedgerPage then
         table.insert(pages, {
@@ -149,6 +149,19 @@ function MainWindow.Create(deps)
     }
     for _, page in ipairs(rest) do
         table.insert(pages, page)
+    end
+    if ns.ListsPage then
+        table.insert(pages, {
+            key = "lists",
+            title = "Lists",
+            build = function(content)
+                if deps.searchLists then
+                    listsPage = ns.ListsPage.Build(content, deps)
+                else
+                    buildUnavailable(content)
+                end
+            end,
+        })
     end
     if ns.TooltipPage then
         table.insert(pages, {
@@ -194,6 +207,13 @@ function MainWindow.Create(deps)
                     tooltipPage.Refresh()
                 end
             end)
+        elseif page.key == "lists" then
+            -- Live prices and scan data change while the page is closed.
+            tabs.buttons[index]:HookScript("OnClick", function()
+                if listsPage and listsPage.Refresh then
+                    listsPage.Refresh()
+                end
+            end)
         elseif page.key == "ledger" then
             tabs.buttons[index]:HookScript("OnClick", openLedger)
             window:HookScript("OnShow", function()
@@ -221,6 +241,14 @@ function MainWindow.Create(deps)
         self.tabs:Select(key)
         if key == "ledger" and before ~= "ledger" and self.tabs:GetSelected() == "ledger" then
             openLedger()
+        end
+    end
+    -- Show the window on the Lists page. If id is a list, select it. The Buying tab uses it (Edit lists).
+    function win:OpenLists(id)
+        self:Show()
+        self:SelectPage("lists")
+        if listsPage and not (id and listsPage.Select(id)) then
+            listsPage.Refresh()
         end
     end
     function win:GetSelectedPage()

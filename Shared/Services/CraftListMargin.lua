@@ -45,6 +45,23 @@ function CraftListMargin.WalkLevels(levels, needed)
     return nil
 end
 
+-- The scan price of the needed units of a material: ScanMarket times the units, and true (it is an estimate).
+-- values is the output of ScanSources.Compute for the item, or nil. It gives nil if there is no ScanMarket.
+function CraftListMargin.ScanMaterialPrice(values, needed)
+    if type(values) == "table" and values.scanMarket then
+        return values.scanMarket * needed, true
+    end
+    return nil
+end
+
+-- The scan price of one unit of a result: ScanMarket, or ScanMin if there is no market value. Else nil.
+function CraftListMargin.ScanResultPrice(values)
+    if type(values) ~= "table" then
+        return nil
+    end
+    return values.scanMarket or values.scanMin
+end
+
 -- list: { materials = { { key, itemID, count } }, results = { { key, itemID, min, max } } }.
 -- A material with no count needs 1 unit. options:
 --   crafts: the number of crafts (a whole number, default 1). It scales the materials and the results.

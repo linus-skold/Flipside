@@ -13,7 +13,7 @@ local function load()
 end
 
 describe("MainWindow", function()
-    local ns, built, deps, strings
+    local ns, built, deps, strings, listsPage
 
     before_each(function()
         mock.reset()
@@ -64,7 +64,23 @@ describe("MainWindow", function()
                 return {}
             end,
         }
+        listsPage = { refreshed = 0, selected = {} }
+        ns.ListsPage = {
+            Build = function(content, d)
+                table.insert(built, { page = "lists", content = content, deps = d })
+                return {
+                    Refresh = function()
+                        listsPage.refreshed = listsPage.refreshed + 1
+                    end,
+                    Select = function(id)
+                        table.insert(listsPage.selected, id)
+                        return id == 7
+                    end,
+                }
+            end,
+        }
         deps = {
+            searchLists = {},
             tooltipConfig = {},
             rules = {},
             formulaRun = {},
@@ -102,13 +118,59 @@ describe("MainWindow", function()
         assert.are.equal("Interface\\Icons\\INV_Misc_Coin_02", win.frame.portrait)
     end)
 
-    it("has six page tabs", function()
+    it("has seven page tabs, with Lists after Operations", function()
         local win = ns.MainWindow.Create(deps)
-        assert.are.equal(6, #win.frame.Tabs)
+        assert.are.equal(7, #win.frame.Tabs)
         assert.are.equal("Ledger", win.frame.Tabs[1]:GetText())
         assert.are.equal("Groups", win.frame.Tabs[2]:GetText())
         assert.are.equal("Operations", win.frame.Tabs[3]:GetText())
-        assert.are.equal("Tooltip", win.frame.Tabs[4]:GetText())
+        assert.are.equal("Lists", win.frame.Tabs[4]:GetText())
+        assert.are.equal("Tooltip", win.frame.Tabs[5]:GetText())
+    end)
+
+    describe("Lists page", function()
+        it("builds with the deps when it is selected", function()
+            local win = ns.MainWindow.Create(deps)
+            assert.are.equal(1, #built)
+            win:SelectPage("lists")
+            assert.are.equal("lists", built[2].page)
+            assert.are.equal(deps, built[2].deps)
+            assert.are.equal("lists", win:GetSelectedPage())
+        end)
+
+        it("says that settings are missing without the lists object", function()
+            deps.searchLists = nil
+            local win = ns.MainWindow.Create(deps)
+            win:SelectPage("lists")
+            assert.are.equal(1, #built)
+            assert.is_true(strings["Settings are not available this session."])
+        end)
+
+        it("draws the page again when its tab is clicked", function()
+            local win = ns.MainWindow.Create(deps)
+            win:SelectPage("lists")
+            local before = listsPage.refreshed
+            win.frame.Tabs[4].scripts.OnClick(win.frame.Tabs[4])
+            assert.are.equal(before + 1, listsPage.refreshed)
+        end)
+
+        it("opens on the Lists page with the list selected, from OpenLists", function()
+            local win = ns.MainWindow.Create(deps)
+            win:OpenLists(7)
+            assert.is_true(win:IsShown())
+            assert.are.equal("lists", win:GetSelectedPage())
+            assert.are.same({ 7 }, listsPage.selected)
+            local before = listsPage.refreshed
+            win:OpenLists(99)
+            assert.are.same({ 7, 99 }, listsPage.selected)
+            assert.are.equal(before + 1, listsPage.refreshed)
+        end)
+
+        it("is not a tab when the page module is missing", function()
+            ns.ListsPage = nil
+            local win = ns.MainWindow.Create(deps)
+            assert.are.equal(6, #win.frame.Tabs)
+        end)
     end)
 
     it("builds the pages with the deps when they are selected", function()
@@ -336,8 +398,8 @@ describe("MainWindow", function()
     describe("Formulas and About tabs", function()
         it("are page tabs and the window has no cog", function()
             local win = ns.MainWindow.Create(deps)
-            assert.are.equal("Formulas", win.frame.Tabs[5]:GetText())
-            assert.are.equal("About", win.frame.Tabs[6]:GetText())
+            assert.are.equal("Formulas", win.frame.Tabs[6]:GetText())
+            assert.are.equal("About", win.frame.Tabs[7]:GetText())
             assert.is_nil(win.cog)
             assert.is_nil(win.settings)
             assert.is_nil(win.settingsTabs)
@@ -359,7 +421,7 @@ describe("MainWindow", function()
             local win = ns.MainWindow.Create(deps)
             win:SelectPage("about")
             assert.are.equal("about", win:GetSelectedPage())
-            assert.is_true(win.tabs.contents[6]:IsShown())
+            assert.is_true(win.tabs.contents[7]:IsShown())
             assert.is_true(strings["Flipside"])
             assert.is_true(strings["Client 1.60.1"])
             assert.is_true(strings["Groups sort items into trees. Operations hold the rules. "
@@ -368,7 +430,7 @@ describe("MainWindow", function()
 
         it("fit in the window at the minimum width", function()
             local win = ns.MainWindow.Create(deps)
-            assert.are.equal(6, #win.frame.Tabs)
+            assert.are.equal(7, #win.frame.Tabs)
             local total = 0
             for _, tab in ipairs(win.frame.Tabs) do
                 total = total + tab:GetWidth()
@@ -391,7 +453,7 @@ describe("MainWindow", function()
         win:SelectPage("tooltip")
         assert.are.equal("tooltip", win.tabs:GetSelected())
         assert.is_false(win.tabs.contents[1]:IsShown())
-        assert.is_true(win.tabs.contents[4]:IsShown())
+        assert.is_true(win.tabs.contents[5]:IsShown())
     end)
 
     it("shows, hides and toggles", function()

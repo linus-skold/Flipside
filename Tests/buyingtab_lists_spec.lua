@@ -13,7 +13,7 @@ local function loadModules()
 end
 
 describe("BuyingTab search lists", function()
-    local ns, bus, client, rules, lists, tab, ui, ahOpen, nameIndex, ahSearch, db, timers
+    local ns, bus, client, rules, lists, tab, ui, ahOpen, nameIndex, ahSearch, db, timers, opened
 
     local function makeClient()
         local c = { ready = true, searches = {}, rows = {} }
@@ -65,6 +65,7 @@ describe("BuyingTab search lists", function()
             isAuctionHouseOpen = function() return ahOpen end,
             after = function(seconds, fn) timers[#timers + 1] = { seconds = seconds, fn = fn } end,
             itemInfo = function(id) return "item " .. id, 1 end,
+            openLists = function(id) opened[#opened + 1] = id or false end,
         }
         for k, v in pairs(extra or {}) do
             deps[k] = v
@@ -83,6 +84,7 @@ describe("BuyingTab search lists", function()
         db = ns.SettingsDB.New({}, { character = "Alice-Realm", schemaVersion = 1 })
         ahOpen = true
         timers = {}
+        opened = {}
         client = makeClient()
         rules = makeRules()
         nameIndex = nil
@@ -103,7 +105,9 @@ describe("BuyingTab search lists", function()
             assert.is_false(ui.picker:IsShown())
             assert.is_true(tab:SetSource("lists"))
             assert.is_true(ui.picker:IsShown())
-            assert.is_true(ui.rename:IsShown())
+            assert.is_true(ui.editLists:IsShown())
+            assert.is_nil(ui.rename)
+            assert.is_nil(ui.delete)
             assert.is_nil(ui.nameInput)
             assert.is_nil(ui.itemInput)
             assert.is_true(tab:SetSource("groups"))
@@ -174,20 +178,35 @@ describe("BuyingTab search lists", function()
     end)
 
     describe("list management", function()
-        it("makes, renames and deletes a list", function()
+        it("makes a list, and has no Rename and Delete in the Auction House", function()
             assert.is_true(tab:NewList("Herbs"))
             assert.are.equal("Herbs", lists:Get(tab.listID).name)
-            assert.is_true(tab:RenameList("Flowers"))
-            assert.are.equal("Flowers", lists:Get(tab.listID).name)
-            local ok, err = tab:NewList("flowers")
+            local ok, err = tab:NewList("herbs")
             assert.is_false(ok)
             assert.is_string(err)
             assert.are.equal(err, ui.message.text)
-            local id = tab.listID
-            assert.is_true(tab:DeleteList())
-            assert.is_nil(lists:Get(id))
+            assert.is_nil(tab.RenameList)
+            assert.is_nil(tab.DeleteList)
+            assert.is_nil(tab.PromptRenameList)
+        end)
+
+        it("opens the Lists page with the shown list from the Edit lists button", function()
+            local id = lists:Create("Herbs", {})
+            tab:SelectList(id)
+            ui.editLists.scripts.OnClick(ui.editLists)
+            assert.are.same({ id }, opened)
+            assert.is_false(mount({ openLists = false }).ui.editLists:IsShown())
+        end)
+
+        it("shows a list that the Lists page deleted or renamed", function()
+            -- Item 200 is in no group, so its row shows the label of the list (item 100 shows its group path).
+            local id = lists:Create("Herbs", { { itemID = 200 } })
+            tab:SelectList(id)
+            lists:Rename(id, "Flowers")
+            assert.are.equal(1, #tab.list)
+            assert.are.equal("Search list: Flowers", tab.list[1].groupPath)
+            lists:Delete(id)
             assert.is_nil(tab.listID)
-            assert.are.equal("lists", tab.source)
             assert.are.same({}, tab.list)
         end)
 
@@ -374,16 +393,6 @@ describe("BuyingTab search lists", function()
             assert.is_true(box:IsShown())
             assert.is_not.equal("", box.error:GetText())
         end)
-
-        it("asks for the new name of the selected list, with the old name as start text", function()
-            local id = lists:Create("Herbs", {})
-            tab:SelectList(id)
-            ui.rename.scripts.OnClick(ui.rename)
-            local box = ns.Kit.Prompt("FlipsideBuyingRenameListPrompt")
-            assert.are.equal("Herbs", box.input:GetText())
-            submit(box, "Flowers")
-            assert.are.equal("Flowers", lists:Get(id).name)
-        end)
     end)
 
     describe("search of a list", function()
@@ -476,15 +485,14 @@ describe("BuyingTab search lists", function()
             assert.are.equal("groups", tab.source)
         end)
 
-        it("shows Save in place of Rename and Delete for an unsaved list only", function()
+        it("shows Save in place of Edit lists for an unsaved list only", function()
             emitTemp()
             assert.is_true(ui.save:IsShown())
-            assert.is_false(ui.rename:IsShown())
-            assert.is_false(ui.delete:IsShown())
+            assert.is_false(ui.editLists:IsShown())
             local id = lists:Create("Own", {})
             tab:SelectList(id)
             assert.is_false(ui.save:IsShown())
-            assert.is_true(ui.rename:IsShown())
+            assert.is_true(ui.editLists:IsShown())
         end)
 
         it("saves the list with the counts through a prompt that starts with the default name", function()
@@ -666,7 +674,7 @@ describe("BuyingTab search lists", function()
             bus:Emit("COMMODITY_RESULTS", 100)
         end
 
-        it("makes a craft list from the New prompt and shows the panel only for it", function()
+        it("makes a craft list from the New prompt and shows the craft strip only for it", function()
             lists:Delete(id)
             tab:SetSource("lists")
             assert.is_false(ui.craftMargin:IsShown())
@@ -676,19 +684,39 @@ describe("BuyingTab search lists", function()
             submit(box, "Shirts")
             assert.are.equal("craft", lists:Get(tab.listID).kind)
             assert.is_true(ui.craftMargin:IsShown())
-            assert.is_true(ui.craftResults.frame:IsShown())
+            assert.is_true(ui.crafts:IsShown())
             ui.newList.scripts.OnClick(ui.newList)
             submit(ns.Kit.Prompt("FlipsideBuyingNewListPrompt"), "Herbs")
             assert.are.equal("search", lists:Get(tab.listID).kind)
             assert.is_false(ui.craftMargin:IsShown())
-            assert.is_false(ui.craftAdd:IsShown())
+            assert.is_false(ui.crafts:IsShown())
         end)
 
-        it("keeps a search list as it was and refuses a result for it", function()
-            local plain = lists:Create("Herbs", { { itemID = 100, count = 2 } })
-            tab:SelectList(plain)
+        it("has no results panel and no result editing in the Auction House", function()
+            assert.is_nil(ui.craftResults)
+            assert.is_nil(ui.craftAdd)
+            assert.is_nil(ui.craftEdit)
+            assert.is_nil(ui.craftRemove)
+            assert.is_nil(tab.AddResult)
+            assert.is_nil(tab.SetResultAmount)
+            assert.is_nil(tab.RemoveResult)
+            assert.is_nil(ns.BuyingTab.MarginLines)
+        end)
+
+        it("gives the list its height back: the craft strip is small, and only for a craft list", function()
+            local function bottom()
+                local last
+                for _, point in ipairs(ui.tree.frame.points) do
+                    if point[1] == "BOTTOMLEFT" then
+                        last = point
+                    end
+                end
+                return last[5]
+            end
+            assert.are.equal(44, bottom())
+            tab:SelectList(lists:Create("Herbs", { { itemID = 100, count = 2 } }))
+            assert.are.equal(0, bottom())
             assert.is_nil(tab:CraftMargin())
-            assert.is_false(tab:AddResult("300"))
             assert.are.equal("2× item 100", tab.nodes[1].text)
             assert.is_false(ui.craftMargin:IsShown())
         end)
@@ -698,41 +726,32 @@ describe("BuyingTab search lists", function()
             assert.are.equal("item 200", tab.nodes[2].text)
         end)
 
-        it("adds a material through the one input, and a result through the Add result button", function()
+        it("adds a material through the one input", function()
             ui.searchInput:SetText("2589")
             tab:SubmitInput("2589")
             assert.are.equal(3, #lists:Get(id).items)
-            ui.searchInput:SetText("25320#s-44")
-            ui.craftAdd.scripts.OnClick(ui.craftAdd)
-            local results = lists:Get(id).results
-            assert.are.equal(2, #results)
-            assert.are.equal(25320, results[2].itemID)
-            assert.are.equal(1, results[2].min)
-            assert.are.equal(1, results[2].max)
-            assert.are.equal(2, #ui.craftResults.data)
+            assert.are.equal(1, #lists:Get(id).results)
         end)
 
-        it("adds a result from the selected row of a name search", function()
+        it("adds the selected result of a name search as a material with the Add to list button", function()
             tab.searchResults = tab.deps.plan.ListEntries({ { itemID = 400, key = "400", name = "Soul Dust" } },
                 { formulaRun = tab.deps.formulaRun, label = "Search" })
             tab:RefreshList()
             tab:Select_("400")
-            assert.is_true(tab:AddResult("Soul"))
-            assert.are.equal(400, lists:Get(id).results[2].itemID)
-            assert.is_false(tab:AddResult("Soul", 2, 1))
-        end)
-
-        it("refuses a result that is not an item, or one that is in the list", function()
-            assert.is_false(tab:AddResult("Linen"))
-            assert.is_false(tab:AddResult("300"))
-            assert.is_false(tab:AddResult("999", 3, 2))
+            assert.is_true(ui.addToList:IsShown())
+            assert.is_true(tab:AddSelectedToList())
+            assert.are.equal(400, lists:Get(id).items[3].itemID)
             assert.are.equal(1, #lists:Get(id).results)
         end)
 
-        it("lists the results with the amount made and the value after the cut", function()
-            assert.are.equal(1, #ui.craftResults.data)
-            assert.are.equal("1-2× Dust   avg 1425c", ui.craftResults.data[1].text)
-            assert.are.equal("1-2× Dust   avg 1425c", ui.craftResults.rows[1].craftText:GetText())
+        it("follows a change that the Lists page makes to the results", function()
+            searchMaterial()
+            lists:SetResult(id, 1, 2, 4)
+            -- value min 2 x 1000 x 95% = 1900, avg 3 x 950 = 2850, max 3800; the cost is 1250.
+            assert.matches("Value 2850c", ui.craftMargin:GetText())
+            assert.matches("Margin 1600c", ui.craftMargin:GetText())
+            lists:AddResult(id, { itemID = 400, min = 1 })
+            assert.matches("Value %?", ui.craftMargin:GetText())
         end)
 
         it("prices a material from the live levels, and the others from the market value as an estimate", function()
@@ -746,12 +765,25 @@ describe("BuyingTab search lists", function()
             assert.are.equal(1250, margin.cost)
         end)
 
-        it("shows the cost, the value and the margin at min, average and max yield, with the percent", function()
+        it("shows one compact margin line: cost, value after the cut and margin at average yield", function()
             searchMaterial()
-            local text = ui.craftMargin:GetText()
-            assert.matches("Materials: 1250c %(estimate%)", text)
-            assert.matches("min 950c  avg 1425c  max 1900c", text)
-            assert.matches("Margin: min %-300c %(%-24%%%)  avg 175c %(14%%%)  max 650c %(52%%%)", text)
+            assert.are.equal("Cost 1250c (est.)  Value 1425c  Margin 175c (14%)", ui.craftMargin:GetText())
+            assert.is_nil(ui.craftMargin:GetText():find("\n", 1, true))
+        end)
+
+        it("shows the margin at min, average and max yield in the tooltip of the margin line", function()
+            searchMaterial()
+            assert.are.same({
+                "min: value 950c, margin -300c",
+                "avg: value 1425c, margin 175c",
+                "max: value 1900c, margin 650c",
+            }, tab.marginTip)
+            local lines = {}
+            _G.GameTooltip.SetText = function() end
+            _G.GameTooltip.AddLine = function(_, text) lines[#lines + 1] = text end
+            _G.GameTooltip.Show = function() end
+            ui.craftTip.scripts.OnEnter(ui.craftTip)
+            assert.are.same(tab.marginTip, lines)
         end)
 
         it("walks the price levels for the count and uses the market value when the live units are too few", function()
@@ -773,17 +805,20 @@ describe("BuyingTab search lists", function()
             assert.are.equal(760, tab:CraftMargin().value.min)
             scan["300"] = {}
             tab:_Update()
-            local text = ui.craftMargin:GetText()
-            assert.matches("Value after the 5%% cut: %?", text)
-            assert.matches("Margin: %?", text)
-            assert.are.equal("1-2× Dust   ?", ui.craftResults.data[1].text)
+            assert.are.equal("Cost 1250c (est.)  Value ?  Margin ?", ui.craftMargin:GetText())
         end)
 
         it("shows ? for the materials with no price at all", function()
             scan["200"] = nil
             tab:_Update()
             assert.is_nil(tab:CraftMargin().margin)
-            assert.matches("Materials: %? %(0c priced%)", ui.craftMargin:GetText())
+            assert.matches("Cost %? %(0c priced%)", ui.craftMargin:GetText())
+        end)
+
+        it("asks for results on the Lists page when the list has none", function()
+            lists:RemoveResult(id, 1)
+            assert.matches("Add results on the Lists page", ui.craftMargin:GetText())
+            assert.are.same({}, tab.marginTip)
         end)
 
         it("fills the amount with count x crafts, follows a change of Crafts and still confirms the buy", function()
@@ -849,39 +884,45 @@ describe("BuyingTab search lists", function()
             assert.are.equal(9, lists:Get(id).items[1].count)
         end)
 
-        it("changes the amount made with a prompt, and checks it", function()
-            ui.craftResults.rows[1].scripts.OnClick(ui.craftResults.rows[1])
-            assert.are.equal("300", tab.resultSel)
-            assert.is_true(ui.craftEdit:IsEnabled())
-            ui.craftEdit.scripts.OnClick(ui.craftEdit)
-            local box = ns.Kit.Prompt("FlipsideBuyingEditResultPrompt")
-            assert.are.equal("1-2", box.input:GetText())
-            submit(box, "4-2")
-            assert.is_true(box:IsShown())
-            assert.are.equal(2, lists:Get(id).results[1].max)
-            submit(box, "3-5")
-            assert.is_false(box:IsShown())
-            assert.are.equal(3, lists:Get(id).results[1].min)
-            assert.are.equal(5, lists:Get(id).results[1].max)
-            assert.are.equal("3-5× Dust", ui.craftResults.data[1].text:match("^(.-)   "))
+        it("keeps the Crafts box in the strip and scales the margin line with it", function()
+            searchMaterial()
+            assert.is_true(ui.crafts:IsShown())
+            ui.crafts:SetText("2")
+            ui.crafts.scripts.OnEnterPressed(ui.crafts)
+            assert.are.equal(2, tab.crafts)
+            assert.matches("^Cost 2500c %(est%.%)  Value 2850c  Margin 350c", ui.craftMargin:GetText())
+            ui.crafts:SetText("x")
+            ui.crafts.scripts.OnEnterPressed(ui.crafts)
+            assert.are.equal(2, tab.crafts)
         end)
 
-        it("reads a yield text", function()
-            assert.are.same({ 2, 2 }, { ns.BuyingTab.ParseYield(" 2 ") })
-            assert.are.same({ 1, 3 }, { ns.BuyingTab.ParseYield("1 - 3") })
-            assert.is_nil((ns.BuyingTab.ParseYield("a")))
-            assert.is_nil((ns.BuyingTab.ParseYield("-1")))
-            assert.is_nil((ns.BuyingTab.ParseYield("")))
+        it("leaves a shift-clicked link to another edit box that has the focus", function()
+            local hooked
+            _G.ChatEdit_InsertLink = function() end
+            _G.hooksecurefunc = function(name, fn)
+                hooked = hooked or (name == "ChatEdit_InsertLink" and fn) or nil
+            end
+            local other = mount()
+            local searched = 0
+            other.SearchLink = function()
+                searched = searched + 1
+            end
+            local link = "|cff1eff00|Hitem:2589::::::::60:::::|h[Linen Cloth]|h|r"
+            _G.GetCurrentKeyBoardFocus = function() return {} end
+            hooked(link)
+            assert.are.equal(0, searched)
+            _G.GetCurrentKeyBoardFocus = function() return nil end
+            hooked(link)
+            assert.are.equal(1, searched)
+            _G.GetCurrentKeyBoardFocus, _G.ChatEdit_InsertLink = nil, nil
         end)
 
-        it("removes the selected result and turns the Edit and Remove buttons off", function()
-            ui.craftResults.rows[1].scripts.OnClick(ui.craftResults.rows[1])
-            ui.craftRemove.scripts.OnClick(ui.craftRemove)
-            assert.same({}, lists:Get(id).results)
-            assert.is_nil(tab.resultSel)
-            assert.is_false(ui.craftEdit:IsEnabled())
-            assert.are.equal(0, #ui.craftResults.data)
-            assert.matches("Add a result", ui.craftMargin:GetText())
+        it("gives the live price of this session to the Lists page", function()
+            assert.is_nil(ns.BuyingTab.LivePrice("100", 4))
+            searchMaterial()
+            assert.are.equal(1200, ns.BuyingTab.LivePrice("100", 4))
+            assert.is_nil(ns.BuyingTab.LivePrice("100", 10))
+            assert.is_nil(ns.BuyingTab.LivePrice("999", 1))
         end)
 
         it("buys the materials after the normal confirmation", function()
