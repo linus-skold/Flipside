@@ -2531,10 +2531,7 @@ local function forgetCommand(character)
     if not known then
         printLine("no saved character " .. character)
     elseif ns.holdings:Forget(character) then
-        -- The metadata of the character in this session stays: its name must show until the next login.
-        if character ~= characterKey() then
-            ns.CharacterKey.RemoveMeta(character)
-        end
+        -- The metadata stays: the ledger records and the balance of the character still need its name.
         printLine("forgot the inventory of " .. shownName)
     else
         printLine("settings are read-only; the inventory was not removed")

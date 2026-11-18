@@ -589,7 +589,8 @@ function LedgerPage.Build(content, deps)
     local function logFilter()
         if ns.Log then
             ns.Log.Write("ledger", "debug", "filter realm=" .. tostring(page.filter.realm) .. " char="
-                .. (page.filter.char == ALL and ALL or LedgerPage.CharText(page.filter.char)) .. " range=" .. tostring(page.filter.range))
+                .. (page.filter.char == ALL and ALL or LedgerPage.CharText(page.filter.char))
+                .. " range=" .. tostring(page.filter.range))
         end
     end
 

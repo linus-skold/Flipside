@@ -87,22 +87,25 @@ function CharacterName.Display(key)
     return name
 end
 
--- Returns the first key of the list that the typed text names, or nil. Case does not matter. The text can be:
+-- Returns the key of the list that the typed text names, or nil. Case does not matter. The text can be:
 --  "Name-Realm": the key itself (a key with no realm also matches "Name-Realm" of the same name);
 --  "Name": the name part of the key (the text has no realm);
 --  "Name Surname": the name and the saved surname of the key (flavours with a surname only).
 -- A text with a realm never matches a key of another realm.
 -- A key is a GUID on Forever: the name and the realm come from the saved metadata (CharacterKey).
--- Two characters can have the same name there. A full match ("Name-Realm", "Name Surname") wins over a name only.
+-- Two characters can have the same name and realm there. "Name Surname" names one character. A text with a name
+-- only ("Name" or "Name-Realm") that more than one key matches gives no key: the result is nil, "ambiguous" and the
+-- name that the keys share.
 function CharacterName.Resolve(text, keys)
     if type(text) ~= "string" or text == "" then
         return nil
     end
     local wanted = text:lower()
     local wantedName, wantedRealm = wanted:match("^([^%-]+)%-(.+)$")
-    local byName
+    local byName, seen, alias = {}, {}, nil
     for _, key in ipairs(keys or {}) do
-        if type(key) == "string" and key ~= "" then
+        if type(key) == "string" and key ~= "" and not seen[key] then
+            seen[key] = true
             local name = CharacterName.Plain(key):lower()
             local realm
             if ns.CharacterKey then
@@ -111,22 +114,23 @@ function CharacterName.Resolve(text, keys)
                 realm = key:match("^[^%-]+%-(.+)$")
             end
             realm = type(realm) == "string" and realm:lower() or nil
-            if (realm and name .. "-" .. realm or name) == wanted then
-                return key
-            end
-            if wantedRealm and not realm and name == wantedName and not byName then
-                byName = key
-            end
             local surname = CharacterName.Surname(key)
             if surname and wanted == (name .. CharacterName.Separator() .. surname):lower() then
-                return key
-            end
-            if not wantedRealm and name == wanted and not byName then
-                byName = key
+                alias = alias or key
+            elseif (realm and name .. "-" .. realm or name) == wanted
+                or (wantedRealm and not realm and name == wantedName)
+                or (not wantedRealm and name == wanted) then
+                byName[#byName + 1] = key
             end
         end
     end
-    return byName
+    if alias then
+        return alias
+    end
+    if #byName > 1 then
+        return nil, "ambiguous", CharacterName.Plain(byName[1])
+    end
+    return byName[1]
 end
 
 -- Returns the name to send to the mail call. Forever has regional unique names: the server needs the full name
@@ -138,7 +142,10 @@ function CharacterName.MailName(text, keys)
     if not CharacterName.Enabled() then
         return text
     end
-    local key = CharacterName.Resolve(text, keys)
+    local key, problem, shared = CharacterName.Resolve(text, keys)
+    if problem == "ambiguous" then
+        return nil, "Flipside: more than one of your characters is named " .. shared .. "; type Name Surname"
+    end
     if key then
         local surname = CharacterName.Surname(key)
         if surname then

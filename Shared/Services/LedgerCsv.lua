@@ -67,8 +67,8 @@ end
 -- The cells of a full record, in the order of COLUMNS.
 local function recordCells(record, charText)
     return {
-        LedgerCsv.TimeText(record.time), charText(record.char), record.type, record.source, record.item, record.itemName,
-        record.qty, signedMoney(record), 1, record.counterparty, record.bid, record.buyout, record.deposit,
+        LedgerCsv.TimeText(record.time), charText(record.char), record.type, record.source, record.item,
+        record.itemName, record.qty, signedMoney(record), 1, record.counterparty, record.bid, record.buyout, record.deposit,
         record.cut, record.value, record.mob, record.place, record.note,
     }
 end

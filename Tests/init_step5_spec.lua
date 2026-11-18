@@ -235,7 +235,8 @@ describe("Init step 5", function()
                 slash("forget Tester Jones")
                 assert.are.same({ "Flipside: forgot the inventory of Tester Jones" }, mock.messages)
                 assert.is_nil(ns.db:GetFor(OTHER, "surname"))
-                assert.is_nil(ns.CharacterKey.Meta(OTHER))
+                -- The ledger of the character still needs its name.
+                assert.are.equal("Tester", ns.CharacterKey.Name(OTHER))
                 assert.are.equal(5, ns.holdings:Count("2589").total)
             end)
 

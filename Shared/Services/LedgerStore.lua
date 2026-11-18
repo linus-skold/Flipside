@@ -2,7 +2,8 @@ local _, ns = ...
 
 -- The ledger records in the FlipsideLedgerDB table, for one region and ruleset (D22).
 -- Layout: records[region][ruleset][<character key>] = list of records, in the order they were moved.
---         sums[region][ruleset][<character key>] = list of daily sums { day, source, item, count, qty, moneyIn, moneyOut }.
+--         sums[region][ruleset][<character key>] = list of daily sums
+--         { day, source, item, count, qty, moneyIn, moneyOut }.
 -- The character key is the player GUID on Forever and "Name-Realm" on TBC (CharacterKey).
 local LedgerStore = {}
 ns.LedgerStore = LedgerStore
