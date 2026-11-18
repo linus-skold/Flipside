@@ -477,7 +477,8 @@ describe("SellingTab", function()
             assert.are.equal("200c", d.deposit.text)
             assert.are.equal("2380c", d.total.text)
             assert.are.equal(119, d.priceInput:GetCopper())
-            assert.are.equal(2380, d.stackInput:GetCopper())
+            -- Forever has no stacks: no stack price box.
+            assert.is_false(d.stackInput:IsShown())
             assert.is_nil(d.net)
             assert.is_nil(d.lowest)
             assert.is_nil(d.vs)
@@ -751,7 +752,7 @@ describe("SellingTab", function()
             for index = 1, 3 do
                 local post = client.posts[index]
                 assert.are.equal("item", post.kind)
-                assert.are.same({ 1, index, 24, 20, nil, 119 * 20 },
+                assert.are.same({ 1, index, 24, 20, nil, 119 },
                     { post.bag, post.slot, post.duration, post.quantity, post.bid, post.buyout })
             end
             local last = client.posts[4]

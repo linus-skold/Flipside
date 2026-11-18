@@ -247,7 +247,18 @@ describe("AuctionClient", function()
             assert.is_false(rows[2].ownerItem)
         end)
 
-        it("gives item rows with the unit price and skips bid-only rows", function()
+        it("gives the buyout of a Forever item row as the price of one item, with no division", function()
+            -- Client source: the item sell frame copies searchResult.buyoutAmount into a per-item price box.
+            -- A row of 40 items at 449 is 449 for each item, not 11.
+            mock.commodity[6] = false
+            mock.itemResults[6] = { { auctionID = 3, link = "L3", buyout = 449, quantity = 40 } }
+            local rows = ns.AuctionClient.LiveRows(6)
+            assert.are.equal(449, rows[1].unitPrice)
+            assert.are.equal(40, rows[1].quantity)
+            assert.are.equal(449, rows[1].buyout)
+        end)
+
+        it("gives item rows with the price of one item and skips bid-only rows", function()
             mock.commodity[6] = false
             mock.itemResults[6] = {
                 { auctionID = 3, link = "L3", buyout = 900, quantity = 3, timeLeft = 2 },
@@ -257,13 +268,27 @@ describe("AuctionClient", function()
             local rows = ns.AuctionClient.LiveRows(6)
             assert.are.equal(2, #rows)
             assert.are.equal(5, rows[1].auctionID)
-            assert.are.equal(300, rows[2].unitPrice)
+            assert.are.equal(900, rows[2].unitPrice)
             assert.are.equal(3, rows[2].quantity)
             assert.are.equal("L3", rows[2].itemLink)
             assert.are.equal(2, rows[2].timeLeft)
             assert.is_false(rows[2].isCommodity)
         end)
 
+        it("reads the rows as a commodity when the client gives no answer and the max stack size is above 1", function()
+            mock.commodity[8] = nil
+            mock.commodityResults[8] = { { auctionID = 1, unitPrice = 30, quantity = 4 } }
+            mock.stackSizes[8] = 20
+            -- With no item data loaded, a stack size is not an answer: the rows are item rows (none here).
+            _G.C_Item.IsItemDataCachedByID = function() return false end
+            assert.are.same({}, ns.AuctionClient.LiveRows(8))
+            _G.C_Item.IsItemDataCachedByID = function() return true end
+            local rows = ns.AuctionClient.LiveRows(8)
+            _G.C_Item.IsItemDataCachedByID = nil
+            assert.are.equal(1, #rows)
+            assert.is_true(rows[1].isCommodity)
+            assert.are.equal(30, rows[1].unitPrice)
+        end)
         it("gives the seller of an item row when the result has one owner", function()
             mock.commodity[6] = false
             mock.itemResults[6] = {

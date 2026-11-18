@@ -349,6 +349,15 @@ describe("SellingTab Buy lowest", function()
             assert.are.same({}, client.violations)
         end)
 
+        it("buys a Forever item row of 40 items at 449 each at the client buyout, with a unit price of 449", function()
+            -- ForeverBackend.LiveRows: unitPrice is the price of one item (buyoutAmount), buyout is the raw amount.
+            choose(10, { { unitPrice = 449, quantity = 40, ownerItem = false, auctionID = 7, isCommodity = false,
+                buyout = 449, owner = "Bob" } })
+            click(ui.buyLowest)
+            assert.is_truthy(box().text.text:find("Unit price: " .. GetMoneyString(449), 1, true))
+            click(box().yesButton)
+            assert.are.same({ { "bid", 7, 449 } }, client.calls)
+        end)
         it("searches again after the purchase completes", function()
             choose(10, { arow(150, 2), arow(160, 1) })
             click(ui.buyLowest)

@@ -341,6 +341,19 @@ describe("BuyingPlan", function()
     end)
 
     describe("PriceLevels", function()
+        it("keeps the price of one item of a Forever item row: 40 items at 449 are 449 each", function()
+            -- ForeverBackend.LiveRows gives unitPrice = buyoutAmount, the price of one item (no division).
+            local rows = { { auctionID = 1, unitPrice = 449, quantity = 40, buyout = 449, isCommodity = false } }
+            local levels = BP.PriceLevels(rows)
+            assert.are.equal(1, #levels)
+            assert.are.equal(449, levels[1].unitPrice)
+            assert.are.equal(40, levels[1].stackSize)
+            assert.are.equal(40, levels[1].quantity)
+            -- The cost of the listing is the price of one item times the items.
+            local entry = { key = "100", maxPrice = 1000, showAboveMax = false }
+            assert.are.equal(449 * 40, BP.Evaluate(entry, rows).cost)
+        end)
+
         it("groups rows by unit price, cheapest first", function()
             local levels = BP.PriceLevels({
                 { unitPrice = 200, quantity = 5, auctionID = 3 },

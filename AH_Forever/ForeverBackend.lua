@@ -207,12 +207,36 @@ local function byPrice(a, b)
     return (a.auctionID or 0) < (b.auctionID or 0)
 end
 
+-- The commodity flag of an item for the live rows. With no answer from the client it is "maximum stack size above
+-- 1" (SPEC 5.1 point 5), but only when the item data is loaded: a size read before that is not a real answer.
+local function commodityFlag(itemID)
+    local flag = Backend.ItemIsCommodity(itemID)
+    if flag ~= nil then
+        return flag
+    end
+    local item = _G.C_Item
+    if type(item) == "table" and type(item.IsItemDataCachedByID) == "function"
+        and type(item.GetItemMaxStackSizeByID) == "function" and item.IsItemDataCachedByID(itemID) then
+        local size = item.GetItemMaxStackSizeByID(itemID)
+        if type(size) == "number" and size >= 1 then
+            return size > 1
+        end
+    end
+    return nil
+end
+
 -- Rows of the last search of an item, cheapest unit price first. Commodity: GetNumCommoditySearchResults (doc 488)
--- and GetCommoditySearchResultInfo (doc 240). Item: GetNumItemSearchResults (doc 503) and GetItemSearchResultInfo
--- (doc 358); a row with no buyout is skipped and the unit price is buyoutAmount / quantity.
+-- and GetCommoditySearchResultInfo (doc 240), where unitPrice is the price of one unit. Item: GetNumItemSearchResults
+-- (doc 503) and GetItemSearchResultInfo (doc 358); a row with no buyout is skipped.
+-- Forever prices an item auction for one item. The client source shows it: the item sell frame copies
+-- searchResult.buyoutAmount into its price box, which is a price per item (PerItemPostfix), and posts
+-- PostItem(item, duration, quantity, bid, buyout) with that price for each item (Blizzard_AuctionHouseUI/Shared/
+-- Blizzard_AuctionHouseItemSellFrame.lua, lines 316-326, 337, 439-440 and 483-486; Ketho/wow-ui-source-forever,
+-- branch forever). So unitPrice = buyoutAmount, with no division by quantity. buyout keeps the raw buyoutAmount: the
+-- client buys with PlaceBid(auctionID, buyoutAmount) (Blizzard_AuctionHouseFrame.lua, line 11).
 function Backend.LiveRows(itemID)
     local rows = {}
-    local isCommodity = Backend.ItemIsCommodity(itemID)
+    local isCommodity = commodityFlag(itemID)
     if isCommodity then
         for i = 1, call("GetNumCommoditySearchResults", itemID) do
             local r = call("GetCommoditySearchResultInfo", itemID, i)
@@ -230,7 +254,7 @@ function Backend.LiveRows(itemID)
             local buyout, quantity = r and r.buyoutAmount, r and r.quantity
             if buyout and buyout > 0 and quantity and quantity > 0 then
                 rows[#rows + 1] = {
-                    auctionID = r.auctionID, unitPrice = buyout / quantity, quantity = quantity, buyout = buyout,
+                    auctionID = r.auctionID, unitPrice = buyout, quantity = quantity, buyout = buyout,
                     isCommodity = false, ownerItem = r.containsOwnerItem == true,
                     timeLeft = r.timeLeftSeconds or r.timeLeft, itemLink = r.itemLink,
                     owner = type(r.owners) == "table" and #r.owners == 1 and r.owners[1] or nil,
