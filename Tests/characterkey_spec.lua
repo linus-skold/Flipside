@@ -248,8 +248,8 @@ describe("LedgerStore MoveCharacter", function()
         assert.are.equal(3, store:MoveCharacter("Bob-Realm", GUID_A))
         local list = saved.records.EU.standard[GUID_A]
         assert.are.equal(2, #list)
-        for _, record in ipairs(list) do
-            assert.are.equal(GUID_A, record.char)
+        for _, stored in ipairs(list) do
+            assert.are.equal(GUID_A, stored.char)
         end
         assert.is_nil(saved.records.EU.standard["Bob-Realm"])
     end)
