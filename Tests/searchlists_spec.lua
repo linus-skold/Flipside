@@ -41,7 +41,10 @@ describe("SearchLists", function()
             local b = lists:Create("Bravo", { { itemID = 10, name = "Linen" }, { itemID = 10 }, { key = "20#s-44" } })
             local a = lists:Create("  alpha ", {})
             assert.is_number(b)
-            assert.same({ { id = a, name = "alpha", count = 0 }, { id = b, name = "Bravo", count = 2 } }, lists:List())
+            assert.same({
+                { id = a, name = "alpha", count = 0, kind = "search" },
+                { id = b, name = "Bravo", count = 2, kind = "search" },
+            }, lists:List())
             local got = lists:Get(b)
             assert.are.equal("Bravo", got.name)
             assert.same({
