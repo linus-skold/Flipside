@@ -748,31 +748,31 @@ describe("BuyingTab search lists", function()
             searchMaterial()
             lists:SetResult(id, 1, 2, 4)
             -- value min 2 x 1000 x 95% = 1900, avg 3 x 950 = 2850, max 3800; the cost is 1250.
-            assert.matches("Value 2850c", ui.craftMargin:GetText())
-            assert.matches("Margin 1600c", ui.craftMargin:GetText())
+            assert.matches("Profit avg 1600c %(128%%%)", ui.craftMargin:GetText())
             lists:AddResult(id, { itemID = 400, min = 1 })
-            assert.matches("Value %?", ui.craftMargin:GetText())
+            assert.matches("Profit avg %?", ui.craftMargin:GetText())
         end)
 
         it("follows the result mode in the margin line and in the tooltip", function()
             searchMaterial()
             scan["400"] = { scanMarket = 100 }
             lists:AddResult(id, { itemID = 400, name = "Cheap", min = 2, max = 3 })
-            assert.matches("Value 1662c", ui.craftMargin:GetText())
+            assert.matches("Profit avg 412c", ui.craftMargin:GetText())
             lists:SetResultMode(id, "oneOf")
             -- Min: Cheap 2 x 100 x 95% = 190. Max: Dust 2 x 1000 x 95% = 1900. Avg: (1425 + 237) / 2 = 831.
-            assert.are.equal("Cost 1250c (est.)  Value (one result, avg) 831c  Margin -419c (-34%)",
-                ui.craftMargin:GetText())
-            local tip = tab.marginTip
-            assert.are.equal("Only one result drops.", tip[1])
-            assert.matches("^min: value 190c, margin %-1060c %(2× Cheap%)$", tip[2])
-            assert.matches("^avg: value 831c, margin %-419c$", tip[3])
-            assert.matches("^max: value 1900c, margin 650c %(2× Dust%)$", tip[4])
+            assert.are.equal("Cost 1250c (est.)  Profit avg -419c (-34%)", ui.craftMargin:GetText())
+            assert.are.same({
+                { "Min / Avg / Max" },
+                { "Yield", "2× Cheap / mean / 2× Dust" },
+                { "Value", "190c / 831c / 1900c" },
+                { "Profit", "-1060c / -419c / 650c" },
+                { "Profit %", "-85% / -34% / 52%" },
+            }, tab.marginTip)
             lists:SetResultMode(id, "all")
-            assert.matches("Value 1662c", ui.craftMargin:GetText())
-            assert.are.equal(3, #tab.marginTip)
+            assert.matches("Profit avg 412c", ui.craftMargin:GetText())
+            assert.are.equal(4, #tab.marginTip)
+            assert.are.same({ "Value", "1140c / 1662c / 2185c" }, tab.marginTip[2])
         end)
-
         it("prices a material from the live levels, and the others from the market value as an estimate", function()
             searchMaterial()
             local margin = tab:CraftMargin()
@@ -784,27 +784,28 @@ describe("BuyingTab search lists", function()
             assert.are.equal(1250, margin.cost)
         end)
 
-        it("shows one compact margin line: cost, value after the cut and margin at average yield", function()
+        it("shows one compact margin line: the cost and the profit at average yield", function()
             searchMaterial()
-            assert.are.equal("Cost 1250c (est.)  Value 1425c  Margin 175c (14%)", ui.craftMargin:GetText())
+            assert.are.equal("Cost 1250c (est.)  Profit avg 175c (14%)", ui.craftMargin:GetText())
             assert.is_nil(ui.craftMargin:GetText():find("\n", 1, true))
         end)
 
-        it("shows the margin at min, average and max yield in the tooltip of the margin line", function()
+        it("shows the table of the Lists page in the tooltip of the margin line", function()
             searchMaterial()
             assert.are.same({
-                "min: value 950c, margin -300c",
-                "avg: value 1425c, margin 175c",
-                "max: value 1900c, margin 650c",
+                { "Min / Avg / Max" },
+                { "Value", "950c / 1425c / 1900c" },
+                { "Profit", "-300c / 175c / 650c" },
+                { "Profit %", "-24% / 14% / 52%" },
             }, tab.marginTip)
             local lines = {}
             _G.GameTooltip.SetText = function() end
-            _G.GameTooltip.AddLine = function(_, text) lines[#lines + 1] = text end
+            _G.GameTooltip.AddLine = function(_, text) lines[#lines + 1] = { text } end
+            _G.GameTooltip.AddDoubleLine = function(_, left, right) lines[#lines + 1] = { left, right } end
             _G.GameTooltip.Show = function() end
             ui.craftTip.scripts.OnEnter(ui.craftTip)
             assert.are.same(tab.marginTip, lines)
         end)
-
         it("walks the price levels for the count and uses the market value when the live units are too few", function()
             client.rows[100] = { row(300, 1), row(500, 2), row(900, 9) }
             tab:Select_("100")
@@ -824,7 +825,7 @@ describe("BuyingTab search lists", function()
             assert.are.equal(760, tab:CraftMargin().value.min)
             scan["300"] = {}
             tab:_Update()
-            assert.are.equal("Cost 1250c (est.)  Value ?  Margin ?", ui.craftMargin:GetText())
+            assert.are.equal("Cost 1250c (est.)  Profit avg ?", ui.craftMargin:GetText())
         end)
 
         it("shows ? for the materials with no price at all", function()
@@ -909,7 +910,7 @@ describe("BuyingTab search lists", function()
             ui.crafts:SetText("2")
             ui.crafts.scripts.OnEnterPressed(ui.crafts)
             assert.are.equal(2, tab.crafts)
-            assert.matches("^Cost 2500c %(est%.%)  Value 2850c  Margin 350c", ui.craftMargin:GetText())
+            assert.matches("^Cost 2500c %(est%.%)  Profit avg 350c", ui.craftMargin:GetText())
             ui.crafts:SetText("x")
             ui.crafts.scripts.OnEnterPressed(ui.crafts)
             assert.are.equal(2, tab.crafts)
