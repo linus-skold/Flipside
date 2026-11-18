@@ -27,7 +27,8 @@ local CONFIRM_WAIT = 15 -- seconds that a buy waits for the result of the server
 local DEAL_PERCENT = 30 -- a lowest price this many percent under the market value shows as a deal
 local CONFIRM_BOX = "FlipsideBuyConfirm" -- the box of the Buying tab: one buy box for both tabs
 local BUY_TEXT = "Buy lowest"
-local INFO_TRIES = 3 -- most requests for the item data of one entry before it is skipped
+local INFO_TRIES = 3 -- failed tries (an event or a timeout with no data) before an entry is skipped
+local INFO_TIMEOUT = 10 -- seconds that an entry waits for item data before it tries again
 
 -- Write a line to the log. The logger can be missing.
 local function log(level, text)
@@ -797,7 +798,7 @@ function Tab:_Decide(entry, rows)
         self:_WaitInfo(entry)
         return
     end
-    entry.waitText, entry.infoTries = nil, nil
+    entry.waitText, entry.infoFails = nil, nil
     local decision = deps.plan.Decide(candidate, rows, {
         isCommodity = commodity == true or nil,
         maxStack = maxStack,
@@ -849,18 +850,24 @@ function Tab:_StackInfo(itemID)
     return commodity, maxStack
 end
 
--- Put an entry in the waiting state until the item data is loaded. It asks the client for the data and tries again
--- when ITEM_DATA_LOAD_RESULT comes (see _OnItemLoaded). After INFO_TRIES tries without data, the entry is skipped.
+-- Put an entry in the waiting state until the item data is loaded. It asks the client for the data once and has one
+-- record in self.infoWait. Two things end the wait: ITEM_DATA_LOAD_RESULT and a timeout (INFO_TIMEOUT seconds). Both
+-- search the entry again (_RetryEntries). A search that still finds no data counts as a failed try. After INFO_TRIES
+-- failed tries the entry is skipped. A new click on a waiting entry changes nothing and uses no try.
 function Tab:_WaitInfo(entry)
     local itemID = entry.candidate.itemID
-    entry.infoTries = (entry.infoTries or 0) + 1
-    if entry.infoTries > INFO_TRIES then
-        entry.status, entry.waitText = "skip", nil
-        entry.decision = { action = "skip", reason = "item data is not available", key = entry.candidate.key }
-        entry.units, entry.next = {}, 1
-        self.deps.log:Add(entry.candidate, entry.decision)
-        self:_Update()
-        return "skipped"
+    local retry = entry.infoRetry
+    entry.infoRetry = nil
+    if retry then
+        entry.infoFails = (entry.infoFails or 0) + 1
+        if entry.infoFails >= INFO_TRIES then
+            entry.status, entry.waitText = "skip", nil
+            entry.decision = { action = "skip", reason = "item data is not available", key = entry.candidate.key }
+            entry.units, entry.next = {}, 1
+            self.deps.log:Add(entry.candidate, entry.decision)
+            self:_Update()
+            return "skipped"
+        end
     end
     entry.status, entry.decision, entry.waitText = "waiting", nil, "item data is loading"
     entry.units, entry.next = {}, 1
@@ -870,10 +877,41 @@ function Tab:_WaitInfo(entry)
         list = {}
         self.infoWait[itemID] = list
     end
+    for _, each in ipairs(list) do
+        if each == entry then
+            return "skipped"
+        end
+    end
     list[#list + 1] = entry
+    entry.infoToken = (entry.infoToken or 0) + 1
+    local token = entry.infoToken
     pcall(self.deps.requestItem, itemID)
+    self.deps.after(INFO_TIMEOUT, function()
+        if entry.infoToken == token and self.infoWait and entry.status == "waiting" then
+            self:_InfoTimeout(entry)
+        end
+    end)
     self:_Update()
     return "skipped"
+end
+
+-- The wait of an entry ran out with no event: search it again, as for an event.
+function Tab:_InfoTimeout(entry)
+    local itemID = entry.candidate.itemID
+    local list = self.infoWait and self.infoWait[itemID]
+    if not list then
+        return
+    end
+    for index, each in ipairs(list) do
+        if each == entry then
+            table.remove(list, index)
+            break
+        end
+    end
+    if #list == 0 then
+        self.infoWait[itemID] = nil
+    end
+    self:_RetryEntries({ entry })
 end
 
 -- The item data of an item arrived: search the entries again that waited for it.
@@ -883,8 +921,20 @@ function Tab:_RetryInfo(itemID)
         return
     end
     self.infoWait[itemID] = nil
-    for _, entry in ipairs(list) do
-        if entry.status == "waiting" then
+    self:_RetryEntries(list)
+end
+
+-- Search entries again after a wait. Only an entry that is still waiting, is in the selection and belongs to an open
+-- tab goes in the queue. Another entry stays "waiting" and is searched when it is selected.
+function Tab:_RetryEntries(entries)
+    for _, entry in ipairs(entries) do
+        entry.infoToken = (entry.infoToken or 0) + 1
+        local selected = false
+        for _, each in ipairs(self.selection) do
+            selected = selected or each == entry
+        end
+        if entry.status == "waiting" and selected and self.active then
+            entry.infoRetry = true
             if self.queue then
                 self.queue.list[#self.queue.list + 1] = entry
             else
@@ -895,6 +945,16 @@ function Tab:_RetryInfo(itemID)
     self:_Next()
 end
 
+-- Forget the entries that wait for item data (Stop, AH close, a new bag read). Their timers do nothing. An entry that
+-- waited stays "waiting" and is searched when it is selected again.
+function Tab:_ClearInfoWait()
+    for _, list in pairs(self.infoWait or {}) do
+        for _, entry in ipairs(list) do
+            entry.infoToken = (entry.infoToken or 0) + 1
+        end
+    end
+    self.infoWait = nil
+end
 -- Start the live search of one entry. Returns "started", "skipped" or "wait" with a text.
 function Tab:_Start(entry)
     local client = self.deps.client
@@ -908,6 +968,7 @@ function Tab:_Start(entry)
     if commodity ~= true and maxStack == nil then
         return self:_WaitInfo(entry)
     end
+    entry.infoRetry = nil
     if not client.IsReady() then
         return "wait", "waiting for the Auction House to be ready"
     end
@@ -984,6 +1045,7 @@ function Tab:RefreshBags()
     end
     local deps = self.deps
     self.queue = nil
+    self:_ClearInfoWait()
     local bagItems = deps.readBags()
     local byKey = self:_CandidatesByKey(bagItems)
     self.entries, self.selection, self.selectedId, self.postedCount = {}, {}, nil, 0
@@ -1376,6 +1438,7 @@ end
 -- Stop the queue. A search in flight still ends with its result.
 function Tab:Stop()
     self.queue = nil
+    self:_ClearInfoWait()
     self:_Update()
 end
 
@@ -2548,7 +2611,7 @@ function Tab:_StartBuy(entry, cover)
         local row = BuyFlow.FirstFree(level)
         self.buy = {
             entry = buyEntry, source = entry, level = level, row = row, isItem = true, phase = "quoted",
-            itemID = itemID, auctionID = row.auctionID, quantity = row.quantity or 1, unit = row.unitPrice,
+            itemID = itemID, auctionID = row.auctionID, quantity = BuyFlow.BuyQuantity(row), unit = row.unitPrice,
             total = BuyFlow.BuyoutOf(row), stacks = level.stacks,
         }
         self:_ShowBuyConfirm()
@@ -3636,6 +3699,7 @@ function Tab:Mount(parent, api)
         bus:Subscribe(closeEvent, OWNER, function()
             -- A scan cannot go on without the AH: end it so that Post is not locked for ever.
             self.queue, self.pending = nil, nil
+            self:_ClearInfoWait()
             -- An open buy ends with no retry and no search: the AH is closed. The wait timers see no buy.
             if self.buy then
                 self:_AbortBuy(self.buy, "the Auction House closed")

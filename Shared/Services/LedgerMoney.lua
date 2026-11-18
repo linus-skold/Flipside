@@ -796,6 +796,11 @@ function Tracker:_OnCall(name, ...)
         local commodity = name == "PostCommodity" or name == "ConfirmPostCommodity"
         if commodity then
             buyout = type(bid) == "number" and type(quantity) == "number" and bid * quantity or nil
+        elseif self._deps.commodityMarket and stacks == 1 and type(buyout) == "number"
+            and type(quantity) == "number" then
+            -- Forever: the buyout of PostItem is the price of one item. The record keeps the buyout of the whole post
+            -- (price times quantity), as for a commodity and for a TBC stack, and as old Forever records have it.
+            buyout = buyout * quantity
         end
         hint = {
             kind = "post", qty = quantity, buyout = buyout, stacks = stacks,
@@ -879,6 +884,10 @@ function Tracker:_OnCreated(auctionID)
             hint.item = deps.itemKey(info.itemLink, false)
             hint.qty = type(info.quantity) == "number" and info.quantity or nil
             hint.buyout = type(info.buyoutAmount) == "number" and info.buyoutAmount or nil
+            -- Forever: buyoutAmount is the price of one item (see ForeverBackend.LiveRows). The record has the total.
+            if hint.buyout and deps.commodityMarket and hint.qty then
+                hint.buyout = hint.buyout * hint.qty
+            end
         end
         self._hints[#self._hints + 1] = hint
     end

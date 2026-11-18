@@ -255,7 +255,7 @@ function Backend.LiveRows(itemID)
             if buyout and buyout > 0 and quantity and quantity > 0 then
                 rows[#rows + 1] = {
                     auctionID = r.auctionID, unitPrice = buyout, quantity = quantity, buyout = buyout,
-                    isCommodity = false, ownerItem = r.containsOwnerItem == true,
+                    isCommodity = false, perItem = true, ownerItem = r.containsOwnerItem == true,
                     timeLeft = r.timeLeftSeconds or r.timeLeft, itemLink = r.itemLink,
                     owner = type(r.owners) == "table" and #r.owners == 1 and r.owners[1] or nil,
                 }

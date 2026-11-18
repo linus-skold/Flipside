@@ -231,14 +231,15 @@ function BuyingPlan.GroupKey(row)
     local link = row.itemLink
     local item = link and (ns.ItemString and ns.ItemString.ToExactKey(link) or link) or ""
     local buyout = row.buyout or math.floor(row.unitPrice * (row.quantity or 1) + 0.5)
-    return string.format("%s|%s|%d|%d", item, row.owner or "", buyout, row.quantity or 1)
+    -- A Forever item row holds separate one-item auctions: the row quantity is not a stack size.
+    return string.format("%s|%s|%d|%d", item, row.owner or "", buyout, row.perItem and 1 or row.quantity or 1)
 end
 
 -- The key that Buy next follows from one bought stack to the next: buyout and stack size only. It leaves out the link
 -- and the seller, which a client can give late or not at all, so a stack keeps its key between two reads.
 function BuyingPlan.ChainKey(row)
     local buyout = row.buyout or math.floor(row.unitPrice * (row.quantity or 1) + 0.5)
-    return string.format("%d|%d", buyout, row.quantity or 1)
+    return string.format("%d|%d", buyout, row.perItem and 1 or row.quantity or 1)
 end
 
 -- The text of the Available column of a stack group: "50 stacks of 1", or "1 stack of 20".
@@ -293,13 +294,15 @@ local function StackLevels(rows, opts)
             local level = byKey[key]
             if not level then
                 level = {
-                    id = key, unitPrice = row.unitPrice, stackSize = row.quantity or 1, stacks = 0, quantity = 0,
-                    listings = 0, own = own, owner = row.owner, timeLeft = row.timeLeft, rows = {},
+                    id = key, unitPrice = row.unitPrice, stackSize = row.perItem and 1 or row.quantity or 1,
+                    stacks = 0, quantity = 0, listings = 0, own = own, owner = row.owner, timeLeft = row.timeLeft,
+                    rows = {}, perItem = row.perItem == true,
                 }
                 byKey[key] = level
                 levels[#levels + 1] = level
             end
-            level.stacks = level.stacks + 1
+            -- A Forever item row of N items is N auctions of one item (see BuyFlow.BuyQuantity).
+            level.stacks = level.stacks + (row.perItem and (row.quantity or 1) or 1)
             level.listings = level.stacks
             level.quantity = level.quantity + (row.quantity or 1)
             level.rows[#level.rows + 1] = row

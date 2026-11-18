@@ -16,7 +16,7 @@ local TBC = { hasCommodityMarket = false, multisell = true }
 
 -- Item 20 is gear (max stack 1, three single items), 21 a stackable good (max stack 20), 22 a commodity (Forever).
 describe("SellingTab single items", function()
-    local ns, bus, client, tab, ui, bagItems, stackSizes, requested
+    local ns, bus, client, tab, ui, bagItems, stackSizes, requested, timers
 
     local function makeClient()
         local c = { ready = true, searches = {}, rows = {}, commodity = {}, posts = {} }
@@ -31,6 +31,7 @@ describe("SellingTab single items", function()
         c.LiveResultEvents = function() return "COMMODITY_RESULTS", "ITEM_RESULTS" end
         c.ReadyEvent = function() return "READY" end
         c.PostedEvent = function() return "CREATED" end
+        c.CloseEvent = function() return "CLOSE" end
         c.MultisellEvent = function() return "MULTI" end
         c.ItemIsCommodity = function(itemID) return c.commodity[itemID] end
         c.CanReadOwned = function() return false end
@@ -87,7 +88,7 @@ describe("SellingTab single items", function()
         ns = loadModules(flavour)
         bus = ns.EventBus.New({})
         client = makeClient()
-        requested = {}
+        requested, timers = {}, {}
         stackSizes = { [20] = 1, [21] = 20, [22] = 20 }
         client.commodity[22] = true
         bagItems = {
@@ -102,7 +103,8 @@ describe("SellingTab single items", function()
         ns.SellingPlan.Log:Clear()
         local core = ns.SellingTab.New({
             bus = bus, rules = makeRules(), formulaRun = { Evaluate = function(_, text) return tonumber(text) end },
-            client = client, after = function() end, itemInfo = function(id) return "Item" .. id, 1 end,
+            client = client, itemInfo = function(id) return "Item" .. id, 1 end,
+            after = function(seconds, fn) timers[#timers + 1] = { seconds = seconds, fn = fn } end,
             readBags = function() return bagItems end,
             maxStack = function(id) return stackSizes[id] end,
             requestItem = function(id) requested[#requested + 1] = id end,
@@ -233,6 +235,98 @@ describe("SellingTab single items", function()
             assert.are.equal("skip", entry.status)
             assert.are.equal("item data is not available", entry.decision.reason)
             assert.are.same({}, client.searches)
+        end)
+
+        -- Run all the timers that are set now. A timer that sets a new timer leaves it for the next round.
+        local function fireTimers()
+            local list = timers
+            timers = {}
+            for _, timer in ipairs(list) do
+                timer.fn()
+            end
+        end
+
+        local function entry20()
+            for _, each in ipairs(tab.entries) do
+                if each.key == "20" then
+                    return each
+                end
+            end
+        end
+
+        it("ends the wait with a timeout when no event comes, asks again and skips after three tries", function()
+            ui.tree:Select("i20")
+            local first = #requested
+            fireTimers()
+            assert.is_true(#requested > first)
+            assert.are.equal("waiting", entry20().status)
+            fireTimers()
+            assert.are.equal("waiting", entry20().status)
+            fireTimers()
+            assert.are.equal("skip", entry20().status)
+            assert.are.equal("item data is not available", entry20().decision.reason)
+            assert.are.same({}, client.searches)
+        end)
+
+        it("searches at a timeout when the data is there but no event came", function()
+            ui.tree:Select("i20")
+            stackSizes[20] = 1
+            client.commodity[20] = false
+            fireTimers()
+            assert.are.same({ 20 }, client.searches)
+        end)
+
+        it("forgets the wait on Stop: no search from an event and no try from a timer", function()
+            ui.tree:Select("i20")
+            tab:Stop()
+            assert.is_nil(tab.infoWait)
+            stackSizes[20] = 1
+            client.commodity[20] = false
+            bus:Emit("ITEM_DATA_LOAD_RESULT", 20)
+            fireTimers()
+            assert.are.same({}, client.searches)
+            assert.is_nil(entry20().infoFails)
+        end)
+
+        it("forgets the wait when the AH closes", function()
+            ui.tree:Select("i20")
+            bus:Emit("CLOSE")
+            assert.is_nil(tab.infoWait)
+            stackSizes[20] = 1
+            client.commodity[20] = false
+            bus:Emit("ITEM_DATA_LOAD_RESULT", 20)
+            assert.are.same({}, client.searches)
+        end)
+
+        it("forgets the wait when the bags are read again", function()
+            ui.tree:Select("i20")
+            tab:RefreshBags()
+            assert.is_nil(tab.infoWait)
+        end)
+
+        it("does not search an entry that is not in the selection any more", function()
+            client.commodity[21] = false
+            ui.tree:Select("i20")
+            ui.tree:Select("i21")
+            local before = #client.searches
+            stackSizes[20] = 1
+            client.commodity[20] = false
+            bus:Emit("ITEM_DATA_LOAD_RESULT", 20)
+            for index = before + 1, #client.searches do
+                assert.are_not.equal(20, client.searches[index])
+            end
+            assert.are.equal("waiting", entry20().status)
+        end)
+
+        it("keeps one record for an entry and uses no try for a new click", function()
+            client.commodity[21] = false
+            ui.tree:Select("i20")
+            ui.tree:Select("i21")
+            client.rows[21] = { row(150, 20) }
+            bus:Emit("ITEM_RESULTS", 21)
+            ui.tree:Select("i20")
+            assert.are.equal(1, #tab.infoWait[20])
+            assert.is_nil(entry20().infoFails)
         end)
 
         it("does not wait for a commodity: its max stack size is not needed", function()

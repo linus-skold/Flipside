@@ -256,6 +256,7 @@ describe("AuctionClient", function()
             assert.are.equal(449, rows[1].unitPrice)
             assert.are.equal(40, rows[1].quantity)
             assert.are.equal(449, rows[1].buyout)
+            assert.is_true(rows[1].perItem)
         end)
 
         it("gives item rows with the price of one item and skips bid-only rows", function()

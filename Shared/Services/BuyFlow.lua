@@ -25,8 +25,16 @@ function BuyFlow.LevelId(level)
     return level.id or level.unitPrice
 end
 
+-- The items that one buy of an auction row takes. A Forever item row (row.perItem) holds quantity separate auctions
+-- of one item each, at the price of one item: one buy (one PlaceBid) takes one item. Any other row is a stack that
+-- one buy takes whole (TBC) or a commodity row.
+function BuyFlow.BuyQuantity(row)
+    return row.perItem and 1 or (row.quantity or 1)
+end
+
+-- The amount that PlaceBid takes for one buy of the row: the raw buyout of the client.
 function BuyFlow.BuyoutOf(row)
-    return row.buyout or math.floor(row.unitPrice * (row.quantity or 1) + 0.5)
+    return row.buyout or math.floor(row.unitPrice * BuyFlow.BuyQuantity(row) + 0.5)
 end
 
 -- True if two auctions are the same stack for sale: same item, seller, buyout and stack size.
@@ -91,12 +99,19 @@ function BuyFlow.QuoteText(buy, label, note)
     }
     if buy.isItem then
         lines[1] = string.format("Buy one stack: %d x %s", buy.quantity, label)
+        if buy.row.perItem then
+            lines[1] = string.format("Buy %d x %s", buy.quantity, label)
+        end
         local owner, left = buy.row.owner, ns.Flavour and ns.Flavour.hasCommodityMarket == false
             and TIME_LEFT[buy.row.timeLeft or 0] or nil
         if owner or left then
             lines[#lines + 1] = string.format("Seller: %s   Time left: %s", owner or "?", left or "?")
         end
-        lines[#lines + 1] = "Available: " .. ns.BuyingPlan.AvailableText(buy.stacks or 1, buy.quantity)
+        if buy.row.perItem then
+            lines[#lines + 1] = "Available: " .. (buy.row.quantity or 1) .. " items"
+        else
+            lines[#lines + 1] = "Available: " .. ns.BuyingPlan.AvailableText(buy.stacks or 1, buy.quantity)
+        end
         if note then
             table.insert(lines, 1, note)
         end
