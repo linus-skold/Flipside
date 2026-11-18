@@ -20,7 +20,7 @@ Flipside is a World of Warcraft: Forever auction house addon. Lua 5.1. Licence M
 3. Formula compiler, with live preview.
 4. Groups and operations UI.
 5. Tooltips and inventory tracking; tooltip price lines configurable with formulas (min, max, average).
-6. AH tabs in Blizzard's Auction House frame: Buying (with dry run), then Selling with decision log (no dry run on Selling). Selling and Buying tabs in Blizzard's AH frame that use the groups.
+6. AH tabs in Blizzard's Auction House frame: Buying (no dry run), then Selling with decision log (no dry run on Selling). Selling and Buying tabs in Blizzard's AH frame that use the groups.
 7. Mailbox parsing and the ledger; then Mailing. Vendoring moved to Phase 2 on 2026-11-06.
 Status of 2026-11-06: steps 0 to 6 are built. Step 7 is built except the ledger CSV export (PR8). Vendoring is not built (Phase 2).
 

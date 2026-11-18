@@ -311,7 +311,7 @@ describe("BuyingTab", function()
             tab.deps.rules = rules
             tab:RefreshList()
             assert.is_true(tab.list[1].noMax)
-            assert.are.equal("no max", ui.tree.list.rows[2].parts.price.text)
+            assert.are.equal("-", ui.tree.list.rows[2].parts.price.text)
             client.rows[20] = { row(50, 1), row(90000, 1) }
             tab:Select_("20")
             tab:Search()
@@ -320,6 +320,28 @@ describe("BuyingTab", function()
             local _, level, _, reason = tab:_NextBuy()
             assert.is_nil(reason)
             assert.are.equal(50, level.unitPrice)
+        end)
+
+        it("shows the market price, or the total for the amount, for an item with no max price", function()
+            rules = makeRules({ "20" })
+            rules.GetOperation = function()
+                return { name = "Default", settings = { maxPrice = "", showAboveMax = false } }
+            end
+            tab.deps.rules = rules
+            tab._ScanInfo = function()
+                return { market = 500 }
+            end
+            tab.amount = nil
+            tab:RefreshList()
+            assert.are.equal("500c", ui.tree.list.rows[2].parts.price.text)
+            tab.amount = 3
+            tab:RefreshList()
+            assert.are.equal("1500c",ui.tree.list.rows[2].parts.price.text)
+            tab._ScanInfo = function()
+                return { market = nil }
+            end
+            tab:RefreshList()
+            assert.are.equal("-", ui.tree.list.rows[2].parts.price.text)
         end)
 
         it("needs a selected item", function()
@@ -532,16 +554,18 @@ describe("BuyingTab", function()
             assert.are.equal("150c", ui.rowsList.rows[1].cells.stackPrice.text)
         end)
 
-        it("keeps the Dry run text and the jump label apart with relative anchors", function()
-            assert.are.equal("Jump warning %", ui.jumpLabel.text)
-            assert.are.equal(ui.dryRun.Text, ui.jumpLabel.points[1][2])
-            assert.are.equal(ui.jumpLabel, ui.jump.points[1][2])
+        it("has no dry run check box and no jump warning control", function()
+            assert.is_nil(ui.dryRun)
+            assert.is_nil(ui.jumpLabel)
+            assert.is_nil(ui.jump)
+            assert.is_nil(tab.SetDryRun)
+            assert.is_nil(tab.SetJumpPercent)
+            assert.is_false(ui.buyNext.enabled)
         end)
 
-        it("has no dry run label and keeps a Dry run check box that is off", function()
-            assert.is_false(ui.dryRun:GetChecked() and true or false)
-            assert.are.equal("Dry run", ui.dryRun.Text.text)
-            assert.is_false(ui.buyNext.enabled)
+        it("puts the Buy button on the amount row, after the total price", function()
+            assert.are.equal(ui.amountTotal, ui.buyNext.points[1][2])
+            assert.are.equal("LEFT", ui.buyNext.points[1][1])
         end)
 
         it("enables Buy next for a level under the max price", function()
@@ -694,10 +718,10 @@ describe("BuyingTab", function()
                 end,
             }
             assert.are.equal(25, tab:GetJumpPercent())
-            assert.is_true(tab:SetJumpPercent(10))
+            assert.is_true(ns.BuyingTab.WriteJumpPercent(tab.deps.db, 10))
             assert.are.equal(10, saved["profilebuying.jumpPercent"])
             assert.are.equal(10, tab:GetJumpPercent())
-            assert.is_false(tab:SetJumpPercent(0))
+            assert.is_false(ns.BuyingTab.WriteJumpPercent(tab.deps.db, 0))
             searchItem({ row(50, 1), row(60, 1) })
             buyAndQuote(50, 50)
             click(dialog("FlipsideBuyConfirm").yesButton)
@@ -873,14 +897,11 @@ describe("BuyingTab", function()
             assert.is_not_nil(tab.buy)
         end)
 
-        it("only logs in dry run", function()
+        it("never buys at the click of Buy: only a quote starts, the confirm needs a second click (D26)", function()
             searchItem({ row(50, 3) })
-            tab:SetDryRun(true)
             click(ui.buyNext)
-            assert.are.same({}, client.calls)
-            assert.are.equal("would buy 3 at 50c", lastLog().decision)
-            assert.are.equal("dry run", lastLog().reason)
-            assert.is_nil(dialog("FlipsideBuyConfirm"))
+            assert.are.same({ { "start", 10, 3 } }, client.calls)
+            assert.are.same({}, client.violations)
         end)
     end)
 
@@ -898,11 +919,6 @@ describe("BuyingTab", function()
                     return frame
                 end
             end
-        end
-
-        local function lastLog()
-            local list = ns.BuyingPlan.Log:List()
-            return list[#list]
         end
 
         local function auction(id, price, own)
@@ -1035,16 +1051,6 @@ describe("BuyingTab", function()
             pick(2)
             tab:Select_("11")
             assert.is_nil(tab.levelSel)
-        end)
-
-        it("logs the selected level in dry run", function()
-            search({ auction(1, 30), auction(2, 40) })
-            tab:SetDryRun(true)
-            pick(2)
-            click(ui.buyNext)
-            assert.are.same({}, client.calls)
-            assert.are.equal("would buy 1 at 40c", lastLog().decision)
-            assert.are.equal("dry run", lastLog().reason)
         end)
 
         -- Commodity levels: 50 x3, 60 x2, 70 x4, 150 x1 (the max price is 100).
@@ -1195,16 +1201,6 @@ describe("BuyingTab", function()
             click(dialog("FlipsideBuyConfirm").yesButton)
             fire("BOUGHT")
             assert.are.equal(50, tab.run.lastPrice)
-        end)
-
-        it("logs the units and the top price in dry run", function()
-            searchCommodity()
-            tab:SetDryRun(true)
-            pick(2)
-            tab:SetAmount("4")
-            click(ui.buyNext)
-            assert.are.same({}, client.calls)
-            assert.are.equal("would buy 4 at 60c", lastLog().decision)
         end)
 
         it("turns the amount box off for an item and buys one auction", function()

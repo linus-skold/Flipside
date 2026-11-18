@@ -18,7 +18,8 @@ local ABOUT_TEXT = "Groups sort items into trees. Operations hold the rules. For
 
 local SOUNDS_TEXT = "Play interface sounds"
 local SHARE_TEXT = "Share prices with my guild"
-local SHARE_HINT = "Off by default. Guild members share scan prices. Your own scans always win over shared prices."
+local JUMP_TEXT = "Buying price jump warning %"
+local SHARE_HINT ="Off by default. Guild members share scan prices. Your own scans always win over shared prices."
 
 -- A page that says why it cannot open.
 local function buildUnavailable(content)
@@ -67,6 +68,23 @@ local function buildAbout(content, deps)
         local hint = Kit.Label(content, SHARE_HINT, "highlight")
         hint:SetPoint("TOPLEFT", check, "BOTTOMLEFT", 4, -Kit.Theme.gap)
         about.shareHint = hint
+        anchor = hint
+    end
+    -- The price jump warning of the Buying tab: the percent of rise between two price levels that asks first.
+    local Buying = ns.BuyingTab
+    if deps.db and Buying and Buying.ReadJumpPercent then
+        local label = Kit.Label(content, JUMP_TEXT, "normal")
+        label:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", anchor == about.shareHint and -4 or 0, -Kit.Theme.gap * 2)
+        local input = Kit.NumberInput(content, 36, {
+            min = 1, max = 1000, hint = "1 - 1000",
+            onChange = function(number)
+                Buying.WriteJumpPercent(deps.db, number)
+            end,
+        })
+        input:SetPoint("LEFT", label, "RIGHT", 6, 0)
+        input:SetJustifyH("CENTER")
+        input:SetNumber(Buying.ReadJumpPercent(deps.db))
+        about.jumpLabel, about.jumpInput = label, input
     end
     return about
 end
