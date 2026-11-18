@@ -764,6 +764,10 @@ function Tracker:OnBid(auctionID)
         end
         item = source ~= nil and deps.itemKey(source, false) or nil
         qty = type(info.quantity) == "number" and info.quantity or (item and 1 or nil)
+        if deps.commodityMarket then
+            -- Forever: one PlaceBid buys one item of a row of N one-item auctions (see BuyFlow.BuyQuantity).
+            qty = item and 1 or nil
+        end
     end
     self:_Ring("bid", auctionID)
     self:AddBuyHint(auctionID, item, qty, seller)
@@ -783,6 +787,9 @@ function Tracker:_OnCall(name, ...)
         if type(info) == "table" then
             item = deps.itemKey(info.itemLink, false)
             qty = type(info.quantity) == "number" and info.quantity or nil
+            if deps.commodityMarket then
+                qty = item and 1 or nil -- Forever: one item for each buy
+            end
         end
         self:AddBuyHint(auctionID, item, qty, type(info) == "table" and info.owner or nil)
         self:_Ring("call", name)

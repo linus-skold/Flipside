@@ -360,8 +360,25 @@ describe("LedgerMoney", function()
             assert.are.equal(1, #records)
             assert.are.equal("ahPurchase", last().source)
             assert.are.equal("e:link9", last().item)
-            assert.are.equal(3, last().qty)
+            -- Forever: one buy takes one item, although the row holds 3.
+            assert.are.equal(1, last().qty)
             assert.are.equal(500, last().money)
+        end)
+
+        it("records one item at its price when one item of a Silver Rod row of 40 is bought", function()
+            tracker = attach({
+                auctionInfo = function()
+                    return { itemLink = "silverrod", buyoutAmount = 449, quantity = 40 }
+                end,
+            })
+            calls("BuyItemAuction", 9, 449)
+            tracker:OnBid(9)
+            bus:Emit("AUCTION_HOUSE_PURCHASE_COMPLETED", 9)
+            change(-449)
+            assert.are.equal(1, #records)
+            assert.are.equal("ahPurchase", last().source)
+            assert.are.equal(1, last().qty)
+            assert.are.equal(449, last().money)
         end)
 
         it("takes the item and the quantity of a buy in Blizzard's own tab from the bid hook", function()
@@ -371,7 +388,7 @@ describe("LedgerMoney", function()
             assert.are.equal(1, #records)
             assert.are.equal("ahPurchase", last().source)
             assert.are.equal("e:link9", last().item)
-            assert.are.equal(3, last().qty)
+            assert.are.equal(1, last().qty)
             assert.are.equal(500, last().money)
         end)
 
