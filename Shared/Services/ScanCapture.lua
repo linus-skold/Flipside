@@ -10,8 +10,9 @@ ns.ScanCapture = ScanCapture
 local Capture = {}
 Capture.__index = Capture
 
--- NOT verified in game: buyoutAmount is treated as the TOTAL for the auction.
--- If the client returns a price per unit, change this one function to return buyoutAmount.
+-- A legacy list row (TBC) has the buyout of the whole stack, so the unit price is the buyout divided by the count.
+-- A Forever item result is different: its buyoutAmount is the price of one item (see ForeverBackend.LiveRows), so
+-- _ReadItems uses it as it is.
 local function UnitPriceFromBuyout(buyoutAmount, count)
     return buyoutAmount / count
 end
@@ -112,7 +113,7 @@ function Capture:_ReadItems(itemKey)
                     byKey[key] = list
                 end
                 list[#list + 1] = {
-                    unitPrice = UnitPriceFromBuyout(info.buyoutAmount, info.quantity),
+                    unitPrice = info.buyoutAmount, -- the price of one item, not of the stack
                     count = info.quantity,
                 }
             end

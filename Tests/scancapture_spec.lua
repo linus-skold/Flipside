@@ -188,12 +188,13 @@ describe("ScanCapture", function()
             assert.are.equal(2, #captured)
         end)
 
-        it("divides the buyout by the quantity", function()
-            itemRow(gear(1001, 6001), 9000, 3)
+        it("takes the buyout of an item result as the price of one item, with no division", function()
+            -- Forever prices an item auction for one item (ForeverBackend.LiveRows): 40 items at 449 each.
+            itemRow(gear(1001, 6001), 449, 40)
             capture:OnItemResults({ itemID = 1001 })
             local r = store:Get("1001#b6001")
-            assert.are.equal(3000, r.latest.min)
-            assert.are.equal(3, r.latest.qty)
+            assert.are.equal(449, r.latest.min)
+            assert.are.equal(40, r.latest.qty)
         end)
 
         it("skips pets, rows without a link and rows without a buyout", function()

@@ -27,6 +27,8 @@ local CONFIRM_WAIT = 15 -- seconds that a buy waits for the result of the server
 local DEAL_PERCENT = 30 -- a lowest price this many percent under the market value shows as a deal
 local CONFIRM_BOX = "FlipsideBuyConfirm" -- the box of the Buying tab: one buy box for both tabs
 local BUY_TEXT = "Buy lowest"
+local INFO_TRIES = 3 -- failed tries (an event or a timeout with no data) before an entry is skipped
+local INFO_TIMEOUT = 10 -- seconds that an entry waits for item data before it tries again
 
 -- Write a line to the log. The logger can be missing.
 local function log(level, text)
@@ -324,7 +326,7 @@ function SellingTab.InfoText(entry)
     elseif status == "noop" then
         return "no operation"
     elseif status == "waiting" then
-        return candidate and candidate.reason or "not searched yet"
+        return entry.waitText or candidate and candidate.reason or "not searched yet"
     elseif status == "searching" then
         return "searching"
     elseif status == "failed" then
@@ -480,8 +482,20 @@ local function defaultVendorPrice(itemID)
     return nil
 end
 
+-- The max stack size of an item, or nil while the item data is not loaded. The tab never guesses 1: it waits for the
+-- data (see Tab:_WaitInfo). A client with no item API (a spec) gives 1.
 local function defaultMaxStack(itemID)
-    return C_Item and C_Item.GetItemMaxStackSizeByID and C_Item.GetItemMaxStackSizeByID(itemID) or 1
+    if not (C_Item and C_Item.GetItemMaxStackSizeByID) then
+        return 1
+    end
+    if C_Item.IsItemDataCachedByID and not C_Item.IsItemDataCachedByID(itemID) then
+        if C_Item.RequestLoadItemDataByID then
+            C_Item.RequestLoadItemDataByID(itemID)
+        end
+        return nil
+    end
+    local size = C_Item.GetItemMaxStackSizeByID(itemID)
+    return type(size) == "number" and size >= 1 and size or nil
 end
 
 -- The item link and the quality of an item; nil while the client has no data yet.
@@ -701,6 +715,9 @@ end
 
 -- Item data arrived. If a row waits for it, draw the rows again (one redraw for a burst of events).
 function Tab:_OnItemLoaded(itemID)
+    if type(itemID) == "number" then
+        self:_RetryInfo(itemID)
+    end
     if not (type(itemID) == "number" and self.waiting[itemID]) then
         return
     end
@@ -775,15 +792,23 @@ function Tab:_Decide(entry, rows)
     local deps = self.deps
     local candidate = entry.candidate
     local itemID = candidate.itemID
-    local okCommodity, commodity = pcall(deps.client.ItemIsCommodity, itemID)
+    local commodity, maxStack = self:_StackInfo(itemID)
+    -- The max stack size is not known yet and the item is not a commodity: do not guess 1. Wait for the data.
+    if not candidate.reason and commodity ~= true and maxStack == nil then
+        self:_WaitInfo(entry)
+        return
+    end
+    entry.waitText, entry.infoFails = nil, nil
     local decision = deps.plan.Decide(candidate, rows, {
-        isCommodity = okCommodity and commodity or nil,
-        maxStack = deps.maxStack(itemID),
+        isCommodity = commodity == true or nil,
+        maxStack = maxStack,
     })
     entry.decision = decision
     entry.marketValue = self:_Market(entry)
     entry.deal = SellingTab.DealText(decision.competitor, entry.marketValue)
-    entry.market = { commodity = okCommodity and commodity == true, maxStack = deps.maxStack(itemID) }
+    -- single: an item that has no stack price: a Forever item auction (no stacks) or a TBC item of max stack 1.
+    entry.market = { commodity = commodity == true, maxStack = maxStack,
+        single = commodity ~= true and (not ns.SellingPlan.Multisell() or (maxStack or 1) <= 1) }
     entry.units, entry.next = {}, 1
     if decision.action == "post" then
         entry.units = SellingTab.BuildUnits(candidate, decision)
@@ -806,6 +831,130 @@ function Tab:_Decide(entry, rows)
     self:_Update()
 end
 
+-- The commodity flag and the max stack size of an item. The flag is true, false or nil (not known). With no answer
+-- on a client that has a commodity market (Forever), a max stack size above 1 means a commodity (SPEC 5.1 point 5).
+-- A client with no commodity market (TBC) has no commodity. The max stack size is nil while the item data loads.
+function Tab:_StackInfo(itemID)
+    local deps = self.deps
+    if type(itemID) ~= "number" then
+        return nil, nil
+    end
+    local ok, commodity = pcall(deps.client.ItemIsCommodity, itemID)
+    commodity = ok and commodity or nil
+    local maxStack = deps.maxStack(itemID)
+    if commodity == nil and ns.Flavour and ns.Flavour.hasCommodityMarket == true and maxStack and maxStack > 1 then
+        commodity = true
+    elseif commodity == nil and ns.Flavour and ns.Flavour.hasCommodityMarket == false then
+        commodity = false
+    end
+    return commodity, maxStack
+end
+
+-- Put an entry in the waiting state until the item data is loaded. It asks the client for the data once and has one
+-- record in self.infoWait. Two things end the wait: ITEM_DATA_LOAD_RESULT and a timeout (INFO_TIMEOUT seconds). Both
+-- search the entry again (_RetryEntries). A search that still finds no data counts as a failed try. After INFO_TRIES
+-- failed tries the entry is skipped. A new click on a waiting entry changes nothing and uses no try.
+function Tab:_WaitInfo(entry)
+    local itemID = entry.candidate.itemID
+    local retry = entry.infoRetry
+    entry.infoRetry = nil
+    if retry then
+        entry.infoFails = (entry.infoFails or 0) + 1
+        if entry.infoFails >= INFO_TRIES then
+            entry.status, entry.waitText = "skip", nil
+            entry.decision = { action = "skip", reason = "item data is not available", key = entry.candidate.key }
+            entry.units, entry.next = {}, 1
+            self.deps.log:Add(entry.candidate, entry.decision)
+            self:_Update()
+            return "skipped"
+        end
+    end
+    entry.status, entry.decision, entry.waitText = "waiting", nil, "item data is loading"
+    entry.units, entry.next = {}, 1
+    self.infoWait = self.infoWait or {}
+    local list = self.infoWait[itemID]
+    if not list then
+        list = {}
+        self.infoWait[itemID] = list
+    end
+    for _, each in ipairs(list) do
+        if each == entry then
+            return "skipped"
+        end
+    end
+    list[#list + 1] = entry
+    entry.infoToken = (entry.infoToken or 0) + 1
+    local token = entry.infoToken
+    pcall(self.deps.requestItem, itemID)
+    self.deps.after(INFO_TIMEOUT, function()
+        if entry.infoToken == token and self.infoWait and entry.status == "waiting" then
+            self:_InfoTimeout(entry)
+        end
+    end)
+    self:_Update()
+    return "skipped"
+end
+
+-- The wait of an entry ran out with no event: search it again, as for an event.
+function Tab:_InfoTimeout(entry)
+    local itemID = entry.candidate.itemID
+    local list = self.infoWait and self.infoWait[itemID]
+    if not list then
+        return
+    end
+    for index, each in ipairs(list) do
+        if each == entry then
+            table.remove(list, index)
+            break
+        end
+    end
+    if #list == 0 then
+        self.infoWait[itemID] = nil
+    end
+    self:_RetryEntries({ entry })
+end
+
+-- The item data of an item arrived: search the entries again that waited for it.
+function Tab:_RetryInfo(itemID)
+    local list = self.infoWait and self.infoWait[itemID]
+    if not list then
+        return
+    end
+    self.infoWait[itemID] = nil
+    self:_RetryEntries(list)
+end
+
+-- Search entries again after a wait. Only an entry that is still waiting, is in the selection and belongs to an open
+-- tab goes in the queue. Another entry stays "waiting" and is searched when it is selected.
+function Tab:_RetryEntries(entries)
+    for _, entry in ipairs(entries) do
+        entry.infoToken = (entry.infoToken or 0) + 1
+        local selected = false
+        for _, each in ipairs(self.selection) do
+            selected = selected or each == entry
+        end
+        if entry.status == "waiting" and selected and self.active then
+            entry.infoRetry = true
+            if self.queue then
+                self.queue.list[#self.queue.list + 1] = entry
+            else
+                self.queue = { list = { entry }, pos = 0 }
+            end
+        end
+    end
+    self:_Next()
+end
+
+-- Forget the entries that wait for item data (Stop, AH close, a new bag read). Their timers do nothing. An entry that
+-- waited stays "waiting" and is searched when it is selected again.
+function Tab:_ClearInfoWait()
+    for _, list in pairs(self.infoWait or {}) do
+        for _, entry in ipairs(list) do
+            entry.infoToken = (entry.infoToken or 0) + 1
+        end
+    end
+    self.infoWait = nil
+end
 -- Start the live search of one entry. Returns "started", "skipped" or "wait" with a text.
 function Tab:_Start(entry)
     local client = self.deps.client
@@ -814,6 +963,12 @@ function Tab:_Start(entry)
         self:_Decide(entry, {})
         return "skipped"
     end
+    -- Search only when the item data is known: the rows and the post depend on the commodity flag and the stack size.
+    local commodity, maxStack = self:_StackInfo(candidate.itemID)
+    if commodity ~= true and maxStack == nil then
+        return self:_WaitInfo(entry)
+    end
+    entry.infoRetry = nil
     if not client.IsReady() then
         return "wait", "waiting for the Auction House to be ready"
     end
@@ -890,6 +1045,7 @@ function Tab:RefreshBags()
     end
     local deps = self.deps
     self.queue = nil
+    self:_ClearInfoWait()
     local bagItems = deps.readBags()
     local byKey = self:_CandidatesByKey(bagItems)
     self.entries, self.selection, self.selectedId, self.postedCount = {}, {}, nil, 0
@@ -1282,6 +1438,7 @@ end
 -- Stop the queue. A search in flight still ends with its result.
 function Tab:Stop()
     self.queue = nil
+    self:_ClearInfoWait()
     self:_Update()
 end
 
@@ -2012,7 +2169,9 @@ function Tab:_PostStep()
             return client.ConfirmPostCommodity(unit.bag, unit.slot, decision.duration, quantity, price)
         end
     else
-        local buyout = price * quantity
+        -- TBC: the buyout is for the stack (price of one item times the stack size). Forever has no stacks: the client
+        -- takes the price of one item (PostItem: the item sell frame posts its per-item price box).
+        local buyout = ns.SellingPlan.Multisell() and price * quantity or price
         -- With no known deposit the backend reads it from the sale slot (TBC). If the vendor pays more than the
         -- net after that deposit, the backend holds the post and the user decides.
         local guard
@@ -2390,6 +2549,11 @@ function Tab:_RefreshLevels()
     end
     local entry = self.levelsOn and self:_LevelEntry() or nil
     local levels = entry and self:_LevelsOf(entry) or {}
+    -- A single item has a price, not a unit price.
+    local title = entry and entry.market and entry.market.single and "Price" or "Unit price"
+    if ui.levelHeader.labels.price.GetText and ui.levelHeader.labels.price:GetText() ~= title then
+        ui.levelHeader.labels.price:SetText(title)
+    end
     if self.levelSel ~= nil and not self:_SelectedLevel(levels) then
         self.levelSel = nil
     end
@@ -2447,7 +2611,7 @@ function Tab:_StartBuy(entry, cover)
         local row = BuyFlow.FirstFree(level)
         self.buy = {
             entry = buyEntry, source = entry, level = level, row = row, isItem = true, phase = "quoted",
-            itemID = itemID, auctionID = row.auctionID, quantity = row.quantity or 1, unit = row.unitPrice,
+            itemID = itemID, auctionID = row.auctionID, quantity = BuyFlow.BuyQuantity(row), unit = row.unitPrice,
             total = BuyFlow.BuyoutOf(row), stacks = level.stacks,
         }
         self:_ShowBuyConfirm()
@@ -2945,7 +3109,7 @@ function Tab:_SyncManual(entry, price)
     local shown = self.manualShown
     local stacks = unit.stacks or 1
     local size = SellingTab.ClampQuantity(entry.manualQty, SellingTab.StackLimit(entry)) or unit.quantity
-    self:_Shape(entry.market ~= nil and entry.market.commodity == true)
+    self:_Shape(SellingTab.ShapeOf(entry.market))
     d.stacksMax:SetText("Max: " .. math.max(1, math.floor(SellingTab.MaxQuantity(entry.candidate) / size)))
     d.qtyMax:SetText("Max: " .. SellingTab.StackLimit(entry))
     if not (shown and shown.entry == entry and shown.next == entry.next and shown.qty == unit.quantity
@@ -2964,23 +3128,40 @@ function Tab:_SyncManual(entry, price)
     return size
 end
 
--- Show the boxes of the post size that fit the item: stacks of a size (TBC), a stack size, or a commodity quantity.
--- A commodity has no stacks, so the stack price box hides. Forever posts one auction for each click.
-function Tab:_Shape(commodity)
+-- The shape of the post boxes for the market of an entry (entry.market, or nil before the first decision):
+--   "commodity": a quantity and a unit price (no stacks).
+--   "plain": a Forever item auction: a price for one item and a quantity. Forever has no stacks.
+--   "single": a TBC item of max stack 1: a price for one item and the number of stacks. No stack size.
+--   "multi": a TBC stackable item: stacks of a size, a unit price and a stack price.
+function SellingTab.ShapeOf(market)
+    if market and market.commodity then
+        return "commodity"
+    elseif ns.SellingPlan.Multisell() then
+        return market and market.single and "single" or "multi"
+    end
+    return "plain"
+end
+
+-- Show the boxes of the post size that fit the item (see SellingTab.ShapeOf). Only a stacked item has a stack
+-- price and a stack size. The price box reads "Unit Price" for a commodity and a stack, else "Price".
+function Tab:_Shape(mode)
     local d = self.ui.details
-    local mode = commodity and "commodity" or (ns.SellingPlan.Multisell() and "multi" or "single")
     if d.mode == mode then
         return
     end
     d.mode = mode
     local multi = mode == "multi"
-    d.stacks:SetShown(multi)
+    local counted = multi or mode == "single" -- the number of stacks is a box
+    d.stacks:SetShown(counted)
     d.stackOf:SetShown(multi)
-    d.stacksMax:SetShown(multi)
-    d.qtyLabel:SetShown(not multi)
-    d.qtyLabel:SetText(commodity and "Quantity:" or "Stack size:")
-    d.stackLabel:SetShown(not commodity)
-    d.stackInput:SetShown(not commodity)
+    d.stacksMax:SetShown(counted)
+    d.qtyLabel:SetShown(mode == "commodity" or mode == "plain")
+    d.qtyLabel:SetText("Quantity:")
+    d.qty:SetShown(mode ~= "single")
+    d.qtyMax:SetShown(mode ~= "single")
+    d.stackLabel:SetShown(multi)
+    d.stackInput:SetShown(multi)
+    d.priceLabel:SetText((mode == "commodity" or multi) and "Unit Price" or "Price")
     local x = multi and QTY_X or SINGLE_QTY_X
     d.qty:ClearAllPoints()
     d.qty:SetPoint("TOPLEFT", d.frame, "TOPLEFT", x, -38)
@@ -3392,7 +3573,7 @@ function Tab:_BuildContent()
     totalLabel:SetText("Total Price:")
     d.total = rline("highlight", 164, 60, 156)
     ui.details = d
-    self:_Shape(false)
+    self:_Shape(SellingTab.ShapeOf(nil))
 
     ui.tree = Kit.CreateTree(content, { rowHeight = ROW_HEIGHT, inset = true, skin = skin,
         initRow = function(row, node, depth, isCollapsed, hasChildren)
@@ -3518,6 +3699,7 @@ function Tab:Mount(parent, api)
         bus:Subscribe(closeEvent, OWNER, function()
             -- A scan cannot go on without the AH: end it so that Post is not locked for ever.
             self.queue, self.pending = nil, nil
+            self:_ClearInfoWait()
             -- An open buy ends with no retry and no search: the AH is closed. The wait timers see no buy.
             if self.buy then
                 self:_AbortBuy(self.buy, "the Auction House closed")

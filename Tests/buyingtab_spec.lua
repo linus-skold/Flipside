@@ -916,6 +916,55 @@ describe("BuyingTab", function()
             assert.are.same({}, client.violations)
         end)
 
+        -- A Forever item row of 40 items at 449 each: 40 separate one-item auctions (BuyFlow.BuyQuantity).
+        local function silverRod()
+            return { auctionID = 9, unitPrice = 449, quantity = 40, isCommodity = false, buyout = 449,
+                perItem = true }
+        end
+
+        it("buys one item of a Forever row of 40 at 449 each: 1 x, 449, counted as one", function()
+            tab.list[1].maxPrice = 500
+            searchItem({ silverRod() })
+            click(ui.buyNext)
+            local confirm = dialog("FlipsideBuyConfirm")
+            assert.matches("Buy 1 x Item10", confirm.text.text)
+            assert.matches("Total: 449c", confirm.text.text)
+            assert.matches("Available: 40 items", confirm.text.text)
+            click(confirm.yesButton)
+            assert.are.same({ { "bid", 9, 449 } }, client.calls)
+            fire("ITEMBOUGHT", 9)
+            assert.are.equal("bought 1 at 449c", lastLog().decision)
+            assert.are.equal(1, tab.run.bought)
+        end)
+
+        it("checks the max price of a Forever item row with the price of one item", function()
+            -- The max price is 100: 449 for one item is above it, whatever the quantity.
+            searchItem({ silverRod() })
+            local ok, reason = tab:BuyNext()
+            assert.is_false(ok)
+            assert.are.equal("above max price", reason)
+            assert.are.same({}, client.calls)
+        end)
+
+        it("goes on with the next auction of the row for each click until the target", function()
+            tab.list[1].maxPrice = 500
+            searchItem({ silverRod() })
+            click(ui.buyNext)
+            click(dialog("FlipsideBuyConfirm").yesButton)
+            local rod = silverRod()
+            rod.quantity = 39
+            client.rows[10] = { rod }
+            fire("ITEMBOUGHT", 9)
+            fire("ITEM_RESULTS", 10)
+            assert.are.equal(1, tab.run.bought)
+            assert.is_not_nil(tab.buy)
+            assert.matches("Buy 1 x Item10", dialog("FlipsideBuyConfirm").text.text)
+            click(dialog("FlipsideBuyConfirm").yesButton)
+            assert.are.same({ { "bid", 9, 449 }, { "bid", 9, 449 } }, client.calls)
+            fire("ITEMBOUGHT", 9)
+            assert.are.equal(2, tab.run.bought)
+        end)
+
         it("logs an item buy error", function()
             searchItem({ { auctionID = 7, unitPrice = 30, quantity = 1, isCommodity = false, buyout = 30 } })
             click(ui.buyNext)

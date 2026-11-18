@@ -84,10 +84,10 @@ function BuyingTab.StackSize(level)
     end
     for _, row in ipairs(level.rows) do
         if not isOwn(row) then
-            return row.quantity or 1
+            return BuyFlow.BuyQuantity(row)
         end
     end
-    return first.quantity or 1
+    return BuyFlow.BuyQuantity(first)
 end
 
 -- The stack price of a price level (unit price times stack size), or nil if the level has no stack.
@@ -2072,7 +2072,7 @@ function Tab:_StartBuy(entry, cover, jump)
         end
         self.buy = {
             entry = entry, level = level, row = row, isItem = true, phase = "quoted", itemID = entry.itemID,
-            auctionID = row.auctionID, quantity = row.quantity or 1, unit = row.unitPrice, total = buyoutOf(row),
+            auctionID = row.auctionID, quantity = BuyFlow.BuyQuantity(row), unit = row.unitPrice, total = buyoutOf(row),
             jump = jump, stacks = level.stacks,
         }
         self:_ShowConfirm()

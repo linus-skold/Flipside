@@ -74,6 +74,11 @@ describe("CraftListMargin", function()
             assert.is_nil(Margin.WalkLevels(stacks, 31))
             assert.are.equal(10 * 10 + 20 * 12, Margin.WalkLevels(stacks, 30))
         end)
+
+        it("prices a Forever item level of 40 items at 449 each as 449 for each item", function()
+            local level = { { unitPrice = 449, stackSize = 40, stacks = 1, quantity = 40 } }
+            assert.are.equal(449 * 40, Margin.WalkLevels(level, 40))
+        end)
     end)
 
     describe("Compute", function()
