@@ -16,8 +16,13 @@ local function login()
     mock.fire("PLAYER_LOGIN")
 end
 
-local function rec(n)
-    return { time = n, char = "Tester-TestRealm", type = "income", source = "quest", money = n }
+-- The character key of the mocked Forever character Tester is its GUID.
+local function key()
+    return mock.guidFor("Tester")
+end
+
+local function rec(n, char)
+    return { time = n, char = char or key(), type = "income", source = "quest", money = n }
 end
 
 describe("Init ledger", function()
@@ -62,7 +67,72 @@ describe("Init ledger", function()
         assert.are.same({ "Flipside_Ledger" }, mock.addOnLoads)
         assert.are.equal(0, ns.ledgerBuffer:Count())
         local region = next(_G.FlipsideLedgerDB.records)
-        assert.are.equal(2, #_G.FlipsideLedgerDB.records[region].standard["Tester-TestRealm"])
+        assert.are.equal(2, #_G.FlipsideLedgerDB.records[region].standard[key()])
+        assert.is_nil(_G.FlipsideLedgerDB.records[region].standard["Tester-TestRealm"])
+    end)
+
+    describe("legacy Name-Realm data", function()
+        local function legacySums()
+            return { { day = 10, source = "quest", item = "", count = 1, qty = 0, moneyIn = 5, moneyOut = 0 } }
+        end
+
+        it("moves the legacy ledger store entries to the GUID that claimed the name, when the store opens", function()
+            _G.FlipsideLedgerDB = {
+                _schema = 1,
+                records = { EU = { standard = { ["Tester-TestRealm"] = { rec(1, "Tester-TestRealm") } } } },
+                sums = { EU = { standard = { ["Tester-TestRealm"] = legacySums() } } },
+            }
+            login()
+            assert.are.equal(0, #mock.addOnLoads)
+            assert.is_true(ns.ledgerLoader:Ensure())
+            local standard = _G.FlipsideLedgerDB.records.EU.standard
+            assert.is_nil(standard["Tester-TestRealm"])
+            assert.are.equal(1, #standard[key()])
+            assert.are.equal(key(), standard[key()][1].char)
+            assert.are.equal(1, #_G.FlipsideLedgerDB.sums.EU.standard[key()])
+            assert.is_nil(_G.FlipsideLedgerDB.sums.EU.standard["Tester-TestRealm"])
+        end)
+
+        it("gives the ledger entries to the first character that logged in, not to a later one", function()
+            _G.FlipsideLedgerDB = {
+                _schema = 1,
+                records = { EU = { standard = { ["Tester-TestRealm"] = { rec(1, "Tester-TestRealm") } } } },
+            }
+            local smith, jones = "Player-1-000000A1", "Player-1-000000B2"
+            mock.playerSurname, mock.playerGuid = "Smith", smith
+            login()
+            -- The store did not open in this session. A second character with the same first name logs in next.
+            local savedDB, savedLedger = _G.FlipsideDB, _G.FlipsideLedgerDB
+            mock.reset()
+            mock.playerName, mock.playerSurname, mock.playerGuid = "Tester", "Jones", jones
+            mock.realmName = "TestRealm"
+            ns = loadAddon()
+            _G.FlipsideDB, _G.FlipsideLedgerDB = savedDB, savedLedger
+            login()
+            assert.is_true(ns.ledgerLoader:Ensure())
+            local standard = _G.FlipsideLedgerDB.records.EU.standard
+            assert.are.equal(1, #standard[smith])
+            assert.is_nil(standard[jones])
+            assert.is_nil(standard["Tester-TestRealm"])
+        end)
+
+        it("rewrites the buffered records and moves the settings of the claimant", function()
+            _G.FlipsideDB = {
+                _schema = 2,
+                ["a/ledger.buffer"] = { rec(1, "Tester-TestRealm"), rec(2, "Other-TestRealm") },
+                ["c/Tester-TestRealm/ledger.balance"] = { copper = 700, time = 5 },
+                ["c/Tester-TestRealm/example"] = 7,
+                ["c/Tester-TestRealm/ledger.view.char"] = "Tester-TestRealm",
+            }
+            login()
+            local buffer = ns.ledgerBuffer:Peek()
+            assert.are.equal(key(), buffer[1].char)
+            assert.are.equal("Other-TestRealm", buffer[2].char)
+            assert.are.equal(7, ns.db:GetFor(key(), "example"))
+            assert.are.equal(key(), ns.db:GetFor(key(), "ledger.view.char"))
+            assert.is_nil(ns.db:GetFor("Tester-TestRealm", "ledger.balance"))
+            assert.is_nil(ns.db:GetFor("Tester-TestRealm", "example"))
+        end)
     end)
 
     it("loads the ledger addon at login when the buffer is not empty", function()
@@ -141,7 +211,7 @@ describe("Init ledger", function()
 
     it("saves the gold balance at login, at PLAYER_ENTERING_WORLD and on PLAYER_MONEY, not at logout", function()
         local function saved()
-            return ns.LedgerBalance.ReadSnapshot(ns.db, "Tester-TestRealm")
+            return ns.LedgerBalance.ReadSnapshot(ns.db, key())
         end
         mock.money = 4200
         login()

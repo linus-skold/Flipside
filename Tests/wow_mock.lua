@@ -9,7 +9,8 @@ local GLOBAL_NAMES = {
     "GetServerTime", "GetTime", "GetCurrentRegion", "IsTestBuild", "IsBetaBuild", "IsPublicTestClient",
     "SLASH_FLIPSIDE1", "SLASH_FLIPSIDE2",
     "SLASH_SCANTEST1", "ScanTestDB", "SlashCmdList",
-    "StaticPopupDialogs", "StaticPopup_Show", "UnitName", "UnitClass", "WOW_PROJECT_ID", "date", "debugprofilestop",
+    "StaticPopupDialogs", "StaticPopup_Show", "UnitName", "UnitGUID", "UnitClass", "WOW_PROJECT_ID", "date",
+    "debugprofilestop",
     "time",
     "UISpecialFrames", "UIParent", "GameTooltip", "UIErrorsFrame", "C_Mail", "GetMoneyString", "GetMoney",
     "issecretvalue",
@@ -523,6 +524,7 @@ function M.reset(options)
     M.stackSizes = {} -- itemID -> max stack size
     M.playerName = nil -- result of UnitName("player")
     M.playerSurname = nil -- second result of UnitName("player") (Forever: the surname)
+    M.playerGuid = nil -- result of UnitGUID("player"); nil: M.guidFor(name); false: no GUID (nil)
     M.playerClass = "MAGE" -- class file that UnitClass("player") gives as its second result
     M.money = 0 -- result of GetMoney()
     M.noLines = false -- true removes CreateLine from the frames that are made after it
@@ -827,6 +829,12 @@ function M.reset(options)
     _G.UnitName = function()
         return M.playerName, M.playerSurname
     end
+    _G.UnitGUID = function(unit)
+        if unit ~= "player" or M.playerGuid == false then
+            return nil
+        end
+        return M.playerGuid or M.guidFor(M.playerName)
+    end
     _G.GetNormalizedRealmName = function()
         return M.realmName
     end
@@ -1035,6 +1043,20 @@ function M.reset(options)
         _G.NUM_BANKBAGSLOTS = 7
         _G.BANK_CONTAINER = -1
     end
+end
+
+-- A stable player GUID for a mocked character: Player-<realm id>-<8 hex digits of a hash of the name>.
+-- It is nil without a name. The same name always gives the same GUID. A spec that needs two characters with the same
+-- first name sets M.playerGuid for each of them.
+function M.guidFor(name)
+    if name == nil then
+        return nil
+    end
+    local hash = 5381
+    for char in name:gmatch(".") do
+        hash = (hash * 33 + char:byte()) % 4294967296
+    end
+    return string.format("Player-1-%08X", hash)
 end
 
 -- Remove the globals that the mock sets.

@@ -10,6 +10,7 @@ local FILES = {
     manifest.path("Core_Forever/Flavour"),
     manifest.path("AuctionClient"),
     manifest.path("ForeverBackend"),
+    manifest.path("CharacterKey"),
     manifest.path("Init"),
 }
 
@@ -233,7 +234,7 @@ describe("Init", function()
             assert.are.equal("Default", ns.db:GetProfile())
             local found = false
             for _, value in pairs(_G.FlipsideDB) do
-                if type(value) == "table" and value["Tester-TestRealm"] == "Default" then
+                if type(value) == "table" and value[mock.guidFor("Tester")] == "Default" then
                     found = true
                 end
             end

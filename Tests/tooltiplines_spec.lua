@@ -433,6 +433,75 @@ describe("TooltipLines", function()
                 assert.are.equal("|cffffffffBob|r: 2 (bags 2)", rows[5].left)
             end)
 
+            it("shows Name Surname, never a GUID, for GUID keys with the same first name on Forever", function()
+                load(manifest.path("CharacterKey"))
+                load(manifest.path("CharacterName"))
+                ns.Flavour = { usesSurname = true, characterGuidKey = true }
+                local smith, jones, bob = "Player-1-0000000A", "Player-1-0000000B", "Player-1-0000000C"
+                local account, surnames = {}, { [smith] = "Smith", [jones] = "Jones" }
+                local db = {
+                    Get = function(_, _, key)
+                        return account[key]
+                    end,
+                    Set = function(_, _, key, value)
+                        account[key] = value
+                        return true
+                    end,
+                    IsReadOnly = function()
+                        return false
+                    end,
+                    GetFor = function(_, key, name)
+                        return name == "surname" and surnames[key] or nil
+                    end,
+                }
+                ns.CharacterKey.Setup({ db = db })
+                ns.CharacterName.Setup({ db = db })
+                ns.CharacterKey.SaveMeta(smith, "Ann", "Home")
+                ns.CharacterKey.SaveMeta(jones, "Ann", "Home")
+                ns.CharacterKey.SaveMeta(bob, "Bob", "Home")
+                local rows = withHoldings({
+                    { name = smith, total = 4, bags = 4 },
+                    { name = jones, total = 3, bags = 3 },
+                    { name = bob, total = 2, bags = 2 },
+                }, {})
+                assert.are.equal("|cffffffffAnn Smith|r: 4 (bags 4)", rows[3].left)
+                assert.are.equal("|cffffffffAnn Jones|r: 3 (bags 3)", rows[4].left)
+                assert.are.equal("|cffffffffBob|r: 2 (bags 2)", rows[5].left)
+            end)
+
+            it("shows Name-Realm for a clash with no known surname, not the GUID", function()
+                load(manifest.path("CharacterKey"))
+                load(manifest.path("CharacterName"))
+                ns.Flavour = { usesSurname = true, characterGuidKey = true }
+                local first, second = "Player-1-0000000A", "Player-1-0000000B"
+                local account = {}
+                local db = {
+                    Get = function(_, _, key)
+                        return account[key]
+                    end,
+                    Set = function(_, _, key, value)
+                        account[key] = value
+                        return true
+                    end,
+                    IsReadOnly = function()
+                        return false
+                    end,
+                    GetFor = function()
+                        return nil
+                    end,
+                }
+                ns.CharacterKey.Setup({ db = db })
+                ns.CharacterName.Setup({ db = db })
+                ns.CharacterKey.SaveMeta(first, "Ann", "Home")
+                ns.CharacterKey.SaveMeta(second, "Ann", "Home")
+                local rows = withHoldings({
+                    { name = first, total = 4, bags = 4 },
+                    { name = second, total = 3, bags = 3 },
+                }, {})
+                assert.are.equal("|cffffffffAnn-Home|r: 4 (bags 4)", rows[3].left)
+                assert.are.equal("|cffffffffAnn-Home|r: 3 (bags 3)", rows[4].left)
+            end)
+
             it("uses white when the class is missing or has no colour", function()
                 local rows = withHoldings({
                     { name = "Ann-Home", total = 1, bags = 1, class = "UNKNOWN" },

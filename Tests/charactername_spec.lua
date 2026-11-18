@@ -164,6 +164,63 @@ describe("CharacterName", function()
         end)
     end)
 
+    describe("with GUID keys (Forever)", function()
+        local A, B = "Player-1-0000000A", "Player-1-0000000B"
+
+        before_each(function()
+            store = {}
+            local account = {}
+            ns = { Flavour = { usesSurname = true, characterGuidKey = true } }
+            assert(loadfile(manifest.path("CharacterKey")))("Flipside", ns)
+            assert(loadfile(manifest.path("CharacterName")))("Flipside", ns)
+            local db = fakeDb()
+            function db.Get(_, _, key)
+                return account[key]
+            end
+            function db.Set(_, _, key, value)
+                account[key] = value
+                return true
+            end
+            function db.IsReadOnly()
+                return false
+            end
+            ns.CharacterKey.Setup({ db = db })
+            C = ns.CharacterName
+            C.Setup({ db = db })
+            ns.CharacterKey.SaveMeta(A, "Bob", "RealmA")
+            ns.CharacterKey.SaveMeta(B, "Bob", "RealmA")
+            C.SaveSurname(A, "Smith")
+            C.SaveSurname(B, "Jones")
+        end)
+
+        it("shows Name Surname of each key and never a GUID", function()
+            assert.are.equal("Bob Smith", C.Display(A))
+            assert.are.equal("Bob Jones", C.Display(B))
+            assert.are.equal("Bob", C.Plain(A))
+            assert.are.equal("Unknown", C.Display("Player-1-000000FF"))
+        end)
+
+        it("shows the name alone for a key with no saved surname", function()
+            ns.CharacterKey.SaveMeta("Player-1-0000000C", "Eve", "RealmA")
+            assert.are.equal("Eve", C.Display("Player-1-0000000C"))
+        end)
+
+        it("matches Name Surname to the right character of the same first name", function()
+            local keys = { A, B }
+            assert.are.equal(A, C.Resolve("Bob Smith", keys))
+            assert.are.equal(B, C.Resolve("bob JONES", keys))
+            assert.are.equal(A, C.Resolve("Bob-RealmA", keys))
+            assert.are.equal(A, C.Resolve("Bob", keys))
+            assert.is_nil(C.Resolve("Bob Brown", keys))
+            assert.is_nil(C.Resolve("Bob-RealmZ", keys))
+        end)
+
+        it("gives the full name of an own character for the mail call", function()
+            assert.are.equal("Bob Jones", C.MailName("Bob Jones", { A, B }))
+            assert.are.equal("Bob Smith", C.MailName("Bob Smith", { B, A }))
+        end)
+    end)
+
     describe("on TBC", function()
         before_each(function()
             setup({ usesSurname = false })

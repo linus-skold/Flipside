@@ -1,8 +1,9 @@
 local _, ns = ...
 
 -- The ledger records in the FlipsideLedgerDB table, for one region and ruleset (D22).
--- Layout: records[region][ruleset][Name-Realm] = list of records, in the order they were moved.
---         sums[region][ruleset][Name-Realm] = list of daily sums { day, source, item, count, qty, moneyIn, moneyOut }.
+-- Layout: records[region][ruleset][<character key>] = list of records, in the order they were moved.
+--         sums[region][ruleset][<character key>] = list of daily sums { day, source, item, count, qty, moneyIn, moneyOut }.
+-- The character key is the player GUID on Forever and "Name-Realm" on TBC (CharacterKey).
 local LedgerStore = {}
 ns.LedgerStore = LedgerStore
 
@@ -249,6 +250,55 @@ function Store:RevertRecord(char, id)
     record.edited = nil
     self._revision = self._revision + 1
     return true
+end
+
+-- Moves the records and the daily sums of the character key `from` to the key `to`, in every region and ruleset.
+-- The record field char changes to `to`. The daily sums that have the same day, source and item are added together.
+-- Nothing that `to` has is removed, and `from` is removed. Returns the number of records and sums that moved,
+-- or 0 (also if the store is read-only).
+function Store:MoveCharacter(from, to)
+    if self._readOnly or from == to or type(from) ~= "string" or type(to) ~= "string" then
+        return 0
+    end
+    local moved = 0
+    for _, name in ipairs({ "records", "sums" }) do
+        local top = self._saved[name]
+        for _, byRegion in pairs(type(top) == "table" and top or {}) do
+            for _, slot in pairs(type(byRegion) == "table" and byRegion or {}) do
+                local old = type(slot) == "table" and slot[from]
+                if type(old) == "table" then
+                    local target = ensure(slot, to)
+                    if name == "records" then
+                        for _, record in ipairs(old) do
+                            record.char = to
+                            target[#target + 1] = record
+                        end
+                    else
+                        local index = {}
+                        for _, sum in ipairs(target) do
+                            index[sum.day .. "|" .. sum.source .. "|" .. sum.item] = sum
+                        end
+                        for _, sum in ipairs(old) do
+                            local key = sum.day .. "|" .. sum.source .. "|" .. sum.item
+                            local same = index[key]
+                            if same then
+                                for _, field in ipairs({ "count", "qty", "moneyIn", "moneyOut" }) do
+                                    same[field] = (same[field] or 0) + (sum[field] or 0)
+                                end
+                            else
+                                target[#target + 1] = sum
+                                index[key] = sum
+                            end
+                        end
+                    end
+                    moved = moved + #old
+                    slot[from] = nil
+                end
+            end
+        end
+    end
+    self._revision = self._revision + moved
+    return moved
 end
 
 -- Returns the sorted names of the characters that have records or sums.

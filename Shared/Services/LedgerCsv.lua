@@ -65,18 +65,18 @@ local function signedMoney(record)
 end
 
 -- The cells of a full record, in the order of COLUMNS.
-local function recordCells(record)
+local function recordCells(record, charText)
     return {
-        LedgerCsv.TimeText(record.time), record.char, record.type, record.source, record.item, record.itemName,
+        LedgerCsv.TimeText(record.time), charText(record.char), record.type, record.source, record.item, record.itemName,
         record.qty, signedMoney(record), 1, record.counterparty, record.bid, record.buyout, record.deposit,
         record.cut, record.value, record.mob, record.place, record.note,
     }
 end
 
 -- The cells of a daily sum: { char, day, source, item, count, qty, moneyIn, moneyOut }. The type is "daily".
-local function sumCells(sum)
+local function sumCells(sum, charText)
     return {
-        LedgerCsv.TimeText(sum.day * SECONDS_PER_DAY), sum.char, "daily", sum.source, sum.item, nil,
+        LedgerCsv.TimeText(sum.day * SECONDS_PER_DAY), charText(sum.char), "daily", sum.source, sum.item, nil,
         sum.qty, (sum.moneyIn or 0) - (sum.moneyOut or 0), sum.count,
     }
 end
@@ -92,15 +92,20 @@ end
 -- Returns the CSV text: the header, then one line for each record and each daily sum, oldest first. Log records
 -- (decision logs) are left out. Lines end with CR LF, also the last one.
 -- records: full ledger records. sums: daily sums, each with the field char added.
-function LedgerCsv.Build(records, sums)
+-- charText(key) (optional) gives the text of a character key for the first column: the key is a GUID on Forever.
+-- The default shows the key as it is.
+function LedgerCsv.Build(records, sums, charText)
+    charText = charText or function(key)
+        return key
+    end
     local rows = {}
     for _, record in ipairs(records or {}) do
         if record.type ~= "log" then
-            rows[#rows + 1] = { time = record.time, cells = recordCells(record) }
+            rows[#rows + 1] = { time = record.time, cells = recordCells(record, charText) }
         end
     end
     for _, sum in ipairs(sums or {}) do
-        rows[#rows + 1] = { time = sum.day * SECONDS_PER_DAY, cells = sumCells(sum) }
+        rows[#rows + 1] = { time = sum.day * SECONDS_PER_DAY, cells = sumCells(sum, charText) }
     end
     for index, row in ipairs(rows) do
         row.order = index

@@ -307,17 +307,24 @@ local function groupRows(ctx, rows, key, config)
     end
 end
 
--- Splits "Name-Realm" into the name and the realm. A key with no realm gives the key and nil.
+-- Splits a character key into the name and the realm (CharacterKey: a GUID key has them as metadata).
+-- A key with no realm gives the key and nil.
 local function splitCharacter(full)
+    if ns.CharacterKey then
+        return ns.CharacterKey.Name(full), ns.CharacterKey.Realm(full)
+    end
     local name, realm = full:match("^([^-]+)-(.+)$")
     return name or full, realm
 end
 
 -- The name of a character whose name another shown character has too. Forever: Name Surname (CharacterName).
--- A character with no known surname, and every character on TBC, shows Name-Realm.
+-- A character with no known surname, and every character on TBC, shows Name-Realm. A GUID is never shown.
 local function clashName(key, name)
     local shown = ns.CharacterName and ns.CharacterName.Display(key) or key
-    return shown ~= name and shown or key
+    if shown ~= name then
+        return shown
+    end
+    return ns.CharacterKey and ns.CharacterKey.FullName(key) or key
 end
 
 -- Returns the characters to show: with ctx.currentRealmOnly, only those of ctx.realm. A shown character

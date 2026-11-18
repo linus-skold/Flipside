@@ -1,9 +1,10 @@
 local _, ns = ...
 
 -- Display names and alias matching of the own characters (SPEC 5.5, "Character names on Forever").
--- A character key stays "Name-Realm" in all saved data. On Forever the client has no real server name: the second
+-- On Forever the character key is the player GUID (CharacterKey) and the client has no real server name: the second
 -- name is the surname of the character. The surname is saved per character key. It is used to show a name, as an
 -- alias when a typed name is matched, and to build the full name for the mail call.
+-- A key can also be a legacy "Name-Realm" key. CharacterKey gives the name and the realm of both kinds.
 -- A flavour sets ns.Flavour.usesSurname for this. TBC shows the key as it is.
 local CharacterName = {}
 ns.CharacterName = CharacterName
@@ -32,8 +33,12 @@ function CharacterName.Separator()
     return type(text) == "string" and text ~= "" and text or DEFAULT_SEPARATOR
 end
 
--- Returns the name part of a "Name-Realm" key. A key with no realm is returned as it is.
+-- Returns the name part of a key (a GUID key: its saved name; a "Name-Realm" key: the part before the realm).
+-- A key with no realm is returned as it is.
 function CharacterName.Plain(key)
+    if ns.CharacterKey then
+        return ns.CharacterKey.Name(key)
+    end
     if type(key) ~= "string" then
         return tostring(key)
     end
@@ -67,8 +72,12 @@ end
 -- Returns the name to show for a character key. Forever: "Name Surname", or "Name" with no known surname.
 -- TBC: the key as it is.
 function CharacterName.Display(key)
-    if type(key) ~= "string" or key == "" or not CharacterName.Enabled() then
+    if type(key) ~= "string" or key == "" then
         return key
+    end
+    if not CharacterName.Enabled() then
+        -- A GUID is never shown, also if a flavour has no surname.
+        return ns.CharacterKey and ns.CharacterKey.FullName(key) or key
     end
     local name = CharacterName.Plain(key)
     local surname = CharacterName.Surname(key)
@@ -83,32 +92,41 @@ end
 --  "Name": the name part of the key (the text has no realm);
 --  "Name Surname": the name and the saved surname of the key (flavours with a surname only).
 -- A text with a realm never matches a key of another realm.
+-- A key is a GUID on Forever: the name and the realm come from the saved metadata (CharacterKey).
+-- Two characters can have the same name there. A full match ("Name-Realm", "Name Surname") wins over a name only.
 function CharacterName.Resolve(text, keys)
     if type(text) ~= "string" or text == "" then
         return nil
     end
     local wanted = text:lower()
     local wantedName, wantedRealm = wanted:match("^([^%-]+)%-(.+)$")
+    local byName
     for _, key in ipairs(keys or {}) do
         if type(key) == "string" and key ~= "" then
-            local lower = key:lower()
-            local name, realm = lower:match("^([^%-]+)%-(.+)$")
-            if lower == wanted then
+            local name = CharacterName.Plain(key):lower()
+            local realm
+            if ns.CharacterKey then
+                realm = ns.CharacterKey.Realm(key)
+            else
+                realm = key:match("^[^%-]+%-(.+)$")
+            end
+            realm = type(realm) == "string" and realm:lower() or nil
+            if (realm and name .. "-" .. realm or name) == wanted then
                 return key
             end
-            if not wantedRealm and (name or lower) == wanted then
-                return key
-            end
-            if wantedRealm and not realm and lower == wantedName then
-                return key
+            if wantedRealm and not realm and name == wantedName and not byName then
+                byName = key
             end
             local surname = CharacterName.Surname(key)
-            if surname and wanted == ((name or lower) .. CharacterName.Separator() .. surname):lower() then
+            if surname and wanted == (name .. CharacterName.Separator() .. surname):lower() then
                 return key
+            end
+            if not wantedRealm and name == wanted and not byName then
+                byName = key
             end
         end
     end
-    return nil
+    return byName
 end
 
 -- Returns the name to send to the mail call. Forever has regional unique names: the server needs the full name
