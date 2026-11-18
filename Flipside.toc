@@ -100,6 +100,7 @@ Shared\UI\Pages\AutoRulesPanel.lua
 Shared\UI\Pages\RulesImport.lua
 Shared\UI\Pages\GroupsPage.lua
 Shared\UI\Pages\OperationsPage.lua
+Shared\UI\Pages\ListsPage.lua
 Shared\UI\TooltipTable.lua
 Shared\UI\Pages\TooltipPage.lua
 Shared\UI\Pages\LedgerEdit.lua

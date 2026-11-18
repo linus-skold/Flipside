@@ -7,6 +7,7 @@ local BuyingTab = {}
 ns.BuyingTab = BuyingTab
 
 local OWNER = "Flipside.BuyingTab"
+local current -- the Buying tab that BuyingTab.New made last (BuyingTab.LivePrice reads its searches)
 
 -- Write one line to the diagnostics log; the Log module can be missing in a spec.
 local function log(level, fmt, ...)
@@ -23,7 +24,7 @@ local DEFAULT_JUMP = 25
 local MESSAGE_ROOM = 12 -- height that the left column gains when the message line is empty
 local SEARCH_SHIFT = 28 -- height of the name search row above the source tabs
 local LIST_GAP = 8 -- space between the source tabs and the lists drop-down
-local CRAFT_HEIGHT = 178 -- height of the craft panel (results and margin) under the item list
+local CRAFT_HEIGHT = 44 -- height of the craft strip (the Crafts box and one margin line) under the item list
 local JUMP_KEY = "buying.jumpPercent"
 local VENDOR_KEY = "buying.vendorFormula"
 local VENDOR_SETTLE = 5 -- most seconds that the Vendor list waits for item data before it builds again
@@ -1050,8 +1051,6 @@ end
 
 local NEW_LIST_PROMPT = "FlipsideBuyingNewListPrompt"
 local SAVE_LIST_PROMPT = "FlipsideBuyingSaveListPrompt"
-local RENAME_LIST_PROMPT = "FlipsideBuyingRenameListPrompt"
-local EDIT_RESULT_PROMPT = "FlipsideBuyingEditResultPrompt"
 
 -- Ask for the kind and the name of a new list: a search list, or a craft list (materials and results).
 function Tab:PromptNewList()
@@ -1083,52 +1082,12 @@ function Tab:PromptSaveList()
     })
 end
 
--- Ask for the new name of the selected search list.
-function Tab:PromptRenameList()
-    local saved = self.listID and self.deps.searchLists:Get(self.listID)
-    if not saved then
-        self:_Say("pick a search list first")
-        return
+-- Open the Flipside window on the Lists page, with the shown list selected. Rename, Delete and the results of a
+-- craft list are there (SPEC 5.3 point 24c).
+function Tab:EditLists()
+    if self.deps.openLists then
+        self.deps.openLists(self.listID)
     end
-    ns.Kit.Prompt(RENAME_LIST_PROMPT):Open({
-        title = "Rename search list",
-        label = "New name",
-        text = saved.name,
-        onOK = function(name)
-            local ok, err = self:RenameList(name)
-            return not ok and err or nil
-        end,
-    })
-end
-
-function Tab:RenameList(name)
-    local lists = self.deps.searchLists
-    if not self.listID then
-        self:_Say("pick a search list first")
-        return false, "pick a search list first"
-    end
-    local ok, err = lists:Rename(self.listID, name)
-    if not ok then
-        self:_Say(err)
-        return false, err
-    end
-    self:_Update()
-    return true
-end
-
-function Tab:DeleteList()
-    local lists = self.deps.searchLists
-    if not self.listID then
-        return false
-    end
-    local ok, err = lists:Delete(self.listID)
-    if not ok then
-        self:_Say(err)
-        return false, err
-    end
-    self.listID = nil
-    self:SetSource("lists")
-    return true
 end
 
 -- Remove one item of the selected search list by its place in the list.
@@ -1404,21 +1363,6 @@ function Tab:AddSelectedToList()
     return self:_AddResolved({ itemID = entry.itemID, key = entry.key, name = entry.name })
 end
 
--- Read a yield text: "2" (min and max are 2) or "1-2". Returns min and max, or nil and a text.
--- The store checks that max is not below min.
-function BuyingTab.ParseYield(text)
-    text = tostring(text or ""):match("^%s*(.-)%s*$")
-    local low, high = text:match("^(%d+)%s*%-%s*(%d+)$")
-    if not low then
-        low = text:match("^(%d+)$")
-        high = low
-    end
-    if not low then
-        return nil, "enter an amount such as 2 or 1-2"
-    end
-    return tonumber(low), tonumber(high)
-end
-
 -- The shown list as { id, name, kind, items, results } if it is a saved craft list, else nil.
 function Tab:_CraftList()
     local lists = self.deps.searchLists
@@ -1427,86 +1371,6 @@ function Tab:_CraftList()
     end
     local saved = lists:Get(self.listID)
     return saved and saved.kind == "craft" and saved or nil
-end
-
--- Add a result to the shown craft list. The text is an item link, ID or key. With other text, the selected row of a
--- name search is the item. The amount made is min to max (default 1). Returns true, or false and a text.
-function Tab:AddResult(text, min, max)
-    local craft = self:_CraftList()
-    if not craft then
-        self:_Say("pick a craft list first")
-        return false, "pick a craft list first"
-    end
-    local item
-    if BuyingTab.IsItemRef(text) then
-        BuyingTab.ParseInput(text, self.deps, function(result)
-            item = result.kind == "item" and result.item or nil
-        end)
-    else
-        local entry = self.searchResults and self:_Selected()
-        item = entry and { itemID = entry.itemID, key = entry.key, name = entry.name } or nil
-    end
-    if not item then
-        local message = "type an item link, ID or key, or pick a search result"
-        self:_Say(message)
-        return false, message
-    end
-    item.min = min or 1
-    item.max = max or item.min
-    local ok, err = self.deps.searchLists:AddResult(craft.id, item)
-    if not ok then
-        self:_Say(err)
-        return false, err
-    end
-    self.resultSel = item.key
-    self:RefreshList()
-    self:_Say("result added")
-    return true
-end
-
--- Change the amount made of the result at a place of the shown craft list. text is "2" or "1-2".
-function Tab:SetResultAmount(index, text)
-    local craft = self:_CraftList()
-    if not craft then
-        return false, "pick a craft list first"
-    end
-    local min, max = BuyingTab.ParseYield(text)
-    if not min then
-        self:_Say(max)
-        return false, max
-    end
-    local ok, err = self.deps.searchLists:SetResult(craft.id, index, min, max)
-    if not ok then
-        self:_Say(err)
-        return false, err
-    end
-    self:RefreshList()
-    return true
-end
-
-function Tab:RemoveResult(index)
-    local craft = self:_CraftList()
-    if not craft then
-        return false, "pick a craft list first"
-    end
-    local ok, err = self.deps.searchLists:RemoveResult(craft.id, index)
-    if not ok then
-        self:_Say(err)
-        return false, err
-    end
-    self.resultSel = nil
-    self:RefreshList()
-    return true
-end
-
--- The place of the selected result in the shown craft list, or nil.
-function Tab:_ResultIndex(craft)
-    for index, result in ipairs(craft and craft.results or {}) do
-        if result.key == self.resultSel then
-            return index
-        end
-    end
-    return nil
 end
 
 -- Set the number of crafts: the materials and the results of the margin count for this many crafts.
@@ -1526,26 +1390,6 @@ function Tab:SetCrafts(text)
     end
     self:_Update()
     return true
-end
-
--- Ask for the amount made of the selected result.
-function Tab:PromptEditResult()
-    local craft = self:_CraftList()
-    local index = self:_ResultIndex(craft)
-    if not index then
-        self:_Say("pick a result first")
-        return
-    end
-    local result = craft.results[index]
-    ns.Kit.Prompt(EDIT_RESULT_PROMPT):Open({
-        title = "Amount made",
-        label = "Min-max (for example 1-2)",
-        text = result.min == result.max and tostring(result.min) or (result.min .. "-" .. result.max),
-        onOK = function(text)
-            local ok, err = self:SetResultAmount(index, text)
-            return not ok and err or nil
-        end,
-    })
 end
 
 -- The ScanSources values (scanMarket, scanMin) of an item key, or nil if there is no scan data.
@@ -1569,17 +1413,23 @@ function Tab:_MaterialPrice(material, needed)
             return total, false
         end
     end
-    local values = self:_ScanValues(material.key)
-    if values and values.scanMarket then
-        return values.scanMarket * needed, true
+    return ns.CraftListMargin.ScanMaterialPrice(self:_ScanValues(material.key), needed)
+end
+
+-- The live cost in copper of the needed units of an item key from the last live search of this session (the Buying
+-- tab that was made last), or nil if there is no search or the live levels hold too few units. The Lists page uses it.
+function BuyingTab.LivePrice(key, needed)
+    local tab = current
+    local done = tab and tab.results[key]
+    if done and done.rows then
+        return ns.CraftListMargin.WalkLevels(tab:_Levels(done.rows), needed)
     end
     return nil
 end
 
 -- The price of one unit of a result: ScanMarket, or ScanMin if there is no market value. Else nil.
 function Tab:_ResultPrice(result)
-    local values = self:_ScanValues(result.key)
-    return values and (values.scanMarket or values.scanMin) or nil
+    return ns.CraftListMargin.ScanResultPrice(self:_ScanValues(result.key))
 end
 
 -- The margin of the shown craft list (see CraftListMargin.Compute), and the list. Both are nil with no craft list.
@@ -1603,30 +1453,32 @@ local function signedMoney(copper)
     return copper < 0 and ("-" .. money(-copper)) or money(copper)
 end
 
--- The text lines of the margin panel for a CraftListMargin result: the cost, the value and the margin.
-function BuyingTab.MarginLines(margin)
-    local lines = {}
+-- The one compact margin line of the craft strip for a CraftListMargin result: the cost of the materials, the value
+-- after the cut at average yield and the margin at average yield. The full breakdown is on the Lists page.
+function BuyingTab.MarginLine(margin)
     local cost = margin.costKnown and money(margin.cost) or ("? (" .. money(margin.cost) .. " priced)")
-    lines[1] = "Materials: " .. cost .. (margin.estimate and " (estimate)" or "")
+    local text = "Cost " .. cost .. (margin.estimate and " (est.)" or "")
     if #margin.results == 0 then
-        lines[2] = "Add a result to see the margin."
+        return text .. "  Add results on the Lists page."
+    end
+    text = text .. "  Value " .. (margin.valueKnown and money(margin.value.avg) or "?")
+    if margin.margin then
+        local percent = margin.percent and string.format(" (%.0f%%)", margin.percent.avg) or ""
+        return text .. "  Margin " .. signedMoney(margin.margin.avg) .. percent
+    end
+    return text .. "  Margin ?"
+end
+
+-- The tooltip lines of the margin line: the value and the margin at min, average and max yield.
+function BuyingTab.MarginTip(margin)
+    local lines = {}
+    if #margin.results == 0 then
         return lines
     end
-    if margin.valueKnown then
-        lines[2] = string.format("Value after the 5%% cut: min %s  avg %s  max %s", money(margin.value.min),
-            money(margin.value.avg), money(margin.value.max))
-    else
-        lines[2] = "Value after the 5% cut: ? (a result has no price)"
-    end
-    if margin.margin then
-        local parts = {}
-        for _, name in ipairs({ "min", "avg", "max" }) do
-            local percent = margin.percent and string.format(" (%.0f%%)", margin.percent[name]) or ""
-            parts[#parts + 1] = name .. " " .. signedMoney(margin.margin[name]) .. percent
-        end
-        lines[3] = "Margin: " .. table.concat(parts, "  ")
-    else
-        lines[3] = "Margin: ?"
+    for _, name in ipairs({ "min", "avg", "max" }) do
+        local value = margin.valueKnown and money(margin.value[name]) or "?"
+        local diff = margin.margin and signedMoney(margin.margin[name]) or "?"
+        lines[#lines + 1] = string.format("%s: value %s, margin %s", name, value, diff)
     end
     return lines
 end
@@ -3195,16 +3047,13 @@ function Tab:_UpdateLeft()
         end
         ui.picker:SetItems(items)
         ui.picker:SetValue(self.listID or (self.temp and "unsaved") or nil)
-        ui.rename:SetEnabled(self.listID ~= nil)
-        ui.delete:SetEnabled(self.listID ~= nil)
-        -- An unsaved list shows a Save button in place of Rename and Delete.
+        -- An unsaved list shows a Save button in place of Edit lists.
         local unsaved = self.temp ~= nil and self.listID == nil
         ui.save:SetShown(unsaved)
-        ui.rename:SetShown(not unsaved)
-        ui.delete:SetShown(not unsaved)
+        ui.editLists:SetShown(not unsaved and self.deps.openLists ~= nil)
     end
     local mode = isLists and "lists" or (isVendor and "vendor" or "groups")
-    -- A craft list leaves room under the item list for the results and the margin panel.
+    -- A craft list leaves room under the item list for the Crafts box and the margin line.
     local bottom = self:_CraftList() and CRAFT_HEIGHT or 0
     local placed = mode .. bottom
     if self.placedFor ~= placed then
@@ -3216,51 +3065,21 @@ function Tab:_UpdateLeft()
     end
 end
 
--- Draw one result row of the craft panel.
-function Tab:_InitResultRow(row, data)
-    local Kit = ns.Kit
-    if not row.craftText then
-        row.craftText = Kit.Label(row, "", "small")
-        row.craftText:SetPoint("LEFT", row, "LEFT", 4, 0)
-        row.selection = Kit.SelectionTexture(row, self.skin)
-    end
-    row.craftText:SetText(data.text)
-    row.selection:SetShown(self.resultSel == data.key)
-    row:SetScript("OnClick", function()
-        self.resultSel = self.resultSel ~= data.key and data.key or nil
-        self:_UpdateCraft()
-    end)
-end
-
--- Update the craft panel under the item list: the results, the buttons and the margin text.
+-- Update the craft strip under the item list: the Crafts box and the one margin line.
 function Tab:_UpdateCraft()
     local ui = self.ui
-    local margin, craft = self:CraftMargin()
+    local margin = self:CraftMargin()
     for _, control in ipairs(ui.craftControls) do
         control:SetShown(margin ~= nil)
     end
     if not margin then
         return
     end
-    local rows = {}
-    for index, line in ipairs(margin.results) do
-        local name = self:_ItemName(craft.results[index]) or ("item " .. line.itemID)
-        local range = line.min == line.max and tostring(line.min) or (line.min .. "-" .. line.max)
-        rows[index] = {
-            key = line.key,
-            text = range .. "× " .. name .. "   " .. (line.net and ("avg " .. signedMoney(line.net.avg)) or "?"),
-        }
-    end
-    if self.resultSel and not self:_ResultIndex(craft) then
-        self.resultSel = nil
-    end
-    ui.craftResults:SetData(rows)
-    ui.craftEdit:SetEnabled(self.resultSel ~= nil)
-    ui.craftRemove:SetEnabled(self.resultSel ~= nil)
     if not ui.crafts:HasFocus() then
         ui.crafts:SetText(tostring(margin.crafts))
     end
-    ui.craftMargin:SetText(table.concat(BuyingTab.MarginLines(margin), "\n"))
+    ui.craftMargin:SetText(BuyingTab.MarginLine(margin))
+    self.marginTip = BuyingTab.MarginTip(margin)
 end
 
 -- The market value (ScanMarket) and the age in hours of the scan data of an item, or nil if the item has no scan data.
@@ -3486,17 +3305,10 @@ function Tab:_BuildLeft(content)
     ui.newList = control(Kit.Button(content, "New", 50, function()
         self:PromptNewList()
     end), 164, -44 - SEARCH_SHIFT - LIST_GAP)
-    ui.rename = control(Kit.Button(content, "Rename", 64, function()
-        self:PromptRenameList()
+    -- Rename, Delete and the results of a craft list are on the Lists page of the Flipside window.
+    ui.editLists = control(Kit.Button(content, "Edit lists", 80, function()
+        self:EditLists()
     end), 218, -44 - SEARCH_SHIFT - LIST_GAP)
-    ui.delete = control(Kit.Button(content, "Delete", 56, function()
-        local saved = self.listID and self.deps.searchLists:Get(self.listID)
-        if saved then
-            Kit.Confirm("FLIPSIDE_DELETE_SEARCH_LIST", "Delete the search list " .. saved.name .. "?", function()
-                self:DeleteList()
-            end)
-        end
-    end), 286, -44 - SEARCH_SHIFT - LIST_GAP)
     ui.save = control(Kit.Button(content, "Save", 64, function()
         self:PromptSaveList()
     end), 218, -44 - SEARCH_SHIFT - LIST_GAP)
@@ -3546,7 +3358,8 @@ function Tab:_BuildLeft(content)
         self:AddSelectedToList()
     end), 280, -14)
     ui.addToList:Hide()
-    -- The craft panel under the item list of a craft list: the results, their buttons and the margin text.
+    -- The craft strip under the item list of a craft list: the Crafts box and one margin line. The results and the
+    -- full margin breakdown are on the Lists page.
     ui.craftControls = {}
     local function craftControl(widget, x, y)
         widget:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", x, y)
@@ -3554,33 +3367,32 @@ function Tab:_BuildLeft(content)
         ui.craftControls[#ui.craftControls + 1] = widget
         return widget
     end
-    craftControl(Kit.Label(content, "Results (amount made for each craft)", "small"), 2, CRAFT_HEIGHT - 14)
-    ui.craftResults = Kit.CreateList(content, { rowHeight = 18, inset = true, skin = self.skin,
-        initRow = function(row, data)
-            self:_InitResultRow(row, data)
-        end })
-    ui.craftResults.frame:SetSize(LIST_WIDTH, 62)
-    craftControl(ui.craftResults.frame, 0, 96)
-    ui.craftAdd = craftControl(Kit.Button(content, "Add result", 84, function()
-        self:AddResult(ui.searchInput:GetText())
-    end), 0, 72)
-    ui.craftEdit = craftControl(Kit.Button(content, "Edit", 50, function()
-        self:PromptEditResult()
-    end), 88, 72)
-    ui.craftRemove = craftControl(Kit.Button(content, "Remove", 64, function()
-        local index = self:_ResultIndex(select(2, self:CraftMargin()))
-        if index then
-            self:RemoveResult(index)
-        end
-    end), 142, 72)
-    craftControl(Kit.Label(content, "Crafts", "small"), 214, 76)
+    craftControl(Kit.Label(content, "Crafts", "small"), 2, 26)
     local function setCrafts(text)
         self:SetCrafts(text)
     end
-    ui.crafts = craftControl(Kit.Input(content, 40, setCrafts, setCrafts), 250, 72)
-    ui.craftMargin = craftControl(Kit.Label(content, "", "small"), 2, 2)
+    ui.crafts = craftControl(Kit.Input(content, 40, setCrafts, setCrafts), 40, 22)
+    ui.craftMargin = craftControl(Kit.Label(content, "", "small"), 2, 4)
     ui.craftMargin:SetJustifyH("LEFT")
     ui.craftMargin:SetWidth(LIST_WIDTH - 4)
+    -- The margin at min, average and max yield shows in a tooltip on the margin line.
+    ui.craftTip = craftControl(CreateFrame("Frame", nil, content), 2, 2)
+    ui.craftTip:SetSize(LIST_WIDTH - 4, 18)
+    ui.craftTip:EnableMouse(true)
+    ui.craftTip:SetScript("OnEnter", function(frame)
+        local lines = self.marginTip
+        if lines and #lines > 0 then
+            GameTooltip:SetOwner(frame, "ANCHOR_RIGHT")
+            GameTooltip:SetText("Margin after the 5% cut")
+            for _, line in ipairs(lines) do
+                GameTooltip:AddLine(line, 1, 1, 1, true)
+            end
+            GameTooltip:Show()
+        end
+    end)
+    ui.craftTip:SetScript("OnLeave", function()
+        GameTooltip:Hide()
+    end)
 end
 
 function Tab:_BuildContent()
@@ -3824,7 +3636,8 @@ end
 -- partial scan came after it) and runJob(name, fn) (the Vendor source), scanEngine and confirmScan(onAccept)
 -- (the Scan and buy button of the Vendor source; the button shows only with both),
 -- searchLists, itemNameIndex, ahNameSearch, keyFor(link) and isAuctionHouseOpen()
--- (search lists and the item box), and getRecord(key) with now() (the % of market and data age columns).
+-- (search lists and the item box), openLists(id) (the Edit lists button: it opens the Lists page of the Flipside
+-- window), and getRecord(key) with now() (the % of market and data age columns).
 function BuyingTab.New(deps)
     if type(deps) ~= "table" or type(deps.bus) ~= "table" then
         error("deps.bus must be a table", 2)
@@ -3861,11 +3674,13 @@ function BuyingTab.New(deps)
         end,
     }
     resolved.log = deps.log or resolved.plan.Log
-    return setmetatable({
+    resolved.openLists = deps.openLists or nil
+    current = setmetatable({
         deps = resolved, list = {}, results = {}, events = {}, active = false, token = 0,
         source = "groups", amount = DEFAULT_AMOUNT, requested = {},
         vendorToken = 0, vendorWaiting = {}, walk = ns.BuyWalk and ns.BuyWalk.New() or nil,
     }, Tab)
+    return current
 end
 
 ns.AuctionTabs.Register({
