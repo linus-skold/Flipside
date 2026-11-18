@@ -1,7 +1,8 @@
 local _, ns = ...
 
 -- The parts of a buy that the Buying tab and the Selling tab share: the cover plan, the text and the options of the
--- confirm box, the check of an auction before the buy, the event rules and the check that only one buy is open (the box is in BuyDialog).
+-- confirm box, the check of an auction before the buy, the event rules and the check that only one buy is open.
+-- The box itself is in Shared/Features/Buying/BuyDialog.lua.
 -- Each tab keeps its own buy state (tab.buy). The protected AH calls stay in the click handlers of the tabs (D26).
 local BuyFlow = {}
 ns.BuyFlow = BuyFlow
