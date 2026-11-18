@@ -40,6 +40,7 @@ local BASE_GROUP = 1
 local ROW_HEIGHT = 22
 local TREE_INDENT = 14
 local ITEM_WIDTH = 244
+local LOWEST_WIDTH = 124
 local ITEM_LEAD = 18
 local ICON_LEAD = 22
 local COLUMN_GAP = 6
@@ -60,6 +61,10 @@ local GREY = { 0.5, 0.5, 0.5 }
 local ORANGE = { 1, 0.6, 0.2 }
 local GREEN = { 0.4, 1, 0.4 }
 local MAX_PRICE = 100000000000
+
+local function paint(label, color)
+    label:SetTextColor(color[1], color[2], color[3])
+end
 local SYNC_INTERVAL = 1
 
 -- The columns of the item list (Kit.ColumnLayout): the header and every row share them.
@@ -68,12 +73,32 @@ local COLUMNS = {
     { key = "item", title = "Item", width = ITEM_WIDTH, owned = true },
     { key = "price", title = "Your price", width = 78, number = true },
     { key = "operation", title = "Operation", width = 80 },
-    { key = "lowest", title = "Lowest on AH", width = 124, number = true },
+    { key = "lowest", title = "Lowest on AH", width = LOWEST_WIDTH, number = true },
     { key = "net", title = "Net", width = 78, number = true },
     { key = "info", title = "Info" },
 }
 local COLUMN_OPTIONS = { gap = COLUMN_GAP }
 SellingTab.COLUMNS = COLUMNS
+
+-- The level list (the Levels toggle): one row for each price level of the shown item, right of the item tree.
+-- With the list on, the tree is compact: the Operation and Info columns hide and Item and Lowest get narrower.
+local LEVELS_KEY = "ui.sellingLevels" -- profile setting: true when the level list shows
+local LEVEL_GAP = 6 -- space between the tree and the level list
+local WIDE_CONTENT = 760 -- content width from which the level list is wide (Forever); narrower is TBC
+local LEVEL_WIDTH = { wide = 270, tight = 200 }
+local LEVEL_MAX = 40 -- most rows of the level list
+local COMPACT = { itemWidth = 190, lowestWidth = 110 }
+local SELECT_TEXT = "Buy selected"
+local LEVEL_COLUMNS = {
+    { key = "price", title = "Unit price", width = 84, number = true },
+    { key = "available", title = "Available", width = 56, number = true },
+    { key = "vs", title = "vs market", width = 48, number = true },
+    { key = "yours", title = "Yours", width = 34 },
+}
+-- The widths of the level columns for a wide and a tight list, and the gap between the columns.
+local LEVEL_WIDTHS = { wide = { 84, 56, 48, 34, gap = 3 }, tight = { 66, 40, 36, 24, gap = 2 } }
+local LEVEL_OPTIONS = { gap = LEVEL_WIDTHS.wide.gap }
+SellingTab.LEVEL_COLUMNS = LEVEL_COLUMNS
 
 local function money(copper)
     if ns.TooltipLines and ns.TooltipLines.FormatMoney then
@@ -559,15 +584,82 @@ function Tab:_Layout()
     local up = (not self.api.band and ui.stop:IsShown()) and 0 or TOP_ROOM
     local content = self.content
     local headerTop = DETAILS_TOP - DETAILS_HEIGHT - 4 + up
+    -- The room that the level list takes at the right of the tree (none with the list off).
+    local room = self.levelsOn and (self:_LevelWidth() + LEVEL_GAP) or 0
     ui.details.frame:ClearAllPoints()
     ui.details.frame:SetPoint("TOPLEFT", content, "TOPLEFT", 0, DETAILS_TOP + up)
     ui.details.frame:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, DETAILS_TOP + up)
     ui.headers.frame:ClearAllPoints()
     ui.headers.frame:SetPoint("TOPLEFT", content, "TOPLEFT", 0, headerTop)
-    ui.headers.frame:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, headerTop)
+    ui.headers.frame:SetPoint("TOPRIGHT", content, "TOPRIGHT", -room, headerTop)
     ui.tree.frame:ClearAllPoints()
     ui.tree.frame:SetPoint("TOPLEFT", content, "TOPLEFT", 0, headerTop - HEADER_HEIGHT)
-    ui.tree.frame:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", 0, 0)
+    ui.tree.frame:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", -room, 0)
+    if ui.levelList then
+        local width = self:_LevelWidth()
+        ui.levelHeader.frame:ClearAllPoints()
+        ui.levelHeader.frame:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, headerTop)
+        ui.levelHeader.frame:SetWidth(width)
+        ui.levelList.frame:ClearAllPoints()
+        ui.levelList.frame:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, headerTop - HEADER_HEIGHT)
+        ui.levelList.frame:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", 0, 0)
+        ui.levelList.frame:SetWidth(width)
+    end
+end
+
+-- The width of the level list: wide when the content is wide (Forever), else tight (TBC).
+function Tab:_LevelWidth()
+    local content = self.content
+    local width = content and content.GetWidth and content:GetWidth() or 0
+    return (type(width) == "number" and width >= WIDE_CONTENT) and LEVEL_WIDTH.wide or LEVEL_WIDTH.tight
+end
+
+-- Set the columns of the tree and of the level list for the state of the toggle, and draw them again.
+-- Off: the columns of the item tree are as they were. On: Operation and Info hide, Item and Lowest are narrower.
+function Tab:_ApplyColumns()
+    local on = self.levelsOn == true
+    COLUMNS[1].width = on and COMPACT.itemWidth or ITEM_WIDTH
+    COLUMNS[3].hidden = on or nil
+    COLUMNS[4].width = on and COMPACT.lowestWidth or LOWEST_WIDTH
+    COLUMNS[6].hidden = on or nil
+    local set = LEVEL_WIDTHS[self:_LevelWidth() == LEVEL_WIDTH.wide and "wide" or "tight"]
+    for index, column in ipairs(LEVEL_COLUMNS) do
+        column.width = set[index]
+    end
+    LEVEL_OPTIONS.gap = set.gap
+    self.colVersion = (self.colVersion or 0) + 1
+    local ui = self.ui
+    if ui and ui.headers then
+        ui.levelHeaderOptions.gap = set.gap
+        ns.Kit.LayoutColumnLabels(ui.headers.labels, ui.headers.frame, COLUMNS, ui.headerOptions)
+        ns.Kit.LayoutColumnLabels(ui.levelHeader.labels, ui.levelHeader.frame, LEVEL_COLUMNS, ui.levelHeaderOptions)
+    end
+    self.levelShown = nil
+end
+
+-- Turn the level list on or off. The state is a profile setting (or a session value with no settings).
+function Tab:SetLevels(on)
+    on = on == true
+    if self.levelsOn == on then
+        return
+    end
+    self.levelsOn = on
+    local db = self.deps.db
+    if db then
+        db:Set("profile", LEVELS_KEY, on)
+    end
+    if not on then
+        self.levelSel = nil
+    end
+    self:_ApplyColumns()
+    if self.ui then
+        self.ui.levels:SetText(on and "Hide" or "Levels")
+        self.ui.levelHeader.frame:SetShown(on)
+        self.ui.levelList.frame:SetShown(on)
+        self:_Layout()
+        self.ui.tree:Refresh()
+        self:_Update()
+    end
 end
 
 -- The vendor sell price of one item of an entry, or nil. It asks the client again until it has a price.
@@ -731,7 +823,7 @@ function Tab:_Start(entry)
     end
     self.token = self.token + 1
     local token = self.token
-    self.live = nil -- the client list is new now
+    self.live, self.levelSel = nil, nil -- the client list is new now
     entry.status = "searching"
     self.pending = { entry = entry, itemID = candidate.itemID, token = token }
     self.deps.after(SEARCH_TIMEOUT, function()
@@ -1159,6 +1251,7 @@ function Tab:SelectNode(node, fromClick)
         return false
     end
     self.selectedId = node.id
+    self.levelSel = nil
     self.selection = SellingTab.CollectEntries(node, {})
     self.postedCount = 0
     self.priceEntry = nil
@@ -2177,12 +2270,19 @@ function Tab:_BuyTarget()
         return entry, nil, "search first", true
     end
     local levels = ns.BuyingPlan.PriceLevels(live.rows)
-    local level = BuyFlow.CheapestFree(levels)
+    -- The selected level, or the lowest level that is not yours. A selected level of yours cannot be bought.
+    local level = self:_SelectedLevel(levels)
+    if level and level.own then
+        return entry, nil, ns.BuyingPlan.REASON.own
+    end
+    level = level or BuyFlow.CheapestFree(levels)
     if not level then
         return entry, nil, #levels > 0 and ns.BuyingPlan.REASON.own or ns.BuyingPlan.REASON.none
     end
     local isItem = live.rows[1].isCommodity == false
-    local cover = BuyFlow.CoverPlan(levels, isItem and level or levels[1], level, level.quantity, isItem)
+    -- A commodity buy takes the cheapest units first: all units up to and including the level (the total of the
+    -- levels below). An item buy is the one auction of the level.
+    local cover = BuyFlow.CoverPlan(levels, isItem and level or levels[1], level, nil, isItem)
     if cover.own then
         -- The API cannot skip own units: a purchase takes the cheapest units of the market.
         return entry, nil, ns.BuyingPlan.REASON.ownBelow
@@ -2199,7 +2299,107 @@ function Tab:_RefreshBuy()
     local entry, cover, _, stale = self:_BuyTarget()
     ui.buyLowest:SetEnabled(cover ~= nil or stale == true)
     local deal = cover and SellingTab.DealText(cover.last.unitPrice, entry.marketValue)
-    ui.buyLowest:SetText(deal and (BUY_TEXT .. " " .. deal) or BUY_TEXT)
+    local text = self.levelSel ~= nil and SELECT_TEXT or BUY_TEXT
+    ui.buyLowest:SetText(deal and (text .. " " .. deal) or text)
+end
+
+-- The level that the user selected in the level list, from the levels of the shown item, or nil.
+function Tab:_SelectedLevel(levels)
+    if self.levelSel == nil then
+        return nil
+    end
+    for _, level in ipairs(levels or {}) do
+        if BuyFlow.LevelId(level) == self.levelSel then
+            return level
+        end
+    end
+    return nil
+end
+
+-- The entry whose levels the list shows: the entry of the open post, or the entry of the pane.
+function Tab:_LevelEntry()
+    return self.awaiting and self.awaiting.entry or self:_Focus()
+end
+
+-- The levels of the shown item, from the rows of the last search. Empty if the rows are for another item.
+function Tab:_LevelsOf(entry)
+    local live = self.live
+    if entry and live and live.itemID == entry.item.itemID then
+        return ns.BuyingPlan.PriceLevels(live.rows)
+    end
+    return {}
+end
+
+-- Draw one row of the level list. The click selects the level; a level of yours cannot be selected.
+function Tab:_InitLevelRow(row, data)
+    local Kit = ns.Kit
+    local parts = row.levelParts
+    if not parts then
+        parts = { cells = Kit.CreateColumnCells(row, LEVEL_COLUMNS, LEVEL_OPTIONS),
+            select = Kit.SelectionTexture(row, ns.AuctionTabs and ns.AuctionTabs.Skin) }
+        row.levelParts = parts
+    end
+    if parts.version ~= self.colVersion then
+        parts.version = self.colVersion
+        Kit.LayoutColumnLabels(parts.cells, row, LEVEL_COLUMNS, LEVEL_OPTIONS)
+    end
+    Kit.SetColumnCells(parts.cells, LEVEL_COLUMNS, data)
+    for _, cell in pairs(parts.cells) do
+        paint(cell, data.mine and GREY or WHITE)
+    end
+    if data.deal then
+        paint(parts.cells.vs, GREEN)
+    end
+    parts.select:SetShown(self.levelSel ~= nil and self.levelSel == data.id)
+    row:SetScript("OnClick", function()
+        self:SelectLevel(data.id)
+    end)
+end
+
+-- Select a level of the list, or clear the selection with a second click. The selection never starts a buy.
+-- Returns true, or false and a reason.
+function Tab:SelectLevel(id)
+    if self.buy then
+        return false, "a buy is open"
+    end
+    local level
+    for _, each in ipairs(self:_LevelsOf(self:_LevelEntry())) do
+        if BuyFlow.LevelId(each) == id then
+            level = each
+        end
+    end
+    if not level then
+        return false, "no such level"
+    end
+    if level.own then
+        self:_ShowBusy(ns.BuyingPlan.REASON.own)
+        return false, ns.BuyingPlan.REASON.own
+    end
+    self.levelSel = self.levelSel ~= id and id or nil
+    self.levelShown = nil
+    self:_Update()
+    return true
+end
+
+-- Fill the level list from the rows of the last search of the shown item. It is empty when the list is off, when
+-- no item shows or when the rows are for another item. It draws again only when the data changed.
+function Tab:_RefreshLevels()
+    local ui = self.ui
+    if not (ui and ui.levelList) then
+        return
+    end
+    local entry = self.levelsOn and self:_LevelEntry() or nil
+    local levels = entry and self:_LevelsOf(entry) or {}
+    if self.levelSel ~= nil and not self:_SelectedLevel(levels) then
+        self.levelSel = nil
+    end
+    local live = self.live
+    local shown = self.levelShown
+    if shown and shown.live == live and shown.entry == entry and shown.sel == self.levelSel then
+        return
+    end
+    self.levelShown = { live = live, entry = entry, sel = self.levelSel }
+    ui.levelList:SetData(SellingTab.LevelRows(levels, entry and entry.marketValue))
 end
 
 -- Search the item of an entry again, so that its decision and its post price use the new lowest price.
@@ -2409,7 +2609,7 @@ end
 
 -- The buy worked. The item is searched again, so that the post price uses the new lowest price.
 function Tab:_BuySucceed(buy)
-    self.buy, self.live = nil, nil
+    self.buy, self.live, self.levelSel = nil, nil, nil
     log("info", string.format("bought %s of item %s, total %s", buy.quantity, buy.itemID, buy.total))
     self.deps.buyLog:Add(buy.entry, string.format("bought %d at %s", buy.quantity, BuyFlow.Money(buy.level.unitPrice)),
         "total " .. BuyFlow.Money(buy.total))
@@ -2422,7 +2622,7 @@ end
 
 -- The buy failed. The list is stale, so the item is searched again.
 function Tab:_BuyFail(buy, reason)
-    self.buy, self.live = nil, nil
+    self.buy, self.live, self.levelSel = nil, nil, nil
     closeBuyBox()
     log("warn", string.format("buy of item %s failed: %s", buy.itemID, reason))
     self.deps.buyLog:Add(buy.entry, "buy failed", reason)
@@ -2457,10 +2657,6 @@ function Tab:_OnBuyItemError(code)
     end
 end
 
-local function paint(label, color)
-    label:SetTextColor(color[1], color[2], color[3])
-end
-
 -- The deal mark of a price: "-70%" when the price is DEAL_PERCENT or more under the market value (ScanMarket).
 -- Nil if the price is not that low or if there is no market value.
 function SellingTab.DealText(price, market)
@@ -2472,6 +2668,39 @@ function SellingTab.DealText(price, market)
         return nil
     end
     return "-" .. below .. "%"
+end
+
+-- The price against the market value as a signed percent ("-70%", "+12%"), or "-" if there is no market value.
+function SellingTab.VsText(price, market)
+    if type(price) ~= "number" or type(market) ~= "number" or market <= 0 then
+        return "-"
+    end
+    local delta = math.floor((price / market - 1) * 100 + 0.5)
+    return delta > 0 and ("+" .. delta .. "%") or (delta .. "%")
+end
+
+-- The rows of the level list from price levels (BuyingPlan.PriceLevels), cheapest first, at most LEVEL_MAX.
+-- Row: { id, unitPrice, price, available, vs, yours, mine, deal }. A commodity level shows its quantity. An item
+-- level (a stack group) shows "stacks x size". deal is true if the price is a deal (see SellingTab.DealText).
+function SellingTab.LevelRows(levels, market)
+    local rows = {}
+    for _, level in ipairs(levels or {}) do
+        if #rows >= LEVEL_MAX then
+            break
+        end
+        local available = tostring(level.quantity or 0)
+        if level.stackSize then
+            available = (level.stacks or 1) > 1 and string.format("%d x %d", level.stacks, level.stackSize)
+                or tostring(level.stackSize)
+        end
+        rows[#rows + 1] = {
+            id = level.id or level.unitPrice, unitPrice = level.unitPrice, price = money(level.unitPrice),
+            available = available, vs = SellingTab.VsText(level.unitPrice, market),
+            yours = level.own and "Yours" or "", mine = level.own == true,
+            deal = SellingTab.DealText(level.unitPrice, market) ~= nil,
+        }
+    end
+    return rows
 end
 
 -- The cells of one item row: the price, operation, lowest, net and info texts and the colour of the net.
@@ -2551,7 +2780,7 @@ function Tab:_InitTreeRow(row, node, depth, isCollapsed, hasChildren)
     end)
     row.selection:SetShown(tree.selected ~= nil and tree.selected == node.id)
     row.label:ClearAllPoints()
-    row.label:SetWidth(math.max(20, ITEM_WIDTH - (depth - 1) * TREE_INDENT - ITEM_LEAD
+    row.label:SetWidth(math.max(20, COLUMNS[1].width - (depth - 1) * TREE_INDENT - ITEM_LEAD
         - (node.kind == "group" and 0 or ICON_LEAD)))
     row.label:SetJustifyH("LEFT")
     if row.label.SetWordWrap then
@@ -2559,8 +2788,8 @@ function Tab:_InitTreeRow(row, node, depth, isCollapsed, hasChildren)
     end
     -- The view indents a row, so the cells shift back: they line up with the header at every depth.
     local shift = tree.box and (depth - 1) * TREE_INDENT or 0
-    if parts.shift ~= shift then
-        parts.shift = shift
+    if parts.shift ~= shift or parts.version ~= self.colVersion then
+        parts.shift, parts.version = shift, self.colVersion
         Kit.LayoutColumnLabels(parts.cells, row, COLUMNS, { gap = COLUMN_GAP, left = -shift })
     end
     if node.kind == "group" then
@@ -2768,7 +2997,7 @@ function Tab:_OnStackPrice(copper)
 end
 
 -- Fill the details pane from the next post of the queue (or the one item that the rule skips).
-function Tab:_UpdateDetails()
+function Tab:_DrawDetails()
     local d = self.ui.details
     local entry = self.awaiting and self.awaiting.entry or self:_Focus()
     -- An edit of the stack size, the stack count or the duration holds until another item shows.
@@ -2866,6 +3095,23 @@ function Tab:_UpdateDetails()
     end
 end
 
+-- Draw the details pane. With the level list on, the Info column of the tree is hidden, so the reason of the shown
+-- entry goes to the warning line when that line has no problem text.
+function Tab:_UpdateDetails()
+    self:_DrawDetails()
+    if not self.levelsOn then
+        return
+    end
+    local d = self.ui.details
+    local entry = self.awaiting and self.awaiting.entry or self:_Focus()
+    local alone = not entry and #self.selection == 1 and self.selectedId and self.selectedId:sub(1, 1) == "i"
+    entry = entry or (alone and self.selection[1] or nil)
+    if entry and (d.warn:GetText() or "") == "" then
+        local info = SellingTab.InfoText(entry)
+        d.warn:SetText(alone and (tostring(self:_Name(entry)) .. ": " .. info) or info)
+        paint(d.warn, GREY)
+    end
+end
 -- Show a refusal text in the warning line of the details pane. The next redraw of the pane replaces it.
 function Tab:_ShowBusy(text)
     local d = self.ui and self.ui.details
@@ -2919,6 +3165,7 @@ function Tab:_Update()
     local busy = self.multi ~= nil or self.buy ~= nil
     self:_RefreshPost()
 
+    self:_RefreshLevels()
     self:_RefreshBuy()
     ui.skip:SetEnabled(not busy and (self.awaiting ~= nil or self:_Focus() ~= nil))
     ui.progress:SetText(self:ProgressText())
@@ -3113,6 +3360,13 @@ function Tab:_BuildContent()
         self:Skip()
     end)
     ui.skip:SetPoint("TOPLEFT", pane, "TOPRIGHT", -312, -72)
+    -- The Levels toggle shows or hides the level list at the right of the tree. It starts no buy.
+    ui.levels = Kit.Button(pane, "Levels", 46, function()
+        self:SetLevels(not self.levelsOn)
+    end)
+    ui.levels:SetPoint("TOPLEFT", pane, "TOPLEFT", 8, -58)
+    Kit.Tooltip(ui.levels, "Levels", { "Shows the price levels of the shown item at the right.",
+        "Click a level, then Buy selected. A commodity buy takes all units up to that level." })
     -- Buy lowest buys the cheapest auction that is not yours. The click starts the buy (D26).
     ui.buyLowest = Kit.Button(pane, BUY_TEXT, 156, nil)
     ui.buyLowest:SetPoint("TOPLEFT", pane, "TOPRIGHT", -164, -76)
@@ -3141,12 +3395,33 @@ function Tab:_BuildContent()
     ui.tree.frame:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", 0, 0)
     -- The column titles over the tree.
     local edge = ui.tree.contentInsets
-    local headers = Kit.CreateColumnHeader(content, COLUMNS,
-        { gap = COLUMN_GAP, left = edge.left, right = edge.right })
+    ui.headerOptions = { gap = COLUMN_GAP, left = edge.left, right = edge.right }
+    local headers = Kit.CreateColumnHeader(content, COLUMNS, ui.headerOptions)
     headers.frame:SetPoint("TOPLEFT", content, "TOPLEFT", 0, DETAILS_TOP - DETAILS_HEIGHT - 4)
     headers.frame:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, DETAILS_TOP - DETAILS_HEIGHT - 4)
     headers.frame:SetHeight(HEADER_HEIGHT)
     ui.headers = headers
+
+    -- The level list at the right of the tree. It shows only with the Levels toggle on (see Tab:SetLevels).
+    ui.levelList = Kit.CreateList(content, { rowHeight = ROW_HEIGHT, inset = true, skin = skin,
+        initRow = function(row, data)
+            self:_InitLevelRow(row, data)
+        end })
+    local levelEdge = ui.levelList.contentInsets
+    ui.levelHeaderOptions = { gap = LEVEL_OPTIONS.gap, left = levelEdge.left, right = levelEdge.right }
+    ui.levelHeader = Kit.CreateColumnHeader(content, LEVEL_COLUMNS, ui.levelHeaderOptions)
+    ui.levelHeader.frame:SetHeight(HEADER_HEIGHT)
+    ui.levelHeader.frame:Hide()
+    ui.levelList.frame:Hide()
+    if content.HookScript then
+        content:HookScript("OnSizeChanged", function()
+            if self.levelsOn then
+                self:_ApplyColumns()
+                self:_Layout()
+                self:_Update()
+            end
+        end)
+    end
 
     ui.stop:Hide()
     self:_Layout()
@@ -3157,6 +3432,12 @@ end
 function Tab:Mount(parent, api)
     self.parent, self.api = parent, api
     self:_BuildContent()
+    -- The Levels toggle is a profile setting: the list shows again when the tab opens.
+    self:_ApplyColumns()
+    local db = self.deps.db
+    if db and db:Get("profile", LEVELS_KEY) == true then
+        self:SetLevels(true)
+    end
     local bus, client = self.deps.bus, self.deps.client
     local commodityEvent, itemEvent = client.LiveResultEvents()
     for _, event in ipairs({ commodityEvent, itemEvent }) do
@@ -3230,7 +3511,7 @@ function Tab:Mount(parent, api)
             if self.buy then
                 self:_AbortBuy(self.buy, "the Auction House closed")
             end
-            self.live = nil
+            self.live, self.levelSel = nil, nil
             self:_Release()
             self:_Update()
         end)
@@ -3273,8 +3554,9 @@ end
 
 -- Create the Selling core. The host mounts it and shows it.
 -- deps: bus, rules, formulaRun, readBags() (bag items with stacks); optional after(seconds, fn), client, plan, log,
--- itemInfo, maxStack(itemID), vendorPrice(itemID) (copper for one item, or nil), confirm(name, text, onAccept),
--- getRecord(key), now(), itemLink(itemID) (link, quality), warn(title, text, onPost, onSkip, onCancel),
+-- itemInfo, db (the settings; the Levels toggle is saved in it), maxStack(itemID), vendorPrice(itemID)
+-- (copper for one item, or nil), confirm(name, text, onAccept), getRecord(key), now(),
+-- itemLink(itemID) (link, quality), warn(title, text, onPost, onSkip, onCancel),
 -- time() (seconds, default GetTime) and syncInterval (seconds between two automatic bag reads, default 1),
 -- requestItem(itemID) (asks the client to load item data), postDelay (seconds that Post stays off after a post
 -- result, default ns.Flavour.postDelay) and postTimeout (seconds after which Post comes back with no result).
@@ -3284,6 +3566,7 @@ function SellingTab.New(deps)
     end
     local resolved = {
         bus = deps.bus,
+        db = deps.db,
         rules = deps.rules,
         formulaRun = deps.formulaRun,
         readBags = deps.readBags,
