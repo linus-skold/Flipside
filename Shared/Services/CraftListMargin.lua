@@ -1,0 +1,116 @@
+local _, ns = ...
+
+-- The margin of a craft list: the cost of the materials, the value of the results and the difference.
+-- No frame code and no client call. The caller gives the price functions.
+local CraftListMargin = {}
+ns.CraftListMargin = CraftListMargin
+
+CraftListMargin.AH_CUT = 0.05
+
+local function round(number)
+    return math.floor(number + 0.5)
+end
+
+-- The AH cut of a gross price in copper (5%, rounded half up).
+function CraftListMargin.Cut(gross)
+    return round(gross * CraftListMargin.AH_CUT)
+end
+
+-- Returns the cost in copper of the cheapest needed units of the levels, or nil if the levels hold fewer units.
+-- levels: { { unitPrice, quantity, own } }, cheapest first. A level that is yours does not count.
+-- A commodity level counts for the units that are needed from it only. A stack level (it has stackSize and stacks)
+-- is bought in whole stacks: the walk takes ceil(left / stackSize) stacks, at most the stacks of the level, and the
+-- cost counts every unit of these stacks, also the units above the need.
+function CraftListMargin.WalkLevels(levels, needed)
+    if type(needed) ~= "number" or needed < 1 then
+        return nil
+    end
+    local left, cost = needed, 0
+    for _, level in ipairs(levels or {}) do
+        if not level.own and type(level.unitPrice) == "number" then
+            local take
+            if level.stackSize and level.stackSize > 0 then
+                local stacks = math.min(math.ceil(left / level.stackSize), level.stacks or 1)
+                take = stacks * level.stackSize
+            else
+                take = math.min(left, level.quantity or 1)
+            end
+            cost = cost + take * level.unitPrice
+            left = left - take
+            if left <= 0 then
+                return cost
+            end
+        end
+    end
+    return nil
+end
+
+-- list: { materials = { { key, itemID, count } }, results = { { key, itemID, min, max } } }.
+-- A material with no count needs 1 unit. options:
+--   crafts: the number of crafts (a whole number, default 1). It scales the materials and the results.
+--   materialPrice(material, needed): the total cost in copper of the needed units, and true if it is an estimate.
+--     It gives nil if there is no price.
+--   resultPrice(result): the price in copper of one unit, or nil. It must not include the AH cut.
+--   cut(gross): the AH cut in copper (default 5%).
+-- Returns a table:
+--   crafts, materials: one entry for each material { key, itemID, needed, total, estimate }.
+--   cost: the sum of the priced materials. costKnown: false if a material has no price (the cost is a lower limit).
+--   estimate: true if a material price is an estimate.
+--   results: one entry for each result { key, itemID, min, max, avg, unit, net = { min, avg, max } }. net is the
+--     value after the cut for the units of the three yields, for all crafts. unit and net are nil without a price.
+--   valueKnown: false if a result has no price.
+--   value: { min, avg, max }: the sum of the net values of the priced results.
+--   margin: { min, avg, max } = value - cost, or nil if the cost or the value is not known for all.
+--   percent: { min, avg, max } = margin / cost * 100, or nil if the margin is nil or the cost is 0.
+function CraftListMargin.Compute(list, options)
+    local crafts = options.crafts
+    if type(crafts) ~= "number" or crafts < 1 or crafts % 1 ~= 0 then
+        crafts = 1
+    end
+    local cut = options.cut or CraftListMargin.Cut
+    local out = {
+        crafts = crafts, materials = {}, cost = 0, costKnown = true, estimate = false,
+        results = {}, valueKnown = true, value = { min = 0, avg = 0, max = 0 },
+    }
+    for index, material in ipairs(list.materials or {}) do
+        local needed = (material.count or 1) * crafts
+        local total, estimate = options.materialPrice(material, needed)
+        out.materials[index] = {
+            key = material.key, itemID = material.itemID, needed = needed, total = total,
+            estimate = total ~= nil and estimate == true,
+        }
+        if total == nil then
+            out.costKnown = false
+        else
+            out.cost = out.cost + total
+            out.estimate = out.estimate or estimate == true
+        end
+    end
+    for index, result in ipairs(list.results or {}) do
+        local avg = (result.min + result.max) / 2
+        local unit = options.resultPrice(result)
+        local line = { key = result.key, itemID = result.itemID, min = result.min, max = result.max, avg = avg,
+            unit = unit }
+        if unit == nil then
+            out.valueKnown = false
+        else
+            line.net = {}
+            for name, yield in pairs({ min = result.min, avg = avg, max = result.max }) do
+                local gross = round(unit * yield * crafts)
+                line.net[name] = gross - cut(gross)
+                out.value[name] = out.value[name] + line.net[name]
+            end
+        end
+        out.results[index] = line
+    end
+    if out.costKnown and out.valueKnown then
+        out.margin, out.percent = {}, out.cost > 0 and {} or nil
+        for _, name in ipairs({ "min", "avg", "max" }) do
+            out.margin[name] = out.value[name] - out.cost
+            if out.percent then
+                out.percent[name] = out.margin[name] / out.cost * 100
+            end
+        end
+    end
+    return out
+end

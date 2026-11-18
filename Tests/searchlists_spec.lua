@@ -41,7 +41,10 @@ describe("SearchLists", function()
             local b = lists:Create("Bravo", { { itemID = 10, name = "Linen" }, { itemID = 10 }, { key = "20#s-44" } })
             local a = lists:Create("  alpha ", {})
             assert.is_number(b)
-            assert.same({ { id = a, name = "alpha", count = 0 }, { id = b, name = "Bravo", count = 2 } }, lists:List())
+            assert.same({
+                { id = a, name = "alpha", count = 0, kind = "search" },
+                { id = b, name = "Bravo", count = 2, kind = "search" },
+            }, lists:List())
             local got = lists:Get(b)
             assert.are.equal("Bravo", got.name)
             assert.same({
@@ -198,11 +201,171 @@ describe("SearchLists", function()
         end)
     end)
 
+    describe("craft lists", function()
+        local id
+
+        before_each(function()
+            id = lists:Create("Pants", { { itemID = 2996, count = 4 } }, "craft")
+        end)
+
+        it("makes a craft list with the materials and no results", function()
+            local list = lists:Get(id)
+            assert.are.equal("craft", list.kind)
+            assert.are.equal(4, list.items[1].count)
+            assert.same({}, list.results)
+            assert.are.equal("craft", lists:List()[1].kind)
+        end)
+
+        it("makes a search list when the kind is missing or is not craft", function()
+            local plain = lists:Create("Plain", {})
+            local other = lists:Create("Other", {}, "junk")
+            assert.are.equal("search", lists:Get(plain).kind)
+            assert.are.equal("search", lists:Get(other).kind)
+            assert.is_nil(db:Get("profile", "searchLists").lists[plain].kind)
+        end)
+
+        it("loads an old list with no kind as a search list with no results", function()
+            db:Set("profile", "searchLists", {
+                version = 1, nextID = 2, lists = { [1] = { name = "Old", items = { { itemID = 1, key = "1" } } } },
+            })
+            local old = lists:Get(1)
+            assert.are.equal("search", old.kind)
+            assert.same({}, old.results)
+            assert.are.equal(1, #old.items)
+        end)
+
+        it("adds a result with a clean copy of the item and the amounts", function()
+            assert.is_true(lists:AddResult(id, { itemID = 10940, name = "Strange Dust", min = 1, max = 2 }))
+            assert.same({ { itemID = 10940, key = "10940", name = "Strange Dust", min = 1, max = 2 } },
+                lists:Get(id).results)
+        end)
+
+        it("uses the min amount as the max amount when there is no max", function()
+            assert.is_true(lists:AddResult(id, { itemID = 10940, min = 3 }))
+            assert.are.equal(3, lists:Get(id).results[1].max)
+        end)
+
+        it("accepts a key with a suffix and a min of 0", function()
+            assert.is_true(lists:AddResult(id, { key = "25320#s-44", min = 0, max = 1 }))
+            local result = lists:Get(id).results[1]
+            assert.are.equal(25320, result.itemID)
+            assert.are.equal(0, result.min)
+        end)
+
+        it("refuses amounts that are not whole numbers, a negative min and a max below the min", function()
+            local bad = {
+                { min = -1, max = 2 }, { min = 1.5, max = 2 }, { min = 1, max = 2.5 }, { min = 3, max = 2 },
+                { min = "1", max = 2 }, { min = 1, max = "2" }, { max = 2 }, {},
+            }
+            for _, amounts in ipairs(bad) do
+                local ok, err = lists:AddResult(id, { itemID = 5, min = amounts.min, max = amounts.max })
+                assert.is_nil(ok)
+                assert.is_string(err)
+            end
+            assert.same({}, lists:Get(id).results)
+        end)
+
+        it("refuses a result with no item, and the same result twice", function()
+            assert.is_nil(lists:AddResult(id, { min = 1, max = 1 }))
+            assert.is_nil(lists:AddResult(id, "junk"))
+            assert.is_true(lists:AddResult(id, { itemID = 5, min = 1, max = 1 }))
+            local ok, err = lists:AddResult(id, { itemID = 5, min = 2, max = 3 })
+            assert.is_nil(ok)
+            assert.is_string(err)
+            assert.are.equal(1, #lists:Get(id).results)
+        end)
+
+        it("refuses a result for a search list or a list that does not exist", function()
+            local plain = lists:Create("Plain", {})
+            local ok, err = lists:AddResult(plain, { itemID = 5, min = 1, max = 1 })
+            assert.is_nil(ok)
+            assert.matches("not a craft list", err)
+            assert.is_nil(lists:AddResult(99, { itemID = 5, min = 1, max = 1 }))
+            assert.same({}, lists:Get(plain).results)
+        end)
+
+        it("changes the amounts of a result and checks them", function()
+            lists:AddResult(id, { itemID = 5, min = 1, max = 1 })
+            assert.is_true(lists:SetResult(id, 1, 2, 5))
+            assert.are.equal(2, lists:Get(id).results[1].min)
+            assert.are.equal(5, lists:Get(id).results[1].max)
+            assert.is_true(lists:SetResult(id, 1, 4))
+            assert.are.equal(4, lists:Get(id).results[1].max)
+            assert.is_nil(lists:SetResult(id, 1, 5, 4))
+            assert.is_nil(lists:SetResult(id, 1, -1, 4))
+            assert.is_nil(lists:SetResult(id, 1, 1.5, 4))
+            assert.is_nil(lists:SetResult(id, 2, 1, 1))
+            assert.are.equal(4, lists:Get(id).results[1].min)
+        end)
+
+        it("addresses the results by the place that Get shows, after a damaged entry", function()
+            local data = db:Get("profile", "searchLists")
+            data.lists[id].results = { { itemID = 5, min = 3, max = 1 }, { itemID = 6, min = 1, max = 2 },
+                { itemID = 7, min = 1, max = 1 } }
+            db:Set("profile", "searchLists", data)
+            assert.are.equal(6, lists:Get(id).results[1].itemID)
+            assert.is_true(lists:SetResult(id, 1, 2, 4))
+            assert.are.equal(4, lists:Get(id).results[1].max)
+            assert.are.equal(6, lists:Get(id).results[1].itemID)
+            assert.is_true(lists:RemoveResult(id, 1))
+            assert.are.equal(1, #lists:Get(id).results)
+            assert.are.equal(7, lists:Get(id).results[1].itemID)
+        end)
+
+        it("removes a result", function()
+            lists:AddResult(id, { itemID = 5, min = 1, max = 1 })
+            lists:AddResult(id, { itemID = 6, min = 1, max = 1 })
+            assert.is_true(lists:RemoveResult(id, 1))
+            assert.are.equal(6, lists:Get(id).results[1].itemID)
+            assert.is_nil(lists:RemoveResult(id, 5))
+        end)
+
+        it("keeps the kind and the results after a reload and when the materials change", function()
+            lists:AddResult(id, { itemID = 5, min = 1, max = 2 })
+            assert.is_true(lists:AddItem(id, { itemID = 7, count = 2 }))
+            assert.is_true(lists:SetCount(id, 2, 3))
+            assert.is_true(lists:RemoveItem(id, 1))
+            assert.is_number(lists:Upsert("Pants", { { itemID = 8 } }))
+            local again = ns.SearchLists.New(open(saved))
+            local list = again:Get(id)
+            assert.are.equal("craft", list.kind)
+            assert.are.equal(8, list.items[1].itemID)
+            assert.are.equal(5, list.results[1].itemID)
+            assert.is_true(again:Rename(id, "Pants 2"))
+            assert.are.equal("craft", again:Get(id).kind)
+        end)
+
+        it("drops a damaged result when it loads", function()
+            local data = db:Get("profile", "searchLists")
+            data.lists[id].results = { { itemID = 5, min = 3, max = 1 }, "junk", { itemID = 6, min = 1, max = 2 } }
+            db:Set("profile", "searchLists", data)
+            local results = lists:Get(id).results
+            assert.are.equal(1, #results)
+            assert.are.equal(6, results[1].itemID)
+        end)
+
+        it("sends the changed event for each result change", function()
+            local before = changes
+            lists:AddResult(id, { itemID = 5, min = 1, max = 1 })
+            lists:SetResult(id, 1, 1, 2)
+            lists:RemoveResult(id, 1)
+            assert.are.equal(before + 3, changes)
+        end)
+
+        it("refuses a result change when the data is read-only", function()
+            saved = { _schema = 99 }
+            make()
+            local ok, err = lists:AddResult(1, { itemID = 5, min = 1, max = 1 })
+            assert.is_nil(ok)
+            assert.is_string(err)
+        end)
+    end)
+
     describe("saving", function()
         it("keeps the lists in the profile after a reload", function()
             local id = lists:Create("Saved", { { itemID = 7, name = "Seven" } })
             local again = ns.SearchLists.New(open(saved))
-            assert.same({ { id = id, name = "Saved", count = 1 } }, again:List())
+            assert.same({ { id = id, name = "Saved", count = 1, kind = "search" } }, again:List())
             assert.are.equal("Seven", again:Get(id).items[1].name)
             assert.is_true(again:Create("Next", {}) > id)
         end)

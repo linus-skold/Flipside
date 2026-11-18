@@ -4,7 +4,8 @@ local mock = require("Tests.wow_mock")
 local function loadModules()
     local ns = { ReportError = function() end }
     for _, name in ipairs({ "EventBus", "SettingsDB", "ItemString", "OperationSchema", "ItemNameIndex", "BuyingPlan",
-        "SearchLists", "Theme", "Widgets", "Window", "Prompt", "List", "Tree", "Tabs", "Columns", "AuctionTabs",
+        "SearchLists", "CraftListMargin", "Theme",
+        "Widgets", "Window", "Prompt", "List", "Tree", "Tabs", "Columns", "AuctionTabs",
         "BuyingTab" }) do
         assert(loadfile(manifest.path(name)))("Flipside", ns)
     end
@@ -607,6 +608,308 @@ describe("BuyingTab search lists", function()
             tab:Select_("100")
             ui.amount.scripts.OnEnterPressed(ui.amount)
             assert.is_nil(lists:Get(id).items[1].count)
+        end)
+    end)
+
+    describe("craft lists", function()
+        local started, confirmed, scan, id
+
+        local function dialog(name)
+            for _, frame in ipairs(mock.frames) do
+                if frame.name == name then
+                    return frame
+                end
+            end
+        end
+
+        local function submit(box, text)
+            box.input:SetText(text)
+            box.input.scripts.OnTextChanged(box.input)
+            box.okButton.scripts.OnClick(box.okButton)
+        end
+
+        before_each(function()
+            getmetatable(CreateFrame("Frame")).__index.HasFocus = function() return false end
+            started, confirmed = {}, {}
+            bus = ns.EventBus.New({})
+            lists = ns.SearchLists.New(db, { bus = bus, isAuctionHouseOpen = function() return ahOpen end })
+            client = makeClient()
+            client.BuyEvents = function()
+                return { priceUpdated = "QUOTE", priceUnavailable = "NOQUOTE", commoditySucceeded = "BOUGHT",
+                    commodityFailed = "NOTBOUGHT", itemCompleted = "ITEMBOUGHT", itemError = "ITEMERR" }
+            end
+            client.StartCommodityPurchase = function(itemID, quantity)
+                started[#started + 1] = { itemID, quantity }
+            end
+            client.ConfirmCommodityPurchase = function(itemID, quantity)
+                confirmed[#confirmed + 1] = { itemID, quantity }
+            end
+            client.CancelCommodityPurchase = function() end
+            client.QuoteSecondsLeft = function() return 30 end
+            tab = mount()
+            ui = tab.ui
+            -- Scan data: item 200 (a material) has a market value of 50, item 300 (the result) sells for 1000.
+            scan = { ["200"] = { scanMarket = 50 }, ["300"] = { scanMarket = 1000 } }
+            tab._ScanValues = function(_, key)
+                return scan[key]
+            end
+            -- A craft list: 4 of item 100 and 1 of item 200 make 1 to 2 of item 300.
+            id = lists:Create("Pants", { { itemID = 100, count = 4 }, { itemID = 200 } }, "craft")
+            lists:AddResult(id, { itemID = 300, name = "Dust", min = 1, max = 2 })
+            tab:SelectList(id)
+        end)
+
+        local function searchMaterial()
+            client.rows[100] = { row(300, 9) }
+            tab:Select_("100")
+            tab:Search()
+            bus:Emit("COMMODITY_RESULTS", 100)
+        end
+
+        it("makes a craft list from the New prompt and shows the panel only for it", function()
+            lists:Delete(id)
+            tab:SetSource("lists")
+            assert.is_false(ui.craftMargin:IsShown())
+            ui.newList.scripts.OnClick(ui.newList)
+            local box = ns.Kit.Prompt("FlipsideBuyingNewListPrompt")
+            box.choiceValue = "craft"
+            submit(box, "Shirts")
+            assert.are.equal("craft", lists:Get(tab.listID).kind)
+            assert.is_true(ui.craftMargin:IsShown())
+            assert.is_true(ui.craftResults.frame:IsShown())
+            ui.newList.scripts.OnClick(ui.newList)
+            submit(ns.Kit.Prompt("FlipsideBuyingNewListPrompt"), "Herbs")
+            assert.are.equal("search", lists:Get(tab.listID).kind)
+            assert.is_false(ui.craftMargin:IsShown())
+            assert.is_false(ui.craftAdd:IsShown())
+        end)
+
+        it("keeps a search list as it was and refuses a result for it", function()
+            local plain = lists:Create("Herbs", { { itemID = 100, count = 2 } })
+            tab:SelectList(plain)
+            assert.is_nil(tab:CraftMargin())
+            assert.is_false(tab:AddResult("300"))
+            assert.are.equal("2× item 100", tab.nodes[1].text)
+            assert.is_false(ui.craftMargin:IsShown())
+        end)
+
+        it("shows the materials with their counts", function()
+            assert.are.equal("4× item 100", tab.nodes[1].text)
+            assert.are.equal("item 200", tab.nodes[2].text)
+        end)
+
+        it("adds a material through the one input, and a result through the Add result button", function()
+            ui.searchInput:SetText("2589")
+            tab:SubmitInput("2589")
+            assert.are.equal(3, #lists:Get(id).items)
+            ui.searchInput:SetText("25320#s-44")
+            ui.craftAdd.scripts.OnClick(ui.craftAdd)
+            local results = lists:Get(id).results
+            assert.are.equal(2, #results)
+            assert.are.equal(25320, results[2].itemID)
+            assert.are.equal(1, results[2].min)
+            assert.are.equal(1, results[2].max)
+            assert.are.equal(2, #ui.craftResults.data)
+        end)
+
+        it("adds a result from the selected row of a name search", function()
+            tab.searchResults = tab.deps.plan.ListEntries({ { itemID = 400, key = "400", name = "Soul Dust" } },
+                { formulaRun = tab.deps.formulaRun, label = "Search" })
+            tab:RefreshList()
+            tab:Select_("400")
+            assert.is_true(tab:AddResult("Soul"))
+            assert.are.equal(400, lists:Get(id).results[2].itemID)
+            assert.is_false(tab:AddResult("Soul", 2, 1))
+        end)
+
+        it("refuses a result that is not an item, or one that is in the list", function()
+            assert.is_false(tab:AddResult("Linen"))
+            assert.is_false(tab:AddResult("300"))
+            assert.is_false(tab:AddResult("999", 3, 2))
+            assert.are.equal(1, #lists:Get(id).results)
+        end)
+
+        it("lists the results with the amount made and the value after the cut", function()
+            assert.are.equal(1, #ui.craftResults.data)
+            assert.are.equal("1-2× Dust   avg 1425c", ui.craftResults.data[1].text)
+            assert.are.equal("1-2× Dust   avg 1425c", ui.craftResults.rows[1].craftText:GetText())
+        end)
+
+        it("prices a material from the live levels, and the others from the market value as an estimate", function()
+            searchMaterial()
+            local margin = tab:CraftMargin()
+            assert.are.equal(1200, margin.materials[1].total)
+            assert.is_false(margin.materials[1].estimate)
+            assert.are.equal(50, margin.materials[2].total)
+            assert.is_true(margin.materials[2].estimate)
+            assert.is_true(margin.estimate)
+            assert.are.equal(1250, margin.cost)
+        end)
+
+        it("shows the cost, the value and the margin at min, average and max yield, with the percent", function()
+            searchMaterial()
+            local text = ui.craftMargin:GetText()
+            assert.matches("Materials: 1250c %(estimate%)", text)
+            assert.matches("min 950c  avg 1425c  max 1900c", text)
+            assert.matches("Margin: min %-300c %(%-24%%%)  avg 175c %(14%%%)  max 650c %(52%%%)", text)
+        end)
+
+        it("walks the price levels for the count and uses the market value when the live units are too few", function()
+            client.rows[100] = { row(300, 1), row(500, 2), row(900, 9) }
+            tab:Select_("100")
+            tab:Search()
+            bus:Emit("COMMODITY_RESULTS", 100)
+            assert.are.equal(300 + 2 * 500 + 900, tab:CraftMargin().materials[1].total)
+            tab.results["100"] = { rows = { row(300, 2) } }
+            tab:_UpdateCraft()
+            -- 2 live units are less than the 4 that are needed, and item 100 has no market value: no price.
+            assert.is_nil(tab:CraftMargin().materials[1].total)
+        end)
+
+        it("uses ScanMin for a result with no market value, and shows ? when there is no price", function()
+            searchMaterial()
+            scan["300"] = { scanMin = 800 }
+            tab:_Update()
+            assert.are.equal(760, tab:CraftMargin().value.min)
+            scan["300"] = {}
+            tab:_Update()
+            local text = ui.craftMargin:GetText()
+            assert.matches("Value after the 5%% cut: %?", text)
+            assert.matches("Margin: %?", text)
+            assert.are.equal("1-2× Dust   ?", ui.craftResults.data[1].text)
+        end)
+
+        it("shows ? for the materials with no price at all", function()
+            scan["200"] = nil
+            tab:_Update()
+            assert.is_nil(tab:CraftMargin().margin)
+            assert.matches("Materials: %? %(0c priced%)", ui.craftMargin:GetText())
+        end)
+
+        it("fills the amount with count x crafts, follows a change of Crafts and still confirms the buy", function()
+            client.rows[100] = { row(300, 20) }
+            assert.is_true(tab:SetCrafts("3"))
+            tab:Select_("100")
+            assert.are.equal(12, tab.amount)
+            tab:Search()
+            bus:Emit("COMMODITY_RESULTS", 100)
+            assert.are.equal("12", ui.amount:GetText())
+            assert.is_true(tab:SetCrafts("2"))
+            assert.are.equal(8, tab.amount)
+            assert.are.equal("8", ui.amount:GetText())
+            ui.buyNext.scripts.OnClick(ui.buyNext)
+            assert.are.same({ { 100, 8 } }, started)
+            bus:Emit("QUOTE", 300, 2400)
+            local confirm = dialog("FlipsideBuyConfirm")
+            assert.is_true(confirm:IsShown())
+            assert.matches("Buy 8 x", confirm.text.text)
+            assert.are.same({}, confirmed)
+            confirm.yesButton.scripts.OnClick(confirm.yesButton)
+            assert.are.same({ { 100, 8 } }, confirmed)
+        end)
+
+        it("uses crafts for a material with no count, and not for a search list", function()
+            tab:SetCrafts("2")
+            tab:Select_("200")
+            assert.are.equal(2, tab.amount)
+            local plain = lists:Create("Herbs", { { itemID = 100, count = 4 } })
+            tab:SelectList(plain)
+            tab:Select_("100")
+            assert.are.equal(4, tab.amount)
+        end)
+
+        it("scales the margin with the number of crafts", function()
+            searchMaterial()
+            assert.is_true(tab:SetCrafts("2"))
+            local margin = tab:CraftMargin()
+            assert.are.equal(2, margin.crafts)
+            assert.are.equal(8, margin.materials[1].needed)
+            assert.are.equal(2 * 950, margin.value.min)
+            assert.are.equal("2", ui.crafts:GetText())
+            assert.is_false(tab:SetCrafts("0"))
+            assert.is_false(tab:SetCrafts("x"))
+            assert.are.equal(2, tab.crafts)
+            assert.is_true(tab:SetCrafts("1"))
+            assert.are.equal(1, tab:CraftMargin().crafts)
+        end)
+
+        it("stores a typed count with Enter only when Crafts is 1", function()
+            tab:SetCrafts("2")
+            tab:Select_("100")
+            tab:SetAmount("9")
+            ui.amount.scripts.OnEnterPressed(ui.amount)
+            assert.are.equal(4, lists:Get(id).items[1].count)
+            assert.are.equal(9, tab.amount)
+            assert.are.equal("set Crafts to 1 to change the count", ui.message.text)
+            tab:SetCrafts("1")
+            tab:Select_("200")
+            tab:Select_("100")
+            tab:SetAmount("9")
+            ui.amount.scripts.OnEnterPressed(ui.amount)
+            assert.are.equal(9, lists:Get(id).items[1].count)
+        end)
+
+        it("changes the amount made with a prompt, and checks it", function()
+            ui.craftResults.rows[1].scripts.OnClick(ui.craftResults.rows[1])
+            assert.are.equal("300", tab.resultSel)
+            assert.is_true(ui.craftEdit:IsEnabled())
+            ui.craftEdit.scripts.OnClick(ui.craftEdit)
+            local box = ns.Kit.Prompt("FlipsideBuyingEditResultPrompt")
+            assert.are.equal("1-2", box.input:GetText())
+            submit(box, "4-2")
+            assert.is_true(box:IsShown())
+            assert.are.equal(2, lists:Get(id).results[1].max)
+            submit(box, "3-5")
+            assert.is_false(box:IsShown())
+            assert.are.equal(3, lists:Get(id).results[1].min)
+            assert.are.equal(5, lists:Get(id).results[1].max)
+            assert.are.equal("3-5× Dust", ui.craftResults.data[1].text:match("^(.-)   "))
+        end)
+
+        it("reads a yield text", function()
+            assert.are.same({ 2, 2 }, { ns.BuyingTab.ParseYield(" 2 ") })
+            assert.are.same({ 1, 3 }, { ns.BuyingTab.ParseYield("1 - 3") })
+            assert.is_nil((ns.BuyingTab.ParseYield("a")))
+            assert.is_nil((ns.BuyingTab.ParseYield("-1")))
+            assert.is_nil((ns.BuyingTab.ParseYield("")))
+        end)
+
+        it("removes the selected result and turns the Edit and Remove buttons off", function()
+            ui.craftResults.rows[1].scripts.OnClick(ui.craftResults.rows[1])
+            ui.craftRemove.scripts.OnClick(ui.craftRemove)
+            assert.same({}, lists:Get(id).results)
+            assert.is_nil(tab.resultSel)
+            assert.is_false(ui.craftEdit:IsEnabled())
+            assert.are.equal(0, #ui.craftResults.data)
+            assert.matches("Add a result", ui.craftMargin:GetText())
+        end)
+
+        it("buys the materials after the normal confirmation", function()
+            searchMaterial()
+            assert.are.equal("4", ui.amount:GetText())
+            ui.buyNext.scripts.OnClick(ui.buyNext)
+            assert.are.same({ { 100, 4 } }, started)
+            assert.are.same({}, confirmed)
+            bus:Emit("QUOTE", 300, 1200)
+            local confirm = dialog("FlipsideBuyConfirm")
+            assert.is_true(confirm:IsShown())
+            assert.matches("Buy 4 x", confirm.text.text)
+            assert.are.same({}, confirmed)
+            confirm.yesButton.scripts.OnClick(confirm.yesButton)
+            assert.are.same({ { 100, 4 } }, confirmed)
+        end)
+
+        it("searches every material with Search all", function()
+            client.rows[100] = { row(300, 9) }
+            client.rows[200] = { row(50, 9) }
+            assert.is_true(tab:SearchAll())
+            bus:Emit("COMMODITY_RESULTS", 100)
+            bus:Emit("COMMODITY_RESULTS", 200)
+            assert.are.same({ 100, 200 }, client.searches)
+            local margin = tab:CraftMargin()
+            assert.is_false(margin.materials[2].estimate)
+            assert.are.equal(50, margin.materials[2].total)
+            assert.is_false(margin.estimate)
         end)
     end)
 

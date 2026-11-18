@@ -82,6 +82,7 @@ Shared\Services\LedgerHooks.lua
 Shared\Services\LedgerBalance.lua
 Shared\Services\DestroyRules.lua
 Shared\Services\CraftCost.lua
+Shared\Services\CraftListMargin.lua
 Shared\UI\Kit\Theme.lua
 Shared\UI\Kit\Window.lua
 Shared\UI\Kit\Widgets.lua
