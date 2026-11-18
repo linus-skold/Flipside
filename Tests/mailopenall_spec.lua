@@ -104,6 +104,18 @@ describe("MailOpenAll", function()
         mock.teardown()
     end)
 
+    describe("quiet time", function()
+        it("uses 0.2 s for a take of the run, and a plain take keeps 0.5 s", function()
+            mails = { mail({ items = 1 }) }
+            assert.is_true(run.Start())
+            assert.are.equal(0.2, timers[1].seconds)
+            pump()
+            pump()
+            take.Begin()
+            assert.are.equal(0.5, timers[#timers].seconds)
+        end)
+    end)
+
     describe("order", function()
         it("works from the last mail to the first and keeps the index right when mails go", function()
             mails = { mail({ items = 1 }), mail({ money = 5 }), mail({ items = 2, money = 7 }) }

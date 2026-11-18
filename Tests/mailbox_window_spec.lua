@@ -456,6 +456,19 @@ describe("MailboxWindow and the Forever layouts of MailHost", function()
         end)
     end)
 
+    describe("the toggle in the window header", function()
+        it("is Blizzard UI, left of the X button, and above the header art", function()
+            attach(true)
+            bus:Emit("MAIL_SHOW")
+            local window = host.window
+            local toggle = window.toggle
+            assert.are.equal("Blizzard UI", toggle:GetText())
+            local point, relative, relativePoint = toggle:GetPoint(1)
+            assert.are.same({ "RIGHT", window.frame.CloseButton, "LEFT" }, { point, relative, relativePoint })
+            assert.is_true(toggle:GetFrameLevel() > 510)
+        end)
+    end)
+
     describe("the toggle on MailFrame", function()
         local tab
 
