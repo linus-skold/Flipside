@@ -124,11 +124,11 @@ describe("BuyingTab shift-click search", function()
         assert.are.equal(0, #searches)
     end)
 
-    it("leaves the link to the item box when it has focus", function()
-        tab.ui.itemInput.focused = true
-        tab.ui.itemInput.Insert = function(self, text) self.inserted = text end
+    it("leaves the link to the input box when it has focus", function()
+        tab.ui.searchInput.focused = true
+        tab.ui.searchInput.Insert = function(self, text) self.inserted = text end
         hooks.ChatEdit_InsertLink(LINK)
-        assert.are.equal(LINK, tab.ui.itemInput.inserted)
+        assert.are.equal(LINK, tab.ui.searchInput.inserted)
         assert.are.equal(0, #finder.calls)
     end)
 

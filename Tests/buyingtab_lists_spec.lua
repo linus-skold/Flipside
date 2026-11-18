@@ -4,7 +4,8 @@ local mock = require("Tests.wow_mock")
 local function loadModules()
     local ns = { ReportError = function() end }
     for _, name in ipairs({ "EventBus", "SettingsDB", "ItemString", "OperationSchema", "ItemNameIndex", "BuyingPlan",
-        "SearchLists", "Theme", "Widgets", "Window", "List", "Tree", "Tabs", "Columns", "AuctionTabs", "BuyingTab" }) do
+        "SearchLists", "Theme", "Widgets", "Window", "Prompt", "List", "Tree", "Tabs", "Columns", "AuctionTabs",
+        "BuyingTab" }) do
         assert(loadfile(manifest.path(name)))("Flipside", ns)
     end
     return ns
@@ -101,7 +102,9 @@ describe("BuyingTab search lists", function()
             assert.is_false(ui.picker:IsShown())
             assert.is_true(tab:SetSource("lists"))
             assert.is_true(ui.picker:IsShown())
-            assert.is_true(ui.itemInput:IsShown())
+            assert.is_true(ui.rename:IsShown())
+            assert.is_nil(ui.nameInput)
+            assert.is_nil(ui.itemInput)
             assert.is_true(tab:SetSource("groups"))
             assert.is_false(ui.picker:IsShown())
         end)
@@ -122,8 +125,36 @@ describe("BuyingTab search lists", function()
             assert.is_true(tab.list[2].noMax)
             assert.are.equal("Default", tab.list[2].operationName)
             assert.are.equal("Peacebloom", tab:_ItemName(tab.list[1]))
-            assert.are.equal("no max", ui.tree.list.rows[4].parts.price.text)
+            assert.are.equal("-", ui.tree.list.rows[2].parts.price.text)
             assert.are.equal("Search list: Recipe", tab.list[2].groupPath)
+        end)
+
+        it("shows the list as a flat list of items, with no group nodes", function()
+            local id = lists:Create("Recipe", { { itemID = 100 }, { itemID = 200 } })
+            assert.is_true(tab:SelectList(id))
+            assert.are.equal(2, #tab.nodes)
+            for _, node in ipairs(tab.nodes) do
+                assert.are.equal("item", node.kind)
+            end
+            assert.are.equal("Cheap", tab.nodes[1].entry.operationName)
+        end)
+
+        it("shows the market price of a list item, and the total only on the selected commodity", function()
+            local id = lists:Create("Recipe", { { itemID = 200 }, { itemID = 300 } })
+            tab._ScanInfo = function()
+                return { market = 250 }
+            end
+            tab:SelectList(id)
+            tab:SetAmount("4")
+            assert.are.equal("250c", ui.tree.list.rows[1].parts.price.text)
+            assert.are.equal("250c", ui.tree.list.rows[2].parts.price.text)
+            client.rows[200] = { row(300, 9) }
+            tab:Select_("200")
+            tab:Search()
+            bus:Emit("COMMODITY_RESULTS", 200)
+            tab:SetAmount("4")
+            assert.are.equal("1000c", ui.tree.list.rows[1].parts.price.text)
+            assert.are.equal("250c", ui.tree.list.rows[2].parts.price.text)
         end)
 
         it("picks the first list when the source changes and no list is selected", function()
@@ -162,7 +193,8 @@ describe("BuyingTab search lists", function()
         it("removes an item with the remove button of its row", function()
             local id = lists:Create("A", { { itemID = 1 }, { itemID = 2 } })
             tab:SelectList(id)
-            local button = ui.tree.list.rows[2].parts.remove
+            -- The list is flat: the first row is the first item.
+            local button = ui.tree.list.rows[1].parts.remove
             assert.is_true(button:IsShown())
             button.scripts.OnClick(button)
             assert.are.equal(1, #tab.list)
@@ -204,53 +236,18 @@ describe("BuyingTab search lists", function()
             assert.are.equal("2589#b1", r.item.key)
         end)
 
-        it("finds a name in the name index: one match, several matches, none", function()
-            local matches = { { itemID = 1, name = "Linen Cloth", key = "1" } }
-            local deps = { itemNameIndex = { Resolve = function() return { kind = "name", matches = matches } end } }
-            assert.are.equal("Linen Cloth", parse("linen", deps).item.name)
-            matches[2] = { itemID = 2, name = "Linen Bandage", key = "2" }
-            local r = parse("linen", deps)
-            assert.are.equal("choices", r.kind)
-            assert.are.equal(2, #r.choices)
-            matches[1], matches[2] = nil, nil
-            r = parse("linen", deps)
-            assert.are.equal("error", r.kind)
-            assert.matches("no item named", r.message)
-        end)
-
-        it("asks the Auction House for a name that the index does not know", function()
-            local found
-            local deps = {
-                itemNameIndex = { Resolve = function() return { kind = "name", matches = {} } end },
-                isAuctionHouseOpen = function() return true end,
-                ahNameSearch = { Find = function(_, query, callback, options)
-                    found = { query = query, exact = options.exact }
-                    callback({ { itemID = 9, name = "Rare Herb", key = "9" } })
-                end },
-            }
-            local r = parse('"Rare Herb"', deps)
-            assert.are.same({ query = "Rare Herb", exact = true }, found)
-            assert.are.equal(9, r.item.itemID)
-            deps.isAuctionHouseOpen = function() return false end
-            assert.are.equal("error", parse("Rare Herb", deps).kind)
-        end)
-
-        it("gives an error for empty text, a short name and no name source", function()
+        it("gives an error for empty text and for a name", function()
             assert.are.equal("error", parse("   ").kind)
-            local short = parse("a", { itemNameIndex = { Resolve = function()
-                return { kind = "error", message = "type at least 3 characters of the name" }
-            end } })
-            assert.matches("at least", short.message)
-            assert.matches("not available", parse("linen").message)
+            assert.matches("not an item ID", parse("linen").message)
         end)
 
         it("adds the item to the selected list and clears the box", function()
             local id = lists:Create("A", {})
             tab:SelectList(id)
-            ui.itemInput:SetText("2589")
+            ui.searchInput:SetText("2589")
             assert.is_true(tab:AddItem("2589"))
             assert.are.equal("2589", lists:Get(id).items[1].key)
-            assert.are.equal("", ui.itemInput:GetText())
+            assert.are.equal("", ui.searchInput:GetText())
             assert.are.equal("2589", tab.selectedKey)
             local ok, err = tab:AddItem("2589")
             assert.is_false(ok)
@@ -274,18 +271,117 @@ describe("BuyingTab search lists", function()
             assert.are.same({}, lists:List())
         end)
 
-        it("shows a choice when several items match and adds the picked one", function()
-            tab.deps.itemNameIndex = { Resolve = function()
-                return { kind = "name", matches = {
-                    { itemID = 1, name = "Linen Cloth", key = "1" }, { itemID = 2, name = "Linen Bandage", key = "2" },
-                } }
+        it("adds the selected result of a name search to the selected list", function()
+            local id = lists:Create("A", {})
+            tab:SelectList(id)
+            tab.deps.ahNameSearch = { Find = function(_, _, callback)
+                callback({
+                    { itemID = 7, key = "7", name = "Rare Herb" },
+                    { itemID = 8, key = "8", name = "Rare Root" },
+                })
             end }
-            assert.is_true(tab:AddItem("linen"))
-            assert.are.equal(2, #tab.choices)
-            assert.matches("2 items match", ui.message.text)
-            assert.are.same({}, lists:List())
-            assert.is_true(tab:_AddResolved(tab.choices[2]))
-            assert.are.equal("2", lists:Get(tab.listID).items[1].key)
+            assert.is_true(tab:SearchName("Rare"))
+            assert.is_true(ui.addToList:IsShown())
+            assert.is_false(ui.addToList.enabled)
+            tab:Select_("8")
+            assert.is_true(ui.addToList.enabled)
+            ui.addToList.scripts.OnClick(ui.addToList)
+            assert.are.equal("8", lists:Get(id).items[1].key)
+            assert.is_nil(tab.searchResults)
+            assert.is_false(ui.addToList:IsShown())
+        end)
+
+        it("has no Add to list button without a list or without a search", function()
+            assert.is_false(ui.addToList:IsShown())
+            local ok = tab:AddSelectedToList()
+            assert.is_false(ok)
+        end)
+    end)
+
+    describe("the one input of the search row", function()
+        local LINK = "|cff1eff00|Hitem:2592::::::::60:::::|h[Wool Cloth]|h|r"
+
+        local function enter(text)
+            ui.searchInput:SetText(text)
+            ui.searchInput.scripts.OnEnterPressed(ui.searchInput)
+        end
+
+        before_each(function()
+            local names = {}
+            ahSearch = { Find = function(_, query)
+                names[#names + 1] = query
+            end }
+            tab.deps.ahNameSearch = ahSearch
+            tab.names = names
+        end)
+
+        it("has no placeholder text", function()
+            assert.is_nil(ui.searchInput.placeholder)
+        end)
+
+        it("adds an item ID, a key or a link to the current list on Enter and starts no name search", function()
+            local id = lists:Create("A", {})
+            tab:SelectList(id)
+            enter("2589")
+            enter("25320#s-44")
+            enter(LINK)
+            local items = lists:Get(id).items
+            assert.are.equal("2589", items[1].key)
+            assert.are.equal("25320#s-44", items[2].key)
+            assert.are.equal(2592, items[3].itemID)
+            assert.are.same({}, tab.names)
+        end)
+
+        it("runs the name search on Enter for other text", function()
+            local id = lists:Create("A", {})
+            tab:SelectList(id)
+            enter("Linen Cloth")
+            assert.are.same({ "Linen Cloth" }, tab.names)
+            assert.are.same({}, lists:Get(id).items)
+        end)
+
+        it("tells an item reference from a name", function()
+            assert.is_true(ns.BuyingTab.IsItemRef(" 2589 "))
+            assert.is_true(ns.BuyingTab.IsItemRef("25320#s-44"))
+            assert.is_true(ns.BuyingTab.IsItemRef(LINK))
+            assert.is_false(ns.BuyingTab.IsItemRef("Linen Cloth"))
+            assert.is_false(ns.BuyingTab.IsItemRef(""))
+        end)
+    end)
+
+    describe("the name prompts", function()
+        local function submit(box, text)
+            box.input:SetText(text)
+            box.input.scripts.OnTextChanged(box.input)
+            box.okButton.scripts.OnClick(box.okButton)
+        end
+
+        it("asks for the name of a new list", function()
+            ui.newList.scripts.OnClick(ui.newList)
+            local box = ns.Kit.Prompt("FlipsideBuyingNewListPrompt")
+            assert.is_true(box:IsShown())
+            submit(box, "Herbs")
+            assert.are.equal("Herbs", lists:Get(tab.listID).name)
+            assert.is_false(box:IsShown())
+        end)
+
+        it("keeps the new list prompt open with the error for a name in use", function()
+            lists:Create("Herbs", {})
+            ui.newList.scripts.OnClick(ui.newList)
+            local box = ns.Kit.Prompt("FlipsideBuyingNewListPrompt")
+            submit(box, "herbs")
+            assert.is_true(box:IsShown())
+            assert.is_not.equal("", box.error:GetText())
+        end)
+
+        it("asks for the new name of the selected list, with the old name as start text", function()
+            local id = lists:Create("Herbs", {})
+            tab:SelectList(id)
+            ui.rename.scripts.OnClick(ui.rename)
+            local box = ns.Kit.Prompt("FlipsideBuyingRenameListPrompt")
+            assert.are.equal("Herbs", box.input:GetText())
+            submit(box, "Flowers")
+            assert.are.equal("Flowers", lists:Get(id).name)
         end)
     end)
 

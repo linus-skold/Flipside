@@ -22,6 +22,7 @@ local CONFIRM_WAIT = 15
 local DEFAULT_JUMP = 25
 local MESSAGE_ROOM = 12 -- height that the left column gains when the message line is empty
 local SEARCH_SHIFT = 28 -- height of the name search row above the source tabs
+local LIST_GAP = 8 -- space between the source tabs and the lists drop-down
 local JUMP_KEY = "buying.jumpPercent"
 local VENDOR_KEY = "buying.vendorFormula"
 local VENDOR_SETTLE = 5 -- most seconds that the Vendor list waits for item data before it builds again
@@ -188,33 +189,15 @@ local function itemOf(itemID, key, name)
     return { itemID = itemID, key = key, name = name }
 end
 
-local function itemFromMatch(match)
-    return itemOf(match.itemID, match.key, match.name)
-end
-
-local function resolveMatches(matches, text, callback)
-    if #matches == 0 then
-        callback({ kind = "error", message = 'no item named "' .. text .. '"' })
-    elseif #matches == 1 then
-        callback({ kind = "item", item = itemFromMatch(matches[1]) })
-    else
-        local choices = {}
-        for index, match in ipairs(matches) do
-            choices[index] = itemFromMatch(match)
-        end
-        callback({ kind = "choices", choices = choices })
-    end
-end
-
--- Read the text of the item box: an item ID, an item link, a Flipside key or an item name.
--- callback(result) runs once, at once or after an Auction House name search. result is
--- { kind = "item", item }, { kind = "choices", choices } or { kind = "error", message }.
--- deps: itemNameIndex, ahNameSearch, keyFor(link), isAuctionHouseOpen() (all optional).
+-- Read the text of the input: an item ID, an item link or a Flipside key. Other text is a name, and the caller
+-- sends it to the name search (Tab:SubmitInput). callback(result) runs once, at once. result is
+-- { kind = "item", item } or { kind = "error", message }.
+-- deps: keyFor(link) (optional).
 function BuyingTab.ParseInput(input, deps, callback)
     local text = tostring(input or ""):match("^%s*(.-)%s*$")
     local ItemString = ns.ItemString
     if text == "" then
-        callback({ kind = "error", message = "enter an item name, ID, link or key" })
+        callback({ kind = "error", message = "enter an item ID, link or key" })
         return
     end
     if text:match("^%d+$") then
@@ -237,34 +220,7 @@ function BuyingTab.ParseInput(input, deps, callback)
         callback({ kind = "item", item = itemOf(fields.itemID, key, text:match("|h%[(.-)%]|h")) })
         return
     end
-    local index = deps.itemNameIndex
-    local result = index and index:Resolve(text) or nil
-    if result and result.kind == "error" then
-        callback({ kind = "error", message = result.message })
-        return
-    end
-    if result and result.kind == "name" and #result.matches > 0 then
-        resolveMatches(result.matches, text, callback)
-        return
-    end
-    local search = deps.ahNameSearch
-    local open = deps.isAuctionHouseOpen and deps.isAuctionHouseOpen()
-    if search and open then
-        local query = ns.ItemNameIndex and ns.ItemNameIndex.ParseQuery(text) or { raw = text }
-        search:Find(query.raw, function(items, err)
-            if not items then
-                callback({ kind = "error", message = err or "the search failed" })
-            else
-                resolveMatches(items, text, callback)
-            end
-        end, { exact = query.exact })
-        return
-    end
-    if not index and not search then
-        callback({ kind = "error", message = "item names are not available" })
-    else
-        callback({ kind = "error", message = 'no item named "' .. text .. '" in the scan data' })
-    end
+    callback({ kind = "error", message = "not an item ID, link or key: " .. text })
 end
 
 local function defaultItemInfo(itemID)
@@ -1015,11 +971,41 @@ function Tab:NewList(name)
         self:_Say(err)
         return false, err
     end
-    if self.ui then
-        self.ui.nameInput:SetText("")
-    end
     self:SelectList(id)
     return true
+end
+
+local NEW_LIST_PROMPT = "FlipsideBuyingNewListPrompt"
+local RENAME_LIST_PROMPT = "FlipsideBuyingRenameListPrompt"
+
+-- Ask for the name of a new search list.
+function Tab:PromptNewList()
+    ns.Kit.Prompt(NEW_LIST_PROMPT):Open({
+        title = "New search list",
+        label = "Name",
+        onOK = function(name)
+            local ok, err = self:NewList(name)
+            return not ok and err or nil
+        end,
+    })
+end
+
+-- Ask for the new name of the selected search list.
+function Tab:PromptRenameList()
+    local saved = self.listID and self.deps.searchLists:Get(self.listID)
+    if not saved then
+        self:_Say("pick a search list first")
+        return
+    end
+    ns.Kit.Prompt(RENAME_LIST_PROMPT):Open({
+        title = "Rename search list",
+        label = "New name",
+        text = saved.name,
+        onOK = function(name)
+            local ok, err = self:RenameList(name)
+            return not ok and err or nil
+        end,
+    })
 end
 
 function Tab:RenameList(name)
@@ -1234,60 +1220,53 @@ function Tab:_AddResolved(item)
     end
     self:_DropSearch()
     self.source = "lists"
-    if self.ui then
-        self.ui.itemInput:SetText("")
-    end
     self:RefreshList()
     self:Select_(item.key)
     self:_Say("added " .. (item.name or self.deps.itemInfo(item.itemID)))
     return true
 end
 
--- Add the item that the text names (name, ID, link or key) to the current search list.
+-- Add the item that the text names (ID, link or key) to the current search list.
 function Tab:AddItem(text)
     local deps = self.deps
     if not deps.searchLists then
         return false, "search lists are not available"
     end
-    local handled, ok, err = false, nil, nil
+    local ok, err
     BuyingTab.ParseInput(text, deps, function(result)
-        handled = true
         if result.kind == "item" then
             ok, err = self:_AddResolved(result.item)
-        elseif result.kind == "choices" then
-            self.choices = result.choices
-            self:_Say(#result.choices .. " items match, pick one")
-            self:_ShowChoices(result.choices)
-            ok = true
         else
             self:_Say(result.message)
             ok, err = false, result.message
         end
     end)
-    if not handled then
-        return true
-    end
     return ok, err
 end
 
--- Open a menu with the matching items. The pick adds the item.
-function Tab:_ShowChoices(choices)
-    local ui = self.ui
-    if not (ui and ns.Kit.ContextMenu) then
-        return
+-- Add the selected row of a name search to the selected search list (the Lists source). Returns true, or false and
+-- a text.
+function Tab:AddSelectedToList()
+    local entry = self.searchResults and self:_Selected()
+    if not (entry and self.source == "lists" and self.listID) then
+        return false, "pick a search list and a result first"
     end
-    local entries = {}
-    for index = 1, math.min(#choices, 12) do
-        local item = choices[index]
-        entries[index] = {
-            text = (item.name or ("item " .. item.itemID)) .. " (" .. item.key .. ")",
-            onClick = function()
-                self.choices = nil
-                self:_AddResolved(item)
-            end,
-        }
+    return self:_AddResolved({ itemID = entry.itemID, key = entry.key, name = entry.name })
+end
+-- True if the text is an item link, an item ID or an item key. Other text is a name.
+function BuyingTab.IsItemRef(text)
+    text = tostring(text or ""):match("^%s*(.-)%s*$")
+    local ItemString = ns.ItemString
+    return text:match("^%d+$") ~= nil or ItemString.IsItemLink(text) or ItemString.ParseKey(text) ~= nil
+end
+
+-- The Enter key of the input row. An item link, ID or key adds the item to the current search list.
+-- Other text is a name search on the Auction House. Returns true, or false and a text.
+function Tab:SubmitInput(text)
+    if BuyingTab.IsItemRef(text) then
+        return self:AddItem(text)
     end
-    ns.Kit.ContextMenu(ui.itemInput, entries, { title = "Pick an item" })
+    return self:SearchName(text)
 end
 
 -- Apply a request to open a search list; start the search if autoSearch is true.
@@ -1703,29 +1682,25 @@ function Tab:_OnReady()
 end
 
 -- The jump warning threshold in percent. It is saved in the profile (buying.jumpPercent).
-function Tab:GetJumpPercent()
-    local db = self.deps.db
-    local value = db and db:Get("profile", JUMP_KEY) or self.jumpPercent
+-- The About page of the Flipside window sets it.
+function BuyingTab.ReadJumpPercent(db)
+    local value = db and db:Get("profile", JUMP_KEY)
     if type(value) ~= "number" then
         return DEFAULT_JUMP
     end
     return value
 end
 
-function Tab:SetJumpPercent(value)
-    if type(value) ~= "number" or value <= 0 then
+function BuyingTab.WriteJumpPercent(db, value)
+    if type(value) ~= "number" or value <= 0 or not db then
         return false
     end
-    self.jumpPercent = value
-    if self.deps.db then
-        self.deps.db:Set("profile", JUMP_KEY, value)
-    end
+    db:Set("profile", JUMP_KEY, value)
     return true
 end
 
-function Tab:SetDryRun(on)
-    self.dryRun = on == true
-    self:_Update()
+function Tab:GetJumpPercent()
+    return BuyingTab.ReadJumpPercent(self.deps.db)
 end
 
 -- The run of the selected item: the price of the level bought last.
@@ -1915,7 +1890,7 @@ function Tab:_NextBuy()
         reason = REASON.ownBelow
     elseif not isItem and self.amountBad then
         reason = AMOUNT_TEXT
-    elseif not self.dryRun and not self.deps.client.CanBuy() then
+    elseif not self.deps.client.CanBuy() then
         reason = "buying is not available"
     elseif not self.deps.client.IsReady() then
         reason = "waiting for the Auction House"
@@ -1931,11 +1906,6 @@ function Tab:BuyNext()
         return false, reason
     end
     local level = cover.last
-    if self.dryRun then
-        self.deps.log:Add(entry, string.format("would buy %d at %s", cover.quantity, money(level.unitPrice)),
-            "dry run")
-        return true
-    end
     local run = self:_Run(entry)
     local prev = run.lastPrice or cheapestBuyable(levels).unitPrice
     local percent = self:GetJumpPercent()
@@ -2340,10 +2310,6 @@ end
 -- client list, so the box may first read that page. This only shows the stack; the buy needs a click.
 function Tab:_ContinueItem(key)
     local entry = self:_Selected()
-    if self.dryRun then
-        self:_CloseConfirm()
-        return
-    end
     local done = self.results[key]
     local rows = done and done.rows or {}
     local levels = self:_Levels(rows)
@@ -2411,7 +2377,7 @@ function Tab:_ContinueBuy()
     -- The selection moves to the row in the box.
     self.levelSel = nil
     local _, _, _, reason, cover = self:_NextBuy()
-    if reason or self.dryRun then
+    if reason then
         self:_CloseConfirm()
         self:_Say(reason or "")
         self:_Update()
@@ -2609,6 +2575,23 @@ local function makeItemParts(row)
     return parts
 end
 
+-- The price text of an item with no max price: the market price. For the selected commodity with a known amount, it
+-- is the total for that amount. "-" if no market price is known.
+function Tab:_MarketText(entry)
+    local info = self:_ScanInfo(entry)
+    local market = info and info.market
+    if type(market) ~= "number" or market <= 0 then
+        return "-"
+    end
+    local done = self.results[entry.key]
+    local first = done and done.rows and done.rows[1]
+    local commodity = first ~= nil and first.isCommodity ~= false
+    if entry.key == self.selectedKey and commodity and type(self.amount) == "number" and self.amount > 0 then
+        return money(market * self.amount)
+    end
+    return money(market)
+end
+
 -- Draw one tree row: a group (toggle and name) or an item (icon, name and max price).
 function Tab:_InitTreeRow(row, node, depth, isCollapsed, hasChildren)
     local parts = row.parts
@@ -2667,7 +2650,7 @@ function Tab:_InitTreeRow(row, node, depth, isCollapsed, hasChildren)
     parts.price:ClearAllPoints()
     parts.price:SetPoint("RIGHT", row, "RIGHT", removable and -20 or -4, 0)
     if entry.noMax then
-        parts.price:SetText("no max")
+        parts.price:SetText(self:_MarketText(entry))
         setColor(parts.price, false)
     elseif entry.maxPrice then
         parts.price:SetText(money(entry.maxPrice))
@@ -2805,6 +2788,9 @@ function Tab:_UpdateLeft()
     for _, control in ipairs(ui.vendorControls) do
         control:SetShown(isVendor)
     end
+    local canAdd = self.searchResults ~= nil and self.source == "lists" and self.listID ~= nil
+    ui.addToList:SetShown(canAdd)
+    ui.addToList:SetEnabled(canAdd and self:_Selected() ~= nil)
     if isVendor then
         local state = self:_VendorState()
         ui.vendorStatus:SetText(self.vendorError and ("Formula error: " .. self.vendorError) or state or "")
@@ -2833,7 +2819,7 @@ function Tab:_UpdateLeft()
     if self.placedFor ~= mode then
         self.placedFor = mode
         ui.tree.frame:ClearAllPoints()
-        local top = ({ lists = 122, vendor = 120, groups = 44 })[mode] + SEARCH_SHIFT
+        local top = ({ lists = 44 + LIST_GAP + 28, vendor = 120, groups = 44 })[mode] + SEARCH_SHIFT
         ui.tree.frame:SetPoint("TOPLEFT", ui.leftTop, "TOPLEFT", 0, -top)
         ui.tree.frame:SetPoint("BOTTOMLEFT", ui.content, "BOTTOMLEFT", 0, 0)
     end
@@ -2865,8 +2851,8 @@ function Tab:_Update()
     local canSearch = client.CanLiveSearch()
     local selected = self:_Selected()
     ui.stop:SetShown(self.queue ~= nil or self:_Reading())
-    if self.searchResults or self.source == "vendor" then
-        -- The results and the vendor flips are a flat list of items, with no group nodes.
+    if self.searchResults or self.source ~= "groups" then
+        -- The name search, the Lists view and the Vendor view are a flat list of items. Only Groups has a tree.
         self.nodes = {}
         for index, entry in ipairs(self.list) do
             self.nodes[index] = { id = "i" .. entry.key, kind = "item", entry = entry, text = self:_ItemName(entry) }
@@ -3057,13 +3043,13 @@ function Tab:_BuildLeft(content)
     end
     ui.picker = control(Kit.Dropdown(content, 160, { onChange = function(id)
         self:SelectList(id)
-    end }), 0, -44 - SEARCH_SHIFT)
+    end }), 0, -44 - SEARCH_SHIFT - LIST_GAP)
     ui.newList = control(Kit.Button(content, "New", 50, function()
-        self:NewList(ui.nameInput:GetText())
-    end), 164, -44 - SEARCH_SHIFT)
+        self:PromptNewList()
+    end), 164, -44 - SEARCH_SHIFT - LIST_GAP)
     ui.rename = control(Kit.Button(content, "Rename", 64, function()
-        self:RenameList(ui.nameInput:GetText())
-    end), 218, -44 - SEARCH_SHIFT)
+        self:PromptRenameList()
+    end), 218, -44 - SEARCH_SHIFT - LIST_GAP)
     ui.delete = control(Kit.Button(content, "Delete", 56, function()
         local saved = self.listID and self.deps.searchLists:Get(self.listID)
         if saved then
@@ -3071,15 +3057,7 @@ function Tab:_BuildLeft(content)
                 self:DeleteList()
             end)
         end
-    end), 286, -44 - SEARCH_SHIFT)
-    ui.nameInput = control(Kit.Input(content, 250, nil, nil, { placeholder = "name of the list" }), 6,
-        -72 - SEARCH_SHIFT)
-    ui.itemInput = control(Kit.Input(content, 250, function(text)
-        self:AddItem(text)
-    end, nil, { placeholder = "item name, ID, link or key" }), 6, -98 - SEARCH_SHIFT)
-    ui.addItem = control(Kit.Button(content, "Add", 50, function()
-        self:AddItem(ui.itemInput:GetText())
-    end), 262, -96 - SEARCH_SHIFT)
+    end), 286, -44 - SEARCH_SHIFT - LIST_GAP)
     -- The Vendor source: the max price formula and the state of the list.
     ui.vendorControls = {}
     local function vendorControl(widget, x, y)
@@ -3110,16 +3088,22 @@ function Tab:_BuildLeft(content)
     ui.walkStop = vendorControl(Kit.Button(content, "Stop", 56, function()
         self:WalkStop()
     end), 184, -92 - SEARCH_SHIFT)
-    -- The name search row: find any item on the Auction House, also an item in no group.
-    ui.searchInput = place(Kit.Input(content, 206, function(text)
-        self:SearchName(text)
-    end, nil, { placeholder = "search the Auction House by name" }), 6, -16)
-    ui.searchButton = place(Kit.Button(content, "Search", 70, function()
-        self:SearchName(ui.searchInput:GetText())
-    end), 218, -14)
-    ui.searchClear = place(Kit.Button(content, "Clear", 60, function()
+    -- The one input row. A link, an item ID or an item key adds the item to the list. Other text is a name search
+    -- on the Auction House, which finds any item, also an item in no group.
+    ui.searchInput = place(Kit.Input(content, 150, function(text)
+        self:SubmitInput(text)
+    end), 6, -16)
+    ui.searchButton = place(Kit.Button(content, "Search", 60, function()
+        self:SubmitInput(ui.searchInput:GetText())
+    end), 162, -14)
+    ui.searchClear = place(Kit.Button(content, "Clear", 50, function()
         self:ClearSearch()
-    end), 292, -14)
+    end), 226, -14)
+    -- Shows for a name search while the Lists source has a list: adds the selected result to that list.
+    ui.addToList = place(Kit.Button(content, "Add to list", 86, function()
+        self:AddSelectedToList()
+    end), 280, -14)
+    ui.addToList:Hide()
 end
 
 function Tab:_BuildContent()
@@ -3184,7 +3168,7 @@ function Tab:_BuildContent()
         self:_InitLevelRow(row, data)
     end })
     ui.rowsList.frame:SetPoint("TOPLEFT", content, "TOPLEFT", rightX, -38)
-    ui.rowsList.frame:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", 0, 78)
+    ui.rowsList.frame:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", 0, 44)
     -- The column titles over the price level list.
     local edge = ui.rowsList.contentInsets or { left = 0, right = 0 }
     ui.levelHeader = Kit.CreateColumnHeader(content, LEVEL_COLUMNS,
@@ -3195,8 +3179,8 @@ function Tab:_BuildContent()
     -- The totals row: same columns as the list, below the list. It is not a list row, so it is not selectable.
     local options = { gap = LEVEL_OPTIONS.gap, left = edge.left, right = edge.right, role = "highlight" }
     ui.totals = CreateFrame("Frame", nil, content)
-    ui.totals:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", rightX, 58)
-    ui.totals:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", 0, 58)
+    ui.totals:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", rightX, 24)
+    ui.totals:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", 0, 24)
     ui.totals:SetHeight(18)
     ui.totals:EnableMouse(true)
     ui.totalsBackground = ui.totals:CreateTexture(nil, "BACKGROUND")
@@ -3208,37 +3192,24 @@ function Tab:_BuildContent()
     Kit.Tooltip(ui.totals, "Total to buy", { "All units and the cost of all price levels that you can buy.",
         "Your own levels and levels above the max price are not in the total." })
     ui.totals:Hide()
-    ui.buyNext = Kit.Button(content, "Buy", 100, function()
-        self:BuyNext()
-    end)
-    ui.buyNext:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", rightX, 0)
     -- The amount box: units to buy for a commodity. Empty means all units up to the level.
     ui.amountLabel = Kit.Label(content, "Amount", "small")
-    ui.amountLabel:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", rightX, 34)
+    ui.amountLabel:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", rightX, 0)
     ui.amount = Kit.Input(content, 70, nil, nil, { placeholder = "all" })
     ui.amount:SetNumeric(true)
     ui.amount:SetPoint("LEFT", ui.amountLabel, "RIGHT", 8, 0)
     ui.amount:HookScript("OnTextChanged", function(box)
         self:SetAmount(box:GetText())
     end)
-    -- The total price of the purchase, on the right of the amount box.
-    ui.amountTotal = Kit.Label(content, "", "highlight")
-    ui.amountTotal:SetPoint("LEFT", ui.amount, "RIGHT", 10, 0)
-    ui.buyNext:SetEnabled(false)
-    ui.dryRun = Kit.Check(content, "Dry run", function(checked)
-        self:SetDryRun(checked)
+    -- The Buy button sits on the amount row, at a fixed offset from the amount box.
+    ui.buyNext = Kit.Button(content, "Buy", 100, function()
+        self:BuyNext()
     end)
-    ui.dryRun:SetPoint("LEFT", ui.buyNext, "RIGHT", 4, 0)
-    ui.dryRun:SetChecked(self.dryRun)
-    -- The jump label anchors to the end of the Dry run text, and the input anchors to the label.
-    ui.jumpLabel = Kit.Label(content, "Jump warning %", "small")
-    ui.jumpLabel:SetPoint("LEFT", ui.dryRun.Text or ui.dryRun, "RIGHT", ui.dryRun.Text and 14 or 70, 0)
-    ui.jump = Kit.NumberInput(content, 36, { min = 1, max = 1000, hint = "1 - 1000", onChange = function(number)
-        self:SetJumpPercent(number)
-    end })
-    ui.jump:SetPoint("LEFT", ui.jumpLabel, "RIGHT", 6, 0)
-    ui.jump:SetJustifyH("CENTER")
-    ui.jump:SetNumber(self:GetJumpPercent())
+    ui.buyNext:SetPoint("LEFT", ui.amount, "RIGHT", 10, 0)
+    ui.buyNext:SetEnabled(false)
+    -- The total price of the purchase, on the right of the Buy button.
+    ui.amountTotal = Kit.Label(content, "", "highlight")
+    ui.amountTotal:SetPoint("LEFT", ui.buyNext, "RIGHT", 10, 0)
 end
 
 -- Build the panel in the parent frame and listen for the search events.
@@ -3291,12 +3262,12 @@ function Tab:Mount(parent, api)
         self.events[#self.events + 1] = "Flipside.SearchListOpen"
         self.events[#self.events + 1] = "Flipside.SearchListsChanged"
     end
-    -- A shift-click on an item link puts the link into the item box while it has focus.
+    -- A shift-click on an item link puts the link into the input box while it has focus.
     -- With no box in focus, the link becomes the name search (Tab:SearchLink).
     local function onLink(text)
         local ui = self.ui
-        if ui and ui.itemInput and ui.itemInput:HasFocus() and type(text) == "string" then
-            ui.itemInput:Insert(text)
+        if ui and ui.searchInput and ui.searchInput:HasFocus() and type(text) == "string" then
+            ui.searchInput:Insert(text)
         elseif type(text) == "string" then
             self:SearchLink(text)
         end
@@ -3407,7 +3378,7 @@ function BuyingTab.New(deps)
     }
     resolved.log = deps.log or resolved.plan.Log
     return setmetatable({
-        deps = resolved, list = {}, results = {}, events = {}, active = false, token = 0, dryRun = false,
+        deps = resolved, list = {}, results = {}, events = {}, active = false, token = 0,
         source = "groups", amount = DEFAULT_AMOUNT, requested = {},
         vendorToken = 0, vendorWaiting = {}, walk = ns.BuyWalk and ns.BuyWalk.New() or nil,
     }, Tab)

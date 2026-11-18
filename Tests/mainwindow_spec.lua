@@ -168,6 +168,51 @@ describe("MainWindow", function()
         assert.is_false(on)
     end)
 
+    describe("price jump warning on the About page", function()
+        local written
+
+        local function findInput()
+            for _, object in ipairs(mock.objects) do
+                if object.kind == "EditBox" and object.SetNumber then
+                    return object
+                end
+            end
+        end
+
+        before_each(function()
+            written = nil
+            ns.BuyingTab = {
+                ReadJumpPercent = function()
+                    return 25
+                end,
+                WriteJumpPercent = function(db, value)
+                    written = { db = db, value = value }
+                    return true
+                end,
+            }
+            deps.db = {}
+        end)
+
+        it("shows the saved percent and saves a change", function()
+            local win = ns.MainWindow.Create(deps)
+            win:SelectPage("about")
+            assert.is_true(strings["Buying price jump warning %"])
+            local input = findInput()
+            assert.is_not_nil(input)
+            assert.are.equal("25", input:GetText())
+            input:SetText("40")
+            input.scripts.OnEnterPressed(input)
+            assert.are.same({ db = deps.db, value = 40 }, written)
+        end)
+
+        it("is not there with no settings database", function()
+            deps.db = nil
+            local win = ns.MainWindow.Create(deps)
+            win:SelectPage("about")
+            assert.is_nil(findInput())
+        end)
+    end)
+
     describe("guild sharing check on the About page", function()
         local enabled, changes
 
