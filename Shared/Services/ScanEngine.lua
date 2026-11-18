@@ -610,9 +610,15 @@ function Engine:_LoadRows(jobView, rows, noProgressSeconds, run)
         outstanding[itemID] = true
     end
     deps.cache:ResetFailed()
+    local total, left = 0, 0
     for itemID in pairs(outstanding) do
+        total = total + 1
+        left = left + 1
         ask(itemID)
         jobView:Checkpoint(1)
+    end
+    if total > 0 then
+        jobView:SetProgress(0, total)
     end
     local lastProgress, nextPoll = startAt, startAt + interval
     while next(outstanding) ~= nil do
@@ -628,13 +634,16 @@ function Engine:_LoadRows(jobView, rows, noProgressSeconds, run)
                 if rows.pending[itemID] and resolver:IsCommodity(itemID) == true then
                     rows.pending[itemID] = nil
                 end
-                if not rows.pending[itemID] then
+                if not rows.pending[itemID] and outstanding[itemID] then
                     outstanding[itemID] = nil
+                    left = left - 1
                 end
                 if not outstanding[itemID] or incompleteRows(rows, itemID) < before[itemID] then
                     lastProgress = deps.seconds()
                 end
             end
+            -- Show the loaded item count in the scan bar.
+            jobView:SetProgress(total - left, total)
         elseif run.closed or deps.seconds() - lastProgress >= noProgressSeconds then
             break
         else

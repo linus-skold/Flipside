@@ -11,6 +11,8 @@ local EVENT_FINISHED = "Flipside.ScanFinished"
 local EVENT_PROGRESS = "Flipside.ScanProgress"
 local BAR_HEIGHT = 22
 local LABEL_GAP = 6
+local TICK_SECONDS = 0.4
+local SWEEP_STEPS = 6
 
 local REFUSALS = {
     running = "a scan is already running",
@@ -50,8 +52,44 @@ local function countText(done, total)
     return string.format("%d / %d (%d%%)", done, total, math.floor(done * 100 / total))
 end
 
+-- True when the progress is a phase that shows activity without a count: waiting, saving, and loading or
+-- reading with an unknown count.
+function ScanBar.IsIndeterminate(progress)
+    local phase = progress and progress.phase
+    if phase == "waiting" or phase == "saving" then
+        return true
+    end
+    return (phase == "loading" or phase == "reading") and ScanBar.ProgressFraction(progress) == nil
+end
+
+-- Return the sweep position (0 to 1, back and forth) of the indeterminate fill for a tick.
+function ScanBar.SweepPosition(tick)
+    local step = (tick or 0) % (2 * SWEEP_STEPS)
+    if step > SWEEP_STEPS then
+        step = 2 * SWEEP_STEPS - step
+    end
+    return step / SWEEP_STEPS
+end
+
+-- The dots of a tick: one, two or three.
+local function dots(tick)
+    return string.rep(".", (tick or 0) % 3 + 1)
+end
+
 -- Return the status text of a progress table (event Flipside.ScanProgress). short drops the long prefixes.
-function ScanBar.ProgressText(progress, short)
+-- tick (number) and elapsed (seconds) add the dots and the elapsed time to a phase without a count.
+function ScanBar.ProgressText(progress, short, tick, elapsed)
+    local text = ScanBar._PhaseText(progress, short)
+    if tick ~= nil and ScanBar.IsIndeterminate(progress) then
+        text = text .. dots(tick)
+        if elapsed ~= nil then
+            text = text .. string.format(" %ds", math.max(0, math.floor(elapsed)))
+        end
+    end
+    return text
+end
+
+function ScanBar._PhaseText(progress, short)
     local phase = progress.phase
     local counted = ScanBar.ProgressFraction(progress) ~= nil
     if phase == "waiting" then
@@ -111,6 +149,46 @@ function Bar:_Changed()
     end
 end
 
+local function now(bar)
+    local clock = bar.deps.seconds or GetTime
+    return clock and clock() or 0
+end
+
+-- The seconds since the current phase began.
+function Bar:_Elapsed()
+    return self.phaseAt and (now(self) - self.phaseAt) or 0
+end
+
+-- Start the activity ticker while a phase without a count shows, and stop it after. Each tick moves the dots.
+function Bar:_SyncTicker()
+    local active = self.progress ~= nil and ScanBar.IsIndeterminate(self.progress)
+    if active and not self.ticker and C_Timer and C_Timer.NewTicker then
+        self.ticker = C_Timer.NewTicker(TICK_SECONDS, function()
+            self.tick = (self.tick or 0) + 1
+            self:_Changed()
+        end)
+    elseif not active and self.ticker then
+        self.ticker:Cancel()
+        self.ticker = nil
+    end
+    if not active then
+        self.tick = nil
+    elseif self.tick == nil then
+        self.tick = 0
+    end
+end
+
+-- Take a progress table of the scan engine. A new phase restarts the elapsed time and the dots.
+function Bar:_SetProgress(progress)
+    local phase = self.progress and self.progress.phase
+    if not progress or progress.phase ~= phase then
+        self.phaseAt = progress and now(self) or nil
+        self.tick = nil
+    end
+    self.progress = progress
+    self:_SyncTicker()
+end
+
 -- Remember the last scan result for the status text of the bar.
 function Bar:SetResult(summary)
     self.result = summary and ScanBar.ResultText(summary) or nil
@@ -134,7 +212,7 @@ function Bar:_StatusText(running, left, clientRefuses)
     if running then
         local engine = self.deps.scanEngine
         if self.progress then
-            return ScanBar.ProgressText(self.progress, short)
+            return ScanBar.ProgressText(self.progress, short, self.tick, self:_Elapsed())
         end
         local mode, page, pages
         if engine.GetProgress then
@@ -269,11 +347,11 @@ function ScanBar.New(parent, deps, opts)
     end
     if deps.bus then
         deps.bus:Subscribe(EVENT_PROGRESS, bar, function(_, progress)
-            bar.progress = progress
+            bar:_SetProgress(progress)
             bar:_Changed()
         end)
         deps.bus:Subscribe(EVENT_FINISHED, bar, function()
-            bar.progress = nil
+            bar:_SetProgress(nil)
         end)
     end
     return bar
