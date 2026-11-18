@@ -214,14 +214,91 @@ describe("ScanBar", function()
             engine.running = true
             local bar = build()
             deps.bus:Emit("Flipside.ScanProgress", { phase = "waiting" })
-            assert.are.equal("Waiting for server", bar.status:GetText())
+            assert.are.equal("Waiting for server. 0s", bar.status:GetText())
             deps.bus:Emit("Flipside.ScanProgress", { phase = "reading", done = 1234, total = 5678 })
             assert.are.equal("Scanning 1234 / 5678 (21%)", bar.status:GetText())
             assert.are.equal(1234 / 5678, ns.ScanBar.ProgressFraction(bar.progress))
             deps.bus:Emit("Flipside.ScanProgress", { phase = "loading", done = 5, total = 10 })
             assert.are.equal("Loading items 5 / 10 (50%)", bar.status:GetText())
             deps.bus:Emit("Flipside.ScanProgress", { phase = "saving" })
-            assert.are.equal("Saving", bar.status:GetText())
+            assert.are.equal("Saving. 0s", bar.status:GetText())
+        end)
+
+        describe("activity indicator", function()
+            local clock
+
+            before_each(function()
+                clock = 100
+                deps.seconds = function()
+                    return clock
+                end
+                engine.running = true
+            end)
+
+            it("cycles the dots with the tick and adds the elapsed seconds", function()
+                local progress = { phase = "loading" }
+                assert.are.equal("Loading item info.", ns.ScanBar.ProgressText(progress, false, 0))
+                assert.are.equal("Loading item info..", ns.ScanBar.ProgressText(progress, false, 1))
+                assert.are.equal("Loading item info...", ns.ScanBar.ProgressText(progress, false, 2))
+                assert.are.equal("Loading item info.", ns.ScanBar.ProgressText(progress, false, 3))
+                assert.are.equal("Loading item info.. 12s", ns.ScanBar.ProgressText(progress, false, 1, 12.9))
+                assert.are.equal("Loading item info", ns.ScanBar.ProgressText(progress))
+            end)
+
+            it("shows the count and no dots when the count is known", function()
+                local progress = { phase = "loading", done = 5, total = 10 }
+                assert.are.equal("Loading items 5 / 10 (50%)", ns.ScanBar.ProgressText(progress, false, 1, 4))
+                assert.is_false(ns.ScanBar.IsIndeterminate(progress))
+                assert.is_true(ns.ScanBar.IsIndeterminate({ phase = "loading" }))
+            end)
+
+            it("moves the sweep back and forth", function()
+                assert.are.equal(0, ns.ScanBar.SweepPosition(0))
+                assert.are.equal(1, ns.ScanBar.SweepPosition(6))
+                assert.are.equal(0, ns.ScanBar.SweepPosition(12))
+                assert.are.equal(0.5, ns.ScanBar.SweepPosition(9))
+            end)
+
+            it("starts the ticker for a phase without a count and stops it with the count", function()
+                local bar = build()
+                deps.bus:Emit("Flipside.ScanProgress", { phase = "loading" })
+                assert.are.equal(1, #tickers)
+                assert.is_false(tickers[1].cancelled)
+                clock = 112
+                tickers[1].fn()
+                assert.are.equal("Loading item info.. 12s", bar.status:GetText())
+                tickers[1].fn()
+                assert.are.equal("Loading item info... 12s", bar.status:GetText())
+                deps.bus:Emit("Flipside.ScanProgress", { phase = "loading", done = 1, total = 4 })
+                assert.is_true(tickers[1].cancelled)
+                assert.are.equal("Loading items 1 / 4 (25%)", bar.status:GetText())
+            end)
+
+            it("keeps one ticker over the phases without a count and restarts the elapsed time", function()
+                local bar = build()
+                deps.bus:Emit("Flipside.ScanProgress", { phase = "waiting" })
+                clock = 105
+                deps.bus:Emit("Flipside.ScanProgress", { phase = "saving" })
+                assert.are.equal(1, #tickers)
+                assert.are.equal("Saving. 0s", bar.status:GetText())
+                clock = 107
+                tickers[1].fn()
+                assert.are.equal("Saving.. 2s", bar.status:GetText())
+            end)
+
+            it("stops the ticker when the scan finishes", function()
+                build()
+                deps.bus:Emit("Flipside.ScanProgress", { phase = "saving" })
+                engine.running = false
+                deps.bus:Emit("Flipside.ScanFinished", { label = "full scan", result = "ok", items = 1 })
+                assert.is_true(tickers[1].cancelled)
+            end)
+
+            it("starts no ticker for a phase with a count", function()
+                build()
+                deps.bus:Emit("Flipside.ScanProgress", { phase = "reading", done = 1, total = 2 })
+                assert.are.equal(0, #tickers)
+            end)
         end)
 
         it("shows page and row counts of the page scan", function()

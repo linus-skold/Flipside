@@ -134,17 +134,21 @@ function Tab:Refresh()
     end
     ui.status:SetText(self:_StatusText())
     if ui.progress then
-        local fraction = 0
+        local fraction, sweep = 0, nil
         local running = engine ~= nil and engine:IsRunning()
         if running and engine.GetScanProgress then
-            fraction = ns.ScanBar.ProgressFraction(engine:GetScanProgress()) or 0
+            local scanProgress = engine:GetScanProgress()
+            fraction = ns.ScanBar.ProgressFraction(scanProgress) or 0
+            if ns.ScanBar.IsIndeterminate(scanProgress) then
+                sweep = ns.ScanBar.SweepPosition(self.bar.tick)
+            end
         elseif running and engine.GetProgress then
             local _, page, pages = engine:GetProgress()
             if page and pages and pages > 0 then
                 fraction = page / pages
             end
         end
-        self:_SetProgress(fraction, running)
+        self:_SetProgress(fraction, running, sweep)
     end
 end
 
@@ -504,6 +508,7 @@ end
 
 -- The progress bar of the compact layout: a dark back, a fill and the status text on top. It uses client art only.
 local BAR_TEXTURE = "Interface\\TargetingFrame\\UI-StatusBar"
+local SWEEP_WIDTH = 0.25 -- width of the moving fill, as a part of the bar
 
 function buildProgress(content, ui, x, y, width, hideIdle)
     local frame = CreateFrame("Frame", nil, content)
@@ -526,14 +531,31 @@ function buildProgress(content, ui, x, y, width, hideIdle)
     return frame
 end
 
--- Set the fill of the progress bar to a fraction from 0 to 1.
-function Tab:_SetProgress(fraction, running)
+-- Set the fill of the progress bar to a fraction from 0 to 1. A sweep (0 to 1) shows a short fill that
+-- moves along the bar, for a phase without a count.
+function Tab:_SetProgress(fraction, running, sweep)
     local progress = self.ui.progress
     if not progress then
         return
     end
     if progress.hideIdle then
         progress.frame:SetShown(running == true)
+    end
+    if sweep ~= nil then
+        local size = math.max(1, progress.width * SWEEP_WIDTH)
+        progress.fill:SetWidth(size)
+        progress.fill:ClearAllPoints()
+        progress.fill:SetPoint("TOPLEFT", progress.frame, "TOPLEFT", (progress.width - size) * sweep, 0)
+        progress.fill:SetPoint("BOTTOMLEFT", progress.frame, "BOTTOMLEFT", (progress.width - size) * sweep, 0)
+        progress.fill:Show()
+        progress.swept = true
+        return
+    end
+    if progress.swept then
+        progress.swept = nil
+        progress.fill:ClearAllPoints()
+        progress.fill:SetPoint("TOPLEFT", progress.frame, "TOPLEFT", 0, 0)
+        progress.fill:SetPoint("BOTTOMLEFT", progress.frame, "BOTTOMLEFT", 0, 0)
     end
     if fraction > 0 then
         progress.fill:SetWidth(math.max(1, progress.width * math.min(fraction, 1)))

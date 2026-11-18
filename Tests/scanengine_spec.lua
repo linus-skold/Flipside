@@ -712,6 +712,23 @@ describe("ScanEngine Forever retry", function()
         assert.are.equal(1, #w.store:Get("1001#b6001").today.snaps)
     end)
 
+    it("sends the loaded item count in the loading phase", function()
+        local row = gearRow(1)
+        row.linkAfter = 2
+        local w = MakeWorld({ rows = { row, gearRow(2) }, forever = true })
+        local loading = {}
+        w.bus:Subscribe("Flipside.ScanProgress", loading, function(_, progress)
+            if progress.phase == "loading" and progress.total then
+                loading[#loading + 1] = progress
+            end
+        end)
+        Run(w)
+        assert.is_true(#loading >= 2)
+        assert.are.equal(0, loading[1].done)
+        assert.are.equal(1, loading[1].total)
+        assert.are.equal(1, loading[#loading].done)
+    end)
+
     it("keys an item when hasAllInfo changes from false to true", function()
         local rows = { gearRow(1), gearRow(2) }
         rows[2].late = true
