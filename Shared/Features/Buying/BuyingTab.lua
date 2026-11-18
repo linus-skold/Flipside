@@ -996,7 +996,8 @@ function Tab:OpenTemp(name, items, autoSearch)
     local copy = {}
     for index, item in ipairs(items) do
         copy[index] = {
-            itemID = item.itemID, key = item.key or string.format("%d", item.itemID), name = item.name, count = item.count,
+            itemID = item.itemID, key = item.key or string.format("%d", item.itemID), name = item.name,
+            count = item.count,
         }
     end
     self:_DropSearch()

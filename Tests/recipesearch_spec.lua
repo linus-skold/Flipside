@@ -125,7 +125,7 @@ describe("RecipeSearch", function()
             assert.are.equal("N21", items[2].name)
         end)
 
-        it("gives the first tier of a slot its count, the other tiers none, and adds the counts of an item in two slots (2 and 1)", function()
+        it("counts only the first tier of a slot, and adds an item of two slots (2 and 1)", function()
             local items = ns.RecipeSearch.Reagents(schematic, nil, 1)
             assert.are.equal(3, items[1].count)
             assert.are.equal(3, items[2].count)
