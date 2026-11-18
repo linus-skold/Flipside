@@ -1163,6 +1163,11 @@ function Tab:SetItemCount()
         and not self.amountBad) then
         return false
     end
+    -- The amount of a craft list material is count x crafts, so it is the count only for 1 craft.
+    if (self.crafts or 1) > 1 and self:_CraftList() then
+        self:_Say("set Crafts to 1 to change the count")
+        return false
+    end
     if self.temp and not self.listID then
         local item = self.temp.items[entry.listIndex]
         if not item then
