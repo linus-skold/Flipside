@@ -189,33 +189,15 @@ local function itemOf(itemID, key, name)
     return { itemID = itemID, key = key, name = name }
 end
 
-local function itemFromMatch(match)
-    return itemOf(match.itemID, match.key, match.name)
-end
-
-local function resolveMatches(matches, text, callback)
-    if #matches == 0 then
-        callback({ kind = "error", message = 'no item named "' .. text .. '"' })
-    elseif #matches == 1 then
-        callback({ kind = "item", item = itemFromMatch(matches[1]) })
-    else
-        local choices = {}
-        for index, match in ipairs(matches) do
-            choices[index] = itemFromMatch(match)
-        end
-        callback({ kind = "choices", choices = choices })
-    end
-end
-
--- Read the text of the item box: an item ID, an item link, a Flipside key or an item name.
--- callback(result) runs once, at once or after an Auction House name search. result is
--- { kind = "item", item }, { kind = "choices", choices } or { kind = "error", message }.
--- deps: itemNameIndex, ahNameSearch, keyFor(link), isAuctionHouseOpen() (all optional).
+-- Read the text of the input: an item ID, an item link or a Flipside key. Other text is a name, and the caller
+-- sends it to the name search (Tab:SubmitInput). callback(result) runs once, at once. result is
+-- { kind = "item", item } or { kind = "error", message }.
+-- deps: keyFor(link) (optional).
 function BuyingTab.ParseInput(input, deps, callback)
     local text = tostring(input or ""):match("^%s*(.-)%s*$")
     local ItemString = ns.ItemString
     if text == "" then
-        callback({ kind = "error", message = "enter an item name, ID, link or key" })
+        callback({ kind = "error", message = "enter an item ID, link or key" })
         return
     end
     if text:match("^%d+$") then
@@ -238,34 +220,7 @@ function BuyingTab.ParseInput(input, deps, callback)
         callback({ kind = "item", item = itemOf(fields.itemID, key, text:match("|h%[(.-)%]|h")) })
         return
     end
-    local index = deps.itemNameIndex
-    local result = index and index:Resolve(text) or nil
-    if result and result.kind == "error" then
-        callback({ kind = "error", message = result.message })
-        return
-    end
-    if result and result.kind == "name" and #result.matches > 0 then
-        resolveMatches(result.matches, text, callback)
-        return
-    end
-    local search = deps.ahNameSearch
-    local open = deps.isAuctionHouseOpen and deps.isAuctionHouseOpen()
-    if search and open then
-        local query = ns.ItemNameIndex and ns.ItemNameIndex.ParseQuery(text) or { raw = text }
-        search:Find(query.raw, function(items, err)
-            if not items then
-                callback({ kind = "error", message = err or "the search failed" })
-            else
-                resolveMatches(items, text, callback)
-            end
-        end, { exact = query.exact })
-        return
-    end
-    if not index and not search then
-        callback({ kind = "error", message = "item names are not available" })
-    else
-        callback({ kind = "error", message = 'no item named "' .. text .. '" in the scan data' })
-    end
+    callback({ kind = "error", message = "not an item ID, link or key: " .. text })
 end
 
 local function defaultItemInfo(itemID)
@@ -1271,33 +1226,33 @@ function Tab:_AddResolved(item)
     return true
 end
 
--- Add the item that the text names (name, ID, link or key) to the current search list.
+-- Add the item that the text names (ID, link or key) to the current search list.
 function Tab:AddItem(text)
     local deps = self.deps
     if not deps.searchLists then
         return false, "search lists are not available"
     end
-    local handled, ok, err = false, nil, nil
+    local ok, err
     BuyingTab.ParseInput(text, deps, function(result)
-        handled = true
         if result.kind == "item" then
             ok, err = self:_AddResolved(result.item)
-        elseif result.kind == "choices" then
-            self.choices = result.choices
-            self:_Say(#result.choices .. " items match, pick one")
-            self:_ShowChoices(result.choices)
-            ok = true
         else
             self:_Say(result.message)
             ok, err = false, result.message
         end
     end)
-    if not handled then
-        return true
-    end
     return ok, err
 end
 
+-- Add the selected row of a name search to the selected search list (the Lists source). Returns true, or false and
+-- a text.
+function Tab:AddSelectedToList()
+    local entry = self.searchResults and self:_Selected()
+    if not (entry and self.source == "lists" and self.listID) then
+        return false, "pick a search list and a result first"
+    end
+    return self:_AddResolved({ itemID = entry.itemID, key = entry.key, name = entry.name })
+end
 -- True if the text is an item link, an item ID or an item key. Other text is a name.
 function BuyingTab.IsItemRef(text)
     text = tostring(text or ""):match("^%s*(.-)%s*$")
@@ -1312,26 +1267,6 @@ function Tab:SubmitInput(text)
         return self:AddItem(text)
     end
     return self:SearchName(text)
-end
-
--- Open a menu with the matching items. The pick adds the item.
-function Tab:_ShowChoices(choices)
-    local ui = self.ui
-    if not (ui and ns.Kit.ContextMenu) then
-        return
-    end
-    local entries = {}
-    for index = 1, math.min(#choices, 12) do
-        local item = choices[index]
-        entries[index] = {
-            text = (item.name or ("item " .. item.itemID)) .. " (" .. item.key .. ")",
-            onClick = function()
-                self.choices = nil
-                self:_AddResolved(item)
-            end,
-        }
-    end
-    ns.Kit.ContextMenu(ui.searchInput,entries, { title = "Pick an item" })
 end
 
 -- Apply a request to open a search list; start the search if autoSearch is true.
@@ -2640,15 +2575,18 @@ local function makeItemParts(row)
     return parts
 end
 
--- The price text of an item with no max price: the market price, or the total for the amount to buy if the amount
--- is known. "-" if no market price is known.
+-- The price text of an item with no max price: the market price. For the selected commodity with a known amount, it
+-- is the total for that amount. "-" if no market price is known.
 function Tab:_MarketText(entry)
     local info = self:_ScanInfo(entry)
     local market = info and info.market
     if type(market) ~= "number" or market <= 0 then
         return "-"
     end
-    if type(self.amount) == "number" and self.amount > 0 then
+    local done = self.results[entry.key]
+    local first = done and done.rows and done.rows[1]
+    local commodity = first ~= nil and first.isCommodity ~= false
+    if entry.key == self.selectedKey and commodity and type(self.amount) == "number" and self.amount > 0 then
         return money(market * self.amount)
     end
     return money(market)
@@ -2850,6 +2788,9 @@ function Tab:_UpdateLeft()
     for _, control in ipairs(ui.vendorControls) do
         control:SetShown(isVendor)
     end
+    local canAdd = self.searchResults ~= nil and self.source == "lists" and self.listID ~= nil
+    ui.addToList:SetShown(canAdd)
+    ui.addToList:SetEnabled(canAdd and self:_Selected() ~= nil)
     if isVendor then
         local state = self:_VendorState()
         ui.vendorStatus:SetText(self.vendorError and ("Formula error: " .. self.vendorError) or state or "")
@@ -3149,15 +3090,20 @@ function Tab:_BuildLeft(content)
     end), 184, -92 - SEARCH_SHIFT)
     -- The one input row. A link, an item ID or an item key adds the item to the list. Other text is a name search
     -- on the Auction House, which finds any item, also an item in no group.
-    ui.searchInput = place(Kit.Input(content, 206, function(text)
+    ui.searchInput = place(Kit.Input(content, 150, function(text)
         self:SubmitInput(text)
     end), 6, -16)
-    ui.searchButton = place(Kit.Button(content, "Search", 70, function()
+    ui.searchButton = place(Kit.Button(content, "Search", 60, function()
         self:SubmitInput(ui.searchInput:GetText())
-    end), 218, -14)
-    ui.searchClear = place(Kit.Button(content, "Clear", 60, function()
+    end), 162, -14)
+    ui.searchClear = place(Kit.Button(content, "Clear", 50, function()
         self:ClearSearch()
-    end), 292, -14)
+    end), 226, -14)
+    -- Shows for a name search while the Lists source has a list: adds the selected result to that list.
+    ui.addToList = place(Kit.Button(content, "Add to list", 86, function()
+        self:AddSelectedToList()
+    end), 280, -14)
+    ui.addToList:Hide()
 end
 
 function Tab:_BuildContent()
@@ -3255,15 +3201,15 @@ function Tab:_BuildContent()
     ui.amount:HookScript("OnTextChanged", function(box)
         self:SetAmount(box:GetText())
     end)
-    -- The total price of the purchase, on the right of the amount box.
-    ui.amountTotal = Kit.Label(content, "", "highlight")
-    ui.amountTotal:SetPoint("LEFT", ui.amount, "RIGHT", 10, 0)
-    -- The Buy button sits on the amount row, after the total price.
+    -- The Buy button sits on the amount row, at a fixed offset from the amount box.
     ui.buyNext = Kit.Button(content, "Buy", 100, function()
         self:BuyNext()
     end)
-    ui.buyNext:SetPoint("LEFT", ui.amountTotal, "RIGHT", 10, 0)
+    ui.buyNext:SetPoint("LEFT", ui.amount, "RIGHT", 10, 0)
     ui.buyNext:SetEnabled(false)
+    -- The total price of the purchase, on the right of the Buy button.
+    ui.amountTotal = Kit.Label(content, "", "highlight")
+    ui.amountTotal:SetPoint("LEFT", ui.buyNext, "RIGHT", 10, 0)
 end
 
 -- Build the panel in the parent frame and listen for the search events.

@@ -334,9 +334,17 @@ describe("BuyingTab", function()
             tab.amount = nil
             tab:RefreshList()
             assert.are.equal("500c", ui.tree.list.rows[2].parts.price.text)
+            -- A row that is not the selected commodity shows the market price only.
             tab.amount = 3
             tab:RefreshList()
-            assert.are.equal("1500c",ui.tree.list.rows[2].parts.price.text)
+            assert.are.equal("500c", ui.tree.list.rows[2].parts.price.text)
+            client.rows[20] = { row(50, 1) }
+            tab:Select_("20")
+            tab:Search()
+            fire("COMMODITY_RESULTS", 20)
+            tab.amount = 3
+            tab:RefreshList()
+            assert.are.equal("1500c", ui.tree.list.rows[2].parts.price.text)
             tab._ScanInfo = function()
                 return { market = nil }
             end
@@ -563,8 +571,8 @@ describe("BuyingTab", function()
             assert.is_false(ui.buyNext.enabled)
         end)
 
-        it("puts the Buy button on the amount row, after the total price", function()
-            assert.are.equal(ui.amountTotal, ui.buyNext.points[1][2])
+        it("puts the Buy button on the amount row, right of the amount box", function()
+            assert.are.equal(ui.amount, ui.buyNext.points[1][2])
             assert.are.equal("LEFT", ui.buyNext.points[1][1])
         end)
 

@@ -19,7 +19,7 @@ local ABOUT_TEXT = "Groups sort items into trees. Operations hold the rules. For
 local SOUNDS_TEXT = "Play interface sounds"
 local SHARE_TEXT = "Share prices with my guild"
 local JUMP_TEXT = "Buying price jump warning %"
-local SHARE_HINT ="Off by default. Guild members share scan prices. Your own scans always win over shared prices."
+local SHARE_HINT = "Off by default. Guild members share scan prices. Your own scans always win over shared prices."
 
 -- A page that says why it cannot open.
 local function buildUnavailable(content)
