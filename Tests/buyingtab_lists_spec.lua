@@ -193,7 +193,8 @@ describe("BuyingTab search lists", function()
         it("removes an item with the remove button of its row", function()
             local id = lists:Create("A", { { itemID = 1 }, { itemID = 2 } })
             tab:SelectList(id)
-            local button = ui.tree.list.rows[2].parts.remove
+            -- The list is flat: the first row is the first item.
+            local button = ui.tree.list.rows[1].parts.remove
             assert.is_true(button:IsShown())
             button.scripts.OnClick(button)
             assert.are.equal(1, #tab.list)
@@ -351,6 +352,7 @@ describe("BuyingTab search lists", function()
     describe("the name prompts", function()
         local function submit(box, text)
             box.input:SetText(text)
+            box.input.scripts.OnTextChanged(box.input)
             box.okButton.scripts.OnClick(box.okButton)
         end
 
