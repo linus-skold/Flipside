@@ -3,8 +3,8 @@ local mock = require("Tests.wow_mock")
 
 local function loadModules()
     local ns = { ReportError = function() end }
-    for _, name in ipairs({ "EventBus", "ItemString", "ScanKey", "BagItems", "SellingPlan", "BuyingPlan", "BuyFlow",
-        "Theme", "Widgets", "MoneyInput", "Window", "List", "Columns", "Tree", "AuctionTabs", "BuyDialog",
+    for _, name in ipairs({ "EventBus", "ItemString", "ScanKey", "ScanClock", "ScanSources", "BagItems",
+        "SellingPlan", "BuyingPlan", "BuyFlow", "Theme", "Widgets", "MoneyInput", "Window", "List", "Columns", "Tree", "AuctionTabs", "BuyDialog",
         "SellingTab" }) do
         assert(loadfile(manifest.path(name)))("Flipside", ns)
     end
@@ -231,6 +231,17 @@ describe("SellingTab Buy", function()
             assert.is_nil(ns.SellingTab.DealText(800, 1000))
             assert.is_nil(ns.SellingTab.DealText(300, nil))
             assert.is_nil(ns.SellingTab.DealText(300, 0))
+        end)
+
+        it("compares with the 14-day average (ScanMarket), not the latest scan", function()
+            local now = 20 * 86400 + 3600
+            local record = {
+                latest = { time = now - 600, min = 400, market = 450, qty = 5, auctions = 2 },
+                days = { { day = ns.ScanClock.DayOf(now) - 1, min = 900, market = 1000, qty = 5, auctions = 2 } },
+            }
+            tab.deps.getRecord = function() return record end
+            tab.deps.now = function() return now end
+            assert.are.equal(1000, tab:_Market({ key = "10" }))
         end)
     end)
 

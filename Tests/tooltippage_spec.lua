@@ -356,6 +356,11 @@ describe("TooltipPage", function()
             assert.are.equal("", page.status:GetText())
         end)
 
+        it("gives a new line the latest price with the average as fallback", function()
+            click(page.addButton)
+            assert.are.equal("first(scanrecent, scanmarket)", page.formulaInput:GetText())
+        end)
+
         it("shows the limit message at 12 lines", function()
             for _ = 4, 12 do
                 click(page.addButton)

@@ -99,6 +99,7 @@ end
 -- Open the settings DB; leave ns.db nil and print one line if that is not possible.
 -- Version 2: the saved post durations of an operation use the hours of the flavour (TBC: 2, 8, 24 became 12, 24, 48).
 -- A flavour without legacyDurations needs no change.
+-- Version 3: the default price formulas use the latest scan (see migrateDefaultPrices).
 -- Account defaults: the ledger defaults and ui.sounds (client sounds, default on).
 local function accountDefaults()
     local defaults = ns.LedgerRecord and ns.LedgerRecord.Defaults() or {}
@@ -134,6 +135,36 @@ end
 
 ns.MigrateDurations = migrateDurations
 
+-- The text without spaces and in lower case, to compare a formula with a default.
+local function squash(text)
+    return (text:gsub("%s+", "")):lower()
+end
+
+-- Version 3 (2026-11-19): the default price formulas use the latest scan (OperationSchema.LEGACY_PRICES).
+-- A saved formula that still equals the old default becomes the new default. An edited formula stays.
+local function migrateDefaultPrices(data)
+    local schema = ns.OperationSchema
+    for key, value in pairs(data) do
+        if type(key) == "string" and key:match("^p/.+/operations$") and type(value) == "table"
+            and type(value.ops) == "table" then
+            for _, op in pairs(value.ops) do
+                local legacy = type(op) == "table" and type(op.settings) == "table" and schema.LEGACY_PRICES[op.type]
+                if legacy then
+                    local defaults = schema.Defaults(op.type)
+                    for field, oldText in pairs(legacy) do
+                        local text = op.settings[field]
+                        if type(text) == "string" and squash(text) == squash(oldText) then
+                            op.settings[field] = defaults[field]
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+
+ns.MigrateDefaultPrices = migrateDefaultPrices
+
 local function openSettingsDB()
     local character = characterKey()
     if not character then
@@ -146,8 +177,8 @@ local function openSettingsDB()
     end
     local ok, result = pcall(ns.SettingsDB.New, _G[name], {
         character = character,
-        schemaVersion = 2,
-        migrations = { [2] = migrateDurations },
+        schemaVersion = 3,
+        migrations = { [2] = migrateDurations, [3] = migrateDefaultPrices },
         defaults = { account = accountDefaults() },
         onWarning = ns.ReportError,
     })

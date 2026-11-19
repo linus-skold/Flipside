@@ -86,6 +86,15 @@ describe("TooltipConfig", function()
         assert.are.equal(0, changes)
     end)
 
+    it("keeps the 14-day market column and period in the defaults", function()
+        saved["p/Default/tooltip"] = nil
+        make()
+        local data = tc:Get()
+        assert.is_true(data.stats.market)
+        assert.is_true(data.periods["14d"])
+        assert.is_true(data.periods["1d"])
+    end)
+
     it("adds a line", function()
         assert.is_true(tc:AddLine("  Avg ", "scanmarket * 2"))
         local data = tc:Get()
