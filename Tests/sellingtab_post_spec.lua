@@ -361,20 +361,13 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
     end)
 
     describe("the info pane", function()
-        it("keeps the lowest price in the list and not in the pane", function()
+        it("has no lowest price in the tree and none in the pane: the level pane shows the levels", function()
             selectCloth()
             pick("i10")
-            assert.are.equal("Lowest on AH", ui.headers.labels.lowest.text)
-            assert.are.equal("120c", draw("i10").sellParts.cells.lowest.text)
+            assert.is_nil(ui.headers.labels.lowest)
+            assert.is_nil(draw("i10").sellParts.cells.lowest)
             assert.is_nil(ui.details.lowest)
             assert.is_nil(ui.details.vs)
-        end)
-
-        it("says none in the list when no other seller has an auction", function()
-            client.rows[10] = {}
-            pick("i10")
-            fire("ITEM_RESULTS", 10)
-            assert.are.equal("none", draw("i10").sellParts.cells.lowest.text)
         end)
 
         it("shows no post time", function()
@@ -432,9 +425,11 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
             vendor[10] = 5
             selectCloth()
             pick("i10")
-            assert.are.equal("", ui.details.warn.text)
+            -- No vendor line: the line shows the reason of the entry (the Info column of the tree is hidden).
+            assert.is_nil(ui.details.warn.text:find("Sells for more", 1, true))
+            assert.are.equal(ns.SellingTab.InfoText(entryOf("10")), ui.details.warn.text)
             pick("i11")
-            assert.are.equal("", ui.details.warn.text)
+            assert.is_nil(ui.details.warn.text:find("Sells for more", 1, true))
         end)
 
         it("follows the typed price", function()
@@ -442,7 +437,7 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
             selectCloth()
             pick("i10")
             type_("50s")
-            assert.are.equal("", ui.details.warn.text)
+            assert.is_nil(ui.details.warn.text:find("Sells for more", 1, true))
             type_("1c")
             assert.matches("^Sells for more at a vendor", ui.details.warn.text)
         end)
@@ -823,9 +818,9 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
                 local drawn = draw(id)
                 local cell = drawn.sellParts.cells.price
                 assert.are.equal(headerX, cell.points[1][4] + (depth - 1) * 14, id)
-                local info = drawn.sellParts.cells.info
-                assert.are.equal(info.points[1][4] + (depth - 1) * 14,
-                    ui.headers.labels.info.points[1][4] - ui.tree.contentInsets.left, id)
+                local net = drawn.sellParts.cells.net
+                assert.are.equal(net.points[1][4] + (depth - 1) * 14,
+                    ui.headers.labels.net.points[1][4] - ui.tree.contentInsets.left, id)
             end
         end)
 
@@ -836,7 +831,6 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
             end
             assert.is_true(ns.SellingTab.COLUMNS[2].number)
             assert.is_true(ns.SellingTab.COLUMNS[4].number)
-            assert.is_true(ns.SellingTab.COLUMNS[5].number)
         end)
     end)
 
