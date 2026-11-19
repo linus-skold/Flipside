@@ -27,6 +27,7 @@ local CONFIRM_WAIT = 15 -- seconds that a buy waits for the result of the server
 local DEAL_PERCENT = 30 -- a lowest price this many percent under the market value shows as a deal
 local CONFIRM_BOX = "FlipsideBuyConfirm" -- the box of the Buying tab: one buy box for both tabs
 local BUY_TEXT = "Buy"
+local ROWS_TRIES = 3 -- most retries of the search for the rows of the pane while the AH is not ready
 local ROWS_DELAY = 0.25 -- seconds that a click waits before the search for the rows of the pane starts (debounce)
 local DOT_SECONDS = 0.4 -- seconds between two steps of the dots of the loading text
 local INFO_TRIES = 3 -- failed tries (an event or a timeout with no data) before an entry is skipped
@@ -975,6 +976,8 @@ function Tab:_Launch(entry, rowsOnly)
                 entry.status = "skip"
                 entry.decision = { action = "skip", reason = "no response", key = candidate.key }
                 self.deps.log:Add(candidate, entry.decision)
+                -- No second search at once: a new click searches again.
+                self.rowsFailed = candidate.itemID
             else
                 entry.status = "waiting" -- not wanted any more: no mark, it is searched when it is selected again
             end
@@ -1041,6 +1044,10 @@ function Tab:_StartWantedRows()
     if not entry or self.pending or self.queue or self.rowsScheduled then
         return
     end
+    -- No search for the pane during a post, a multisell or a buy, or while the tab is hidden.
+    if self.awaiting or self.multi or self.buy or self.lock or not self.active then
+        return
+    end
     if not self:_InSelection(entry) or self:_HasRows(entry) or self.rowsFailed == entry.item.itemID then
         return
     end
@@ -1054,10 +1061,39 @@ function Tab:_StartWantedRows()
         return
     end
     if self:_Launch(entry, true) == "wait" then
+        -- The AH is not ready: try again, but not for ever.
+        self.rowsTries = (self.rowsTries or 0) + 1
+        if self.rowsTries > ROWS_TRIES then
+            self.rowsFailed, self.rowsTries = candidate.itemID, nil
+            self:_Update()
+            self:_ShowBusy("The prices could not be loaded. Click the item again.")
+            return
+        end
         self:_ScheduleRetry()
     else
+        self.rowsTries = nil
         self:_Update()
     end
+end
+
+-- True if something will search the entry: it is the search that runs, it is in the queue or it waits for item data.
+function Tab:_Searching(entry)
+    if self.pending and self.pending.entry == entry then
+        return true
+    end
+    for _, each in ipairs(self.queue and self.queue.list or {}) do
+        if each == entry then
+            return true
+        end
+    end
+    for _, list in pairs(self.infoWait or {}) do
+        for _, each in ipairs(list) do
+            if each == entry then
+                return true
+            end
+        end
+    end
+    return false
 end
 
 -- True while the pane waits for the rows of its item: a search is on its way or will start.
@@ -1066,8 +1102,9 @@ function Tab:_PaneLoading()
     if not entry or not self:_InSelection(entry) or self:_HasRows(entry) then
         return false
     end
+    -- An entry that waits or searches is loading only while something searches it (Stop and the AH close end it).
     if entry.status == "waiting" or entry.status == "searching" then
-        return true
+        return self:_Searching(entry)
     end
     return self.rowsFailed ~= entry.item.itemID and (self.pending ~= nil or self.rowsScheduled == true
         or self.queue ~= nil or self.retrying == true)
@@ -1081,7 +1118,7 @@ function Tab:_TickLoading()
     self.ticking = true
     self.deps.after(DOT_SECONDS, function()
         self.ticking = false
-        if self.ui and self:_PaneLoading() then
+        if self.ui and self.active and self:_PaneLoading() then
             self.dots = (self.dots or 0) % 3 + 1
             self.ui.levelLoading:SetText("Loading prices" .. string.rep(".", self.dots))
             self:_TickLoading()
@@ -1496,7 +1533,7 @@ function Tab:SelectNode(node, fromClick)
     self.priceEntry = nil
     -- Latest selection wins: this click is the item that the pane wants. An older wish is dropped.
     local only = #self.selection == 1 and node.id:sub(1, 1) == "i" and self.selection[1] or nil
-    self.wanted, self.rowsFailed = only, nil
+    self.wanted, self.rowsFailed, self.rowsTries = only, nil, nil
     self.rowsToken, self.rowsScheduled = (self.rowsToken or 0) + 1, false
     if fromClick and #self.selection == 1 and node.id:sub(1, 1) == "i" then
         self:_Revive(self.selection[1])
@@ -2528,6 +2565,8 @@ function Tab:_BuyTarget()
         return entry, nil, "a buy is open"
     elseif self.awaiting or self.multi or self.lock then
         return entry, nil, "a post is open"
+    elseif self:_PaneLoading() then
+        return entry, nil, "loading prices"
     elseif self.pending or self.queue then
         return entry, nil, "a search is running"
     elseif not client.IsReady() then

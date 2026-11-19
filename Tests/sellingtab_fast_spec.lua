@@ -30,6 +30,11 @@ describe("SellingTab fast clicks and the loading pane", function()
         c.CloseEvent = function() return "CLOSE" end
         c.ItemIsCommodity = function(itemID) return c.commodity[itemID] end
         c.CanReadOwned = function() return false end
+        c.AvailablePostCount = function() return 1000 end
+        c.IsSellItemValid = function() return true end
+        c.RefreshOwned = function() end
+        c.PostCommodity = function() return false end
+        c.ConfirmPostCommodity = function() end
         c.Deposit = function(_, _, _, quantity) return quantity * 10 end
         c.BuyEvents = function()
             return {
@@ -296,6 +301,90 @@ describe("SellingTab fast clicks and the loading pane", function()
 
         it("shows no loading text with no item selected", function()
             assert.is_false(ui.levelLoading:IsShown())
+        end)
+    end)
+
+    describe("the search for the rows of the pane", function()
+        -- Item 11 is decided but the rows in the pane are the rows of item 10.
+        local function decidedWithoutRows()
+            pickItem(11)
+            answer(11, { crow(150, 5) })
+            pickItem(10)
+            answer(10, { arow(160, 1) })
+            pickItem(11)
+        end
+
+        it("sends no second search after a timeout of the wanted item", function()
+            pickItem(11)
+            runTimers(10)
+            assert.are.equal("skip", entryOf("11").status)
+            assert.are.equal(11, tab.rowsFailed)
+            assert.are.same({ 11 }, client.searches)
+            assert.is_nil(tab.pending)
+        end)
+
+        it("sends no search while a post is open", function()
+            decidedWithoutRows()
+            assert.is_true(ui.postNext.enabled)
+            ui.postNext.scripts.OnClick(ui.postNext)
+            assert.is_true(tab.multi ~= nil or tab.lock ~= nil)
+            runTimers(0.25)
+            assert.are.same({ 11, 10 }, client.searches)
+        end)
+
+        it("sends no search while the tab is hidden", function()
+            decidedWithoutRows()
+            tab:Deselect()
+            runTimers(0.25)
+            assert.are.same({ 11, 10 }, client.searches)
+        end)
+
+        it("turns the Buy button off while the pane loads, also in the delay and while it retries", function()
+            decidedWithoutRows()
+            assert.is_false(ui.buy.enabled)
+            local ok, reason = tab:Buy()
+            assert.is_false(ok)
+            assert.are.equal("loading prices", reason)
+            assert.are.same({}, client.calls)
+            client.ready = false
+            runTimers(0.25)
+            assert.is_true(tab.retrying)
+            assert.is_false(ui.buy.enabled)
+            assert.are.equal("loading prices", select(2, tab:Buy()))
+        end)
+
+        it("stops the retries after three tries and ends the loading state", function()
+            decidedWithoutRows()
+            client.ready = false
+            runTimers(0.25)
+            assert.are.equal(1, runTimers(5))
+            assert.are.equal(1, runTimers(5))
+            assert.are.equal(1, runTimers(5))
+            assert.are.equal(11, tab.rowsFailed)
+            assert.are.equal(0, runTimers(5))
+            assert.is_false(ui.levelLoading:IsShown())
+            assert.are.same({ 11, 10 }, client.searches)
+        end)
+    end)
+
+    describe("the loading text", function()
+        it("goes away after Stop: nothing searches the waiting item", function()
+            pickItem(11)
+            pickItem(10)
+            assert.is_true(ui.levelLoading:IsShown())
+            tab:Stop()
+            assert.is_false(ui.levelLoading:IsShown())
+            runTimers(0.4)
+            assert.are.equal(0, runTimers(0.4))
+        end)
+
+        it("stops the ticker when the tab is hidden", function()
+            pickItem(11)
+            assert.are.equal("Loading prices.", ui.levelLoading.text)
+            tab:Deselect()
+            assert.are.equal(1, runTimers(0.4))
+            assert.are.equal("Loading prices.", ui.levelLoading.text)
+            assert.are.equal(0, runTimers(0.4))
         end)
     end)
 
