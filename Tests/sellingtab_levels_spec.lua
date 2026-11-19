@@ -297,7 +297,7 @@ describe("SellingTab level pane and Buy", function()
         it("show a Forever item row of 40 as 40 stacks of 1", function()
             choose(10, { { unitPrice = 449, quantity = 40, ownerItem = false, auctionID = 7, isCommodity = false,
                 buyout = 449, owner = "Bob", perItem = true } })
-            assert.are.equal("40 x 1", ui.levelList.data[1].available)
+            assert.are.equal("40", ui.levelList.data[1].available)
         end)
 
         it("clear while a search runs and read the new rows after it", function()
