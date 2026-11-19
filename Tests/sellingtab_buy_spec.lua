@@ -4,8 +4,8 @@ local mock = require("Tests.wow_mock")
 local function loadModules()
     local ns = { ReportError = function() end }
     for _, name in ipairs({ "EventBus", "ItemString", "ScanKey", "ScanClock", "ScanSources", "BagItems",
-        "SellingPlan", "BuyingPlan", "BuyFlow", "Theme", "Widgets", "MoneyInput", "Window", "List", "Columns", "Tree", "AuctionTabs", "BuyDialog",
-        "SellingTab" }) do
+        "SellingPlan", "BuyingPlan", "BuyFlow", "Theme", "Widgets", "MoneyInput",
+        "Window", "List", "Columns", "Tree", "AuctionTabs", "BuyDialog", "SellingTab" }) do
         assert(loadfile(manifest.path(name)))("Flipside", ns)
     end
     return ns
