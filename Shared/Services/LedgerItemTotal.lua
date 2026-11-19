@@ -11,7 +11,8 @@ ns.LedgerItemTotal = LedgerItemTotal
 --   sold: type sale (money is what the seller got: the price minus the cut, plus the deposit back).
 --   bought: type purchase, minus the outbid refunds (source ahOutbidRefund).
 --   deposits: source ahDeposit, minus the deposit refunds (source ahDepositRefund).
---   cut: the `cut` field of a sale. It is only shown. The sale money does not hold it, so net does not subtract it again.
+--   cut: the `cut` field of a sale. It is only shown. The sale money does not hold it, so net does not
+--   subtract it again.
 --   A post record has a `deposit` field, but the money of the deposit is in the ahDeposit record. It is not counted.
 --   post, expired, cancelled and log records have no money flow.
 -- net = sold money - bought money - deposits.

@@ -86,8 +86,8 @@ describe("LedgerItemTotal", function()
         end)
 
         it("gives an empty total for a missing item key", function()
-            local total = ns.LedgerItemTotal.Compute({ rec({ type = "sale", source = "ahSale", item = PLAIN, money = 5 }) },
-                nil, "")
+            local records = { rec({ type = "sale", source = "ahSale", item = PLAIN, money = 5 }) }
+            local total = ns.LedgerItemTotal.Compute(records, nil, "")
             assert.are.equal(0, total.net)
         end)
 
@@ -104,8 +104,10 @@ describe("LedgerItemTotal", function()
             local saved = {
                 records = { EU = { standard = {
                     [ME] = {
-                        rec({ type = "sale", source = "ahSale", item = PLAIN, qty = 1, money = 100, time = NOW - 3600 }),
-                        rec({ type = "sale", source = "ahSale", item = PLAIN, qty = 1, money = 10, time = NOW - 50 * DAY }),
+                        rec({ type = "sale", source = "ahSale", item = PLAIN, qty = 1, money = 100,
+                            time = NOW - 3600 }),
+                        rec({ type = "sale", source = "ahSale", item = PLAIN, qty = 1, money = 10,
+                            time = NOW - 50 * DAY }),
                     },
                     [ALT] = {
                         rec({ type = "sale", source = "ahSale", item = PLAIN, qty = 1, money = 1000, char = ALT,
@@ -117,7 +119,9 @@ describe("LedgerItemTotal", function()
                     },
                 } } },
                 sums = { EU = { standard = {
-                    [ME] = { { day = 300, source = "ahSale", item = "", count = 4, qty = 4, moneyIn = 40, moneyOut = 0 } },
+                    [ME] = {
+                        { day = 300, source = "ahSale", item = "", count = 4, qty = 4, moneyIn = 40, moneyOut = 0 },
+                    },
                 } } },
             }
             store = ns.LedgerStore.New(saved, { region = "EU", ruleset = "standard" })

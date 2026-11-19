@@ -1079,10 +1079,12 @@ function LedgerPage.Build(content, deps)
         end
     end
 
-    -- Item detail (SPEC 5.8 point 9). A left click on a row with an item key shows the net result of the item for the
-    -- character filter and the date range of the page. A second click on the same item, a filter change or a hide closes it.
+    -- Item detail (SPEC 5.8 point 9). A left click on a row with an item key shows the net result of the item
+    -- for the character filter and the date range of the page. A second click on the same item, a filter change
+    -- or a hide closes it.
     local function filterSignature()
-        return table.concat({ tostring(page.filter.char), tostring(page.filter.realm), tostring(page.filter.range) }, "|")
+        local filter = page.filter
+        return table.concat({ tostring(filter.char), tostring(filter.realm), tostring(filter.range) }, "|")
     end
 
     function page.CloseItemTotal()
