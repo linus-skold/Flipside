@@ -61,7 +61,8 @@ end
 
 local SOURCE_LABEL = { scanRecent = "latest scan", scanMarket = "14-day average", scanMin = "lowest listing" }
 
--- The text of the price source: for example "latest scan, 12 min ago". field is the ScanSources field that gave the price.
+-- The text of the price source: for example "latest scan, 12 min ago".
+-- field is the ScanSources field that gave the price.
 function CraftListMargin.PriceSource(values, field)
     local label = SOURCE_LABEL[field]
     if not label then
