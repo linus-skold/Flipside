@@ -147,6 +147,79 @@ describe("AHNameSearch", function()
             assert.are.equal(1, #got.items)
             assert.are.equal(1, got.items[1].itemID)
         end)
+
+        describe("a slow client", function()
+            local INFO = "ITEM_KEY_ITEM_INFO_RECEIVED"
+            local SILVER_BAR = 2842
+
+            before_each(function()
+                search = ns.AHNameSearch.New({
+                    bus = bus, api = api, clock = function() return now end, infoEvent = INFO,
+                    isAuctionHouseOpen = function() return open end,
+                    after = function(sec, fn) timers[#timers + 1] = { sec = sec, fn = fn } end,
+                })
+            end)
+
+            it("waits for the name of a commodity row (Silver Bar)", function()
+                api.rows = { { itemKey = key(SILVER_BAR) } }
+                local got = runSettle("Silver Bar")
+                bus:Emit(EVENT)
+                timers[#timers].fn()
+                assert.is_nil(got.n)
+                api.names[SILVER_BAR] = "Silver Bar"
+                bus:Emit(INFO, SILVER_BAR)
+                timers[#timers].fn()
+                assert.are.equal(1, got.n)
+                assert.are.same({ { itemID = SILVER_BAR, name = "Silver Bar", key = "2842" } }, got.items)
+                assert.is_false(bus:HasSubscribers(INFO))
+            end)
+
+            it("reads again after a quiet time when the info event is lost", function()
+                api.rows = { { itemKey = key(SILVER_BAR) } }
+                local got = runSettle("Silver Bar")
+                bus:Emit(EVENT)
+                api.names[SILVER_BAR] = "Silver Bar"
+                timers[#timers].fn()
+                assert.is_nil(got.n)
+                assert.are.same({ 0, 1 }, seenLists)
+                now = now + 6
+                timers[#timers].fn()
+                assert.are.equal(1, #got.items)
+            end)
+
+            it("does not end on an empty first event", function()
+                local got = runSettle("Silver Bar")
+                bus:Emit(EVENT)
+                timers[#timers].fn()
+                assert.is_nil(got.n)
+                api.rows = { { itemKey = key(SILVER_BAR) } }
+                api.names[SILVER_BAR] = "Silver Bar"
+                bus:Emit(EVENT)
+                now = now + 6
+                timers[#timers].fn()
+                assert.are.equal(1, got.n)
+                assert.are.equal(1, #got.items)
+            end)
+
+            it("ends with no items after the grace time", function()
+                local got = runSettle("Nothing")
+                bus:Emit(EVENT)
+                now = now + 6
+                timers[#timers].fn()
+                assert.are.equal(1, got.n)
+                assert.are.same({}, got.items)
+            end)
+
+            it("ends with the items found, not an error, at the timeout", function()
+                api.rows = { { itemKey = key(SILVER_BAR) } }
+                local got = runSettle("Silver Bar")
+                bus:Emit(EVENT)
+                timers[1].fn()
+                assert.are.equal(1, got.n)
+                assert.is_nil(got.err)
+                assert.are.same({}, got.items)
+            end)
+        end)
     end)
 
     it("times out through after()", function()

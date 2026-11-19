@@ -717,6 +717,7 @@ local function openAHSearch()
         },
         event = ns.AuctionClient.NameResultEvent(),
         addedEvent = ns.AuctionClient.NameAddedEvent(),
+        infoEvent = ns.AuctionClient.NameInfoEvent(),
         isAuctionHouseOpen = ns.IsAuctionHouseOpen,
         clock = GetTime,
         after = C_Timer.After,

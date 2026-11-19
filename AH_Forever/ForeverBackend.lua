@@ -140,6 +140,11 @@ function Backend.NameAddedEvent()
     return "AUCTION_HOUSE_BROWSE_RESULTS_ADDED"
 end
 
+-- GetItemKeyInfo can give no name at first; this event comes when the info has loaded.
+function Backend.NameInfoEvent()
+    return "ITEM_KEY_ITEM_INFO_RECEIVED"
+end
+
 function Backend.NameResults()
     return call("GetBrowseResults")
 end

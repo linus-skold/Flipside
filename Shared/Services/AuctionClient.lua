@@ -66,6 +66,8 @@ query("CanLiveSearch", false)
 query("ScanDoneEvent")
 query("NameResultEvent")
 query("NameAddedEvent")
+-- NameInfoEvent() gives the event that says that the item key info of a browse row has loaded.
+query("NameInfoEvent")
 query("OwnedEvent")
 query("OpenEvent")
 query("CloseEvent")
