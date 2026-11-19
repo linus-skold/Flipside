@@ -1136,7 +1136,9 @@ function LedgerPage.Build(content, deps)
         })
     end
 
-    content:HookScript("OnHide", function()
+    -- A child frame of the page: it hides with the page, so its OnHide closes the panel.
+    page.hideWatcher = CreateFrame("Frame", nil, content)
+    page.hideWatcher:SetScript("OnHide", function()
         page.CloseItemTotal()
     end)
 
