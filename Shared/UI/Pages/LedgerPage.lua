@@ -907,6 +907,8 @@ function LedgerPage.Build(content, deps)
                     row:SetScript("OnClick", function(self, button)
                         if button == "RightButton" and self.data then
                             page.OpenRowMenu(self, self.data)
+                        elseif button == "LeftButton" and self.data then
+                            page.ToggleItemTotal(self, self.data)
                         end
                     end)
                     row:SetScript("OnEnter", function(self)
@@ -1077,11 +1079,77 @@ function LedgerPage.Build(content, deps)
         end
     end
 
+    -- Item detail (SPEC 5.8 point 9). A left click on a row with an item key shows the net result of the item
+    -- for the character filter and the date range of the page. A second click on the same item, a filter change
+    -- or a hide closes it.
+    local function filterSignature()
+        local filter = page.filter
+        return table.concat({ tostring(filter.char), tostring(filter.realm), tostring(filter.range) }, "|")
+    end
+
+    function page.CloseItemTotal()
+        page.itemKey, page.itemSignature = nil, nil
+        if ns.LedgerItemPanel then
+            ns.LedgerItemPanel.Hide()
+        end
+    end
+
+    -- The scope text of the panel header, for example "Last 30 days, Name".
+    function page.ItemScopeText()
+        local rangeText = tostring(page.filter.range)
+        for _, range in ipairs(LedgerPage.RANGES) do
+            if range.value == page.filter.range then
+                rangeText = range.days == nil and "All time" or range.days == 1 and "Today" or "Last " .. range.text
+            end
+        end
+        local who = page.filter.char == ALL and "all characters" or LedgerPage.CharText(page.filter.char)
+        return rangeText .. ", " .. who
+    end
+
+    function page.ToggleItemTotal(row, data)
+        local key = data.record and data.record.item
+        if type(key) ~= "string" or key == "" or not (ns.LedgerItemTotal and ns.LedgerItemPanel) then
+            return
+        end
+        if page.itemKey == key and ns.LedgerItemPanel.IsShown() then
+            page.CloseItemTotal()
+            return
+        end
+        local current = store()
+        if not current then
+            return
+        end
+        local filter = page.filter
+        local total = ns.LedgerItemTotal.ForStore(current, storeOptions(filter, now(deps)), key, function(char)
+            return inRealm(filter, char)
+        end)
+        page.itemKey, page.itemSignature = key, filterSignature()
+        ns.LedgerItemPanel.Show({
+            itemText = itemText(key, "sales"),
+            scopeText = page.ItemScopeText(),
+            total = total,
+            formatMoney = money,
+            anchor = row,
+            onClose = function()
+                page.itemKey, page.itemSignature = nil, nil
+            end,
+        })
+    end
+
+    -- A child frame of the page: it hides with the page, so its OnHide closes the panel.
+    page.hideWatcher = CreateFrame("Frame", nil, content)
+    page.hideWatcher:SetScript("OnHide", function()
+        page.CloseItemTotal()
+    end)
+
     -- Draw the visible tab. Only the rows of this tab and range are built.
     function page.Draw()
         local current = store()
         if not current then
             return
+        end
+        if page.itemSignature and page.itemSignature ~= filterSignature() then
+            page.CloseItemTotal()
         end
         refreshCharacters()
         local tab = page.tab
