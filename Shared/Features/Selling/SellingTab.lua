@@ -28,7 +28,9 @@ local DEAL_PERCENT = 30 -- a lowest price this many percent under the market val
 local CONFIRM_BOX = "FlipsideBuyConfirm" -- the box of the Buying tab: one buy box for both tabs
 local BUY_TEXT = "Buy"
 local ROWS_TRIES = 3 -- most retries of the search for the rows of the pane while the AH is not ready
-local ROWS_DELAY = 0.25 -- seconds that a click waits before the search for the rows of the pane starts (debounce)
+-- Seconds that a click waits before the search for the rows of the pane starts (debounce). It is not GATE_POLL_SECONDS:
+-- the gate poll timers and these timers must stay apart.
+local ROWS_DELAY = 0.3
 local DOT_SECONDS = 0.4 -- seconds between two steps of the dots of the loading text
 local INFO_TRIES = 3 -- failed tries (an event or a timeout with no data) before an entry is skipped
 local INFO_TIMEOUT = 10 -- seconds that an entry waits for item data before it tries again
@@ -930,7 +932,6 @@ function Tab:_ClearInfoWait()
 end
 -- Start the live search of one entry. Returns "started", "skipped" or "wait" with a text.
 function Tab:_Start(entry)
-    local client = self.deps.client
     local candidate = entry.candidate
     if candidate.reason or not candidate.itemID then
         self:_Decide(entry, {})
@@ -1024,7 +1025,7 @@ end
 -- Latest selection wins. A click on one item sets self.wanted. The rows of that item are searched when no search is
 -- in flight, else when the search that runs has ended. A result for an entry that is not selected any more is
 -- dropped. Only the last click counts: the debounce below lets a fast run of clicks end in one search.
-function Tab:_WantRows(entry)
+function Tab:_WantRows()
     self.rowsToken = (self.rowsToken or 0) + 1
     local token = self.rowsToken
     self.rowsScheduled = true
@@ -1553,7 +1554,7 @@ function Tab:SelectNode(node, fromClick)
         self.queue = nil
         -- A decided item has no rows in the pane unless it was the last search: ask for them (after a short delay).
         if only and not self:_HasRows(only) then
-            self:_WantRows(only)
+            self:_WantRows()
         end
         self:_Update()
         return true
