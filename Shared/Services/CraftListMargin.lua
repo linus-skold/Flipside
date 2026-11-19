@@ -45,30 +45,69 @@ function CraftListMargin.WalkLevels(levels, needed)
     return nil
 end
 
--- The scan price of the needed units of a material: ScanMarket times the units, and true (it is an estimate).
--- values is the output of ScanSources.Compute for the item, or nil. It gives nil if there is no ScanMarket.
+-- The age of a scan as text: "12 min ago", "3 h ago" or "2 d ago". Empty text without an age.
+local function ageText(hours)
+    if type(hours) ~= "number" or hours < 0 then
+        return ""
+    end
+    local minutes = math.floor(hours * 60 + 0.5)
+    if minutes < 60 then
+        return minutes .. " min ago"
+    elseif hours < 48 then
+        return math.floor(hours) .. " h ago"
+    end
+    return math.floor(hours / 24) .. " d ago"
+end
+
+local SOURCE_LABEL = { scanRecent = "latest scan", scanMarket = "14-day average", scanMin = "lowest listing" }
+
+-- The text of the price source: for example "latest scan, 12 min ago". field is the ScanSources field that gave the price.
+function CraftListMargin.PriceSource(values, field)
+    local label = SOURCE_LABEL[field]
+    if not label then
+        return nil
+    end
+    local age = type(values) == "table" and ageText(values.scanAge) or ""
+    return age ~= "" and (label .. ", " .. age) or label
+end
+
+-- The scan price of the needed units of a material: ScanRecent (the latest scan) times the units, else ScanMarket
+-- times the units. The second value is true (it is an estimate). The third value is the source text.
+-- values is the output of ScanSources.Compute for the item, or nil. It gives nil if there is neither value.
 function CraftListMargin.ScanMaterialPrice(values, needed)
-    if type(values) == "table" and values.scanMarket then
-        return values.scanMarket * needed, true
+    if type(values) ~= "table" then
+        return nil
+    end
+    for _, field in ipairs({ "scanRecent", "scanMarket" }) do
+        if values[field] then
+            return values[field] * needed, true, CraftListMargin.PriceSource(values, field)
+        end
     end
     return nil
 end
 
--- The scan price of one unit of a result: ScanMarket, or ScanMin if there is no market value. Else nil.
+-- The scan price of one unit of a result: ScanRecent, else ScanMarket, else ScanMin. Else nil.
+-- The second value is the source text.
 function CraftListMargin.ScanResultPrice(values)
     if type(values) ~= "table" then
         return nil
     end
-    return values.scanMarket or values.scanMin
+    for _, field in ipairs({ "scanRecent", "scanMarket", "scanMin" }) do
+        if values[field] then
+            return values[field], CraftListMargin.PriceSource(values, field)
+        end
+    end
+    return nil
 end
 
 -- list: { materials = { { key, itemID, count } }, results = { { key, itemID, name, min, max } },
 --   resultMode = "all" (default) or "oneOf" }.
 -- A material with no count needs 1 unit. options:
 --   crafts: the number of crafts (a whole number, default 1). It scales the materials and the results.
---   materialPrice(material, needed): the total cost in copper of the needed units, and true if it is an estimate.
---     It gives nil if there is no price.
---   resultPrice(result): the price in copper of one unit, or nil. It must not include the AH cut.
+--   materialPrice(material, needed): the total cost in copper of the needed units, true if it is an estimate, and
+--     an optional source text. It gives nil if there is no price.
+--   resultPrice(result): the price in copper of one unit (or nil) and an optional source text. It must not include
+--     the AH cut.
 --   cut(gross): the AH cut in copper (default 5%).
 -- Returns a table:
 --   crafts, materials: one entry for each material { key, itemID, needed, total, estimate }.
@@ -98,10 +137,10 @@ function CraftListMargin.Compute(list, options)
     }
     for index, material in ipairs(list.materials or {}) do
         local needed = (material.count or 1) * crafts
-        local total, estimate = options.materialPrice(material, needed)
+        local total, estimate, source = options.materialPrice(material, needed)
         out.materials[index] = {
             key = material.key, itemID = material.itemID, needed = needed, total = total,
-            estimate = total ~= nil and estimate == true,
+            estimate = total ~= nil and estimate == true, source = total ~= nil and source or nil,
         }
         if total == nil then
             out.costKnown = false
@@ -112,9 +151,9 @@ function CraftListMargin.Compute(list, options)
     end
     for index, result in ipairs(list.results or {}) do
         local avg = (result.min + result.max) / 2
-        local unit = options.resultPrice(result)
+        local unit, source = options.resultPrice(result)
         local line = { key = result.key, itemID = result.itemID, name = result.name, min = result.min,
-            max = result.max, avg = avg, unit = unit }
+            max = result.max, avg = avg, unit = unit, source = unit ~= nil and source or nil }
         if unit == nil then
             out.valueKnown = false
         else

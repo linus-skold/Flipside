@@ -255,16 +255,45 @@ describe("CraftListMargin", function()
 
     describe("the scan prices", function()
         it("prices the needed units of a material at ScanMarket, as an estimate", function()
-            assert.are.same({ 1200, true }, { Margin.ScanMaterialPrice({ scanMarket = 300 }, 4) })
+            assert.are.equal(1200, (Margin.ScanMaterialPrice({ scanMarket = 300 }, 4)))
             assert.is_nil((Margin.ScanMaterialPrice({ scanMin = 300 }, 4)))
             assert.is_nil((Margin.ScanMaterialPrice(nil, 4)))
         end)
 
-        it("prices a result at ScanMarket, else ScanMin, else no price", function()
+        it("prices a result at ScanRecent, else ScanMarket, else ScanMin, else no price", function()
+            assert.are.equal(1200, Margin.ScanResultPrice({ scanRecent = 1200, scanMarket = 1000, scanMin = 800 }))
             assert.are.equal(1000, Margin.ScanResultPrice({ scanMarket = 1000, scanMin = 800 }))
             assert.are.equal(800, Margin.ScanResultPrice({ scanMin = 800 }))
             assert.is_nil(Margin.ScanResultPrice({}))
             assert.is_nil(Margin.ScanResultPrice(nil))
+        end)
+
+        it("prices a material at ScanRecent first, else ScanMarket", function()
+            assert.are.same({ 1600, true, "latest scan" },
+                { Margin.ScanMaterialPrice({ scanRecent = 400, scanMarket = 300 }, 4) })
+            assert.are.same({ 1200, true, "14-day average" }, { Margin.ScanMaterialPrice({ scanMarket = 300 }, 4) })
+        end)
+
+        it("names the source and the age of a scan price", function()
+            assert.are.equal("latest scan, 12 min ago", Margin.PriceSource({ scanAge = 0.2 }, "scanRecent"))
+            assert.are.equal("14-day average, 3 h ago", Margin.PriceSource({ scanAge = 3.4 }, "scanMarket"))
+            assert.are.equal("lowest listing, 3 d ago", Margin.PriceSource({ scanAge = 80 }, "scanMin"))
+            assert.are.equal("latest scan", Margin.PriceSource({}, "scanRecent"))
+            assert.is_nil(Margin.PriceSource({}, "other"))
+        end)
+
+        it("gives the source of a price in the margin lines", function()
+            local out = Margin.Compute({ materials = { { key = "1", itemID = 1 } },
+                results = { { key = "2", itemID = 2, min = 1, max = 1 } } }, {
+                materialPrice = function()
+                    return 100, true, "latest scan"
+                end,
+                resultPrice = function()
+                    return 500, "14-day average"
+                end,
+            })
+            assert.are.equal("latest scan", out.materials[1].source)
+            assert.are.equal("14-day average", out.results[1].source)
         end)
     end)
 end)
