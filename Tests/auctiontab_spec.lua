@@ -820,7 +820,12 @@ describe("AuctionTab", function()
                 click(ui.lookup)
                 assert.are.equal("1000c", shownRows(ui)[2].money:GetText())
                 records["123"] = record(555)
-                deps.bus:Emit("Flipside.ScanFinished", { result = "ok" })
+                deps.bus:Emit("Flipside.ScanFinished", {
+                    result = "ok", rows = 10, kept = 9, items = 8, keys = 7, newItems = 2, changed = 1,
+                    cpuMs = 12.4, wallMs = 3000, itemsKeyed = 8, itemsPendingMissing = 0, itemsNoLink = 0,
+                    itemsLinkMismatch = 0, itemsUnknown = 0, itemsLinkFallback = 0, noKey = 0,
+                    commodityStats = { client = 1, stack = 2, unknown = 3, mismatch = 4, linkFallback = 5 },
+                })
                 assert.are.equal("555c", shownRows(ui)[2].money:GetText())
             end)
         end)
