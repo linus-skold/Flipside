@@ -735,6 +735,12 @@ function ListsPage.Build(content, deps)
         deps.bus:Subscribe(EVENT, OWNER, function()
             page.Refresh()
         end)
+        -- New scan data changes the material and result prices: draw the margin again at once.
+        for _, event in ipairs({ "Flipside.ScanFinished", "Flipside.PriceCaptured" }) do
+            deps.bus:Subscribe(event, OWNER, function()
+                page.Refresh()
+            end)
+        end
     end
 
     -- Shift-click on an item link puts the link in the add box while it has focus. WoW: Forever calls

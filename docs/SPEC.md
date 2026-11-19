@@ -192,6 +192,7 @@ All steps run as coroutines that yield each frame, with a progress bar. The scan
 - Tooltips have no "Flipside" header line (decided 2026-10-21). They show the data age only if the setting `showAgeLine` is on (default off): one dim line "Updated 2 h ago" after the price lines. The price table shows the prices of four windows (§5, tooltip design point 15). A formula line can still show age and days with data.
 - Operations get two safety settings: *max data age* and *min samples*. If either fails, the selling plan prices from the live listing of another seller (§5.4 point e). If no such listing exists, the item is skipped with the reason "stale price" (old data) or "too few samples" in the decision log.
 - The Flipside AH tab shows when the last full scan ran and when the next is available (a Dashboard comes in Phase 2).
+- **Freshness rule (2026-11-19).** New scan data shows at once, with no reload, no restart and no reopen of the AH. A scan or a live capture writes the record through `ScanStore:Put`, which raises the store version. Every reader reads the store at the time of use, or keeps a cache keyed on that version. Each open view that shows a price draws again on `Flipside.ScanFinished` (and on `Flipside.PriceCaptured` where it shows a single price): the Selling and Buying tabs, the Lists page, the price panel of the Flipside tab and the craft panel.
 
 ### 3.5 Sharing scan data
 

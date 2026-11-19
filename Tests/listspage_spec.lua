@@ -530,6 +530,16 @@ describe("ListsPage", function()
             assert.are.same({ kind = "item", left = "1-2× Dust", right = "avg 1425c" }, rows[5])
         end)
 
+        it("shows the new prices at once when a scan ends or a price is captured", function()
+            assert.are.equal("50c (est.)", right(3))
+            scan["200"] = { scanMarket = 70 }
+            bus:Emit("Flipside.ScanFinished", { result = "ok" })
+            assert.are.equal("70c (est.)", right(3))
+            scan["200"] = { scanMarket = 90 }
+            bus:Emit("Flipside.PriceCaptured", "200")
+            assert.are.equal("90c (est.)", right(3))
+        end)
+
         it("shows the cost once and the table with the columns Min, Avg and Max", function()
             assert.are.equal("Cost", page.tableCost.label:GetText())
             assert.are.equal("1250c (est.)", cost())

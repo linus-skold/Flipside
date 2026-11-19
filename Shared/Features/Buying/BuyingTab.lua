@@ -580,6 +580,9 @@ function Tab:_OnVendorScan(summary)
     end
     if self.active and self.source == "vendor" then
         self:RefreshList()
+    elseif self.active and self.ui then
+        -- The scan prices (market text, craft margin) changed: draw the tab again.
+        self:_Update()
     end
 end
 
