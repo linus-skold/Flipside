@@ -930,7 +930,6 @@ function Tab:_ClearInfoWait()
 end
 -- Start the live search of one entry. Returns "started", "skipped" or "wait" with a text.
 function Tab:_Start(entry)
-    local client = self.deps.client
     local candidate = entry.candidate
     if candidate.reason or not candidate.itemID then
         self:_Decide(entry, {})
@@ -1024,7 +1023,7 @@ end
 -- Latest selection wins. A click on one item sets self.wanted. The rows of that item are searched when no search is
 -- in flight, else when the search that runs has ended. A result for an entry that is not selected any more is
 -- dropped. Only the last click counts: the debounce below lets a fast run of clicks end in one search.
-function Tab:_WantRows(entry)
+function Tab:_WantRows()
     self.rowsToken = (self.rowsToken or 0) + 1
     local token = self.rowsToken
     self.rowsScheduled = true
@@ -1553,7 +1552,7 @@ function Tab:SelectNode(node, fromClick)
         self.queue = nil
         -- A decided item has no rows in the pane unless it was the last search: ask for them (after a short delay).
         if only and not self:_HasRows(only) then
-            self:_WantRows(only)
+            self:_WantRows()
         end
         self:_Update()
         return true
