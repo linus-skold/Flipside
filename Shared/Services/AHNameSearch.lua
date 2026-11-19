@@ -17,6 +17,7 @@ local function log(level, fmt, ...)
     end
 end
 local TIMEOUT = 10
+local GRACE = 5
 
 local Search = {}
 Search.__index = Search
@@ -35,6 +36,7 @@ function AHNameSearch.New(deps)
         after = deps.after,
         event = deps.event or EVENT,
         addedEvent = deps.addedEvent,
+        infoEvent = deps.infoEvent,
         pending = nil,
     }, Search)
 end
@@ -50,6 +52,9 @@ function Search:_Finish(pending, results, err)
     self.bus:Unsubscribe(self.event, self)
     if self.addedEvent then
         self.bus:Unsubscribe(self.addedEvent, self)
+    end
+    if self.infoEvent then
+        self.bus:Unsubscribe(self.infoEvent, self)
     end
     pending.callback(results, err)
 end
@@ -75,6 +80,7 @@ function Search:_ReadResults(pending)
     end
     local wanted = pending.exact and string.lower(pending.name) or nil
     local seen, items = pending.seen, pending.items
+    pending.unnamed = 0
     for _, row in ipairs(rows) do
         local itemKey = type(row) == "table" and row.itemKey or nil
         local itemID = type(itemKey) == "table" and itemKey.itemID or nil
@@ -83,6 +89,10 @@ function Search:_ReadResults(pending)
         if type(itemID) == "number" and not isPet and not seen[itemID] then
             local okInfo, info = pcall(api.getItemKeyInfo, itemKey)
             local name = okInfo and type(info) == "table" and info.itemName or nil
+            if okInfo and (type(name) ~= "string" or name == "") then
+                -- The client has no name yet; it sends the info event later.
+                pending.unnamed = pending.unnamed + 1
+            end
             if type(name) == "string" and name ~= "" and (not wanted or string.lower(name) == wanted) then
                 seen[itemID] = true
                 items[#items + 1] = { itemID = itemID, name = name, key = string.format("%d", itemID) }
@@ -94,17 +104,40 @@ function Search:_ReadResults(pending)
 end
 
 -- Keep the search open after an event. Each event adds items. The search ends after a quiet time with no event.
+-- An empty result, or a row with no name yet, does not end the search before GRACE seconds have passed.
 function Search:_Settle(pending, items)
     pending.token = (pending.token or 0) + 1
+    pending.sawEvent = true
     local token = pending.token
     if pending.onItems then
         pcall(pending.onItems, items)
     end
-    pcall(self.after, pending.settle, function()
-        if pending.token == token then
-            self:_Finish(pending, items)
+    local function onQuiet()
+        if pending.token ~= token or self.pending ~= pending then
+            return
         end
-    end)
+        if (#items == 0 or pending.unnamed > 0) and self.clock() - pending.startedAt < GRACE then
+            -- Read again: the event can be lost, and a name can be there now.
+            local before = #items
+            self:_ReadResults(pending)
+            if #items > before and pending.onItems then
+                pcall(pending.onItems, items)
+            end
+            pcall(self.after, pending.settle, onQuiet)
+            return
+        end
+        self:_Finish(pending, items)
+    end
+    pcall(self.after, pending.settle, onQuiet)
+end
+
+-- The timeout of a search. A settle search that got an event ends with its items, also none.
+function Search:_Timeout(pending)
+    if pending.settle and pending.sawEvent then
+        self:_Finish(pending, pending.items)
+    else
+        self:_Finish(pending, nil, "no answer from the Auction House")
+    end
 end
 
 function Search:_OnResults()
@@ -113,7 +146,7 @@ function Search:_OnResults()
         return
     end
     if self:_IsStale() then
-        self:_Finish(pending, nil, "no answer from the Auction House")
+        self:_Timeout(pending)
         return
     end
     local items, err = self:_ReadResults(pending)
@@ -134,7 +167,7 @@ function Search:Find(name, callback, options)
         error("Find: callback must be a function", 2)
     end
     if self:_IsStale() then
-        self:_Finish(self.pending, nil, "no answer from the Auction House")
+        self:_Timeout(self.pending)
     end
     if self.pending then
         callback(nil, "a search is already running")
@@ -164,6 +197,9 @@ function Search:Find(name, callback, options)
     if self.addedEvent then
         self.bus:Subscribe(self.addedEvent, self, onEvent)
     end
+    if self.infoEvent and pending.settle then
+        self.bus:Subscribe(self.infoEvent, self, onEvent)
+    end
     local okSend, err = pcall(self.api.sendBrowseQuery, { searchString = pending.name, sorts = {} })
     if not okSend then
         self:_Finish(pending, nil, "the Auction House search failed: " .. tostring(err))
@@ -171,7 +207,7 @@ function Search:Find(name, callback, options)
     end
     if self.after then
         pcall(self.after, TIMEOUT, function()
-            self:_Finish(pending, nil, "no answer from the Auction House")
+            self:_Timeout(pending)
         end)
     end
 end
