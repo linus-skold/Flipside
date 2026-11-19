@@ -2,8 +2,8 @@ local _, ns = ...
 
 -- The Selling tab of the Auction House: it reads the bags, searches each item, decides the post and posts it.
 -- The post calls are protected (D26): only a click handler calls them, one post for each click.
--- The Buy lowest button buys the cheapest auction that is not yours, after the same confirm as the Buying tab
--- (ns.BuyFlow). Its protected calls run in a click handler too, one for each click (D26).
+-- The Buy button buys the selected level, or the cheapest level that is not yours, after the same confirm as the
+-- Buying tab (ns.BuyFlow). Its protected calls run in a click handler too, one for each click (D26).
 -- A host (ns.AuctionTabHost) owns the Blizzard frame and the tab button.
 local SellingTab = {}
 ns.SellingTab = SellingTab
@@ -98,7 +98,8 @@ local LEVEL_COLUMNS = {
 }
 -- The widths of the level columns for a wide and a tight pane, and the gap between the columns.
 local LEVEL_WIDTHS = { wide = { 150, 110, gap = 6 }, tight = { 100, 76, gap = 4 } }
-local LEVEL_OPTIONS = { gap = LEVEL_WIDTHS.wide.gap }SellingTab.LEVEL_COLUMNS = LEVEL_COLUMNS
+local LEVEL_OPTIONS = { gap = LEVEL_WIDTHS.wide.gap }
+SellingTab.LEVEL_COLUMNS = LEVEL_COLUMNS
 
 local function money(copper)
     if ns.TooltipLines and ns.TooltipLines.FormatMoney then
@@ -1422,7 +1423,7 @@ function Tab:_OnResult(arg)
     end
     self.pending = nil
     local rows = self.deps.client.LiveRows(pending.itemID)
-    -- The rows stay for the Buy lowest button. The client list belongs to this item until the next search.
+    -- The rows stay for the Buy button. The client list belongs to this item until the next search.
     self.live = { itemID = pending.itemID, rows = rows }
     self:_Decide(pending.entry, rows)
     self:_Next()
@@ -2355,7 +2356,7 @@ function Tab:SkipItem(entry, reason)
     self:_Advance(entry, false)
 end
 
--- Buy lowest. The state of a buy is self.buy, as in the Buying tab (see BuyFlow): phase quoting (a commodity waits for
+-- Buy. The state of a buy is self.buy, as in the Buying tab (see BuyFlow): phase quoting (a commodity waits for
 -- the quote), quoted (the box shows the price), confirming (the buy call went out).
 
 -- The market value of an entry (ScanMarket, from the scan record), or nil.
@@ -2438,22 +2439,18 @@ function Tab:_BuyTarget()
     return entry, cover, nil, nil, info
 end
 
--- Set the amount box, with no change event.
+-- Set the amount box. The box calls SetAmount only for a text that the user typed (the OnTextChanged hook checks it).
 function Tab:_FillAmount(number)
     local box = self.ui.amount
     if box.GetNumber() ~= number then
-        self.fillingAmount = true
         box:SetNumber(number)
-        self.fillingAmount = false
     end
 end
 
 -- The user typed an amount (a whole number above 0, or nil for an empty or bad text). The amount counts for the
--- selected level until the selection or the rows change. Only a commodity buy has an amount.
-function Tab:SetAmount(number)
-    if self.fillingAmount then
-        return false
-    end
+-- selected level until the selection or the rows change. Only a commodity buy has an amount. quiet is true while the
+-- box is empty (the user is still typing): the amount is bad and the button is off, but there is no error text.
+function Tab:SetAmount(number, quiet)
     self.amount, self.amountBad = nil, false
     if number ~= nil then
         if type(number) == "number" and number >= 1 and number == math.floor(number) then
@@ -2466,7 +2463,7 @@ function Tab:SetAmount(number)
         self.amountBad = true
     end
     self:_Update()
-    if self.amountBad then
+    if self.amountBad and not quiet then
         self:_ShowBusy(AMOUNT_TEXT)
     end
     return not self.amountBad
@@ -2490,7 +2487,7 @@ function Tab:_RefreshBuy()
         if not self.amountBad then
             self:_FillAmount(info.amount)
         end
-        ui.amount:SetEnabled(self.buy == nil)
+        ui.amount:SetEnabled(true)
         ui.buyInfo:SetText("")
     else
         -- No target now. A buy that is open keeps the amount that it started with.
@@ -2501,6 +2498,7 @@ function Tab:_RefreshBuy()
         ui.amount:SetEnabled(false)
     end
 end
+
 -- The level that the user selected in the level list, from the levels of the shown item, or nil.
 function Tab:_SelectedLevel(levels)
     if self.levelSel == nil then
@@ -3614,17 +3612,18 @@ function Tab:_BuildContent()
     ui.buy:SetScript("OnClick", function()
         self:Buy()
     end)
-    ui.amount = Kit.NumberInput(ui.buyRow, 56, { min = 1, hint = "1+", onChange = function(number)
-        self:SetAmount(number)
-    end })
+    ui.amount = Kit.NumberInput(ui.buyRow, 56, { min = 1, hint = "1+" })
     ui.amount:SetPoint("RIGHT", ui.buy, "LEFT", -6, 0)
-    if ui.amount.HookScript then
-        ui.amount:HookScript("OnTextChanged", function()
-            if not self.fillingAmount then
-                self:SetAmount(ui.amount.GetNumber())
-            end
-        end)
-    end
+    -- The hint of a bad number sits above the box, so that it does not cover the Buy button.
+    ui.amount.hint:ClearAllPoints()
+    ui.amount.hint:SetPoint("BOTTOM", ui.amount, "TOP", 0, 2)
+    -- Only a text that the user typed is an amount. The client calls the hook with userInput true for a typed text and
+    -- false for SetText (the default amount and the fixed 1 that the tab puts in the box). An empty box is quiet.
+    ui.amount:HookScript("OnTextChanged", function(_, userInput)
+        if userInput == true then
+            self:SetAmount(ui.amount.GetNumber(), (ui.amount:GetText() or "") == "")
+        end
+    end)
     ui.buyInfo = Kit.Label(ui.buyRow, "", "small")
     ui.buyInfo:SetPoint("RIGHT", ui.amount, "LEFT", -6, 0)
     ui.buyInfo:SetJustifyH("RIGHT")
