@@ -28,7 +28,9 @@ local DEAL_PERCENT = 30 -- a lowest price this many percent under the market val
 local CONFIRM_BOX = "FlipsideBuyConfirm" -- the box of the Buying tab: one buy box for both tabs
 local BUY_TEXT = "Buy"
 local ROWS_TRIES = 3 -- most retries of the search for the rows of the pane while the AH is not ready
-local ROWS_DELAY = 0.25 -- seconds that a click waits before the search for the rows of the pane starts (debounce)
+-- Seconds that a click waits before the search for the rows of the pane starts (debounce). It is not GATE_POLL_SECONDS:
+-- the gate poll timers and these timers must stay apart.
+local ROWS_DELAY = 0.3
 local DOT_SECONDS = 0.4 -- seconds between two steps of the dots of the loading text
 local INFO_TRIES = 3 -- failed tries (an event or a timeout with no data) before an entry is skipped
 local INFO_TIMEOUT = 10 -- seconds that an entry waits for item data before it tries again
