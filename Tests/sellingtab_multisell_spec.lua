@@ -617,6 +617,78 @@ describe("SellingTab multisell on TBC", function()
         end)
     end)
 
+    describe("the click on a Max text", function()
+        local function clickMax(key)
+            local button = ui.details[key .. "Button"]
+            button.scripts.OnClick(button)
+        end
+
+        it("fills the stack size and the full stacks that fit, updates the deposit and posts nothing", function()
+            selectLinen(47, { { bag = 1, slot = 1, count = 20 }, { bag = 1, slot = 2, count = 20 },
+                { bag = 1, slot = 3, count = 7 } })
+            tab:SetManualQuantity(5)
+            tab:SetManualStacks(2)
+            clickMax("qtyMax")
+            assert.are.equal(20, ui.details.qty:GetNumber())
+            assert.are.equal(2, ui.details.stacks:GetNumber())
+            assert.are.same({ quantity = 20, stacks = 2 }, client.deposits[#client.deposits])
+            assert.are.equal("400c", ui.details.deposit.text)
+            assert.are.equal(tostring(119 * 20 * 2) .. "c", ui.details.total.text)
+            tab:SetManualQuantity(5)
+            clickMax("stacksMax")
+            assert.are.equal(20, entryOf("10").manualQty)
+            assert.are.equal(0, #client.posts)
+        end)
+
+        it("fills the stack size with the count when the bags hold less than a full stack", function()
+            selectLinen(7, { { bag = 1, slot = 1, count = 7 } })
+            clickMax("qtyMax")
+            assert.are.equal(7, ui.details.qty:GetNumber())
+            assert.are.equal(1, ui.details.stacks:GetNumber())
+        end)
+
+        it("fills the stack count of a single item with the count", function()
+            client.commodity[11] = false
+            selectCloth()
+            pick("i11")
+            assert.are.equal("single", ns.SellingTab.ShapeOf(entryOf("11").market))
+            clickMax("stacksMax")
+            assert.are.equal(12, ui.details.stacks:GetNumber())
+            assert.are.equal(12, entryOf("11").manualStacks)
+            assert.are.equal(0, #client.posts)
+        end)
+
+        it("keeps the text as it is: the same text and no new font", function()
+            selectLinen(60, FULL)
+            local d = ui.details
+            local text, font = d.qtyMax, d.qtyMax.fontObject
+            clickMax("qtyMax")
+            assert.are.equal(text, d.qtyMax)
+            assert.are.equal(font, d.qtyMax.fontObject)
+            assert.are.equal("Max: 20", d.qtyMax.text)
+            assert.is_nil(d.qtyMaxButton.fontObject)
+        end)
+
+        it("does nothing while a multisell is open", function()
+            selectLinen(60, FULL)
+            tab:SetManualQuantity(10)
+            click(ui.postNext)
+            assert.is_not_nil(tab.multi)
+            clickMax("qtyMax")
+            assert.are.equal(10, entryOf("10").manualQty)
+            assert.is_false(tab:SetManualMax())
+            assert.are.equal(1, #itemPosts())
+        end)
+
+        it("does nothing while a buy is open", function()
+            selectLinen(60, FULL)
+            tab:SetManualQuantity(10)
+            tab.buy = { phase = "quoting" }
+            clickMax("qtyMax")
+            assert.are.equal(10, entryOf("10").manualQty)
+        end)
+    end)
+
     describe("the suggestion of the stacks", function()
         it("suggests full stacks of the item maximum stack", function()
             tab = mount({ maxStack = function() return 10 end })

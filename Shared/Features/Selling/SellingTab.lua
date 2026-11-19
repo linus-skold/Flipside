@@ -2083,6 +2083,40 @@ function Tab:SetManualStacks(value)
     return true, entry.manualStacks
 end
 
+-- The entry that a click on a Max text fills, or nil: no post, buy or multisell is open and the bags hold items.
+function Tab:_MaxEntry()
+    local entry = not self.awaiting and not self.multi and not self.buy and self:_Focus()
+    if entry and SellingTab.CanForce(entry) then
+        return entry
+    end
+end
+
+-- Fill the boxes with the most that the bags allow (the click on a Max text). It posts nothing (D26).
+--   commodity, Forever item: the quantity. TBC stack: the biggest stack size and as many full stacks as fit.
+--   TBC single item: the stack count.
+function Tab:SetManualMax()
+    local entry = self:_MaxEntry()
+    if not entry then
+        return false
+    end
+    local mode = SellingTab.ShapeOf(entry.market)
+    local d = self.ui.details
+    local room = SellingTab.MaxQuantity(entry.candidate)
+    if mode ~= "single" then
+        local _, size = self:SetManualQuantity(SellingTab.StackLimit(entry))
+        self.syncing = true
+        d.qty:SetNumber(size)
+        self.syncing = false
+    end
+    if mode == "multi" or mode == "single" then
+        local _, stacks = self:SetManualStacks(room)
+        self.syncing = true
+        d.stacks:SetNumber(stacks)
+        self.syncing = false
+    end
+    return true
+end
+
 -- Set the duration in hours of the next manual post (SellingPlan.DURATIONS). Another value or nil clears it.
 function Tab:SetManualDuration(hours)
     local entry = not self.awaiting and not self.multi and self:_Focus()
@@ -3540,6 +3574,12 @@ function Tab:_RefreshPost()
     ui.postNext:SetText(self:PostLabel())
     ui.postNext:SetEnabled(self.deps.client.CanPost() and self.multi == nil and self.lock == nil and self.buy == nil
         and not self:_Scanning() and open and (self.awaiting ~= nil or self:_Focus() ~= nil))
+    local entry = self:_MaxEntry()
+    local details = ui.details
+    if details and details.qtyMaxButton then
+        details.qtyMaxButton:EnableMouse(entry ~= nil)
+        details.stacksMaxButton:EnableMouse(entry ~= nil)
+    end
     local events = self.deps.client.ThrottleEvents
     if open or not self.active or self.gateWatch or (events and events()) then
         return
@@ -3731,6 +3771,17 @@ function Tab:_BuildContent()
         "The most is your count minus the keep quantity, and the stack size of the item." })
     d.stacksMax = line("small", STACKS_X, 61, 70)
     d.qtyMax = line("small", QTY_X, 61, 70)
+    -- An invisible button over each "Max" text: a click fills the boxes with the most. It leaves the text as it is.
+    for _, key in ipairs({ "stacksMax", "qtyMax" }) do
+        local button = CreateFrame("Button", nil, pane)
+        button:SetAllPoints(d[key])
+        button:SetScript("OnClick", function()
+            self:SetManualMax()
+        end)
+        Kit.Tooltip(button, "Click to post the maximum", { "Fills the boxes with the most that the bags allow.",
+            "Then click Post." })
+        d[key .. "Button"] = button
+    end
     -- The progress text of a run: in the band when the host has one, else under the operation name.
     if band then
         ui.progress = Kit.Label(content, "", "small")
