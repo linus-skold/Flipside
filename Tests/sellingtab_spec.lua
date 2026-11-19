@@ -395,7 +395,6 @@ describe("SellingTab", function()
             local cells = rows[2].sellParts.cells
             assert.are.equal("~100c", cells.price.text)
             assert.are.equal("Sell", cells.operation.text)
-            assert.are.equal("-", cells.lowest.text)
             assert.are.equal("-", cells.net.text)
             assert.are.equal("not searched yet", cells.info.text)
             assert.are.equal("[Bolts]", rows[3].label.text)
@@ -407,12 +406,16 @@ describe("SellingTab", function()
             assert.are.equal("Copper Ore x8", rows[8].label.text)
         end)
 
-        it("has the header columns Item, Your price, Operation, Lowest on AH, Net and Info", function()
+        it("has the header columns Item, Your price, Operation, Net and Info, with no Lowest column", function()
             local titles = {}
             for _, column in ipairs(ns.SellingTab.COLUMNS) do
                 titles[#titles + 1] = ui.headers.labels[column.key].text
             end
-            assert.are.same({ "Item", "Your price", "Operation", "Lowest on AH", "Net", "Info" }, titles)
+            assert.are.same({ "Item", "Your price", "Operation", "Net", "Info" }, titles)
+            assert.is_nil(ui.headers.labels.lowest)
+            -- The tree is compact: the Operation and Info columns are hidden.
+            assert.is_true(ns.SellingTab.COLUMNS[3].hidden)
+            assert.is_true(ns.SellingTab.COLUMNS[5].hidden)
         end)
 
         it("collapses and expands a group", function()
@@ -428,13 +431,11 @@ describe("SellingTab", function()
             selectCloth()
             cells = ui.tree.list.rows[2].sellParts.cells
             assert.are.equal("119c", cells.price.text)
-            assert.are.equal("120c", cells.lowest.text)
             assert.are.equal("6183c", cells.net.text)
             assert.are.equal("1c under lowest", cells.info.text)
             assert.are.same({ 1, 1, 1 }, { cells.price.color[1], cells.price.color[2], cells.price.color[3] })
             local bolts = ui.tree.list.rows[4].sellParts.cells
             assert.are.equal("149c", bolts.price.text)
-            assert.are.equal("150c", bolts.lowest.text)
             assert.are.equal("1579c", bolts.net.text)
         end)
 

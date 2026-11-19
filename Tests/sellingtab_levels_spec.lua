@@ -11,8 +11,8 @@ local function loadModules()
     return ns
 end
 
-describe("SellingTab level list", function()
-    local ns, bus, client, tab, ui, bagItems, itemGroup, groups, store
+describe("SellingTab level pane and Buy", function()
+    local ns, bus, client, tab, ui, bagItems, itemGroup, groups
 
     local function makeClient()
         local c = { ready = true, searches = {}, rows = {}, commodity = {}, calls = {}, violations = {}, canBuy = true }
@@ -139,10 +139,6 @@ describe("SellingTab level list", function()
             maxStack = function(id) return id == 10 and 20 or 1 end,
             vendorPrice = function() return nil end,
             syncInterval = 0, time = function() return 0 end,
-            db = {
-                Get = function(_, scope, key) return store[scope .. "/" .. key] end,
-                Set = function(_, scope, key, value) store[scope .. "/" .. key] = value end,
-            },
         }
         for k, v in pairs(extra or {}) do
             deps[k] = v
@@ -169,7 +165,6 @@ describe("SellingTab level list", function()
         client = makeClient()
         client.commodity[10] = false
         client.commodity[11] = true
-        store = {}
         groups = { [1] = { name = "Base", children = { 2 } }, [2] = { name = "Cloth", children = {} } }
         itemGroup = { ["10"] = 2, ["11"] = 2 }
         bagItems = {
@@ -188,104 +183,124 @@ describe("SellingTab level list", function()
         mock.teardown()
     end)
 
-    describe("the toggle", function()
-        it("is off at first: all tree columns, no list", function()
-            assert.are.equal("Levels", ui.levels.text)
-            assert.is_false(ui.levelList.frame:IsShown())
-            assert.is_false(ui.levelHeader.frame:IsShown())
-            assert.is_nil(ns.SellingTab.COLUMNS[3].hidden)
-            assert.is_nil(ns.SellingTab.COLUMNS[6].hidden)
-            assert.are.equal(244, ns.SellingTab.COLUMNS[1].width)
-            assert.are.equal(124, ns.SellingTab.COLUMNS[4].width)
-        end)
+    -- The yellow of your own rows and the green of a deal price.
+    local YELLOW = { 1, 0.82, 0.1 }
+    local GREEN = { 0.4, 1, 0.4 }
 
-        it("shows the list and the compact tree when on, and restores the tree when off", function()
-            click(ui.levels)
-            assert.are.equal("Hide", ui.levels.text)
+    local function colorOf(label)
+        return { label.color[1], label.color[2], label.color[3] }
+    end
+
+    describe("the pane", function()
+        it("is always shown, with no toggle", function()
+            assert.is_nil(ui.levels)
             assert.is_true(ui.levelList.frame:IsShown())
             assert.is_true(ui.levelHeader.frame:IsShown())
+            assert.is_not_nil(ui.buyRow)
+        end)
+
+        it("has the compact tree: Operation and Info hidden, no Lowest column", function()
             assert.is_true(ns.SellingTab.COLUMNS[3].hidden)
-            assert.is_true(ns.SellingTab.COLUMNS[6].hidden)
-            assert.are.equal(190, ns.SellingTab.COLUMNS[1].width)
-            assert.are.equal(110, ns.SellingTab.COLUMNS[4].width)
-            click(ui.levels)
-            assert.are.equal("Levels", ui.levels.text)
-            assert.is_false(ui.levelList.frame:IsShown())
-            assert.is_nil(ns.SellingTab.COLUMNS[3].hidden)
-            assert.is_nil(ns.SellingTab.COLUMNS[6].hidden)
-            assert.are.equal(244, ns.SellingTab.COLUMNS[1].width)
+            assert.is_true(ns.SellingTab.COLUMNS[5].hidden)
+            assert.is_nil(ui.headers.labels.lowest)
+            for _, column in ipairs(ns.SellingTab.COLUMNS) do
+                assert.are_not.equal("lowest", column.key)
+            end
         end)
 
-        it("makes room at the right of the tree only while on", function()
-            local before = ui.tree.frame.points[#ui.tree.frame.points]
-            click(ui.levels)
-            local after = ui.tree.frame.points[#ui.tree.frame.points]
-            assert.is_true(after[4] < before[4])
-            click(ui.levels)
-            assert.are.equal(before[4], ui.tree.frame.points[#ui.tree.frame.points][4])
+        it("has only the price and the Available columns: no vs market and no Yours", function()
+            local keys = {}
+            for _, column in ipairs(ns.SellingTab.LEVEL_COLUMNS) do
+                keys[#keys + 1] = column.key
+            end
+            assert.are.same({ "price", "available" }, keys)
+            assert.is_nil(ui.levelHeader.labels.vs)
+            assert.is_nil(ui.levelHeader.labels.yours)
         end)
 
-        it("is saved in the profile settings and read again when the tab opens", function()
-            click(ui.levels)
-            assert.is_true(store["profile/ui.sellingLevels"])
-            tab:Unmount()
-            tab = mount()
-            ui = tab.ui
-            assert.are.equal("Hide", ui.levels.text)
-            assert.is_true(ui.levelList.frame:IsShown())
+        it("makes room at the right of the tree", function()
+            local point = ui.tree.frame.points[#ui.tree.frame.points]
+            assert.is_true(point[4] < 0)
+        end)
+
+        it("is wide (320) for a wide content and tight (220) for a narrow one", function()
+            tab.content.GetWidth = function() return 800 end
+            assert.are.equal(320, tab:_LevelWidth())
+            tab.content.GetWidth = function() return 700 end
+            assert.are.equal(220, tab:_LevelWidth())
         end)
 
         it("moves the reason of the Info column to the warning line", function()
-            click(ui.levels)
             choose(11, { crow(150, 5) })
             local entry = tab.entries[1].key == "11" and tab.entries[1] or tab.entries[2]
             local info = ns.SellingTab.InfoText(entry)
             assert.is_true(info ~= "")
             assert.are.equal(info, ui.details.warn.text)
         end)
+
+        it("has the Buy button under the pane and none in the details pane", function()
+            assert.are.equal("Buy", ui.buy.text)
+            assert.is_nil(ui.buyLowest)
+        end)
     end)
 
     describe("the rows", function()
         it("are empty with no item shown", function()
-            click(ui.levels)
             assert.are.same({}, ui.levelList.data)
         end)
 
-        it("show the levels of the shown item cheapest first, with the own mark", function()
-            click(ui.levels)
+        it("show the levels cheapest first, and your own level is marked yellow", function()
             choose(11, { crow(150, 5), crow(160, 4, true), crow(170, 2) })
             local data = ui.levelList.data
             assert.are.equal(3, #data)
             assert.are.same({ 150, 160, 170 }, { data[1].unitPrice, data[2].unitPrice, data[3].unitPrice })
             assert.are.same({ "5", "4", "2" }, { data[1].available, data[2].available, data[3].available })
             assert.are.same({ false, true, false }, { data[1].mine, data[2].mine, data[3].mine })
-            assert.are.equal("Yours", data[2].yours)
-            assert.are.equal("", data[1].yours)
+            local rows = ui.levelList.rows
+            assert.are.same(YELLOW, colorOf(rows[2].levelParts.cells.price))
+            assert.are.same(YELLOW, colorOf(rows[2].levelParts.cells.available))
+            assert.is_true(rows[2].levelParts.mark:IsShown())
+            assert.is_false(rows[1].levelParts.mark:IsShown())
+            assert.are.same({ 1, 1, 1 }, colorOf(rows[1].levelParts.cells.price))
+        end)
+
+        it("show the price of a deal in green (30 percent or more under the market value)", function()
+            ns.ScanSources = { Compute = function() return { scanMarket = 1000 } end }
+            tab:Unmount()
+            tab = mount({ getRecord = function() return {} end, now = function() return 1 end })
+            ui = tab.ui
+            choose(11, { crow(200, 5), crow(900, 4), crow(1200, 1) })
+            local data = ui.levelList.data
+            assert.are.same({ true, false, false }, { data[1].deal, data[2].deal, data[3].deal })
+            local rows = ui.levelList.rows
+            assert.are.same(GREEN, colorOf(rows[1].levelParts.cells.price))
+            assert.are.same({ 1, 1, 1 }, colorOf(rows[2].levelParts.cells.price))
+            assert.are.same({ 1, 1, 1 }, colorOf(rows[3].levelParts.cells.price))
+        end)
+
+        it("keep the yellow of your own row, also when its price is a deal", function()
+            ns.ScanSources = { Compute = function() return { scanMarket = 1000 } end }
+            tab:Unmount()
+            tab = mount({ getRecord = function() return {} end, now = function() return 1 end })
+            ui = tab.ui
+            choose(11, { crow(200, 5, true), crow(900, 4) })
+            assert.are.same(YELLOW, colorOf(ui.levelList.rows[1].levelParts.cells.price))
         end)
 
         it("show the stacks of an item level as stacks x size", function()
-            click(ui.levels)
             choose(10, { arow(150, 2), arow(150, 2), arow(160, 5) })
             local data = ui.levelList.data
             assert.are.equal("2 x 2", data[1].available)
             assert.are.equal("5", data[2].available)
         end)
 
-        it("show the deal mark and the percent against the market value", function()
-            ns.ScanSources = { Compute = function() return { scanMarket = 1000 } end }
-            tab:Unmount()
-            tab = mount({ getRecord = function() return {} end, now = function() return 1 end })
-            ui = tab.ui
-            click(ui.levels)
-            choose(11, { crow(200, 5), crow(900, 4), crow(1200, 1) })
-            local data = ui.levelList.data
-            assert.are.same({ "-80%", "-10%", "+20%" }, { data[1].vs, data[2].vs, data[3].vs })
-            assert.are.same({ true, false, false }, { data[1].deal, data[2].deal, data[3].deal })
-            assert.are.equal("-", ns.SellingTab.VsText(100, nil))
+        it("show a Forever item row of 40 as 40 stacks of 1", function()
+            choose(10, { { unitPrice = 449, quantity = 40, ownerItem = false, auctionID = 7, isCommodity = false,
+                buyout = 449, owner = "Bob", perItem = true } })
+            assert.are.equal("40 x 1", ui.levelList.data[1].available)
         end)
 
         it("clear while a search runs and read the new rows after it", function()
-            click(ui.levels)
             choose(11, { crow(150, 5) })
             assert.are.equal(1, #ui.levelList.data)
             tab:_Research(tab.entries[1].key == "11" and tab.entries[1] or tab.entries[2])
@@ -295,86 +310,166 @@ describe("SellingTab level list", function()
             assert.are.equal(2, #ui.levelList.data)
         end)
 
-        it("are empty with the list off", function()
+        it("have a header Price for a single item and Unit price for a commodity", function()
+            -- Forever has no stacks: an item auction is a single item.
+            choose(10, { arow(150, 1) })
+            assert.are.equal("Price", ui.levelHeader.labels.price.text)
             choose(11, { crow(150, 5) })
-            assert.are.same({}, ui.levelList.data)
+            assert.are.equal("Unit price", ui.levelHeader.labels.price.text)
         end)
     end)
 
     describe("the selection", function()
-        it("changes the button text, and a second click clears it", function()
-            click(ui.levels)
+        it("keeps the button text Buy, and a second click clears it", function()
             choose(11, { crow(150, 5), crow(160, 4) })
-            assert.are.equal("Buy lowest", ui.buyLowest.text)
             clickLevel(2)
-            assert.are.equal("Buy selected", ui.buyLowest.text)
-            assert.is_true(ui.buyLowest.enabled)
+            assert.are.equal(160, tab.levelSel)
+            assert.are.equal("Buy", ui.buy.text)
+            assert.is_true(ui.buy.enabled)
             clickLevel(2)
-            assert.are.equal("Buy lowest", ui.buyLowest.text)
+            assert.is_nil(tab.levelSel)
         end)
 
         it("does not select a level of yours", function()
-            click(ui.levels)
             choose(11, { crow(150, 5, true), crow(160, 4) })
             clickLevel(1)
             assert.is_nil(tab.levelSel)
-            assert.are.equal("Buy lowest", ui.buyLowest.text)
             assert.are.same({}, client.calls)
         end)
 
-        it("clears on a new search and when the list goes off", function()
-            click(ui.levels)
+        it("clears on a new search", function()
             choose(11, { crow(150, 5), crow(160, 4) })
             clickLevel(2)
-            click(ui.levels)
+            tab:_Research(tab.entries[1].key == "11" and tab.entries[1] or tab.entries[2])
             assert.is_nil(tab.levelSel)
-            assert.are.equal("Buy lowest", ui.buyLowest.text)
         end)
     end)
 
-    describe("Buy selected on a commodity", function()
-        it("asks for the units of all levels up to the selected level, and buys only after the confirm", function()
-            click(ui.levels)
-            choose(11, { crow(150, 2), crow(160, 3), crow(170, 4) })
-            clickLevel(3)
-            click(ui.buyLowest)
-            assert.are.same({ { "start", 11, 9 } }, client.calls)
+    describe("Buy with no selection", function()
+        it("is off with no item", function()
+            assert.is_false(ui.buy.enabled)
+            click(ui.buy)
+            assert.are.same({}, client.calls)
+        end)
+
+        it("buys the cheapest level that is not yours: its quantity, then a quote, then the confirm", function()
+            choose(11, { crow(150, 5), crow(160, 4) })
+            assert.are.equal(5, ui.amount.GetNumber())
+            click(ui.buy)
+            assert.are.same({ { "start", 11, 5 } }, client.calls)
             assert.is_nil(box())
-            bus:Emit("QUOTE", 160, 1440)
+            bus:Emit("QUOTE", 150, 750)
             assert.is_true(box():IsShown())
-            assert.is_truthy(box().text.text:find("Buy 9 x", 1, true))
+            assert.is_truthy(box().text.text:find("Buy 5 x", 1, true))
             assert.are.same({ "start" }, names())
             click(box().yesButton)
-            assert.are.same({ { "start", 11, 9 }, { "confirm", 11, 9 } }, client.calls)
+            assert.are.same({ { "start", 11, 5 }, { "confirm", 11, 5 } }, client.calls)
             assert.are.same({}, client.violations)
         end)
 
-        it("searches again and reads the new rows after the buy", function()
-            click(ui.levels)
+        it("is off when every level is yours", function()
+            choose(11, { crow(150, 5, true), crow(160, 4, true) })
+            assert.is_false(ui.buy.enabled)
+            click(ui.buy)
+            assert.are.same({}, client.calls)
+        end)
+
+        it("is off for a commodity when a level of yours is below the first level that is not yours", function()
+            choose(11, { crow(140, 2, true), crow(150, 5) })
+            assert.is_false(ui.buy.enabled)
+        end)
+
+        it("is on for an item auction above an own auction, because an item buy takes one auction", function()
+            choose(10, { arow(140, 1, true), arow(150, 1) })
+            assert.is_true(ui.buy.enabled)
+        end)
+
+        it("is off while another tab has a buy open", function()
+            choose(11, { crow(150, 5) })
+            ns.BuyFlow.Register("buying", function() return true end)
+            tab:_Update()
+            assert.is_false(ui.buy.enabled)
+        end)
+    end)
+
+    describe("the amount of a commodity", function()
+        it("is prefilled with the units up to the selected level", function()
             choose(11, { crow(150, 2), crow(160, 3), crow(170, 4) })
+            assert.are.equal(2, ui.amount.GetNumber())
+            clickLevel(3)
+            assert.are.equal(9, ui.amount.GetNumber())
+            assert.is_true(ui.amount.enabled)
+            click(ui.buy)
+            assert.are.same({ { "start", 11, 9 } }, client.calls)
+        end)
+
+        it("can be lowered: the buy takes the typed amount, cheapest units first", function()
+            choose(11, { crow(150, 2), crow(160, 3), crow(170, 4) })
+            clickLevel(3)
+            assert.is_true(tab:SetAmount(4))
+            assert.are.equal(4, ui.amount.GetNumber())
+            click(ui.buy)
+            assert.are.same({ { "start", 11, 4 } }, client.calls)
+        end)
+
+        it("can be raised up to the units for sale", function()
+            choose(11, { crow(150, 2), crow(160, 3) })
+            assert.is_true(tab:SetAmount(5))
+            click(ui.buy)
+            assert.are.same({ { "start", 11, 5 } }, client.calls)
+        end)
+
+        it("is capped by the units for sale: a larger amount turns the button off", function()
+            choose(11, { crow(150, 2), crow(160, 3) })
+            tab:SetAmount(6)
+            assert.is_false(ui.buy.enabled)
+            local ok, reason = tab:Buy()
+            assert.is_false(ok)
+            assert.are.equal("only 5 units are for sale", reason)
+            assert.are.same({}, client.calls)
+        end)
+
+        it("is capped by the first level of yours: an amount that reaches it is refused", function()
+            choose(11, { crow(150, 2), crow(160, 3, true), crow(170, 4) })
+            clickLevel(3)
+            -- The default is 9 units and takes the units of your level: refused.
+            assert.are.equal(9, ui.amount.GetNumber())
+            assert.is_false(ui.buy.enabled)
+            tab:SetAmount(3)
+            assert.is_false(ui.buy.enabled)
+            local _, reason = tab:Buy()
+            assert.are.equal(ns.BuyingPlan.REASON.ownBelow, reason)
+            -- Up to the units below your level, the buy is allowed.
+            tab:SetAmount(2)
+            assert.is_true(ui.buy.enabled)
+            click(ui.buy)
+            assert.are.same({ { "start", 11, 2 } }, client.calls)
+        end)
+
+        it("refuses an empty or bad amount", function()
+            choose(11, { crow(150, 5) })
+            assert.is_false(tab:SetAmount(nil))
+            assert.is_false(ui.buy.enabled)
+            local ok, reason = tab:Buy()
+            assert.is_false(ok)
+            assert.are.equal("the amount must be a whole number above 0", reason)
+            assert.is_false(tab:SetAmount(2.5))
+            assert.is_false(tab:SetAmount(0))
+            assert.are.same({}, client.calls)
+        end)
+
+        it("goes back to the default when another level is selected", function()
+            choose(11, { crow(150, 2), crow(160, 3), crow(170, 4) })
+            clickLevel(3)
+            tab:SetAmount(4)
             clickLevel(2)
-            click(ui.buyLowest)
-            bus:Emit("QUOTE", 156, 780)
-            click(box().yesButton)
-            local before = #client.searches
-            bus:Emit("BOUGHT")
-            assert.are.equal(before + 1, #client.searches)
-            assert.is_nil(tab.levelSel)
-            assert.are.same({}, ui.levelList.data)
-            client.rows[11] = { crow(170, 4) }
-            bus:Emit("COMMODITY_RESULTS", 11)
-            assert.are.equal(1, #ui.levelList.data)
-            assert.are.equal("Buy lowest", ui.buyLowest.text)
-            local list = ns.BuyingPlan.Log:List()
-            -- The price in the log is the unit price of the quote, not the price of the highest level (160).
-            assert.are.equal("bought 5 at " .. GetMoneyString(156), list[#list].decision)
+            assert.are.equal(5, ui.amount.GetNumber())
         end)
 
         it("shows a quote more than 10 percent above the list as a price jump, and still needs the confirm", function()
-            click(ui.levels)
             choose(11, { crow(150, 2), crow(160, 3), crow(170, 4) })
             clickLevel(2)
-            click(ui.buyLowest)
+            click(ui.buy)
             -- The list says 780 for 5 units. A quote of 1000 is 28% above.
             bus:Emit("QUOTE", 200, 1000)
             assert.is_truthy(box().text.text:find("Price jumps from", 1, true))
@@ -383,42 +478,46 @@ describe("SellingTab level list", function()
             assert.are.same({ "start", "confirm" }, names())
         end)
 
-        it("shows no price jump for a quote within 10 percent of the list", function()
-            click(ui.levels)
-            choose(11, { crow(150, 2), crow(160, 3) })
+        it("logs the unit price of the quote and searches again after the buy", function()
+            choose(11, { crow(150, 2), crow(160, 3), crow(170, 4) })
             clickLevel(2)
-            click(ui.buyLowest)
-            bus:Emit("QUOTE", 160, 820)
-            assert.is_nil(box().text.text:find("Price jumps", 1, true))
-        end)
-
-        it("is off when a level of yours is below the selected level", function()
-            click(ui.levels)
-            choose(11, { crow(150, 2, true), crow(160, 3), crow(170, 4) })
-            clickLevel(3)
-            assert.is_false(ui.buyLowest.enabled)
-            click(ui.buyLowest)
-            assert.are.same({}, client.calls)
-        end)
-
-        it("is off when the selected level is gone after a new search", function()
-            click(ui.levels)
-            choose(11, { crow(150, 2), crow(160, 3) })
-            clickLevel(2)
-            client.rows[11] = { crow(150, 2) }
-            tab:_Research(tab.entries[1].key == "11" and tab.entries[1] or tab.entries[2])
-            bus:Emit("COMMODITY_RESULTS", 11)
+            click(ui.buy)
+            bus:Emit("QUOTE", 156, 780)
+            click(box().yesButton)
+            local before = #client.searches
+            bus:Emit("BOUGHT")
+            assert.are.equal(before + 1, #client.searches)
             assert.is_nil(tab.levelSel)
-            assert.are.equal("Buy lowest", ui.buyLowest.text)
+            assert.is_nil(tab.amount)
+            assert.are.same({}, ui.levelList.data)
+            client.rows[11] = { crow(170, 4) }
+            bus:Emit("COMMODITY_RESULTS", 11)
+            assert.are.equal(1, #ui.levelList.data)
+            local list = ns.BuyingPlan.Log:List()
+            assert.are.equal("bought 5 at " .. GetMoneyString(156), list[#list].decision)
         end)
     end)
 
-    describe("Buy selected on an item auction", function()
-        it("goes to the confirm and buys the selected auction at its buyout", function()
-            click(ui.levels)
+    describe("an item auction or a stack", function()
+        it("has a fixed amount of 1 in a disabled box, with the stack size", function()
+            choose(10, { arow(150, 2) })
+            assert.are.equal(1, ui.amount.GetNumber())
+            assert.is_false(ui.amount.enabled)
+            assert.are.equal("1 stack of 2", ui.buyInfo.text)
+        end)
+
+        it("shows 1 item for a Forever row of items", function()
+            choose(10, { { unitPrice = 449, quantity = 40, ownerItem = false, auctionID = 7, isCommodity = false,
+                buyout = 449, owner = "Bob", perItem = true } })
+            assert.are.equal(1, ui.amount.GetNumber())
+            assert.is_false(ui.amount.enabled)
+            assert.are.equal("1 item", ui.buyInfo.text)
+        end)
+
+        it("goes to the confirm and buys the selected auction at its buyout, after the confirm click", function()
             choose(10, { arow(150, 1), arow(160, 2), arow(170, 1) })
             clickLevel(2)
-            click(ui.buyLowest)
+            click(ui.buy)
             assert.are.same({}, client.calls)
             assert.is_true(box():IsShown())
             assert.is_truthy(box().text.text:find("Buy one stack: 2 x", 1, true))
@@ -427,11 +526,19 @@ describe("SellingTab level list", function()
             assert.are.same({}, client.violations)
         end)
 
+        it("ignores a typed amount", function()
+            choose(10, { arow(150, 1) })
+            tab:SetAmount(5)
+            click(ui.buy)
+            assert.is_true(box():IsShown())
+            click(box().yesButton)
+            assert.are.same({ { "bid", 150, 150 } }, client.calls)
+        end)
+
         it("finds the auction again at the confirm and does not buy a gone auction", function()
-            click(ui.levels)
             choose(10, { arow(150, 1), arow(160, 2) })
             clickLevel(2)
-            click(ui.buyLowest)
+            click(ui.buy)
             client.rows[10] = { arow(150, 1) }
             click(box().yesButton)
             assert.are.same({}, client.calls)
@@ -439,14 +546,25 @@ describe("SellingTab level list", function()
         end)
 
         it("keeps the guards: one buy at a time, Post and Skip off", function()
-            click(ui.levels)
             choose(10, { arow(150, 1), arow(160, 2) })
             clickLevel(2)
-            click(ui.buyLowest)
+            click(ui.buy)
             assert.is_false(ui.postNext.enabled)
             assert.is_false(ui.skip.enabled)
-            assert.is_false(ui.buyLowest.enabled)
+            assert.is_false(ui.buy.enabled)
             assert.is_false((tab:SelectLevel(ns.BuyFlow.LevelId(ui.levelList.data[1]))))
+        end)
+    end)
+
+    describe("a list for another item", function()
+        it("reads the prices again on the click and buys nothing", function()
+            choose(11, { crow(150, 5) })
+            tab.live = nil
+            assert.is_true(ui.buy.enabled)
+            local before = #client.searches
+            click(ui.buy)
+            assert.are.same({}, client.calls)
+            assert.are.equal(before + 1, #client.searches)
         end)
     end)
 end)

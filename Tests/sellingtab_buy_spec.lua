@@ -11,7 +11,7 @@ local function loadModules()
     return ns
 end
 
-describe("SellingTab Buy lowest", function()
+describe("SellingTab Buy", function()
     local ns, bus, client, tab, ui, bagItems, itemGroup, groups
 
     -- A fake client. A protected call outside a click is a violation.
@@ -116,14 +116,6 @@ describe("SellingTab Buy lowest", function()
         end
     end
 
-    local function entryOf(key)
-        for _, entry in ipairs(tab.entries) do
-            if entry.key == key then
-                return entry
-            end
-        end
-    end
-
     local function mount(extra)
         local deps = {
             bus = bus, rules = makeRules(), formulaRun = { Evaluate = function(_, text) return tonumber(text) end },
@@ -188,58 +180,47 @@ describe("SellingTab Buy lowest", function()
 
     describe("the button", function()
         it("is off with no selection", function()
-            assert.is_false(ui.buyLowest.enabled)
-            click(ui.buyLowest)
+            assert.is_false(ui.buy.enabled)
+            click(ui.buy)
             assert.are.same({}, client.calls)
         end)
 
         it("is on for a selected item with a level that is not yours", function()
             choose(11, { crow(150, 5), crow(160, 4) })
-            assert.is_true(ui.buyLowest.enabled)
-            assert.are.equal("Buy lowest", ui.buyLowest.text)
+            assert.is_true(ui.buy.enabled)
+            assert.are.equal("Buy", ui.buy.text)
         end)
 
         it("is off when every level is yours", function()
             choose(11, { crow(150, 5, true), crow(160, 4, true) })
-            assert.is_false(ui.buyLowest.enabled)
-            click(ui.buyLowest)
+            assert.is_false(ui.buy.enabled)
+            click(ui.buy)
             assert.are.same({}, client.calls)
         end)
 
         it("is off for a commodity when an own level is below the first level that is not yours", function()
             choose(11, { crow(140, 2, true), crow(150, 5) })
-            assert.is_false(ui.buyLowest.enabled)
+            assert.is_false(ui.buy.enabled)
         end)
 
         it("is on for an item auction above an own auction, because an item buy takes one auction", function()
             choose(10, { arow(140, 1, true), arow(150, 1) })
-            assert.is_true(ui.buyLowest.enabled)
+            assert.is_true(ui.buy.enabled)
         end)
 
         it("is off when the client cannot buy", function()
             client.canBuy = false
             choose(11, { crow(150, 5) })
-            assert.is_false(ui.buyLowest.enabled)
+            assert.is_false(ui.buy.enabled)
         end)
 
         it("is off while another tab has a buy open", function()
             choose(11, { crow(150, 5) })
             ns.BuyFlow.Register("buying", function() return true end)
             tab:_Update()
-            assert.is_false(ui.buyLowest.enabled)
-            click(ui.buyLowest)
+            assert.is_false(ui.buy.enabled)
+            click(ui.buy)
             assert.are.same({}, client.calls)
-        end)
-
-        it("marks a deal that is far below the market value", function()
-            ns.ScanSources = { Compute = function() return { scanMarket = 1000 } end }
-            tab:Unmount()
-            tab = mount({ getRecord = function() return {} end, now = function() return 1 end })
-            ui = tab.ui
-            choose(11, { crow(200, 5), crow(300, 4) })
-            assert.are.equal("-80%", entryOf("11").deal)
-            assert.is_truthy(ns.SellingTab.Cells(entryOf("11")).lowest:find("-80%", 1, true))
-            assert.are.equal("Buy lowest -80%", ui.buyLowest.text)
         end)
     end)
 
@@ -256,7 +237,7 @@ describe("SellingTab Buy lowest", function()
     describe("a commodity", function()
         it("asks for a quote with the quantity of the lowest level, and buys only after the confirm", function()
             choose(11, { crow(150, 5), crow(160, 4) })
-            click(ui.buyLowest)
+            click(ui.buy)
             assert.are.same({ { "start", 11, 5 } }, client.calls)
             assert.is_nil(box())
             bus:Emit("QUOTE", 150, 750)
@@ -272,7 +253,7 @@ describe("SellingTab Buy lowest", function()
 
         it("searches the item again after the buy and writes the Buying tab log lines", function()
             choose(11, { crow(150, 5), crow(160, 4) })
-            click(ui.buyLowest)
+            click(ui.buy)
             bus:Emit("QUOTE", 150, 750)
             click(box().yesButton)
             local before = #client.searches
@@ -289,15 +270,15 @@ describe("SellingTab Buy lowest", function()
 
         it("makes no second quote while the first buy is open", function()
             choose(11, { crow(150, 5) })
-            click(ui.buyLowest)
-            assert.is_false(ui.buyLowest.enabled)
-            click(ui.buyLowest)
+            click(ui.buy)
+            assert.is_false(ui.buy.enabled)
+            click(ui.buy)
             assert.are.same({ "start" }, names())
         end)
 
         it("cancels the quote when the user cancels the box", function()
             choose(11, { crow(150, 5) })
-            click(ui.buyLowest)
+            click(ui.buy)
             bus:Emit("QUOTE", 150, 750)
             click(box().noButton)
             assert.is_nil(tab.buy)
@@ -306,7 +287,7 @@ describe("SellingTab Buy lowest", function()
 
         it("cancels an open quote when the tab is left", function()
             choose(11, { crow(150, 5) })
-            click(ui.buyLowest)
+            click(ui.buy)
             tab:Deselect()
             assert.is_nil(tab.buy)
             assert.are.same({ "start", "cancel" }, names())
@@ -314,7 +295,7 @@ describe("SellingTab Buy lowest", function()
 
         it("fails and searches again when the server refuses", function()
             choose(11, { crow(150, 5) })
-            click(ui.buyLowest)
+            click(ui.buy)
             bus:Emit("QUOTE", 150, 750)
             click(box().yesButton)
             local before = #client.searches
@@ -339,7 +320,7 @@ describe("SellingTab Buy lowest", function()
     describe("an item auction", function()
         it("goes to the confirm box and buys the auction at its buyout after the click", function()
             choose(10, { arow(140, 1, true), arow(150, 2), arow(160, 1) })
-            click(ui.buyLowest)
+            click(ui.buy)
             assert.are.same({}, client.calls)
             assert.is_true(box():IsShown())
             assert.is_truthy(box().text.text:find("Buy one stack: 2 x", 1, true))
@@ -354,7 +335,7 @@ describe("SellingTab Buy lowest", function()
             -- perItem marks 40 separate one-item auctions.
             choose(10, { { unitPrice = 449, quantity = 40, ownerItem = false, auctionID = 7, isCommodity = false,
                 buyout = 449, owner = "Bob", perItem = true } })
-            click(ui.buyLowest)
+            click(ui.buy)
             local text = box().text.text
             assert.is_truthy(text:find("Buy 1 x", 1, true))
             assert.is_truthy(text:find("Unit price: " .. GetMoneyString(449), 1, true))
@@ -366,7 +347,7 @@ describe("SellingTab Buy lowest", function()
 
         it("searches again after the purchase completes", function()
             choose(10, { arow(150, 2), arow(160, 1) })
-            click(ui.buyLowest)
+            click(ui.buy)
             click(box().yesButton)
             local before = #client.searches
             client.rows[10] = { arow(160, 1) }
@@ -377,7 +358,7 @@ describe("SellingTab Buy lowest", function()
 
         it("does not buy when the auction is gone from the list at the confirm", function()
             choose(10, { arow(150, 2) })
-            click(ui.buyLowest)
+            click(ui.buy)
             client.rows[10] = {}
             click(box().yesButton)
             assert.are.same({}, client.calls)
@@ -386,7 +367,7 @@ describe("SellingTab Buy lowest", function()
 
         it("takes an error event as a failed buy", function()
             choose(10, { arow(150, 2) })
-            click(ui.buyLowest)
+            click(ui.buy)
             click(box().yesButton)
             bus:Emit("ITEMERR", 7)
             assert.is_nil(tab.buy)
@@ -400,7 +381,7 @@ describe("SellingTab Buy lowest", function()
             choose(11, { crow(150, 5) })
             assert.is_true(ui.postNext.enabled)
             assert.is_true(ui.skip.enabled)
-            click(ui.buyLowest)
+            click(ui.buy)
             assert.is_false(ui.postNext.enabled)
             assert.is_false(ui.skip.enabled)
             bus:Emit("QUOTE", 150, 750)
@@ -411,7 +392,7 @@ describe("SellingTab Buy lowest", function()
 
         it("leaves the box open when it ends and the Buying tab has a buy open", function()
             choose(11, { crow(150, 5) })
-            click(ui.buyLowest)
+            click(ui.buy)
             bus:Emit("QUOTE", 150, 750)
             local shown = box()
             ns.BuyFlow.Register("buying", function() return true end)
@@ -433,7 +414,7 @@ describe("SellingTab Buy lowest", function()
 
         it("ends an open quote with no search and no buy call", function()
             choose(11, { crow(150, 5) })
-            click(ui.buyLowest)
+            click(ui.buy)
             bus:Emit("QUOTE", 150, 750)
             local before = #client.searches
             bus:Emit("CLOSE")
@@ -445,7 +426,7 @@ describe("SellingTab Buy lowest", function()
 
         it("ends a buy that went out, and the wait timer does nothing", function()
             choose(10, { arow(150, 2) })
-            click(ui.buyLowest)
+            click(ui.buy)
             click(box().yesButton)
             local before = #client.searches
             bus:Emit("CLOSE")
@@ -479,9 +460,9 @@ describe("SellingTab Buy lowest", function()
         it("reads the prices again on the click and buys nothing", function()
             choose(11, { crow(150, 5) })
             tab.live = nil
-            assert.is_true(ui.buyLowest.enabled)
+            assert.is_true(ui.buy.enabled)
             local before = #client.searches
-            click(ui.buyLowest)
+            click(ui.buy)
             assert.are.same({}, client.calls)
             assert.are.equal(before + 1, #client.searches)
         end)
