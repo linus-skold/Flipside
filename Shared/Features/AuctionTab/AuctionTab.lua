@@ -641,6 +641,10 @@ function Tab:Mount(parent, api)
     self.deps.bus:Subscribe(EVENT_FINISHED, OWNER, function(_, summary)
         self.summaryLines = AuctionTab.DescribeSummary(summary)
         self:Refresh()
+        -- The scan stored new prices: show the price of the shown item again.
+        if self.redisplay then
+            self.redisplay()
+        end
     end)
     self.deps.bus:Subscribe(EVENT_PRICE_CAPTURED, OWNER, function(_, key)
         self:_OnPriceCaptured(key)
