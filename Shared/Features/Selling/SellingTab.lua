@@ -27,6 +27,8 @@ local CONFIRM_WAIT = 15 -- seconds that a buy waits for the result of the server
 local DEAL_PERCENT = 30 -- a lowest price this many percent under the market value shows as a deal
 local CONFIRM_BOX = "FlipsideBuyConfirm" -- the box of the Buying tab: one buy box for both tabs
 local BUY_TEXT = "Buy"
+local ROWS_DELAY = 0.25 -- seconds that a click waits before the search for the rows of the pane starts (debounce)
+local DOT_SECONDS = 0.4 -- seconds between two steps of the dots of the loading text
 local INFO_TRIES = 3 -- failed tries (an event or a timeout with no data) before an entry is skipped
 local INFO_TIMEOUT = 10 -- seconds that an entry waits for item data before it tries again
 
@@ -939,6 +941,15 @@ function Tab:_Start(entry)
         return self:_WaitInfo(entry)
     end
     entry.infoRetry = nil
+    return self:_Launch(entry, false)
+end
+
+-- Send the live search of an entry. Only one search is in flight (self.pending). rowsOnly is true for a search that
+-- only brings the rows for the level pane: the decision of the entry stays as it is. Returns "started", or "wait"
+-- and a text.
+function Tab:_Launch(entry, rowsOnly)
+    local client = self.deps.client
+    local candidate = entry.candidate
     if not client.IsReady() then
         return "wait", "waiting for the Auction House to be ready"
     end
@@ -949,17 +960,26 @@ function Tab:_Start(entry)
     self.token = self.token + 1
     local token = self.token
     self.live, self.levelSel, self.amount, self.amountBad = nil, nil, nil, false -- the client list is new now
-    entry.status = "searching"
-    self.pending = { entry = entry, itemID = candidate.itemID, token = token }
+    if not rowsOnly then
+        entry.status = "searching"
+    end
+    self.pending = { entry = entry, itemID = candidate.itemID, token = token, rowsOnly = rowsOnly }
+    -- A search that gets no result ends with the timeout, so that the next search can start.
     self.deps.after(SEARCH_TIMEOUT, function()
         local pending = self.pending
         if pending and pending.token == token then
             self.pending = nil
-            entry.status = "skip"
-            entry.decision = { action = "skip", reason = "no response", key = candidate.key }
-            self.deps.log:Add(candidate, entry.decision)
+            if rowsOnly then
+                self.rowsFailed = candidate.itemID
+            elseif self:_InSelection(entry) then
+                entry.status = "skip"
+                entry.decision = { action = "skip", reason = "no response", key = candidate.key }
+                self.deps.log:Add(candidate, entry.decision)
+            else
+                entry.status = "waiting" -- not wanted any more: no mark, it is searched when it is selected again
+            end
             self:_Update()
-            self:_Next()
+            self:_AfterSearch()
         end
     end)
     return "started"
@@ -973,6 +993,99 @@ function Tab:_ScheduleRetry()
     self.deps.after(RETRY_SECONDS, function()
         self.retrying = false
         self:_Next()
+        self:_StartWantedRows()
+    end)
+end
+
+-- True if the entry is in the current selection.
+function Tab:_InSelection(entry)
+    for _, each in ipairs(self.selection) do
+        if each == entry then
+            return true
+        end
+    end
+    return false
+end
+
+-- True if the rows of the last search are the rows of this entry.
+function Tab:_HasRows(entry)
+    return self.live ~= nil and self.live.itemID == entry.item.itemID
+end
+
+-- After a search ended (result, drop or timeout): go on with the queue, else with the rows that the pane wants.
+function Tab:_AfterSearch()
+    self:_Next()
+    self:_StartWantedRows()
+end
+
+-- Latest selection wins. A click on one item sets self.wanted. The rows of that item are searched when no search is
+-- in flight, else when the search that runs has ended. A result for an entry that is not selected any more is
+-- dropped. Only the last click counts: the debounce below lets a fast run of clicks end in one search.
+function Tab:_WantRows(entry)
+    self.rowsToken = (self.rowsToken or 0) + 1
+    local token = self.rowsToken
+    self.rowsScheduled = true
+    self.deps.after(ROWS_DELAY, function()
+        if self.rowsToken ~= token then
+            return
+        end
+        self.rowsScheduled = false
+        self:_StartWantedRows()
+        self:_Update()
+    end)
+end
+
+-- Start the search for the rows of the wanted item if the pane lacks them and nothing else is searching.
+function Tab:_StartWantedRows()
+    local entry = self.wanted
+    if not entry or self.pending or self.queue or self.rowsScheduled then
+        return
+    end
+    if not self:_InSelection(entry) or self:_HasRows(entry) or self.rowsFailed == entry.item.itemID then
+        return
+    end
+    local candidate = entry.candidate
+    if not candidate or candidate.reason or not candidate.itemID or entry.status == "waiting"
+        or entry.status == "searching" or entry.next > 1 then
+        return
+    end
+    local commodity, maxStack = self:_StackInfo(candidate.itemID)
+    if commodity ~= true and maxStack == nil then
+        return
+    end
+    if self:_Launch(entry, true) == "wait" then
+        self:_ScheduleRetry()
+    else
+        self:_Update()
+    end
+end
+
+-- True while the pane waits for the rows of its item: a search is on its way or will start.
+function Tab:_PaneLoading()
+    local entry = self.wanted
+    if not entry or not self:_InSelection(entry) or self:_HasRows(entry) then
+        return false
+    end
+    if entry.status == "waiting" or entry.status == "searching" then
+        return true
+    end
+    return self.rowsFailed ~= entry.item.itemID and (self.pending ~= nil or self.rowsScheduled == true
+        or self.queue ~= nil or self.retrying == true)
+end
+
+-- Animate the dots of the loading text. The ticker stops when the pane has its rows.
+function Tab:_TickLoading()
+    if self.ticking then
+        return
+    end
+    self.ticking = true
+    self.deps.after(DOT_SECONDS, function()
+        self.ticking = false
+        if self.ui and self:_PaneLoading() then
+            self.dots = (self.dots or 0) % 3 + 1
+            self.ui.levelLoading:SetText("Loading prices" .. string.rep(".", self.dots))
+            self:_TickLoading()
+        end
     end)
 end
 
@@ -1014,7 +1127,7 @@ function Tab:RefreshBags()
         return false, "end the open buy first"
     end
     local deps = self.deps
-    self.queue = nil
+    self.queue, self.wanted = nil, nil
     self:_ClearInfoWait()
     local bagItems = deps.readBags()
     local byKey = self:_CandidatesByKey(bagItems)
@@ -1381,6 +1494,10 @@ function Tab:SelectNode(node, fromClick)
     self.selection = SellingTab.CollectEntries(node, {})
     self.postedCount = 0
     self.priceEntry = nil
+    -- Latest selection wins: this click is the item that the pane wants. An older wish is dropped.
+    local only = #self.selection == 1 and node.id:sub(1, 1) == "i" and self.selection[1] or nil
+    self.wanted, self.rowsFailed = only, nil
+    self.rowsToken, self.rowsScheduled = (self.rowsToken or 0) + 1, false
     if fromClick and #self.selection == 1 and node.id:sub(1, 1) == "i" then
         self:_Revive(self.selection[1])
     end
@@ -1397,6 +1514,10 @@ function Tab:SelectNode(node, fromClick)
     end
     if #list == 0 then
         self.queue = nil
+        -- A decided item has no rows in the pane unless it was the last search: ask for them (after a short delay).
+        if only and not self:_HasRows(only) then
+            self:_WantRows(only)
+        end
         self:_Update()
         return true
     end
@@ -1422,17 +1543,34 @@ function Tab:_OnResult(arg)
         return
     end
     self.pending = nil
+    local entry = pending.entry
+    if not self:_InSelection(entry) then
+        -- Latest selection wins: the user selected something else while this search ran. Drop the result, give the
+        -- entry its wait state back and start the search for the wanted item at once.
+        if not pending.rowsOnly and entry.status == "searching" then
+            entry.status = "waiting"
+        end
+        self:_Update()
+        self:_AfterSearch()
+        return
+    end
     local rows = self.deps.client.LiveRows(pending.itemID)
     -- The rows stay for the Buy button. The client list belongs to this item until the next search.
     self.live = { itemID = pending.itemID, rows = rows }
-    self:_Decide(pending.entry, rows)
-    self:_Next()
+    self.rowsFailed = nil
+    if pending.rowsOnly then
+        self:_Update()
+    else
+        self:_Decide(entry, rows)
+    end
+    self:_AfterSearch()
 end
 
 function Tab:_OnReady()
     if self.queue and not self.pending then
         self:_Next()
     end
+    self:_StartWantedRows()
 end
 
 -- The client made an auction. It ends a one-stack post that waits for it (_EndMulti). A multi-stack post
@@ -2593,6 +2731,19 @@ function Tab:_RefreshLevels()
     end
     local entry = self:_LevelEntry()
     local levels = entry and self:_LevelsOf(entry) or {}
+    -- While the pane waits for its rows it shows the loading text and no rows (not the rows of an older item).
+    local loading = self:_PaneLoading()
+    if loading ~= ui.levelLoading:IsShown() then
+        ui.levelLoading:SetShown(loading)
+        if loading then
+            self.dots = 1
+            ui.levelLoading:SetText("Loading prices.")
+        end
+    end
+    if loading then
+        levels = {}
+        self:_TickLoading()
+    end
     -- A single item has a price, not a unit price.
     local title = entry and entry.market and entry.market.single and "Price" or "Unit price"
     if ui.levelHeader.labels.price.GetText and ui.levelHeader.labels.price:GetText() ~= title then
@@ -2887,16 +3038,18 @@ end
 
 -- The rows of the level pane from price levels (BuyingPlan.PriceLevels), cheapest first, at most LEVEL_MAX.
 -- Row: { id, unitPrice, price, available, mine, deal }. A commodity level shows its quantity. An item level
--- (a stack group) shows "stacks x size". mine is true for your own level (the row is yellow). deal is true if the
--- price is a deal (see SellingTab.DealText); the price is green.
+-- (a stack group) shows "stacks x size" for a stack above 1, else the count. mine is true for your own level (the row
+-- is yellow). deal is true if the price is a deal (see SellingTab.DealText); the price is green.
 function SellingTab.LevelRows(levels, market)
     local rows = {}
     for _, level in ipairs(levels or {}) do
         if #rows >= LEVEL_MAX then
             break
         end
+        -- Available is the count of items. Only a real stack (a size above 1) is "stacks x size": a level of one-item
+        -- auctions (a Forever row, a TBC level of stacks of 1) is just the count.
         local available = tostring(level.quantity or 0)
-        if level.stackSize then
+        if level.stackSize and level.stackSize > 1 then
             available = (level.stacks or 1) > 1 and string.format("%d x %d", level.stacks, level.stackSize)
                 or tostring(level.stackSize)
         end
@@ -3604,6 +3757,10 @@ function Tab:_BuildContent()
     ui.levelHeaderOptions = { gap = LEVEL_OPTIONS.gap, left = levelEdge.left, right = levelEdge.right }
     ui.levelHeader = Kit.CreateColumnHeader(content, LEVEL_COLUMNS, ui.levelHeaderOptions)
     ui.levelHeader.frame:SetHeight(HEADER_HEIGHT)
+    -- The loading text of the pane: shown while the pane waits for the rows of its item.
+    ui.levelLoading = Kit.Label(ui.levelList.frame, "", "highlight")
+    ui.levelLoading:SetPoint("CENTER", ui.levelList.frame, "CENTER", 0, 0)
+    ui.levelLoading:Hide()
     -- The Buy row: the info text, the amount box and the Buy button. The click on Buy starts the buy (D26).
     ui.buyRow = CreateFrame("Frame", nil, content)
     ui.buyRow:SetSize(LEVEL_WIDTH.wide, BUY_ROW)
@@ -3721,6 +3878,13 @@ function Tab:Mount(parent, api)
         bus:Subscribe(closeEvent, OWNER, function()
             -- A scan cannot go on without the AH: end it so that Post is not locked for ever.
             self.queue, self.pending = nil, nil
+            -- A search that was in flight gets no result now: its entry waits again (it would stay "searching").
+            for _, entry in ipairs(self.entries) do
+                if entry.status == "searching" then
+                    entry.status = "waiting"
+                end
+            end
+            self.wanted, self.rowsFailed = nil, nil
             self:_ClearInfoWait()
             -- An open buy ends with no retry and no search: the AH is closed. The wait timers see no buy.
             if self.buy then
