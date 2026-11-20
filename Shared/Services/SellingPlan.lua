@@ -308,7 +308,8 @@ function SellingPlan.Profit(price, units, vendorPrice)
     local net = gross - cut - deposit
     local vendor = vendorPrice and vendorPrice * quantity or nil
     return {
-        gross = gross, cut = cut, deposit = deposit, depositKnown = known, net = net, afterCut = gross - cut, quantity = quantity,
+        gross = gross, cut = cut, deposit = deposit, depositKnown = known, net = net, afterCut = gross - cut,
+        quantity = quantity,
         vendor = vendor, vs = vendor and (net - vendor) or nil,
     }
 end
