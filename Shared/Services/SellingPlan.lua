@@ -290,7 +290,8 @@ end
 
 -- Potential profit of some auctions. Each unit is { quantity, deposit } (deposit can be nil).
 -- price is the copper for one item. vendorPrice is the vendor sell price of one item, or nil if not known.
--- Returns { gross, cut, deposit, depositKnown, net, vendor, vs, quantity }. net = gross - cut - deposit.
+-- Returns { gross, cut, deposit, depositKnown, net, afterCut, vendor, vs, quantity }. net = gross - cut - deposit.
+-- afterCut = gross - cut. The vendor rule uses afterCut (the deposit comes back on a sale): see VendorBetter.
 -- depositKnown is false if a unit has no deposit; the net then counts that deposit as 0 (net before deposit).
 -- vs = net - vendor (the vendor value of the same items); nil if the vendor price is not known.
 function SellingPlan.Profit(price, units, vendorPrice)
@@ -307,13 +308,14 @@ function SellingPlan.Profit(price, units, vendorPrice)
     local net = gross - cut - deposit
     local vendor = vendorPrice and vendorPrice * quantity or nil
     return {
-        gross = gross, cut = cut, deposit = deposit, depositKnown = known, net = net, quantity = quantity,
+        gross = gross, cut = cut, deposit = deposit, depositKnown = known, net = net, afterCut = gross - cut, quantity = quantity,
         vendor = vendor, vs = vendor and (net - vendor) or nil,
     }
 end
 
 -- The vendor skip rule. decision is a post decision, units are its units ({ quantity, deposit }).
--- Returns a skip decision if the vendor sell price of the items is higher than the AH net, else nil.
+-- Returns a skip decision if the vendor sell price of the items is higher than the AH price after the cut
+-- (no deposit in the rule), else nil.
 -- The rule is on unless the operation sets vendorSkip to false. With no vendor price it skips nothing.
 function SellingPlan.VendorSkip(candidate, decision, units, vendorPrice)
     local s = candidate.settings or {}
@@ -321,11 +323,12 @@ function SellingPlan.VendorSkip(candidate, decision, units, vendorPrice)
         return nil
     end
     local profit = SellingPlan.Profit(decision.price, units, vendorPrice)
-    if profit.vendor <= profit.net then
+    if profit.vendor <= profit.afterCut then
         return nil
     end
     return Skip(candidate, "vendor pays more than the AH", {
-        suggested = decision.price, competitor = decision.competitor, vendor = profit.vendor, net = profit.net,
+        suggested = decision.price, competitor = decision.competitor, vendor = profit.vendor,
+        afterCut = profit.afterCut,
     })
 end
 
