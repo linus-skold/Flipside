@@ -437,15 +437,16 @@ function SellingTab.TotalPrice(unitPrice, unit)
     return math.max(0, tonumber(unitPrice) or 0) * unit.quantity * (unit.stacks or 1)
 end
 
--- Tell if the vendor pays more than the AH for the next post. Returns the vendor total and the net, or nil.
+-- Tell if the vendor pays more than the AH for the next post. Returns the vendor total and the AH price after
+-- the cut (price x quantity - cut, no deposit: it comes back on a sale), or nil. This is the one vendor rule.
 -- unit is { quantity, deposit }; price is per item; vendorPrice is per item or nil.
 function SellingTab.VendorBetter(price, unit, vendorPrice)
     if not vendorPrice or not unit or not price then
         return nil
     end
     local profit = ns.SellingPlan.Profit(price, { unit }, vendorPrice)
-    if profit.vendor and profit.vendor > profit.net then
-        return profit.vendor, profit.net, profit
+    if profit.vendor and profit.vendor > profit.afterCut then
+        return profit.vendor, profit.afterCut, profit
     end
     return nil
 end
@@ -2165,7 +2166,7 @@ function Tab:_Warnings(entry, price)
     local skipReason
     if entry.status ~= "ready" then
         skipReason = entry.decision and entry.decision.reason or "no decision"
-        -- The vendor case is checked at the post with the real deposit (_VendorHold), so it has no line here.
+        -- The vendor case is checked at the post (_VendorHold), so it has no line here.
         if skipReason ~= VENDOR_SKIP then
             lines[1] = "The rule skips this item: " .. (SKIP_TEXT[skipReason] or skipReason) .. "."
         end
@@ -2212,21 +2213,22 @@ function SellingTab.VendorText(vendor, net)
     return "Sell to vendor for: " .. show(vendor, vendor > net) .. "\nAH net profit: " .. show(net, net > vendor)
 end
 
--- The vendor rule for one post: the held table { deposit, vendor, net, profit } if the vendor pays more than the
--- net of the post, else nil. It needs the vendor price and a real deposit. One rule: SellingTab.VendorBetter.
+-- The vendor rule for one post: the held table { vendor, net, profit } if the vendor pays more than the
+-- AH price after the cut, else nil. It needs the vendor price, not the deposit. One rule: SellingTab.VendorBetter.
+-- net in the table is the AH price after the cut.
 function Tab:_VendorHold(entry, price, unit)
     local vendor = self:_Vendor(entry)
-    if not vendor or type(unit.deposit) ~= "number" then
+    if not vendor then
         return nil
     end
-    local better, net, profit = SellingTab.VendorBetter(price, unit, vendor)
+    local better, afterCut, profit = SellingTab.VendorBetter(price, unit, vendor)
     if better then
-        return { deposit = unit.deposit, vendor = better, net = net, profit = profit }
+        return { vendor = better, net = afterCut, profit = profit }
     end
     return nil
 end
 
--- The backend held a post: with the real deposit the vendor pays more than the net. The item is back in the bag.
+-- The vendor pays more than the AH price after the cut. The item is still in the bag.
 -- Show the box. "Post anyway" posts once in its own click. "Cancel" posts nothing and skips the item.
 function Tab:_AskVendor(entry, held)
     local function stale()
@@ -2234,7 +2236,7 @@ function Tab:_AskVendor(entry, held)
     end
     local text = SellingTab.VendorText(held.vendor, held.net)
     -- The title names the item (item link in the quality colour), so the body is only the two lines.
-    local title = "Check the deposit: " .. (self:_ItemLink(entry) or self:_Name(entry))
+    local title = "Check the price: " .. (self:_ItemLink(entry) or self:_Name(entry))
     self.deps.warn(title, text, function()
         if stale() then
             return
@@ -2300,7 +2302,7 @@ function Tab:_PostStep()
     if not price then
         return false, why
     end
-    -- After "Post anyway" the user knows the real deposit, so the price warnings do not come back.
+    -- After "Post anyway" (vendorForce) or an accepted price box (warned), the warnings do not come back.
     if not entry.warned and not entry.vendorForce then
         local lines, unit = self:_Warnings(entry, price)
         if #lines > 0 then
@@ -2330,12 +2332,11 @@ function Tab:_PostStep()
     -- The planned item. A backend that posts from the sale slot refuses a bag slot that holds another item.
     local plannedID = entry.item and entry.item.itemID or entry.candidate and entry.candidate.itemID
     local call, confirm, held
-    -- The vendor rule at the post click. A deposit that the pane already shows is used at once. The user
-    -- decides in one box. "Post anyway" sets entry.vendorForce for the rest of the item, so the box does not
-    -- come again. An unknown deposit is read by the backend guard.
+    -- The vendor rule at the post click. It does not need the deposit. The user decides in one box.
+    -- "Post anyway" sets entry.vendorForce for the rest of the item, so the box does not come again.
     local forced = entry.vendorForce
-    if not forced and unit.deposit and quantity == unit.quantity then
-        held = self:_VendorHold(entry, price, { quantity = quantity, stacks = stacks, deposit = unit.deposit })
+    if not forced then
+        held = self:_VendorHold(entry, price, { quantity = quantity, stacks = stacks })
         if held then
             self:_AskVendor(entry, held)
             return true
@@ -2352,21 +2353,8 @@ function Tab:_PostStep()
         -- TBC: the buyout is for the stack (price of one item times the stack size). Forever has no stacks: the client
         -- takes the price of one item (PostItem: the item sell frame posts its per-item price box).
         local buyout = ns.SellingPlan.Multisell() and price * quantity or price
-        -- With no known deposit the backend reads it from the sale slot (TBC). If the vendor pays more than the
-        -- net after that deposit, the backend holds the post and the user decides.
-        local guard
-        if self:_Vendor(entry) and not forced then
-            guard = function(deposit)
-                if type(deposit) ~= "number" then
-                    return true
-                end
-                unit.deposit = deposit
-                held = self:_VendorHold(entry, price, { quantity = quantity, stacks = stacks, deposit = deposit })
-                return held == nil
-            end
-        end
         call = function()
-            return client.PostItem(unit.bag, unit.slot, decision.duration, quantity, nil, buyout, plannedID, guard,
+            return client.PostItem(unit.bag, unit.slot, decision.duration, quantity, nil, buyout, plannedID, nil,
                 stacks > 1 and stacks or nil)
         end
         confirm = function()
@@ -2387,15 +2375,9 @@ function Tab:_PostStep()
         self:_DropMulti()
         return self:_Fail(entry, tostring(needsConfirmation))
     end
-    if needsConfirmation == "held" or needsConfirmation then
+    -- The tab passes no guard, so the backend never holds the post ("held" cannot come back).
+    if needsConfirmation then
         self:_DropMulti()
-    end
-    if needsConfirmation == "held" then
-        if not held then
-            return self:_Fail(entry, "the post was held")
-        end
-        self:_AskVendor(entry, held)
-        return true
     end
     if needsConfirmation then
         self.awaiting = { entry = entry, unit = unit, quantity = quantity, confirm = confirm, price = price,
