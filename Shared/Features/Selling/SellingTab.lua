@@ -2302,7 +2302,7 @@ function Tab:_PostStep()
     if not price then
         return false, why
     end
-    -- After "Post anyway" the user knows the real deposit, so the price warnings do not come back.
+    -- After "Post anyway" (vendorForce) or an accepted price box (warned), the warnings do not come back.
     if not entry.warned and not entry.vendorForce then
         local lines, unit = self:_Warnings(entry, price)
         if #lines > 0 then
@@ -2375,15 +2375,9 @@ function Tab:_PostStep()
         self:_DropMulti()
         return self:_Fail(entry, tostring(needsConfirmation))
     end
-    if needsConfirmation == "held" or needsConfirmation then
+    -- The tab passes no guard, so the backend never holds the post ("held" cannot come back).
+    if needsConfirmation then
         self:_DropMulti()
-    end
-    if needsConfirmation == "held" then
-        if not held then
-            return self:_Fail(entry, "the post was held")
-        end
-        self:_AskVendor(entry, held)
-        return true
     end
     if needsConfirmation then
         self.awaiting = { entry = entry, unit = unit, quantity = quantity, confirm = confirm, price = price,
