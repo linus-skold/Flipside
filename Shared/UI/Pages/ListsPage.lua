@@ -116,8 +116,8 @@ end
 -- Returns { { kind = "head" | "item", left, right } }.
 function ListsPage.MarginRows(margin, saved, nameOf)
     local rows = {}
-    local function add(kind, left, right)
-        rows[#rows + 1] = { kind = kind, left = left, right = right or "" }
+    local function add(kind, left, right, note)
+        rows[#rows + 1] = { kind = kind, left = left, right = right or "", note = note }
     end
     add("head", "Materials for " .. margin.crafts .. (margin.crafts == 1 and " craft" or " crafts"))
     for index, line in ipairs(margin.materials) do
@@ -125,7 +125,7 @@ function ListsPage.MarginRows(margin, saved, nameOf)
         if line.total then
             right = money(line.total) .. (line.estimate and " (est.)" or "")
         end
-        add("item", line.needed .. "× " .. nameOf(saved.items[index]), right)
+        add("item", line.needed .. "× " .. nameOf(saved.items[index]), right, line.source)
     end
     if #margin.materials == 0 then
         add("item", "No materials yet")
@@ -138,7 +138,7 @@ function ListsPage.MarginRows(margin, saved, nameOf)
     end
     for index, line in ipairs(margin.results) do
         add("item", rangeText(line.min, line.max) .. "× " .. nameOf(saved.results[index]),
-            line.net and ("avg " .. money(line.net.avg)) or "no price")
+            line.net and ("avg " .. money(line.net.avg)) or "no price", line.source)
     end
     return rows
 end
@@ -400,7 +400,8 @@ function ListsPage.Build(content, deps)
                 row.left:SetJustifyH("LEFT")
             end
             row.left:SetText(data.left)
-            row.right:SetText(data.right)
+            -- The source and the age of a scan price, for example "latest scan, 12 min ago".
+            row.right:SetText(data.note and (data.right .. "  (" .. data.note .. ")") or data.right)
         end })
     page.margin.frame:SetPoint("TOPLEFT", content, "TOPLEFT", MARGIN_X, -44)
     page.margin.frame:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", 0, 26 + TABLE_HEIGHT + 4)
@@ -735,6 +736,12 @@ function ListsPage.Build(content, deps)
         deps.bus:Subscribe(EVENT, OWNER, function()
             page.Refresh()
         end)
+        -- New scan data changes the material and result prices: draw the margin again at once.
+        for _, event in ipairs({ "Flipside.ScanFinished", "Flipside.PriceCaptured" }) do
+            deps.bus:Subscribe(event, OWNER, function()
+                page.Refresh()
+            end)
+        end
     end
 
     -- Shift-click on an item link puts the link in the add box while it has focus. WoW: Forever calls

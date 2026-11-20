@@ -524,10 +524,33 @@ describe("ListsPage", function()
             local rows = page.margin.data
             assert.are.equal(5, #rows)
             assert.are.same({ kind = "head", left = "Materials for 1 craft", right = "" }, rows[1])
-            assert.are.same({ kind = "item", left = "4× item 100", right = "1200c (est.)" }, rows[2])
-            assert.are.same({ kind = "item", left = "1× item 200", right = "50c (est.)" }, rows[3])
+            assert.are.same({ kind = "item", left = "4× item 100", right = "1200c (est.)", note = "14-day average" },
+                rows[2])
+            assert.are.same({ kind = "item", left = "1× item 200", right = "50c (est.)", note = "14-day average" },
+                rows[3])
             assert.are.same({ kind = "head", left = "Results (value after the 5% cut)", right = "" }, rows[4])
-            assert.are.same({ kind = "item", left = "1-2× Dust", right = "avg 1425c" }, rows[5])
+            assert.are.same({ kind = "item", left = "1-2× Dust", right = "avg 1425c", note = "14-day average" },
+                rows[5])
+        end)
+
+        it("shows the new prices at once when a scan ends or a price is captured", function()
+            assert.are.equal("50c (est.)", right(3))
+            scan["200"] = { scanMarket = 70 }
+            bus:Emit("Flipside.ScanFinished", { result = "ok" })
+            assert.are.equal("70c (est.)", right(3))
+            scan["200"] = { scanMarket = 90 }
+            bus:Emit("Flipside.PriceCaptured", "200")
+            assert.are.equal("90c (est.)", right(3))
+        end)
+
+        it("prices with the latest scan first and shows the source and the age", function()
+            scan["200"] = { scanRecent = 80, scanMarket = 50, scanAge = 0.2 }
+            scan["300"] = { scanRecent = 2000, scanMarket = 1000, scanMin = 900, scanAge = 3 }
+            page.Refresh()
+            assert.are.equal("80c (est.)", right(3))
+            assert.are.equal("latest scan, 12 min ago", page.margin.data[3].note)
+            assert.are.equal("avg 2850c", right(5))
+            assert.are.equal("latest scan, 3 h ago", page.margin.data[5].note)
         end)
 
         it("shows the cost once and the table with the columns Min, Avg and Max", function()
@@ -545,7 +568,7 @@ describe("ListsPage", function()
 
         it("draws the rows in the list", function()
             assert.are.equal("4× item 100", page.margin.rows[2].left:GetText())
-            assert.are.equal("1200c (est.)", page.margin.rows[2].right:GetText())
+            assert.are.equal("1200c (est.)  (14-day average)", page.margin.rows[2].right:GetText())
         end)
 
         it("uses the live price of this session when there is one, and no estimate mark for it", function()

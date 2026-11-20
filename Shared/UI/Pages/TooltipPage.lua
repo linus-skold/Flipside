@@ -17,7 +17,7 @@ local REMOVE_DIALOG = "FLIPSIDE_REMOVE_TOOLTIP_LINE"
 local RESET_DIALOG = "FLIPSIDE_RESET_TOOLTIP"
 local EDITOR_DIALOG = "FlipsideFormulaEditor"
 local EDITOR_HELP = "Missing prices are invalid, never 0. Functions: min max avg first check ifgt iflt ifeq round."
-local NEW_LABEL, NEW_FORMULA = "New line", "scanmarket"
+local NEW_LABEL, NEW_FORMULA = "New line", "first(scanrecent, scanmarket)"
 local READ_ONLY = "Settings are read-only"
 local ALT_HINT = "Hold Alt over an item to see the value of the whole stack."
 

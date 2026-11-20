@@ -72,7 +72,7 @@ describe("TBC post durations", function()
         mock.fire("PLAYER_LOGIN")
         assert.is_table(ns.db)
         assert.equal(48, _G.FlipsideDB_TBC["p/Default/operations"].ops[1].settings.duration)
-        assert.equal(2, _G.FlipsideDB_TBC._schema)
+        assert.equal(3, _G.FlipsideDB_TBC._schema)
     end)
 
     it("leaves Forever durations unchanged", function()

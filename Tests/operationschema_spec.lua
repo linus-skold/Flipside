@@ -2,8 +2,9 @@ local manifest = require("Tests.manifest")
 describe("OperationSchema", function()
     local ns, S, compile
 
-    local DEFAULT = "check(first(crafting, scanmarket), "
+    local DEFAULT = "check(first(crafting, scanrecent, scanmarket), "
         .. "max(0.25 * avg(crafting, scanmarket, scanhistorical), 1.5 * vendorsell))"
+    local PRICE = "first(scanrecent, scanmarket)"
 
     local function load(path)
         assert(loadfile(path))("Flipside", ns)
@@ -64,7 +65,7 @@ describe("OperationSchema", function()
 
     it("gives defaults", function()
         assert.same({
-            minPrice = DEFAULT, normalPrice = "scanmarket", maxPrice = "2 * scanmarket", undercut = 1,
+            minPrice = DEFAULT, normalPrice = PRICE, maxPrice = "2 * " .. PRICE, undercut = 1,
             duration = 24, postCap = 0, stackSize = 0, keepInBags = 0, belowMin = "skip", aboveMax = "postAtMax",
             vendorSkip = true, cancelUndercut = true, needScanData = true,
             maxDataAgeHours = 72, minSamples = 3,
@@ -73,8 +74,8 @@ describe("OperationSchema", function()
         assert.equal(1, builtIn.undercut)
         assert.equal("first(vendorsell, 1)", builtIn.minPrice)
         assert.is_false(builtIn.needScanData)
-        assert.equal("scanmarket", builtIn.normalPrice)
-        assert.same({ maxPrice = "scanmarket", showAboveMax = false, maxDataAgeHours = 72, minSamples = 3 },
+        assert.equal(PRICE, builtIn.normalPrice)
+        assert.same({ maxPrice = PRICE, showAboveMax = false, maxDataAgeHours = 72, minSamples = 3 },
             S.Defaults("buying"))
         assert.same({ sellToVendor = false, keepInBags = 0, safetyMultiple = 2, maxDataAgeHours = 72, minSamples = 3 },
             S.Defaults("vendoring"))
@@ -307,7 +308,14 @@ describe("OperationSchema", function()
             local ok, errors = S.Validate("buying", settings, compile)
             assert.same({}, errors)
             assert.is_true(ok)
-            assert.equal("scanmarket", S.Defaults("buying").maxPrice)
+            assert.equal(PRICE, S.Defaults("buying").maxPrice)
+        end)
+
+        it("keeps the old default texts for the migration", function()
+            assert.equal("scanmarket", S.LEGACY_PRICES.selling.normalPrice)
+            assert.equal("2 * scanmarket", S.LEGACY_PRICES.selling.maxPrice)
+            assert.equal("scanmarket", S.LEGACY_PRICES.buying.maxPrice)
+            assert.is_not.equal(DEFAULT, S.LEGACY_PRICES.selling.minPrice)
         end)
 
         it("reports unknown field", function()

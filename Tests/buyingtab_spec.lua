@@ -5,7 +5,7 @@ local function loadModules()
     local ns = { ReportError = function() end, Flavour = { hasCommodityMarket = true } }
     for _, name in ipairs({ "EventBus", "ItemString", "BuyingPlan",
         "BuyFlow", "Theme", "Widgets", "Window", "List", "Tree",
-        "Tabs",
+        "Tabs", "ScanClock", "ScanSources",
         "Columns", "AuctionTabs", "BuyDialog", "BuyingTab" }) do
         assert(loadfile(manifest.path(name)))("Flipside", ns)
     end
@@ -330,7 +330,7 @@ describe("BuyingTab", function()
             end
             tab.deps.rules = rules
             tab._ScanInfo = function()
-                return { market = 500 }
+                return { price = 500 }
             end
             tab.amount = nil
             tab:RefreshList()
@@ -347,10 +347,33 @@ describe("BuyingTab", function()
             tab:RefreshList()
             assert.are.equal("1500c", ui.tree.list.rows[2].parts.price.text)
             tab._ScanInfo = function()
-                return { market = nil }
+                return { price = nil }
             end
             tab:RefreshList()
             assert.are.equal("-", ui.tree.list.rows[2].parts.price.text)
+        end)
+
+        it("takes the price text from the latest scan, and from the average if there is no latest scan", function()
+            local now = 20 * 86400 + 3600
+            local day = ns.ScanClock.DayOf(now) - 1
+            local older = { day = day, min = 900, market = 1000, qty = 5, auctions = 2 }
+            local record = {
+                latest = { time = now - 600, min = 400, market = 450, qty = 5, auctions = 2 }, days = { older },
+            }
+            tab.deps.getRecord = function()
+                return record
+            end
+            tab.deps.now = function()
+                return now
+            end
+            local info = tab:_ScanInfo({ key = "20" })
+            assert.are.equal(450, info.price)
+            -- The deal percent still compares with the 14-day average.
+            assert.are.equal(1000, info.market)
+            record = { days = { older } }
+            info = tab:_ScanInfo({ key = "20" })
+            assert.are.equal(1000, info.price)
+            assert.are.equal(1000, info.market)
         end)
 
         it("needs a selected item", function()

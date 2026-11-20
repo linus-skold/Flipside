@@ -580,6 +580,9 @@ function Tab:_OnVendorScan(summary)
     end
     if self.active and self.source == "vendor" then
         self:RefreshList()
+    elseif self.active and self.ui then
+        -- The scan prices (market text, craft margin) changed: draw the tab again.
+        self:_Update()
     end
 end
 
@@ -2652,11 +2655,11 @@ local function makeItemParts(row)
     return parts
 end
 
--- The price text of an item with no max price: the market price. For the selected commodity with a known amount, it
--- is the total for that amount. "-" if no market price is known.
+-- The price text of an item with no max price: the latest scan price, else the 14-day average. For the selected
+-- commodity with a known amount, it is the total for that amount. "-" if no price is known.
 function Tab:_MarketText(entry)
     local info = self:_ScanInfo(entry)
-    local market = info and info.market
+    local market = info and info.price
     if type(market) ~= "number" or market <= 0 then
         return "-"
     end
@@ -2927,7 +2930,8 @@ function Tab:_UpdateCraft()
     self.marginTip = BuyingTab.MarginTip(margin)
 end
 
--- The market value (ScanMarket) and the age in hours of the scan data of an item, or nil if the item has no scan data.
+-- The scan data of an item, or nil if the item has no scan data: the market value (ScanMarket, the 14-day average,
+-- for the deal percent), the price (ScanRecent, else ScanMarket, for the price text) and the age in hours.
 function Tab:_ScanInfo(entry)
     local deps = self.deps
     local record = deps.getRecord and entry.key and deps.getRecord(entry.key)
@@ -2939,7 +2943,9 @@ function Tab:_ScanInfo(entry)
         return nil
     end
     local values = ns.ScanSources.Compute(record, now)
-    return { market = values.scanMarket, ageHours = values.scanAge }
+    return {
+        market = values.scanMarket, price = values.scanRecent or values.scanMarket, ageHours = values.scanAge,
+    }
 end
 
 -- Update the buttons, the list and the right side from the state.

@@ -148,7 +148,7 @@ describe("BuyingTab search lists", function()
         it("shows the market price of a list item, and the total only on the selected commodity", function()
             local id = lists:Create("Recipe", { { itemID = 200 }, { itemID = 300 } })
             tab._ScanInfo = function()
-                return { market = 250 }
+                return { price = 250 }
             end
             tab:SelectList(id)
             tab:SetAmount("4")

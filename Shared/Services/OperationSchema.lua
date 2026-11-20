@@ -3,8 +3,22 @@ local _, ns = ...
 local OperationSchema = {}
 ns.OperationSchema = OperationSchema
 
-local DEFAULT_MIN = "check(first(crafting, scanmarket), "
+-- The price of an item: the latest scan, or the 14-day average if there is no latest scan (changed 2026-11-19).
+local PRICE = "first(scanrecent, scanmarket)"
+local DEFAULT_MIN = "check(first(crafting, scanrecent, scanmarket), "
     .. "max(0.25 * avg(crafting, scanmarket, scanhistorical), 1.5 * vendorsell))"
+
+-- The default price formulas before 2026-11-19, by operation type. A saved formula with this text is rewritten
+-- to the current default (schema version 3, see Init.lua).
+OperationSchema.LEGACY_PRICES = {
+    selling = {
+        minPrice = "check(first(crafting, scanmarket), "
+            .. "max(0.25 * avg(crafting, scanmarket, scanhistorical), 1.5 * vendorsell))",
+        normalPrice = "scanmarket",
+        maxPrice = "2 * scanmarket",
+    },
+    buying = { maxPrice = "scanmarket" },
+}
 
 -- The post durations in hours: 2, 8 and 24 on WoW: Forever, 12, 24 and 48 on TBC (ns.Flavour.durations).
 local DURATIONS = ns.Flavour and ns.Flavour.durations or { 2, 8, 24 }
@@ -59,11 +73,11 @@ local FIELDS = {
             help = "Never post below this price.",
         },
         {
-            key = "normalPrice", label = "Normal price", kind = "formula", default = "scanmarket",
+            key = "normalPrice", label = "Normal price", kind = "formula", default = PRICE,
             help = "The price to post at when there is no competition.",
         },
         {
-            key = "maxPrice", label = "Maximum price", kind = "formula", default = "2 * scanmarket",
+            key = "maxPrice", label = "Maximum price", kind = "formula", default = "2 * " .. PRICE,
             help = "Never post above this price.",
         },
         {
@@ -128,7 +142,7 @@ local FIELDS = {
     },
     buying = {
         {
-            key = "maxPrice", label = "Maximum price", kind = "formula", default = "scanmarket", optional = true,
+            key = "maxPrice", label = "Maximum price", kind = "formula", default = PRICE, optional = true,
             help = "Never buy above this price. Empty means no limit.",
         },
         {
