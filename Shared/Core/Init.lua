@@ -650,9 +650,10 @@ local function openGuildSync()
             isEnabled = guildSyncEnabled,
             isInGuild = IsInGuild,
             selfName = function()
-                -- No realm known: the name alone (never "Name-nil"). GuildSync adds the realm to a bare name.
-                local realm = currentRealm()
-                return tostring(UnitName("player")) .. (realm and ("-" .. realm) or "")
+                -- Saved or client realm, else the surname (Forever), else the name alone. Never "Name-nil".
+                local name, surname = UnitName("player")
+                return ns.CharacterKey.FullSelfName(name, surname, ns.CharacterName and ns.CharacterName.Surname(
+                    characterKey()))
             end,
             realm = currentRealm,
             scope = scope,

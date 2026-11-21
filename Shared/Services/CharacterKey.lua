@@ -89,6 +89,18 @@ function CharacterKey.ClientRealm()
     return nil
 end
 
+-- The "Name-Realm" text of the current character, for a text only (never a key, never saved). Order: the realm
+-- (CurrentRealm), then the surname on Forever (surname = the 2nd result of UnitName, else savedSurname), then the
+-- name alone. An empty realm is normal on Forever (user, 2026-11-21).
+function CharacterKey.FullSelfName(name, surname, savedSurname)
+    name = tostring(name)
+    local suffix = CharacterKey.CurrentRealm()
+    if not suffix and CharacterKey.UsesGuid() then
+        suffix = (isText(surname) and surname) or (isText(savedSurname) and savedSurname) or nil
+    end
+    return suffix and (name .. "-" .. suffix) or name
+end
+
 -- The realm of the current character: the client realm, else the realm saved in the metadata of the player GUID
 -- (Forever, after the DB is open), else nil. Use this for each realm read. Never use "Name-" .. nil.
 function CharacterKey.CurrentRealm()
