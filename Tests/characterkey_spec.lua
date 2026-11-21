@@ -141,6 +141,30 @@ describe("CharacterKey", function()
             assert.is_nil(K.CurrentRealm())
         end)
 
+        it("FullSelfName: saved realm, then surname, then saved surname, then the name alone", function()
+            _G.GetNormalizedRealmName = function() return nil end
+            assert.are.equal("Bob-Mild", K.FullSelfName("Bob", "Mild", "Saved"))
+            assert.are.equal("Bob-Saved", K.FullSelfName("Bob", nil, "Saved"))
+            assert.are.equal("Bob-Saved", K.FullSelfName("Bob", "", "Saved"))
+            assert.are.equal("Bob", K.FullSelfName("Bob", nil, nil))
+            K.SaveMeta(GUID_A, "Bob", "Realm")
+            assert.are.equal("Bob-Realm", K.FullSelfName("Bob", "Mild", "Saved"))
+        end)
+
+        it("FullSelfName: TBC never uses a surname", function()
+            _G.GetNormalizedRealmName = function() return nil end
+            local tbc = load({ usesSurname = false, characterGuidKey = false })
+            assert.are.equal("Bob", tbc.CharacterKey.FullSelfName("Bob", "Mild", "Saved"))
+        end)
+
+        it("SaveMeta never stores a surname as the realm", function()
+            _G.GetNormalizedRealmName = function() return nil end
+            K.SaveMeta(GUID_A, "Bob", K.ClientRealm())
+            K.FullSelfName("Bob", "Mild", nil)
+            assert.is_nil(K.Realm(GUID_A))
+            assert.is_nil(K.CurrentRealm())
+        end)
+
         it("does not use the metadata if the GUID is a secret value", function()
             K.SaveMeta(GUID_A, "Bob", "Saved")
             _G.issecretvalue = function() return true end
