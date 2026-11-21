@@ -660,8 +660,8 @@ local function openGuildSync()
             -- Other spellings of the own name: the name alone, "Name Surname" (client separator), "Name-Surname".
             selfAliases = function()
                 local name, surname = UnitName("player")
-                local saved = ns.CharacterName and ns.CharacterName.Surname(characterKey())
-                return ns.CharacterKey.SelfAliases(name, surname, saved,
+                local savedSurname = ns.CharacterName and ns.CharacterName.Surname(characterKey())
+                return ns.CharacterKey.SelfAliases(name, surname, savedSurname,
                     ns.CharacterName and ns.CharacterName.Separator())
             end,
             realm = currentRealm,
