@@ -77,7 +77,8 @@ function CharacterKey.ClientRealm()
             return realm
         end
     end
-    if type(api.GetRealmName) == "function" then
+    -- The GetRealmName fallback is for Forever only. TBC keeps the old rule (no realm gives no key).
+    if CharacterKey.UsesGuid() and type(api.GetRealmName) == "function" then
         local realm = api.GetRealmName()
         if isText(realm) then
             realm = realm:gsub("%s", "")
@@ -99,6 +100,19 @@ function CharacterKey.FullSelfName(name, surname, savedSurname)
         suffix = (isText(surname) and surname) or (isText(savedSurname) and savedSurname) or nil
     end
     return suffix and (name .. "-" .. suffix) or name
+end
+
+-- Other spellings of the own name, for a self check: the name alone, and on Forever "Name<separator>Surname" and
+-- "Name-Surname" if a surname is known (surname, else savedSurname). The separator is optional (default a space).
+function CharacterKey.SelfAliases(name, surname, savedSurname, separator)
+    name = tostring(name)
+    local list = { name }
+    local last = isText(surname) and surname or (isText(savedSurname) and savedSurname) or nil
+    if last and CharacterKey.UsesGuid() then
+        list[#list + 1] = name .. (isText(separator) and separator or " ") .. last
+        list[#list + 1] = name .. "-" .. last
+    end
+    return list
 end
 
 -- The realm of the current character: the client realm, else the realm saved in the metadata of the player GUID

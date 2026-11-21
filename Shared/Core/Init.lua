@@ -81,7 +81,8 @@ end)
 
 -- Character key (CharacterKey): the player GUID on Forever, Name-Realm on TBC. It is Name-Realm for a session in
 -- which the client gives no usable GUID (nil, not a string or a secret value). It is nil if the client gives no
--- name or realm. The second result is the legacy key Name-Realm, only if the key is a GUID.
+-- name, or if it gives no realm and no usable GUID. The second result is the legacy key Name-Realm, only if the key
+-- is a GUID and a realm is known (client or saved). A GUID with no realm gives the GUID key and no legacy key.
 -- The realm of this character (CharacterKey.CurrentRealm): the client realm, else the saved realm, else nil.
 local function currentRealm()
     return ns.CharacterKey.CurrentRealm()
@@ -199,9 +200,10 @@ local function openSettingsDB()
 end
 
 -- Character key (SPEC 5.5, "Character names on Forever"), Forever only: the key is a GUID.
--- Save the name and the realm of this character as metadata. The first character that logs in with a name and a
--- realm claims the legacy Name-Realm data (settings, holdings, balance, ledger buffer). The ledger addon store
--- moves its legacy data when it opens (openLedger). A session with no usable GUID moves nothing.
+-- Save the name and the realm of this character as metadata (the client realm only). The first character that logs
+-- in with a name and a realm (client or saved) claims the legacy Name-Realm data (settings, holdings, balance,
+-- ledger buffer). The ledger addon store moves its legacy data when it opens (openLedger). A session with no usable
+-- GUID moves nothing. A session with a GUID and no known realm saves the name, claims and moves nothing.
 local function openCharacterKey()
     local CharacterKey = ns.CharacterKey
     CharacterKey.Setup({ db = ns.db })
@@ -654,6 +656,13 @@ local function openGuildSync()
                 local name, surname = UnitName("player")
                 return ns.CharacterKey.FullSelfName(name, surname, ns.CharacterName and ns.CharacterName.Surname(
                     characterKey()))
+            end,
+            -- Other spellings of the own name: the name alone, "Name Surname" (client separator), "Name-Surname".
+            selfAliases = function()
+                local name, surname = UnitName("player")
+                local saved = ns.CharacterName and ns.CharacterName.Surname(characterKey())
+                return ns.CharacterKey.SelfAliases(name, surname, saved,
+                    ns.CharacterName and ns.CharacterName.Separator())
             end,
             realm = currentRealm,
             scope = scope,

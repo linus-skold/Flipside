@@ -227,6 +227,27 @@ describe("GuildSync", function()
             assert.are.equal(0, sync:Status().senders)
         end)
 
+        it("ignores own messages in every spelling of the name when no realm is known", function()
+            deps.realm = function()
+                return nil
+            end
+            deps.selfName = function()
+                return "Me-Mild"
+            end
+            deps.selfAliases = function()
+                return { "Me", "Me Mild", "Me-Mild" }
+            end
+            for _, text in ipairs(remoteSet(5)) do
+                for _, sender in ipairs({ "Me", "Me Mild", "Me-Mild", "me mild" }) do
+                    receive(text, sender)
+                end
+            end
+            assert.are.equal(0, deps.guildStore:Count())
+            assert.are.equal(0, sync:Status().senders)
+            receive(remoteSet(5)[1], "Bob")
+            assert.are.equal(1, sync:Status().senders)
+        end)
+
         it("ignores other prefixes and other channels", function()
             for _, text in ipairs(remoteSet(5)) do
                 receive(text, "Bob-Realm", "GUILD", "Other")

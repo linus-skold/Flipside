@@ -151,6 +151,22 @@ describe("CharacterKey", function()
             assert.are.equal("Bob-Realm", K.FullSelfName("Bob", "Mild", "Saved"))
         end)
 
+        it("TBC does not use GetRealmName if the normalised realm is missing", function()
+            _G.GetNormalizedRealmName = function() return nil end
+            _G.GetRealmName = function() return "Some Realm" end
+            local tbc = load({ usesSurname = false, characterGuidKey = false })
+            assert.is_nil(tbc.CharacterKey.ClientRealm())
+            assert.is_nil(tbc.CharacterKey.CurrentRealm())
+        end)
+
+        it("SelfAliases: the name, then Name Surname with the separator, then Name-Surname", function()
+            assert.are.same({ "Bob", "Bob Mild", "Bob-Mild" }, K.SelfAliases("Bob", "Mild", nil))
+            assert.are.same({ "Bob", "Bob_Saved", "Bob-Saved" }, K.SelfAliases("Bob", nil, "Saved", "_"))
+            assert.are.same({ "Bob" }, K.SelfAliases("Bob", nil, nil))
+            local tbc = load({ usesSurname = false, characterGuidKey = false })
+            assert.are.same({ "Bob" }, tbc.CharacterKey.SelfAliases("Bob", "Mild", nil))
+        end)
+
         it("FullSelfName: TBC never uses a surname", function()
             _G.GetNormalizedRealmName = function() return nil end
             local tbc = load({ usesSurname = false, characterGuidKey = false })

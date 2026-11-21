@@ -19,6 +19,9 @@ local function session(options)
     local savedDB, savedLedger = _G.FlipsideDB, _G.FlipsideLedgerDB
     mock.reset()
     mock.playerName, mock.realmName = "Tester", "TestRealm"
+    if options.noRealm then
+        mock.realmName = nil
+    end
     mock.playerSurname, mock.playerGuid = options.surname, options.guid
     mock.money = options.money or 0
     _G.issecretvalue = options.isSecret
@@ -95,6 +98,25 @@ describe("Init character key", function()
                 for _, name in ipairs(ns.db:ListCharacters()) do
                     assert.are_not.equal(LEGACY, name)
                 end
+            end)
+
+            it("uses the saved realm for the claim and the move if the client gives no realm", function()
+                session({ surname = "Smith", guid = SMITH })
+                _G.FlipsideDB["c/" .. LEGACY .. "/example"] = 7
+                session({ surname = "Smith", guid = SMITH, noRealm = true })
+                assert.are.equal("TestRealm", ns.CharacterKey.Realm(SMITH))
+                assert.are.equal(7, ns.db:GetFor(SMITH, "example"))
+                assert.is_nil(ns.db:GetFor(LEGACY, "example"))
+            end)
+
+            it("claims and moves nothing if no realm is known", function()
+                _G.FlipsideDB = legacy()
+                session({ surname = "Smith", guid = SMITH, noRealm = true })
+                assert.is_table(ns.db)
+                assert.is_nil(ns.CharacterKey.Realm(SMITH))
+                assert.are.same({}, ns.CharacterKey.Claims())
+                assert.is_nil(ns.db:GetFor(SMITH, "example"))
+                assert.are.equal(7, ns.db:GetFor(LEGACY, "example"))
             end)
 
             it("moves once: a second login of the same character changes nothing", function()
