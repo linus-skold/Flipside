@@ -267,16 +267,26 @@ describe("Init", function()
             assert.is_true(mock.messages[1]:find("^Flipside: settings are not available") ~= nil)
         end)
 
-        it("creates no DB and prints one line for a nil or empty realm", function()
+        it("opens the DB on Forever with the GUID key for a nil or empty realm (2026-11-21)", function()
             mock.realmName = nil
             mock.fire("PLAYER_LOGIN")
-            assert.is_nil(ns.db)
-            assert.are.equal(1, #mock.messages)
-            mock.messages = {}
+            assert.is_table(ns.db)
+            assert.are.equal(0, #mock.messages)
+            local found = false
+            for _, value in pairs(_G.FlipsideDB) do
+                if type(value) == "table" and value[mock.guidFor("Tester")] == "Default" then
+                    found = true
+                end
+            end
+            assert.is_true(found)
+        end)
+
+        it("opens the DB for an empty realm and saves no realm in the metadata", function()
             mock.realmName = ""
             mock.fire("PLAYER_LOGIN")
-            assert.is_nil(ns.db)
-            assert.are.equal(1, #mock.messages)
+            assert.is_table(ns.db)
+            assert.is_nil(ns.CharacterKey.Realm(mock.guidFor("Tester")))
+            assert.are.equal("Tester", ns.CharacterKey.Name(mock.guidFor("Tester")))
         end)
 
         it("emits Flipside.DBReady before Flipside.Login", function()

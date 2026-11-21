@@ -60,11 +60,29 @@ describe("CharacterKey", function()
             assert.is_nil(legacy)
         end)
 
-        it("gives nil if the name or the realm is missing", function()
+        it("gives nil if the name is missing", function()
             assert.is_nil((K.Compute(nil, "Realm", GUID_A)))
-            assert.is_nil((K.Compute("Bob", nil, GUID_A)))
             assert.is_nil((K.Compute("", "Realm", GUID_A)))
-            assert.is_nil((K.Compute("Bob", "", GUID_A)))
+        end)
+
+        it("gives the GUID and no legacy key on Forever if the realm is missing", function()
+            local key, legacy = K.Compute("Bob", nil, GUID_A)
+            assert.are.equal(GUID_A, key)
+            assert.is_nil(legacy)
+            key, legacy = K.Compute("Bob", "", GUID_A)
+            assert.are.equal(GUID_A, key)
+            assert.is_nil(legacy)
+        end)
+
+        it("gives nil on Forever if the realm and a usable GUID are missing", function()
+            assert.is_nil((K.Compute("Bob", nil, nil)))
+            assert.is_nil((K.Compute("Bob", "", "Creature-0-1-2-3-4-5")))
+        end)
+
+        it("gives nil on a flavour with no GUID key (TBC) if the realm is missing", function()
+            local tbc = load({ usesSurname = false, characterGuidKey = false })
+            assert.is_nil((tbc.CharacterKey.Compute("Bob", nil, GUID_A)))
+            assert.is_nil((tbc.CharacterKey.Compute("Bob", "", GUID_A)))
         end)
 
         it("keeps Name-Realm on a flavour with no GUID key (TBC)", function()
@@ -72,6 +90,68 @@ describe("CharacterKey", function()
             local key, legacy = tbc.CharacterKey.Compute("Bob", "Realm", GUID_A)
             assert.are.equal("Bob-Realm", key)
             assert.is_nil(legacy)
+        end)
+    end)
+
+    describe("CurrentRealm", function()
+        local saved = {}
+        local NAMES = { "GetNormalizedRealmName", "GetRealmName", "UnitGUID", "issecretvalue" }
+
+        before_each(function()
+            for _, name in ipairs(NAMES) do
+                saved[name] = _G[name]
+                _G[name] = nil
+            end
+            _G.UnitGUID = function()
+                return GUID_A
+            end
+        end)
+
+        after_each(function()
+            for _, name in ipairs(NAMES) do
+                _G[name] = saved[name]
+            end
+        end)
+
+        it("uses the normalised realm first", function()
+            _G.GetNormalizedRealmName = function() return "Norm" end
+            _G.GetRealmName = function() return "Real Name" end
+            K.SaveMeta(GUID_A, "Bob", "Saved")
+            assert.are.equal("Norm", K.CurrentRealm())
+        end)
+
+        it("uses the realm name with no spaces if the normalised realm is missing", function()
+            _G.GetNormalizedRealmName = function() return "" end
+            _G.GetRealmName = function() return "Real Name" end
+            K.SaveMeta(GUID_A, "Bob", "Saved")
+            assert.are.equal("RealName", K.CurrentRealm())
+        end)
+
+        it("uses the saved realm of the GUID if the client gives none", function()
+            _G.GetNormalizedRealmName = function() return nil end
+            _G.GetRealmName = function() return nil end
+            K.SaveMeta(GUID_A, "Bob", "Saved")
+            assert.are.equal("Saved", K.CurrentRealm())
+        end)
+
+        it("gives nil if the client and the metadata give no realm", function()
+            _G.GetNormalizedRealmName = function() return nil end
+            assert.is_nil(K.CurrentRealm())
+            K.SaveMeta(GUID_B, "Eve", "Other")
+            assert.is_nil(K.CurrentRealm())
+        end)
+
+        it("does not use the metadata if the GUID is a secret value", function()
+            K.SaveMeta(GUID_A, "Bob", "Saved")
+            _G.issecretvalue = function() return true end
+            assert.is_nil(K.CurrentRealm())
+        end)
+
+        it("does not use the metadata on a flavour with no GUID key (TBC)", function()
+            local tbc = load({ usesSurname = false, characterGuidKey = false })
+            tbc.CharacterKey.Setup({ db = db })
+            K.SaveMeta(GUID_A, "Bob", "Saved")
+            assert.is_nil(tbc.CharacterKey.CurrentRealm())
         end)
     end)
 
@@ -100,8 +180,17 @@ describe("CharacterKey", function()
         it("saves nothing for a legacy key or a missing name", function()
             assert.is_false(K.SaveMeta("Bob-Realm", "Bob", "Realm"))
             assert.is_false(K.SaveMeta(GUID_A, nil, "Realm"))
-            assert.is_false(K.SaveMeta(GUID_A, "Bob", ""))
             assert.is_nil(K.Meta(GUID_A))
+        end)
+
+        it("saves the name with no realm, and never replaces a saved realm with nil", function()
+            assert.is_true(K.SaveMeta(GUID_A, "Bob", ""))
+            assert.are.equal("Bob", K.Name(GUID_A))
+            assert.is_nil(K.Realm(GUID_A))
+            K.SaveMeta(GUID_A, "Bob", "Realm")
+            K.SaveMeta(GUID_A, "Bob", nil)
+            K.SaveMeta(GUID_A, "Bob", "")
+            assert.are.equal("Realm", K.Realm(GUID_A))
         end)
 
         it("reads the name and the realm of a legacy key from the key", function()

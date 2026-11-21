@@ -82,13 +82,18 @@ end)
 -- Character key (CharacterKey): the player GUID on Forever, Name-Realm on TBC. It is Name-Realm for a session in
 -- which the client gives no usable GUID (nil, not a string or a secret value). It is nil if the client gives no
 -- name or realm. The second result is the legacy key Name-Realm, only if the key is a GUID.
+-- The realm of this character (CharacterKey.CurrentRealm): the client realm, else the saved realm, else nil.
+local function currentRealm()
+    return ns.CharacterKey.CurrentRealm()
+end
+
 local function characterKeys()
     -- No boolean test of the GUID here: it can be a secret value.
     local guid
     if type(UnitGUID) == "function" then
         guid = UnitGUID("player")
     end
-    return ns.CharacterKey.Compute(UnitName("player"), GetNormalizedRealmName(), guid,
+    return ns.CharacterKey.Compute(UnitName("player"), currentRealm(), guid,
         type(issecretvalue) == "function" and issecretvalue or nil)
 end
 
@@ -202,10 +207,14 @@ local function openCharacterKey()
     CharacterKey.Setup({ db = ns.db })
     local key, legacy = characterKeys()
     -- A read-only DB takes no write (no metadata, no claim, no move): a write would print a second warning.
-    if not (ns.db and key and legacy) or ns.db:IsReadOnly() then
+    if not (ns.db and key and CharacterKey.IsGuid(key)) or ns.db:IsReadOnly() then
         return
     end
-    CharacterKey.SaveMeta(key, UnitName("player"), GetNormalizedRealmName())
+    -- Only a realm that the client gives is saved. No realm: the saved realm stays and gives the legacy key.
+    CharacterKey.SaveMeta(key, UnitName("player"), CharacterKey.ClientRealm())
+    if not legacy then
+        return
+    end
     if CharacterKey.Claim(legacy, key) ~= key then
         return
     end
@@ -541,7 +550,7 @@ local function openScan()
     end
     local realm
     if ns.Flavour.scopeIncludesRealm then
-        realm = GetNormalizedRealmName()
+        realm = currentRealm()
     end
     local ok, result = pcall(ns.ScanStore.New, _G[scanName], {
         region = region,
@@ -641,9 +650,11 @@ local function openGuildSync()
             isEnabled = guildSyncEnabled,
             isInGuild = IsInGuild,
             selfName = function()
-                return tostring(UnitName("player")) .. "-" .. tostring(GetNormalizedRealmName())
+                -- No realm known: the name alone (never "Name-nil"). GuildSync adds the realm to a bare name.
+                local realm = currentRealm()
+                return tostring(UnitName("player")) .. (realm and ("-" .. realm) or "")
             end,
-            realm = GetNormalizedRealmName,
+            realm = currentRealm,
             scope = scope,
             localStore = scan,
             guildStore = guildStore,
@@ -1389,7 +1400,7 @@ local function openTooltip()
             containerItemInfo = C_Container.GetContainerItemInfo,
             bus = ns.bus,
             currentRealmOnly = ns.Flavour.countsCurrentRealmOnly == true,
-            realm = GetNormalizedRealmName,
+            realm = currentRealm,
             clock = debugprofilestop,
             report = ns.ReportError,
         }
@@ -1614,7 +1625,7 @@ local function openMailing()
                     -- The contact list: friends and guild from the client, the manual list in the account setting.
                     friends = ns.MailContacts.Friends,
                     guild = ns.MailContacts.GuildMembers,
-                    realm = GetNormalizedRealmName,
+                    realm = currentRealm,
                     request = function()
                         ns.MailContacts.Request(GetTime())
                     end,
@@ -1772,7 +1783,7 @@ local function writeSessionMarker()
         client = client,
         build = build,
         interface = interface,
-        realm = GetNormalizedRealmName(),
+        realm = currentRealm(),
         character = UnitName("player"),
     })
 end

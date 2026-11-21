@@ -39,24 +39,66 @@ local function isText(value)
 end
 
 -- Returns the key of the current character, and its legacy key "Name-Realm".
--- The key is nil if the client gives no name or realm. The legacy key is nil if the key is the legacy key itself:
--- this is TBC, or Forever with no usable GUID. Then the session uses "Name-Realm" and no data moves.
+-- The key is nil if the client gives no name, or no realm and no usable GUID. The legacy key is nil if the key is the
+-- legacy key itself: this is TBC, or Forever with no usable GUID. Then the session uses "Name-Realm" and no data moves.
+-- Forever with a usable GUID and no realm: the key is the GUID and the legacy key is nil (no realm is known).
 -- isSecret (optional) is issecretvalue. UnitGUID gives a secret value when the unit identity is restricted.
 function CharacterKey.Compute(name, realm, guid, isSecret)
-    if not (isText(name) and isText(realm)) then
+    if not isText(name) then
         return nil
     end
-    local legacy = name .. "-" .. realm
-    if not CharacterKey.UsesGuid() then
-        return legacy
-    end
-    if isSecret and isSecret(guid) then
-        return legacy
-    end
-    if CharacterKey.IsGuid(guid) then
+    local legacy = isText(realm) and (name .. "-" .. realm) or nil
+    if CharacterKey.UsesGuid() and not (isSecret and isSecret(guid)) and CharacterKey.IsGuid(guid) then
         return guid, legacy
     end
     return legacy
+end
+
+-- The GUID of the player, or nil if the client gives none or a secret value.
+local function playerGuid()
+    local api = _G
+    if type(api.UnitGUID) ~= "function" then
+        return nil
+    end
+    local guid = api.UnitGUID("player")
+    if type(api.issecretvalue) == "function" and api.issecretvalue(guid) then
+        return nil
+    end
+    return CharacterKey.IsGuid(guid) and guid or nil
+end
+
+-- The realm that the client gives now: GetNormalizedRealmName, else GetRealmName with no spaces. Nil if none.
+-- A client can give no realm at all (WoW: Forever, 2026-11-21).
+function CharacterKey.ClientRealm()
+    local api = _G
+    if type(api.GetNormalizedRealmName) == "function" then
+        local realm = api.GetNormalizedRealmName()
+        if isText(realm) then
+            return realm
+        end
+    end
+    if type(api.GetRealmName) == "function" then
+        local realm = api.GetRealmName()
+        if isText(realm) then
+            realm = realm:gsub("%s", "")
+            if realm ~= "" then
+                return realm
+            end
+        end
+    end
+    return nil
+end
+
+-- The realm of the current character: the client realm, else the realm saved in the metadata of the player GUID
+-- (Forever, after the DB is open), else nil. Use this for each realm read. Never use "Name-" .. nil.
+function CharacterKey.CurrentRealm()
+    local realm = CharacterKey.ClientRealm()
+    if realm then
+        return realm
+    end
+    local guid = CharacterKey.UsesGuid() and playerGuid() or nil
+    local meta = guid and CharacterKey.Meta(guid)
+    return meta and isText(meta.realm) and meta.realm or nil
 end
 
 -- The saved table of one section; nil if the DB is not set or has no table.
@@ -76,11 +118,15 @@ function CharacterKey.Meta(key)
 end
 
 -- Saves the name and the realm of a GUID key. Returns false if nothing was saved.
+-- If the realm is not text, the saved realm stays (it is never replaced with nil).
 function CharacterKey.SaveMeta(key, name, realm)
-    if not (deps.db and CharacterKey.IsGuid(key) and isText(name) and isText(realm)) then
+    if not (deps.db and CharacterKey.IsGuid(key) and isText(name)) then
         return false
     end
     local old = CharacterKey.Meta(key)
+    if not isText(realm) then
+        realm = old and old.realm or nil
+    end
     if old and old.name == name and old.realm == realm then
         return true
     end

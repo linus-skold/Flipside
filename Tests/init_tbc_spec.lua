@@ -116,6 +116,13 @@ describe("Init on TBC", function()
             end
         end)
 
+        it("keeps the error line and opens no DB if the realm is missing (no GUID key)", function()
+            mock.realmName = nil
+            login()
+            assert.is_nil(ns.db)
+            assert.are.equal(1, count("settings are not available this session"))
+        end)
+
         it("installs the tooltip hook and adds a price line to an item tooltip", function()
             login()
             assert.are.equal(0, count("tooltip hook not available"))
