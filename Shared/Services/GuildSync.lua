@@ -27,7 +27,8 @@ local BUILD_TIMEOUT = 300
 local Sync = {}
 Sync.__index = Sync
 
--- deps: isEnabled(), isInGuild(), selfName() (full Name-Realm of the player), realm(), scope (text),
+-- deps: isEnabled(), isInGuild(), selfName() (full Name-Realm of the player), selfAliases() (optional, a list of
+-- other spellings of the own name), realm(), scope (text),
 -- localStore (scan store), guildStore (GuildPriceStore), queue (GuildSyncQueue), clock() (server time),
 -- after(seconds, fn), random(low, high), registerPrefix(prefix), runJob(name, fn) (fn gets the job or nil),
 -- lastScan() (server time of the last full scan, or nil), log(level, format, ...) (optional),
@@ -101,6 +102,21 @@ local function fullName(self, name)
     return (string.lower((string.gsub(name, "%s", ""))))
 end
 
+-- True if the sender is the player: the sender matches selfName() or one of selfAliases() (other spellings of the
+-- own name, for example the name alone or "Name Surname"). All texts go through the same fullName rule.
+local function isSelf(self, sender)
+    local wanted = fullName(self, sender)
+    if wanted == fullName(self, self.deps.selfName()) then
+        return true
+    end
+    for _, alias in ipairs(self.deps.selfAliases and self.deps.selfAliases() or {}) do
+        if wanted == fullName(self, alias) then
+            return true
+        end
+    end
+    return false
+end
+
 -- Handle CHAT_MSG_ADDON. The bus gives the event name first.
 function Sync:OnAddon(_, prefix, text, channel, sender)
     local codec = ns.GuildSyncCodec
@@ -111,7 +127,7 @@ function Sync:OnAddon(_, prefix, text, channel, sender)
         self:_Log("debug", "drop disabled message from %s", tostring(sender))
         return
     end
-    if fullName(self, sender) == fullName(self, self.deps.selfName()) then
+    if isSelf(self, sender) then
         return
     end
     self.assembler:Sweep()

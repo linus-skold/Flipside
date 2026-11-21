@@ -81,14 +81,20 @@ end)
 
 -- Character key (CharacterKey): the player GUID on Forever, Name-Realm on TBC. It is Name-Realm for a session in
 -- which the client gives no usable GUID (nil, not a string or a secret value). It is nil if the client gives no
--- name or realm. The second result is the legacy key Name-Realm, only if the key is a GUID.
+-- name, or if it gives no realm and no usable GUID. The second result is the legacy key Name-Realm, only if the key
+-- is a GUID and a realm is known (client or saved). A GUID with no realm gives the GUID key and no legacy key.
+-- The realm of this character (CharacterKey.CurrentRealm): the client realm, else the saved realm, else nil.
+local function currentRealm()
+    return ns.CharacterKey.CurrentRealm()
+end
+
 local function characterKeys()
     -- No boolean test of the GUID here: it can be a secret value.
     local guid
     if type(UnitGUID) == "function" then
         guid = UnitGUID("player")
     end
-    return ns.CharacterKey.Compute(UnitName("player"), GetNormalizedRealmName(), guid,
+    return ns.CharacterKey.Compute(UnitName("player"), currentRealm(), guid,
         type(issecretvalue) == "function" and issecretvalue or nil)
 end
 
@@ -194,18 +200,23 @@ local function openSettingsDB()
 end
 
 -- Character key (SPEC 5.5, "Character names on Forever"), Forever only: the key is a GUID.
--- Save the name and the realm of this character as metadata. The first character that logs in with a name and a
--- realm claims the legacy Name-Realm data (settings, holdings, balance, ledger buffer). The ledger addon store
--- moves its legacy data when it opens (openLedger). A session with no usable GUID moves nothing.
+-- Save the name and the realm of this character as metadata (the client realm only). The first character that logs
+-- in with a name and a realm (client or saved) claims the legacy Name-Realm data (settings, holdings, balance,
+-- ledger buffer). The ledger addon store moves its legacy data when it opens (openLedger). A session with no usable
+-- GUID moves nothing. A session with a GUID and no known realm saves the name, claims and moves nothing.
 local function openCharacterKey()
     local CharacterKey = ns.CharacterKey
     CharacterKey.Setup({ db = ns.db })
     local key, legacy = characterKeys()
     -- A read-only DB takes no write (no metadata, no claim, no move): a write would print a second warning.
-    if not (ns.db and key and legacy) or ns.db:IsReadOnly() then
+    if not (ns.db and key and CharacterKey.IsGuid(key)) or ns.db:IsReadOnly() then
         return
     end
-    CharacterKey.SaveMeta(key, UnitName("player"), GetNormalizedRealmName())
+    -- Only a realm that the client gives is saved. No realm: the saved realm stays and gives the legacy key.
+    CharacterKey.SaveMeta(key, UnitName("player"), CharacterKey.ClientRealm())
+    if not legacy then
+        return
+    end
     if CharacterKey.Claim(legacy, key) ~= key then
         return
     end
@@ -541,7 +552,7 @@ local function openScan()
     end
     local realm
     if ns.Flavour.scopeIncludesRealm then
-        realm = GetNormalizedRealmName()
+        realm = currentRealm()
     end
     local ok, result = pcall(ns.ScanStore.New, _G[scanName], {
         region = region,
@@ -641,9 +652,19 @@ local function openGuildSync()
             isEnabled = guildSyncEnabled,
             isInGuild = IsInGuild,
             selfName = function()
-                return tostring(UnitName("player")) .. "-" .. tostring(GetNormalizedRealmName())
+                -- Saved or client realm, else the surname (Forever), else the name alone. Never "Name-nil".
+                local name, surname = UnitName("player")
+                return ns.CharacterKey.FullSelfName(name, surname, ns.CharacterName and ns.CharacterName.Surname(
+                    characterKey()))
             end,
-            realm = GetNormalizedRealmName,
+            -- Other spellings of the own name: the name alone, "Name Surname" (client separator), "Name-Surname".
+            selfAliases = function()
+                local name, surname = UnitName("player")
+                local savedSurname = ns.CharacterName and ns.CharacterName.Surname(characterKey())
+                return ns.CharacterKey.SelfAliases(name, surname, savedSurname,
+                    ns.CharacterName and ns.CharacterName.Separator())
+            end,
+            realm = currentRealm,
             scope = scope,
             localStore = scan,
             guildStore = guildStore,
@@ -1389,7 +1410,7 @@ local function openTooltip()
             containerItemInfo = C_Container.GetContainerItemInfo,
             bus = ns.bus,
             currentRealmOnly = ns.Flavour.countsCurrentRealmOnly == true,
-            realm = GetNormalizedRealmName,
+            realm = currentRealm,
             clock = debugprofilestop,
             report = ns.ReportError,
         }
@@ -1614,7 +1635,7 @@ local function openMailing()
                     -- The contact list: friends and guild from the client, the manual list in the account setting.
                     friends = ns.MailContacts.Friends,
                     guild = ns.MailContacts.GuildMembers,
-                    realm = GetNormalizedRealmName,
+                    realm = currentRealm,
                     request = function()
                         ns.MailContacts.Request(GetTime())
                     end,
@@ -1772,7 +1793,7 @@ local function writeSessionMarker()
         client = client,
         build = build,
         interface = interface,
-        realm = GetNormalizedRealmName(),
+        realm = currentRealm(),
         character = UnitName("player"),
     })
 end
