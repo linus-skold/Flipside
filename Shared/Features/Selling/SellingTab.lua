@@ -2771,9 +2771,16 @@ function Tab:SelectLevel(id)
         self:_ShowBusy(ns.BuyingPlan.REASON.own)
         return false, ns.BuyingPlan.REASON.own
     end
-    self.levelSel = self.levelSel ~= id and id or nil
+    local selecting = self.levelSel ~= id
+    self.levelSel = selecting and id or nil
     self.amount, self.amountBad = nil, false -- the default amount follows the selected level
     self.levelShown = nil
+    -- A click that selects sets the price of the shown item to the unit price of the level (no undercut). The
+    -- redraw below handles it as a typed price. The click that clears the selection keeps the price.
+    local entry = self:_LevelEntry()
+    if selecting and entry and level.unitPrice then
+        self:_FillPrice(entry, level.unitPrice)
+    end
     self:_Update()
     return true
 end
