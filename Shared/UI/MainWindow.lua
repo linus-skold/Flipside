@@ -19,6 +19,7 @@ local ABOUT_TEXT = "Groups sort items into trees. Operations hold the rules. For
 local SOUNDS_TEXT = "Play interface sounds"
 local SHARE_TEXT = "Share prices with my guild"
 local JUMP_TEXT = "Buying price jump warning %"
+local MARKET_TEXT = "Buying market value source (formula)"
 local SHARE_HINT = "Off by default. Guild members share scan prices. Your own scans always win over shared prices."
 
 -- A page that says why it cannot open.
@@ -85,6 +86,36 @@ local function buildAbout(content, deps)
         input:SetJustifyH("CENTER")
         input:SetNumber(Buying.ReadJumpPercent(deps.db))
         about.jumpLabel, about.jumpInput = label, input
+        anchor = label
+    end
+    -- The market value of the Buying tab: the formula that gives the 100% of the % MV column.
+    if deps.db and Buying and Buying.ReadMarketSource then
+        local label = Kit.Label(content, MARKET_TEXT, "normal")
+        label:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", anchor == about.shareHint and -4 or 0, -Kit.Theme.gap * 2)
+        local status = Kit.Label(content, "", "bad")
+        local function save(text)
+            text = text:match("^%s*(.-)%s*$")
+            if text == "" then
+                text = Buying.DEFAULT_MARKET_SOURCE
+            end
+            local run = deps.formulaRun
+            local _, err
+            if run and run.Compile then
+                _, err = run:Compile(text)
+            end
+            if err then
+                status:SetText(err.message or "formula error")
+                return
+            end
+            status:SetText("")
+            about.marketInput:SetText(text)
+            Buying.WriteMarketSource(deps.db, text)
+        end
+        local input = Kit.Input(content, 260, save, save)
+        input:SetPoint("LEFT", label, "RIGHT", 6, 0)
+        input:SetText(Buying.ReadMarketSource(deps.db))
+        status:SetPoint("TOPLEFT", label, "BOTTOMLEFT", 0, -Kit.Theme.gap)
+        about.marketLabel, about.marketInput, about.marketStatus = label, input, status
     end
     return about
 end
