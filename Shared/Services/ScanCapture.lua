@@ -18,8 +18,9 @@ local function UnitPriceFromBuyout(buyoutAmount, count)
 end
 
 -- A search result comes in pages. While the client says the result is not full, the capture asks for the next page
--- (api.commodityMore(itemID), api.itemMore(itemKey)). It stops at a full result, at a page with no new row and after
--- MAX_MORE_REQUESTS requests. api.isReady (optional) is the throttle gate: if it says false, the request waits.
+-- (api.commodityMore(itemID), api.itemMore(itemKey)). It pages only the search that BeginSearch named last. It stops
+-- at a full result and after MAX_MORE_REQUESTS requests. api.isReady (optional) is the throttle gate: if it says
+-- false, the request waits.
 local MAX_MORE_REQUESTS = 100
 local MAX_READY_TRIES = 20
 local READY_DELAY = 0.5
@@ -83,31 +84,40 @@ function Capture:_SendMore(id, state, request, tries)
     state.requests = state.requests + 1
     local ok, err = pcall(request)
     if not ok then
+        state.open = false
         self:_Fail(err)
     end
 end
 
+-- The backend calls this when Flipside sends a search for an item. Only the result of this latest search gets
+-- paging: the state of any other key, and all link waits of this key, end here. A result that Flipside did not
+-- send (Blizzard's own window) has no state, so the capture saves it and does not page it.
+function Capture:BeginSearch(itemID, itemKey)
+    local commodityID, itemKeyID = "c" .. tostring(itemID), "i" .. ItemKeyText(itemKey)
+    self.paging = {
+        [commodityID] = { rows = 0, requests = 0, open = false },
+        [itemKeyID] = { rows = 0, requests = 0, open = false },
+    }
+    self.linkTries[commodityID] = nil
+    self.linkTries[itemKeyID] = nil
+end
+
 -- Ask for the next page of a result that is not full. count is the number of rows now.
+-- state.open is true from the request (or its wait for the throttle gate) until the event with more rows. An event
+-- with no more rows while it is open is a duplicate: it starts no second chain and does not clear the state.
 function Capture:_RequestMore(id, count, request)
-    if type(request) ~= "function" or count < 1 then
-        return
-    end
     local state = self.paging[id]
-    if state and count < state.rows then
-        state = nil -- a new search of the same item starts again
-    end
-    if state and state.requests >= MAX_MORE_REQUESTS then
-        return -- the cap is reached; the state stays until a new search gives fewer rows
-    end
-    if state and state.requests > 0 and count == state.rows then
-        self.paging[id] = nil -- the last request gave no new row
+    if not state or type(request) ~= "function" or count < 1 then
         return
     end
-    if not state then
-        state = { rows = count, requests = 0 }
-        self.paging[id] = state
+    if state.open and count <= state.rows then
+        return
+    end
+    if state.requests >= MAX_MORE_REQUESTS then
+        return
     end
     state.rows = count
+    state.open = true
     self:_SendMore(id, state, request, 0)
 end
 

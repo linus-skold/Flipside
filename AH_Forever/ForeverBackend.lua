@@ -137,16 +137,37 @@ local function keyInfoKnown(itemKey)
     return not has("GetItemKeyInfo") or call("GetItemKeyInfo", itemKey) ~= nil
 end
 
--- Calls send(itemKey) when the key info exists, or after the wait. Gives nothing.
-local function sendWhenKnown(itemID, send)
+local liveWaiting = false -- true while a live search waits for the key info
+
+-- Sends the search and tells the capture which search is the active one (it pages only that one).
+local function sendSearch(itemID, itemKey)
+    call("SendSearchQuery", itemKey, {}, true)
+    local capture = ns.scanCapture
+    if capture and capture.BeginSearch then
+        local ok, err = pcall(capture.BeginSearch, capture, itemID, itemKey)
+        if not ok then
+            log("warn", "capture search start failed: %s", tostring(err))
+        end
+    end
+end
+
+-- Sends the search for itemID when the key info exists, or after the wait. A live search wins over a targeted
+-- one (the tooltip refresh): the targeted search is dropped while a live search waits. Gives nothing.
+local function sendWhenKnown(itemID, live)
+    if live then
+        liveWaiting = false
+    elseif liveWaiting then
+        return
+    end
     searchToken = searchToken + 1
     local token = searchToken
     local itemKey = call("MakeItemKey", itemID)
     local timer = _G.C_Timer
     if keyInfoKnown(itemKey) or type(timer) ~= "table" or type(timer.After) ~= "function" then
-        send(itemKey)
+        sendSearch(itemID, itemKey)
         return
     end
+    liveWaiting = live == true
     local tries = 0
     local function check()
         if token ~= searchToken then
@@ -154,7 +175,14 @@ local function sendWhenKnown(itemID, send)
         end
         tries = tries + 1
         if tries >= KEY_INFO_TRIES or keyInfoKnown(itemKey) then
-            send(itemKey)
+            liveWaiting = false
+            if ns.IsAuctionHouseOpen and not ns.IsAuctionHouseOpen() then
+                return -- the AH closed during the wait
+            end
+            local ok, err = pcall(sendSearch, itemID, itemKey)
+            if not ok then
+                log("warn", "delayed search failed: %s", tostring(err))
+            end
             return
         end
         timer.After(KEY_INFO_DELAY, check)
@@ -164,9 +192,7 @@ end
 
 -- Search the listings of one item by item key; the capture events carry the result.
 function Backend.TargetedSearch(itemID)
-    sendWhenKnown(itemID, function(itemKey)
-        call("SendSearchQuery", itemKey, {}, true)
-    end)
+    sendWhenKnown(itemID, false)
 end
 
 function Backend.NameResultEvent()
@@ -238,9 +264,7 @@ function Backend.LiveSearch(itemID)
         return false, "search limit, wait"
     end
     searchTimes[#searchTimes + 1] = now
-    sendWhenKnown(itemID, function(itemKey)
-        call("SendSearchQuery", itemKey, {}, true)
-    end)
+    sendWhenKnown(itemID, true)
     return true
 end
 

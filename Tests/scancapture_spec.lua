@@ -257,6 +257,7 @@ describe("ScanCapture", function()
                 after = function(seconds, fn) timers[#timers + 1] = { seconds = seconds, fn = fn } end,
                 onCaptured = function(key, _, partial) captured[#captured + 1] = { key = key, partial = partial } end,
             })
+            capture:BeginSearch(2589, { itemID = 2589 }) -- Flipside sent the search for item 2589
         end)
 
         local function runTimers()
@@ -287,6 +288,7 @@ describe("ScanCapture", function()
         end)
 
         it("requests the next item page until the result is full", function()
+            capture:BeginSearch(1001, { itemID = 1001 })
             api.itemIsFull = false
             itemRow(gear(1001, 6001), 5000)
             capture:OnItemResults({ itemID = 1001 })
@@ -323,13 +325,73 @@ describe("ScanCapture", function()
             assert.are.equal(100, #more)
         end)
 
-        it("starts again for a new search of the same item", function()
+        it("starts again for a new search, also with the same first page size", function()
             api.commodityIsFull = false
             commodityRows({ 100, 110, 120 })
             capture:OnCommodityResults(2589)
-            commodityRows({ 100 })
+            assert.are.equal(1, #more)
+            capture:OnCommodityResults(2589) -- a duplicate event: nothing changes
+            assert.are.equal(1, #more)
+            capture:BeginSearch(2589, { itemID = 2589 })
+            capture:OnCommodityResults(2589) -- the new search has the same count
+            assert.are.equal(2, #more)
+        end)
+
+        it("does not page a search that Flipside did not send", function()
+            api.commodityIsFull = false
+            commodityRows({ 100, 110 })
+            capture:OnCommodityResults(3000)
+            assert.are.equal(0, #more)
+            assert.are.equal(100, store:Get("3000").latest.min) -- the rows are saved
+        end)
+
+        it("stops the paging of an item when a search for another item starts", function()
+            api.commodityIsFull = false
+            ready = false
+            commodityRows({ 100, 110 })
+            capture:OnCommodityResults(2589)
+            assert.are.equal(1, #timers)
+            capture:BeginSearch(3000, { itemID = 3000 })
+            ready = true
+            runTimers()
+            assert.are.equal(0, #more)
+            capture:OnCommodityResults(2589)
+            assert.are.equal(0, #more)
+            capture:OnCommodityResults(3000)
+            assert.are.equal(1, #more)
+        end)
+
+        it("runs one request chain for each item, also with duplicate events", function()
+            api.commodityIsFull = false
+            ready = false
+            commodityRows({ 100, 110 })
+            capture:OnCommodityResults(2589)
+            capture:OnCommodityResults(2589)
+            assert.are.equal(1, #timers)
+            ready = true
+            runTimers()
+            assert.are.equal(1, #more)
+            capture:OnCommodityResults(2589) -- a duplicate while the request is open
+            assert.are.equal(1, #more)
+            commodityRows({ 100, 110, 120 })
             capture:OnCommodityResults(2589)
             assert.are.equal(2, #more)
+        end)
+
+        it("clears the link wait of a key when a new search for it starts", function()
+            itemRow(gear(1001, 6001), 5000)
+            itemRow(nil, 4000)
+            capture:OnItemResults({ itemID = 1001 })
+            for _ = 1, 4 do
+                runTimers() -- 5 link tries used
+            end
+            capture:BeginSearch(1001, { itemID = 1001 })
+            timers = {}
+            capture:OnItemResults({ itemID = 1001 })
+            for _ = 1, 4 do
+                assert.are.equal(1, #timers) -- the link tries start again
+                runTimers()
+            end
         end)
 
         it("waits for the throttle gate before it requests the next page", function()
