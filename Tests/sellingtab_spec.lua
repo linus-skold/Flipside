@@ -5,7 +5,7 @@ local function loadModules()
     local ns = { ReportError = function() end }
     for _, name in ipairs({ "EventBus", "ItemString", "ScanKey", "BagItems", "SellingPlan", "BuyingPlan", "BuyFlow",
         "Theme", "Widgets",
-        "MoneyInput", "List", "Columns", "Tree", "AuctionTabs", "BuyDialog", "SellingTab" }) do
+        "MoneyInput", "List", "Columns", "Tree", "AuctionTabs", "RowTooltip", "BuyDialog", "SellingTab" }) do
         assert(loadfile(manifest.path(name)))("Flipside", ns)
     end
     return ns
