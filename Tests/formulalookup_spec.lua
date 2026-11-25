@@ -91,13 +91,49 @@ describe("FormulaLookup", function()
         store:Put("123#b4000", high)
         store:Put("123#b5000", low)
         store:Put("1234#b4000", record(1))
+        local options = { itemIdVariants = true }
         for _, input in ipairs({ 123, "123" }) do
-            local r, k, id = Find(store, input)
+            local r, k, id = Find(store, input, options)
             assert.equals(low, r)
             assert.equals("123#b5000", k)
             assert.equals(123, id)
+            -- Without the option (Selling and Buying) the lookup keeps the base-key rule.
+            local none, _, id2 = Find(store, input)
+            assert.is_nil(none)
+            assert.equals(123, id2)
         end
-        assert.is_nil(Find(store, 124))
+        assert.is_nil(Find(store, 124, options))
+    end)
+
+    it("builds the variant index again after a store write", function()
+        local store = ns.ScanStore.New({}, { region = "EU", ruleset = "standard", schemaVersion = 1 })
+        local options = { itemIdVariants = true }
+        store:Put("123#b4000", record(900))
+        local _, k = Find(store, 123, options)
+        assert.equals("123#b4000", k)
+        local cheap = record(100)
+        store:Put("123#b5000", cheap)
+        local r, k2 = Find(store, 123, options)
+        assert.equals(cheap, r)
+        assert.equals("123#b5000", k2)
+        store:Remove("123#b5000")
+        _, k = Find(store, 123, options)
+        assert.equals("123#b4000", k)
+    end)
+
+    it("reads the store key list one time for each store version", function()
+        local store = ns.ScanStore.New({}, { region = "EU", ruleset = "standard", schemaVersion = 1 })
+        store:Put("123#b4000", record(900))
+        local calls, realKeys = 0, store.Keys
+        store.Keys = function(self)
+            calls = calls + 1
+            return realKeys(self)
+        end
+        local options = { itemIdVariants = true }
+        Find(store, 123, options)
+        Find(store, 123, options)
+        Find(store, 999, options)
+        assert.equals(1, calls)
     end)
 
     it("prefers the base record over variants for an item id", function()

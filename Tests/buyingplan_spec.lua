@@ -53,6 +53,21 @@ describe("BuyingPlan", function()
             assert.same({}, list())
         end)
 
+        it("evaluates without the item ID variant option", function()
+            local g = GT.Create(groups, 1, "Herbs")
+            GT.AddItem(groups, "100", g)
+            GT.Attach(groups, g, "buying", 10)
+            local extra, calls = "unset", 0
+            run.Evaluate = function(_, _, _, options)
+                calls = calls + 1
+                extra = options
+                return 5000, { kind = "ok" }
+            end
+            list()
+            assert.is_true(calls > 0)
+            assert.is_nil(extra)
+        end)
+
         it("lists items of a group with a buying operation", function()
             local g = GT.Create(groups, 1, "Herbs")
             GT.AddItem(groups, "100", g)

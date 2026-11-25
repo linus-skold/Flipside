@@ -11,8 +11,8 @@ describe("SellingPlan with scan records", function()
         assert(loadfile(path))("Flipside", ns)
     end
 
-    local function candidates(record)
-        store:Put("2589", record)
+    local function candidates(record, storeKey)
+        store:Put(storeKey or "2589", record)
         local data = ns.GroupTree.NewData()
         local g = ns.GroupTree.Create(data, 1, "Cloth")
         ns.GroupTree.AddItem(data, "2589", g)
@@ -52,6 +52,18 @@ describe("SellingPlan with scan records", function()
         local record = assert(ns.ScanRecord.Decode("1;" .. (NOW - 3600) .. ",15,17,8381,202,1;;"))
         local c = candidates(record)[1]
         assert.equal("no data for min price: scanmarket missing, scan again", c.reason)
+    end)
+
+    it("does not price an item from an exact-key variant", function()
+        local record = ns.ScanRecord.New()
+        record.latest = { time = NOW - 3600, min = 15, market = 17, qty = 8381, auctions = 202, partial = false }
+        record.today = { day = 20000, snaps = { { time = NOW - 3600, min = 15, market = 17, qty = 1, auctions = 1 } } }
+        local c = candidates(record, "2589#b4000")[1]
+        assert.is_not_nil(c.reason)
+        assert.is_nil(c.normalPrice)
+        -- The formula page and the tooltip opt in to the variant fallback.
+        assert.equal(17, (run:Evaluate("scanmarket", "2589", { itemIdVariants = true })))
+        assert.is_nil((run:Evaluate("scanmarket", "2589")))
     end)
 
     it("prices a record that has a snapshot of today", function()
