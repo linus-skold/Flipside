@@ -1,6 +1,7 @@
 local _, ns = ...
 
--- The gold balance over time for the Ledger page graph (SPEC 5.8 point 9). Pure: it reads a store, writes nothing.
+-- The gold balance over time for the Ledger page graph (SPEC 5.8 point 9).
+-- The series functions read a store and write nothing. WriteSnapshot saves the balance, and Reconcile adds one record.
 -- The balance at time t is: anchor + (money change up to t) - (money change up to the anchor time).
 -- The anchor is the live GetMoney() of the current character, or the last saved balance of another one.
 local LedgerBalance = {}
@@ -62,6 +63,10 @@ function LedgerBalance.Reconcile(args)
     local saved = LedgerBalance.ReadSnapshot(args.db, char)
     if not saved or saved.copper == copper or not args.buffer then
         return nil
+    end
+    -- A read of 0 with a saved balance is more likely a client that is not ready than a real loss of all gold.
+    if copper == 0 then
+        return nil, "zero"
     end
     local delta = copper - saved.copper
     local ok = args.buffer:Add({
