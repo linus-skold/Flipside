@@ -355,9 +355,9 @@ describe("SellingTab fast clicks and the loading pane", function()
             decidedWithoutRows()
             client.ready = false
             runTimers(0.15)
-            assert.are.equal(1, runTimers(1))
-            assert.are.equal(1, runTimers(1))
-            assert.are.equal(1, runTimers(1))
+            for _ = 1, 6 do
+                assert.are.equal(1, runTimers(1))
+            end
             assert.are.equal(11, tab.rowsFailed)
             assert.are.equal(0, runTimers(1))
             assert.is_false(ui.levelLoading:IsShown())
@@ -417,7 +417,8 @@ describe("SellingTab fast clicks and the loading pane", function()
             local draws = 0
             local update = tab._Update
             tab._Update = function(self)
-                draws = draws + 1
+                -- Count only the real redraws: a call inside a batch only sets the dirty flag.
+                draws = draws + ((self.batchDepth or 0) == 0 and 1 or 0)
                 return update(self)
             end
             answerAny(client.searches[1])

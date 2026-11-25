@@ -2782,9 +2782,11 @@ function Tab:_RefreshLevels()
     -- While the pane waits for its rows it shows the loading text and no rows (not the rows of an older item).
     local loading = self:_PaneLoading()
     -- The pane shows the stored scan price with its age until the live rows come.
-    local newItem = loading and self.storedFor ~= entry
+    -- The entry of the pane is the wanted entry: the shown entry (_Focus) is nil while it searches.
+    local wanted = loading and self.wanted or nil
+    local newItem = loading and self.storedFor ~= wanted
     if newItem then
-        self.storedFor, self.storedText = entry, entry and self:_StoredText(entry) or nil
+        self.storedFor, self.storedText = wanted, wanted and self:_StoredText(wanted) or nil
     end
     if loading ~= ui.levelLoading:IsShown() or newItem then
         ui.levelLoading:SetShown(loading)
