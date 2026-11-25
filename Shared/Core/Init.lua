@@ -503,6 +503,9 @@ local function openCapture()
         serverTime = GetServerTime,
         api = source.api,
         report = ns.ReportError,
+        after = function(seconds, fn)
+            C_Timer.After(seconds, fn)
+        end,
         onCaptured = function(key)
             ns.bus:Emit(EVENT_PRICE_CAPTURED, key)
         end,

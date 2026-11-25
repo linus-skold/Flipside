@@ -243,6 +243,255 @@ describe("ScanCapture", function()
         end)
     end)
 
+    describe("paging", function()
+        local more, ready, timers
+
+        before_each(function()
+            more, ready, timers = {}, true, {}
+            api.commodityMore = function(id) more[#more + 1] = id end
+            api.itemMore = function(key) more[#more + 1] = key end
+            api.isReady = function() return ready end
+            capture = ns.ScanCapture.New({
+                store = store, serverTime = function() return now end, api = api,
+                report = function(text) reports[#reports + 1] = text end,
+                after = function(seconds, fn) timers[#timers + 1] = { seconds = seconds, fn = fn } end,
+                onCaptured = function(key, _, partial) captured[#captured + 1] = { key = key, partial = partial } end,
+            })
+            capture:BeginSearch(2589, { itemID = 2589 }) -- Flipside sent the search for item 2589
+        end)
+
+        local function runTimers()
+            local list = timers
+            timers = {}
+            for _, t in ipairs(list) do
+                t.fn()
+            end
+        end
+
+        it("requests the next commodity page until the result is full", function()
+            api.commodityIsFull = false
+            commodityRows({ 100, 110 })
+            capture:OnCommodityResults(2589)
+            assert.are.same({ 2589 }, more)
+            commodityRows({ 100, 110, 120, 130 })
+            capture:OnCommodityResults(2589)
+            assert.are.same({ 2589, 2589 }, more)
+            assert.is_true(store:Get("2589").latest.partial)
+            commodityRows({ 100, 110, 120, 130, 140 })
+            api.commodityIsFull = true
+            capture:OnCommodityResults(2589)
+            assert.are.equal(2, #more)
+            local r = store:Get("2589")
+            assert.is_false(r.latest.partial)
+            assert.are.equal(5, r.latest.auctions)
+            assert.is_false(captured[#captured].partial)
+        end)
+
+        it("requests the next item page until the result is full", function()
+            capture:BeginSearch(1001, { itemID = 1001 })
+            api.itemIsFull = false
+            itemRow(gear(1001, 6001), 5000)
+            capture:OnItemResults({ itemID = 1001 })
+            assert.are.same({ { itemID = 1001 } }, more)
+            itemRow(gear(1001, 6001), 5100)
+            capture:OnItemResults({ itemID = 1001 })
+            assert.are.equal(2, #more)
+            api.itemIsFull = true
+            itemRow(gear(1001, 6001), 5200)
+            capture:OnItemResults({ itemID = 1001 })
+            assert.are.equal(2, #more)
+            assert.is_false(store:Get("1001#b6001").latest.partial)
+            assert.are.equal(3, store:Get("1001#b6001").latest.auctions)
+        end)
+
+        it("stops when a request gives no new row", function()
+            api.commodityIsFull = false
+            commodityRows({ 100, 110 })
+            capture:OnCommodityResults(2589)
+            capture:OnCommodityResults(2589)
+            assert.are.equal(1, #more)
+            assert.is_true(store:Get("2589").latest.partial)
+        end)
+
+        it("stops after the request cap", function()
+            api.commodityIsFull = false
+            for n = 1, 130 do
+                api.commodityRows = {}
+                for i = 1, n do
+                    api.commodityRows[i] = { unitPrice = 100 + i, quantity = 1 }
+                end
+                capture:OnCommodityResults(2589)
+            end
+            assert.are.equal(100, #more)
+        end)
+
+        it("starts again for a new search, also with the same first page size", function()
+            api.commodityIsFull = false
+            commodityRows({ 100, 110, 120 })
+            capture:OnCommodityResults(2589)
+            assert.are.equal(1, #more)
+            capture:OnCommodityResults(2589) -- a duplicate event: nothing changes
+            assert.are.equal(1, #more)
+            capture:BeginSearch(2589, { itemID = 2589 })
+            capture:OnCommodityResults(2589) -- the new search has the same count
+            assert.are.equal(2, #more)
+        end)
+
+        it("does not page a search that Flipside did not send", function()
+            api.commodityIsFull = false
+            commodityRows({ 100, 110 })
+            capture:OnCommodityResults(3000)
+            assert.are.equal(0, #more)
+            assert.are.equal(100, store:Get("3000").latest.min) -- the rows are saved
+        end)
+
+        it("stops the paging of an item when a search for another item starts", function()
+            api.commodityIsFull = false
+            ready = false
+            commodityRows({ 100, 110 })
+            capture:OnCommodityResults(2589)
+            assert.are.equal(1, #timers)
+            capture:BeginSearch(3000, { itemID = 3000 })
+            ready = true
+            runTimers()
+            assert.are.equal(0, #more)
+            capture:OnCommodityResults(2589)
+            assert.are.equal(0, #more)
+            capture:OnCommodityResults(3000)
+            assert.are.equal(1, #more)
+        end)
+
+        it("runs one request chain for each item, also with duplicate events", function()
+            api.commodityIsFull = false
+            ready = false
+            commodityRows({ 100, 110 })
+            capture:OnCommodityResults(2589)
+            capture:OnCommodityResults(2589)
+            assert.are.equal(1, #timers)
+            ready = true
+            runTimers()
+            assert.are.equal(1, #more)
+            capture:OnCommodityResults(2589) -- a duplicate while the request is open
+            assert.are.equal(1, #more)
+            commodityRows({ 100, 110, 120 })
+            capture:OnCommodityResults(2589)
+            assert.are.equal(2, #more)
+        end)
+
+        it("clears the link wait of a key when a new search for it starts", function()
+            itemRow(gear(1001, 6001), 5000)
+            itemRow(nil, 4000)
+            capture:OnItemResults({ itemID = 1001 })
+            for _ = 1, 4 do
+                runTimers() -- 5 link tries used
+            end
+            capture:BeginSearch(1001, { itemID = 1001 })
+            timers = {}
+            capture:OnItemResults({ itemID = 1001 })
+            for _ = 1, 4 do
+                assert.are.equal(1, #timers) -- the link tries start again
+                runTimers()
+            end
+        end)
+
+        it("waits for the throttle gate before it requests the next page", function()
+            api.commodityIsFull = false
+            ready = false
+            commodityRows({ 100, 110 })
+            capture:OnCommodityResults(2589)
+            assert.are.equal(0, #more)
+            assert.are.equal(1, #timers)
+            runTimers()
+            assert.are.equal(0, #more)
+            ready = true
+            runTimers()
+            assert.are.equal(1, #more)
+        end)
+
+        it("reports a failed request once and still saves the rows", function()
+            api.commodityIsFull = false
+            api.commodityMore = function() error("more") end
+            commodityRows({ 100, 110 })
+            capture:OnCommodityResults(2589)
+            assert.are.equal(1, #reports)
+            assert.are.equal(100, store:Get("2589").latest.min)
+        end)
+
+        it("does not page a legacy client with no next-page call", function()
+            api.commodityMore, api.itemMore = nil, nil
+            api.commodityIsFull = false
+            commodityRows({ 100 })
+            capture:OnCommodityResults(2589)
+            assert.are.equal(0, #more)
+            assert.are.equal(100, store:Get("2589").latest.min)
+        end)
+    end)
+
+    describe("rows with no link", function()
+        local timers
+
+        before_each(function()
+            timers = {}
+            capture = ns.ScanCapture.New({
+                store = store, serverTime = function() return now end, api = api,
+                after = function(seconds, fn) timers[#timers + 1] = { seconds = seconds, fn = fn } end,
+                onCaptured = function(key, _, partial) captured[#captured + 1] = { key = key, partial = partial } end,
+            })
+        end)
+
+        local function runTimers()
+            local list = timers
+            timers = {}
+            for _, t in ipairs(list) do
+                t.fn()
+            end
+        end
+
+        it("waits for the link and then saves the full result", function()
+            itemRow(gear(1001, 6001), 5000)
+            itemRow(nil, 4000)
+            capture:OnItemResults({ itemID = 1001 })
+            assert.are.equal(1, #timers)
+            assert.are.same({}, store:Keys())
+            api.itemRows[2].itemLink = gear(1001, 6001)
+            runTimers()
+            local r = store:Get("1001#b6001")
+            assert.are.equal(4000, r.latest.min)
+            assert.are.equal(2, r.latest.auctions)
+            assert.is_false(r.latest.partial)
+            assert.are.equal(0, #timers)
+        end)
+
+        it("saves the linked rows as partial when the link does not come", function()
+            itemRow(gear(1001, 6001), 5000)
+            itemRow(nil, 4000)
+            capture:OnItemResults({ itemID = 1001 })
+            for _ = 1, 10 do
+                runTimers()
+            end
+            assert.are.equal(0, #timers)
+            local r = store:Get("1001#b6001")
+            assert.is_true(r.latest.partial)
+            assert.are.equal(5000, r.latest.min)
+        end)
+
+        it("saves a partial result with no wait when the client has no timer", function()
+            capture = ns.ScanCapture.New({ store = store, serverTime = function() return now end, api = api })
+            itemRow(gear(1001, 6001), 5000)
+            itemRow(nil, 4000)
+            capture:OnItemResults({ itemID = 1001 })
+            assert.is_true(store:Get("1001#b6001").latest.partial)
+        end)
+
+        it("does not count a row with no buyout as a row with no link", function()
+            itemRow(gear(1001, 6001), 5000)
+            itemRow(nil, 0)
+            capture:OnItemResults({ itemID = 1001 })
+            assert.are.equal(0, #timers)
+            assert.is_false(store:Get("1001#b6001").latest.partial)
+        end)
+    end)
+
     describe("guards", function()
         it("saves nothing to a read-only store", function()
             store = ns.ScanStore.New({ _schema = 99 }, { region = "EU", ruleset = "standard", schemaVersion = 1 })

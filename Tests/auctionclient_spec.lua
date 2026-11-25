@@ -177,6 +177,7 @@ describe("AuctionClient", function()
 
         it("searches one item by item key", function()
             local sent
+            mock.commodity[2589] = true
             _G.C_AuctionHouse.MakeItemKey = function(itemID) return { itemID = itemID } end
             _G.C_AuctionHouse.SendSearchQuery = function(...) sent = { ... } end
             assert.is_true(ns.AuctionClient.CanTargetSearch())
@@ -184,6 +185,35 @@ describe("AuctionClient", function()
             assert.are.same({ { itemID = 2589 }, {}, true }, sent)
             _G.C_AuctionHouse.SendSearchQuery = nil
             assert.is_false(ns.AuctionClient.CanTargetSearch())
+        end)
+
+        it("gives the next-page and throttle reads to the capture", function()
+            local capture = ns.AuctionClient.Capture()
+            assert.are.equal(_G.C_AuctionHouse.RequestMoreCommoditySearchResults, capture.api.commodityMore)
+            assert.are.equal(_G.C_AuctionHouse.RequestMoreItemSearchResults, capture.api.itemMore)
+            assert.are.equal(_G.C_AuctionHouse.IsThrottledMessageSystemReady, capture.api.isReady)
+        end)
+
+        it("waits for the item key info before a targeted search", function()
+            ns.AuctionClient.TargetedSearch(77)
+            assert.are.equal(0, #mock.searchQueries)
+            mock.advance(0.2)
+            assert.are.equal(0, #mock.searchQueries)
+            mock.itemNames[77] = "Bolt"
+            mock.advance(0.2)
+            assert.are.equal(1, #mock.searchQueries)
+            assert.are.equal(77, mock.searchQueries[1].itemKey.itemID)
+            mock.advance(5)
+            assert.are.equal(1, #mock.searchQueries)
+        end)
+
+        it("sends a targeted search after the key info wait ends with no info", function()
+            ns.AuctionClient.TargetedSearch(78)
+            for _ = 1, 10 do
+                mock.advance(0.2)
+            end
+            assert.are.equal(1, #mock.searchQueries)
+            assert.are.equal(78, mock.searchQueries[1].itemKey.itemID)
         end)
 
         it("reads the owned auctions", function()
@@ -207,13 +237,84 @@ describe("AuctionClient", function()
         end)
 
         it("sends one targeted search for the item key", function()
+            mock.commodity[5] = true
             assert.is_true(ns.AuctionClient.CanLiveSearch())
             assert.is_true(ns.AuctionClient.LiveSearch(5))
             assert.are.equal(5, mock.searchQueries[1].itemKey.itemID)
             assert.is_true(mock.searchQueries[1].separate)
         end)
 
+        it("sends no live search before the key info exists, and sends it when the info comes", function()
+            assert.is_true(ns.AuctionClient.LiveSearch(5))
+            assert.are.equal(0, #mock.searchQueries)
+            mock.itemNames[5] = "Bolt"
+            mock.advance(0.2)
+            assert.are.equal(1, #mock.searchQueries)
+        end)
+
+        it("sends a live search when the key info wait ends", function()
+            assert.is_true(ns.AuctionClient.LiveSearch(5))
+            for _ = 1, 10 do
+                mock.advance(0.2)
+            end
+            assert.are.equal(1, #mock.searchQueries)
+        end)
+
+        it("tells the capture about each search that it sends", function()
+            local started = {}
+            ns.scanCapture = { BeginSearch = function(_, id, key) started[#started + 1] = { id, key.itemID } end }
+            mock.commodity[5] = true
+            ns.AuctionClient.LiveSearch(5)
+            assert.are.same({ { 5, 5 } }, started)
+            ns.AuctionClient.LiveSearch(6) -- no key info: the search waits, and the capture hears of it later
+            assert.are.equal(1, #started)
+            mock.itemNames[6] = "Bolt"
+            mock.advance(0.2)
+            assert.are.same({ { 5, 5 }, { 6, 6 } }, started)
+        end)
+
+        it("does not let a targeted search drop a waiting live search", function()
+            assert.is_true(ns.AuctionClient.LiveSearch(5))
+            ns.AuctionClient.TargetedSearch(6)
+            mock.itemNames[5] = "Bolt"
+            mock.advance(0.2)
+            assert.are.equal(1, #mock.searchQueries)
+            assert.are.equal(5, mock.searchQueries[1].itemKey.itemID)
+            mock.commodity[6] = true -- after the live search went out, a targeted search works again
+            ns.AuctionClient.TargetedSearch(6)
+            assert.are.equal(2, #mock.searchQueries)
+        end)
+
+        it("sends no delayed search when the AH closed during the wait", function()
+            ns.IsAuctionHouseOpen = function() return false end
+            assert.is_true(ns.AuctionClient.LiveSearch(5))
+            for _ = 1, 10 do
+                mock.advance(0.2)
+            end
+            assert.are.equal(0, #mock.searchQueries)
+        end)
+
+        it("catches an error of a delayed search", function()
+            _G.C_AuctionHouse.SendSearchQuery = function() error("boom") end
+            assert.is_true(ns.AuctionClient.LiveSearch(5))
+            mock.itemNames[5] = "Bolt"
+            assert.has_no.errors(function()
+                mock.advance(0.2)
+            end)
+        end)
+
+        it("drops a waiting search when a newer search starts", function()
+            assert.is_true(ns.AuctionClient.LiveSearch(5))
+            mock.commodity[6] = true
+            assert.is_true(ns.AuctionClient.LiveSearch(6))
+            mock.itemNames[5] = "Bolt"
+            mock.advance(5)
+            assert.are.equal(1, #mock.searchQueries)
+            assert.are.equal(6, mock.searchQueries[1].itemKey.itemID)
+        end)
+
         it("stops after 100 searches in a minute and allows again later", function()
+            mock.commodity[5] = true
             for _ = 1, 100 do
                 assert.is_true(ns.AuctionClient.LiveSearch(5))
             end
@@ -304,6 +405,7 @@ describe("AuctionClient", function()
         end)
 
         it("has no page count and ignores a page", function()
+            mock.commodity[5] = true
             assert.is_nil(ns.AuctionClient.LivePageCount())
             assert.is_true(ns.AuctionClient.LiveSearch(5, 2))
             assert.are.equal(5, mock.searchQueries[1].itemKey.itemID)
