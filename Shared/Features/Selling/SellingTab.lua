@@ -13,8 +13,8 @@ local BuyDialog = ns.BuyDialog -- the confirm box of a buy
 
 local OWNER = "Flipside.SellingTab"
 local DIALOG = "FLIPSIDE_CONFIRM_POST"
-local SEARCH_TIMEOUT = 10
-local RETRY_SECONDS = 5
+local SEARCH_TIMEOUT = 4 -- seconds that a search waits for its result before the next search starts
+local RETRY_SECONDS = 1 -- fallback timer for a refused search; the ready event starts the next search first
 local MULTI_TIMEOUT = 15
 local MULTI_TIMEOUT_PER_STACK = 3
 local SECONDS_PER_HOUR = 3600
@@ -26,13 +26,14 @@ local QUOTE_WAIT = 10 -- seconds that a commodity buy waits for its quote
 local CONFIRM_WAIT = 15 -- seconds that a buy waits for the result of the server
 local DEAL_PERCENT = 30 -- a lowest price this many percent under the market value shows as a deal
 local CONFIRM_BOX = "FlipsideBuyConfirm" -- the box of the Buying tab: one buy box for both tabs
-local ROWS_TRIES = 3 -- most retries of the search for the rows of the pane while the AH is not ready
+local ROWS_TRIES = 6 -- most retries of the search for the rows of the pane while the AH is not ready
 -- Seconds that a click waits before the search for the rows of the pane starts (debounce). It is not GATE_POLL_SECONDS:
 -- the gate poll timers and these timers must stay apart.
-local ROWS_DELAY = 0.3
+local ROWS_DELAY = 0.15
 local DOT_SECONDS = 0.4 -- seconds between two steps of the dots of the loading text
 local INFO_TRIES = 3 -- failed tries (an event or a timeout with no data) before an entry is skipped
-local INFO_TIMEOUT = 10 -- seconds that an entry waits for item data before it tries again
+local INFO_TIMEOUT = 3 -- seconds that an entry waits for item data before it tries again
+local INFO_RESEND = 0.5 -- seconds between two requests for the item data of a waiting entry
 
 -- Write a line to the log. The logger can be missing.
 local function log(level, text)
@@ -857,6 +858,7 @@ function Tab:_WaitInfo(entry)
     entry.infoToken = (entry.infoToken or 0) + 1
     local token = entry.infoToken
     pcall(self.deps.requestItem, itemID)
+    self:_ResendInfo(entry, token, INFO_RESEND)
     self.deps.after(INFO_TIMEOUT, function()
         if entry.infoToken == token and self.infoWait and entry.status == "waiting" then
             self:_InfoTimeout(entry)
@@ -864,6 +866,18 @@ function Tab:_WaitInfo(entry)
     end)
     self:_Update()
     return "skipped"
+end
+
+-- Ask for the item data again while the entry waits for it. The chain ends with a new token, a new state or the
+-- timeout.
+function Tab:_ResendInfo(entry, token, elapsed)
+    self.deps.after(INFO_RESEND, function()
+        if entry.infoToken ~= token or not self.infoWait or entry.status ~= "waiting" or elapsed >= INFO_TIMEOUT then
+            return
+        end
+        pcall(self.deps.requestItem, entry.candidate.itemID)
+        self:_ResendInfo(entry, token, elapsed + INFO_RESEND)
+    end)
 end
 
 -- The wait of an entry ran out with no event: search it again, as for an event.
@@ -966,20 +980,22 @@ function Tab:_Launch(entry, rowsOnly)
     self.deps.after(SEARCH_TIMEOUT, function()
         local pending = self.pending
         if pending and pending.token == token then
-            self.pending = nil
-            if rowsOnly then
-                self.rowsFailed = candidate.itemID
-            elseif self:_InSelection(entry) then
-                entry.status = "skip"
-                entry.decision = { action = "skip", reason = "no response", key = candidate.key }
-                self.deps.log:Add(candidate, entry.decision)
-                -- No second search at once: a new click searches again.
-                self.rowsFailed = candidate.itemID
-            else
-                entry.status = "waiting" -- not wanted any more: no mark, it is searched when it is selected again
-            end
-            self:_Update()
-            self:_AfterSearch()
+            self:_Batch(function()
+                self.pending = nil
+                if rowsOnly then
+                    self.rowsFailed = candidate.itemID
+                elseif self:_InSelection(entry) then
+                    entry.status = "skip"
+                    entry.decision = { action = "skip", reason = "no response", key = candidate.key }
+                    self.deps.log:Add(candidate, entry.decision)
+                    -- No second search at once: a new click searches again.
+                    self.rowsFailed = candidate.itemID
+                else
+                    entry.status = "waiting" -- not wanted any more: no mark, it is searched when it is selected again
+                end
+                self:_Update()
+                self:_AfterSearch()
+            end)
         end
     end)
     return "started"
@@ -992,8 +1008,10 @@ function Tab:_ScheduleRetry()
     self.retrying = true
     self.deps.after(RETRY_SECONDS, function()
         self.retrying = false
-        self:_Next()
-        self:_StartWantedRows()
+        self:_Batch(function()
+            self:_Next()
+            self:_StartWantedRows()
+        end)
     end)
 end
 
@@ -1030,8 +1048,10 @@ function Tab:_WantRows()
             return
         end
         self.rowsScheduled = false
-        self:_StartWantedRows()
-        self:_Update()
+        self:_Batch(function()
+            self:_StartWantedRows()
+            self:_Update()
+        end)
     end)
 end
 
@@ -1117,7 +1137,7 @@ function Tab:_TickLoading()
         self.ticking = false
         if self.ui and self.active and self:_PaneLoading() then
             self.dots = (self.dots or 0) % 3 + 1
-            self.ui.levelLoading:SetText("Loading prices" .. string.rep(".", self.dots))
+            self.ui.levelLoading:SetText(SellingTab.LoadingText(self.dots, self.storedText))
             self:_TickLoading()
         end
     end)
@@ -1568,6 +1588,12 @@ function Tab:Stop()
 end
 
 function Tab:_OnResult(arg)
+    self:_Batch(function()
+        self:_HandleResult(arg)
+    end)
+end
+
+function Tab:_HandleResult(arg)
     local pending = self.pending
     if not pending then
         return
@@ -1600,11 +1626,14 @@ function Tab:_OnResult(arg)
     self:_AfterSearch()
 end
 
+-- The throttle gate opened: go on with the queue at once (the retry timer is only the fallback).
 function Tab:_OnReady()
-    if self.queue and not self.pending then
-        self:_Next()
-    end
-    self:_StartWantedRows()
+    self:_Batch(function()
+        if self.queue and not self.pending then
+            self:_Next()
+        end
+        self:_StartWantedRows()
+    end)
 end
 
 -- The client made an auction. It ends a one-stack post that waits for it (_EndMulti). A multi-stack post
@@ -2558,6 +2587,50 @@ function Tab:_Market(entry)
     return ok and type(values) == "table" and values.scanMarket or nil
 end
 
+-- The text of the pane while it waits for its rows: dots, and the stored price line if there is one.
+function SellingTab.LoadingText(dots, stored)
+    local text = "Loading prices" .. string.rep(".", dots or 1)
+    return stored and (text .. "\n" .. stored) or text
+end
+
+-- The age of a scan in hours as short text.
+function SellingTab.AgeText(hours)
+    if type(hours) ~= "number" then
+        return nil
+    end
+    if hours < 1 then
+        return "under 1 h"
+    end
+    if hours < 48 then
+        return string.format("%d h", math.floor(hours))
+    end
+    return string.format("%d d", math.floor(hours / 24))
+end
+
+-- The stored scan price line for the pane: "Stored price 12g 3s, 2 h old", or nil without a lowest price.
+function SellingTab.StoredText(min, ageHours)
+    if type(min) ~= "number" or min < 1 then
+        return nil
+    end
+    local age = SellingTab.AgeText(ageHours)
+    return "Stored price " .. money(min) .. (age and (", " .. age .. " old") or "")
+end
+
+-- The stored price line of an entry (lowest price of the last scan and its age), or nil.
+function Tab:_StoredText(entry)
+    local deps = self.deps
+    local record = deps.getRecord and entry.key and deps.getRecord(entry.key)
+    local now = deps.now and deps.now()
+    if type(record) ~= "table" or type(now) ~= "number" or not (ns.ScanSources and ns.ScanSources.Compute) then
+        return nil
+    end
+    local ok, values = pcall(ns.ScanSources.Compute, record, now)
+    if not ok or type(values) ~= "table" then
+        return nil
+    end
+    return SellingTab.StoredText(values.scanMin, values.scanAge)
+end
+
 -- The level that the user selected in the level list, from the levels of the shown item, or nil.
 function Tab:_SelectedLevel(levels)
     if self.levelSel == nil then
@@ -2708,12 +2781,20 @@ function Tab:_RefreshLevels()
     local levels = entry and self:_LevelsOf(entry) or {}
     -- While the pane waits for its rows it shows the loading text and no rows (not the rows of an older item).
     local loading = self:_PaneLoading()
-    if loading ~= ui.levelLoading:IsShown() then
+    -- The pane shows the stored scan price with its age until the live rows come.
+    local newItem = loading and self.storedFor ~= entry
+    if newItem then
+        self.storedFor, self.storedText = entry, entry and self:_StoredText(entry) or nil
+    end
+    if loading ~= ui.levelLoading:IsShown() or newItem then
         ui.levelLoading:SetShown(loading)
         if loading then
             self.dots = 1
-            ui.levelLoading:SetText("Loading prices.")
+            ui.levelLoading:SetText(SellingTab.LoadingText(1, self.storedText))
         end
+    end
+    if not loading then
+        self.storedFor, self.storedText = nil, nil
     end
     if loading then
         levels = {}
@@ -3718,7 +3799,26 @@ function Tab:_RefreshPost()
     end)
 end
 
+-- Run fn and draw the panel once at its end, not once for each state change inside it. A nested batch waits for the
+-- outer one. The search events and timers use it: a result starts the next search and decides an entry in one pass.
+function Tab:_Batch(fn)
+    self.batchDepth = (self.batchDepth or 0) + 1
+    local ok, err = pcall(fn)
+    self.batchDepth = self.batchDepth - 1
+    if self.batchDepth == 0 and self.batchDirty then
+        self.batchDirty = false
+        self:_Update()
+    end
+    if not ok then
+        error(err, 0)
+    end
+end
+
 function Tab:_Update()
+    if (self.batchDepth or 0) > 0 then
+        self.batchDirty = true
+        return
+    end
     local ui = self.ui
     if not ui then
         return

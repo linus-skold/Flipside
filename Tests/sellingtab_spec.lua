@@ -656,7 +656,7 @@ describe("SellingTab", function()
             client.ready = false
             pick("g2")
             assert.are.same({}, client.searches)
-            assert.are.equal(5, timers[#timers].seconds)
+            assert.are.equal(1, timers[#timers].seconds)
             client.ready = true
             fire("READY")
             assert.are.same({ 10 }, client.searches)
