@@ -919,6 +919,61 @@ describe("ScanEngine Forever retry", function()
         assert.is_not_nil(w.store:Get("1001#b6001"))
     end)
 
+    it("sends a real load request for an item that the cache has as loaded but whose link is missing", function()
+        local row = gearRow(2)
+        row.linkAfter = 2
+        local w = MakeWorld({ rows = { gearRow(1), row }, forever = true })
+        w.known[1002] = true
+        w.cache:Request(1002)
+        assert.are.equal("loaded", w.cache:GetState(1002))
+        local s = Run(w)
+        assert.are.equal(0, s.pending)
+        assert.are.equal(2, s.keys)
+        assert.is_true((w.requestCount[1002] or 0) >= 1)
+        assert.is_not_nil(w.store:Get("1002#b6002"))
+    end)
+
+    it("keeps the open load requests inside the window and loads all items", function()
+        local rows = {}
+        for i = 1, 7 do
+            rows[i] = gearRow(i)
+            rows[i].late = true
+        end
+        local w = MakeWorld({ rows = rows, forever = true, refresh = 15 })
+        w.api.loadWindow = 3
+        local open, maxOpen = 0, 0
+        w.cache.requestLoad = function(id)
+            w.requested[id] = true
+            w.requestCount[id] = (w.requestCount[id] or 0) + 1
+            open = CountKeys(w.requested)
+            maxOpen = math.max(maxOpen, open)
+        end
+        local s = Run(w)
+        assert.are.equal(0, s.pending)
+        assert.are.equal(7, s.keys)
+        assert.is_true(maxOpen <= 3)
+        assert.is_true(maxOpen >= 1)
+        for i = 1, 7 do
+            assert.is_true((w.requestCount[1000 + i] or 0) >= 1)
+        end
+    end)
+
+    it("counts the items that are still open at the stop by cache state", function()
+        local rows = { gearRow(1), gearRow(2), gearRow(3), gearRow(4) }
+        rows[2].late, rows[3].late = true, true
+        rows[4].linkAfter = 999
+        local w = MakeWorld({ rows = rows, forever = true, refresh = 4 })
+        w.neverLoad[1002] = true
+        w.failLoad[1003] = true
+        local s = Run(w)
+        assert.are.equal(3, s.pending)
+        assert.are.equal(1, s.stopRequested)
+        assert.are.equal(1, s.stopFailed)
+        assert.are.equal(1, s.stopLoaded)
+        assert.are.equal(0, s.stopUnknown)
+        assert.is_true((w.requestCount[1004] or 0) >= 2)
+    end)
+
     it("stops the scan when the Auction House closes during the event wait", function()
         local w = MakeWorld({ rows = { gearRow(1), gearRow(2) }, forever = true, eventDelay = 5 })
         assert.is_true(w.engine:Start())

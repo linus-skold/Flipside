@@ -32,6 +32,8 @@ local PAGE_SIZE = 50
 local PAGE_QUERY_WAIT_SECONDS = 30
 local PAGE_EVENT_WAIT_SECONDS = 20
 local REFRESH_INTERVAL_SECONDS = 1
+-- Forever: the most item load requests that are open at the same time (api.loadWindow overrides it).
+local LOAD_WINDOW = 200
 
 local REQUIRED_FUNCTIONS = { "startJob", "serverTime", "seconds", "ms", "isAuctionHouseOpen", "report" }
 local REQUIRED_TABLES = { "bus", "store", "cooldown", "cache", "api" }
@@ -276,6 +278,10 @@ function Engine:_Conclude(summary)
     summary.retried = count(run.retriedSet)
     summary.nilLink = run.nilLinkItems
     summary.notAllInfo = run.notAllInfoItems
+    summary.stopLoaded = run.stopStates.loaded or 0
+    summary.stopRequested = run.stopStates.requested or 0
+    summary.stopFailed = run.stopStates.failed or 0
+    summary.stopUnknown = run.stopStates.unknown or 0
     summary.wallMs = self.deps.ms() - run.startMs
     summary.cpuMs = summary.wallMs - run.suspendedMs
     summary.frames = run.frames
@@ -595,15 +601,38 @@ function Engine:_LoadRows(jobView, rows, noProgressSeconds, run)
     local resolver = ns.ScanKey.New({ clientIsCommodity = api.clientIsCommodity, maxStack = api.maxStack })
     local interval = api.refreshInterval or REFRESH_INTERVAL_SECONDS
     local startAt = deps.seconds()
-    local outstanding, ready, asked = {}, {}, {}
+    local window = api.loadWindow or LOAD_WINDOW
+    local outstanding, ready, asked, sentAt, queued = {}, {}, {}, {}, {}
+    local queue, head, inflight = {}, 1, 0
     local function onData(itemID)
-        asked[itemID] = nil
+        if asked[itemID] then
+            asked[itemID] = nil
+            inflight = inflight - 1
+        end
         ready[#ready + 1] = itemID
     end
-    local function ask(itemID)
-        if not asked[itemID] then
-            asked[itemID] = true
-            deps.cache:Request(itemID, onData)
+    -- Sends the queued requests, not more than "window" at the same time. Each one is a real client request.
+    local function pump()
+        while head <= #queue and inflight < window do
+            local itemID = queue[head]
+            queue[head] = nil
+            head = head + 1
+            queued[itemID] = nil
+            if outstanding[itemID] and not asked[itemID] then
+                asked[itemID] = true
+                inflight = inflight + 1
+                sentAt[itemID] = deps.seconds()
+                deps.cache:Reload(itemID, onData)
+            end
+        end
+        if head > #queue then
+            queue, head = {}, 1
+        end
+    end
+    local function enqueue(itemID)
+        if not queued[itemID] then
+            queued[itemID] = true
+            queue[#queue + 1] = itemID
         end
     end
     for _, itemID in ipairs(needItems(jobView, rows, resolver)) do
@@ -614,9 +643,10 @@ function Engine:_LoadRows(jobView, rows, noProgressSeconds, run)
     for itemID in pairs(outstanding) do
         total = total + 1
         left = left + 1
-        ask(itemID)
+        enqueue(itemID)
         jobView:Checkpoint(1)
     end
+    pump()
     if total > 0 then
         jobView:SetProgress(0, total)
     end
@@ -650,15 +680,20 @@ function Engine:_LoadRows(jobView, rows, noProgressSeconds, run)
             if deps.seconds() >= nextPoll then
                 nextPoll = deps.seconds() + interval
                 deps.cache:ResetFailed()
+                -- Send again each item that was sent at least one interval ago and is not done.
                 for itemID in pairs(outstanding) do
-                    run.retriedSet[itemID] = true
-                    -- A requested item keeps its callback: send the request again. Else ask again.
-                    if not deps.cache:Resend(itemID) then
-                        asked[itemID] = nil
-                        ask(itemID)
+                    if sentAt[itemID] and deps.seconds() - sentAt[itemID] >= interval then
+                        run.retriedSet[itemID] = true
+                        if asked[itemID] then
+                            asked[itemID] = nil
+                            inflight = inflight - 1
+                        end
+                        sentAt[itemID] = nil
+                        enqueue(itemID)
                     end
                 end
             end
+            pump()
             jobView:Yield()
             if jobView:IsCancelled() then
                 return nil
@@ -666,9 +701,12 @@ function Engine:_LoadRows(jobView, rows, noProgressSeconds, run)
         end
     end
     for itemID in pairs(outstanding) do
-        if deps.cache:GetState(itemID) == "failed" then
+        local state = deps.cache:GetState(itemID)
+        if state == "failed" then
             run.failedSet[itemID] = true
         end
+        -- The cache state of each item that is still outstanding at the stop, for the diagnostics.
+        run.stopStates[state] = (run.stopStates[state] or 0) + 1
     end
     rows.stats.pendingItems = count(rows.pending)
     countPending(rows, run)
@@ -848,7 +886,7 @@ function Engine:_Run(job)
     local run = {
         startMs = deps.ms(), suspendedMs = 0, frames = 1, closed = false, eventSeen = false,
         readCut = false, concluded = false, eventCount = 0, lastEventAt = 0,
-        refreshSeconds = 0, failedSet = {}, retriedSet = {}, nilLinkItems = 0, notAllInfoItems = 0,
+        refreshSeconds = 0, failedSet = {}, retriedSet = {}, nilLinkItems = 0, notAllInfoItems = 0, stopStates = {},
         pendingRows = 0, readSeconds = 0,
     }
     self.run = run

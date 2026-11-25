@@ -192,6 +192,32 @@ describe("ItemInfoCache", function()
         assert.same({}, requests)
     end)
 
+    it("Reload sends a real request for a loaded item and runs the callback once on the result", function()
+        client[10] = { name = "a" }
+        cache:Request(10)
+        assert.equals("loaded", cache:GetState(10))
+        local count = 0
+        local function callback() count = count + 1 end
+        cache:Reload(10, callback)
+        cache:Reload(10, callback)
+        assert.same({ 10, 10 }, requests)
+        assert.equals("requested", cache:GetState(10))
+        cache:OnLoadResult(10, true)
+        assert.equals(1, count)
+        assert.equals("loaded", cache:GetState(10))
+    end)
+
+    it("Reload marks the item failed when the request raises an error", function()
+        local called
+        local failing = IIC.New({
+            getInfo = function() end,
+            requestLoad = function() error("boom") end,
+        })
+        failing:Reload(10, function(_, _, state) called = state end)
+        assert.equals("failed", failing:GetState(10))
+        assert.equals("failed", called)
+    end)
+
     it("counts pending items", function()
         cache:Request(1)
         cache:Request(2)

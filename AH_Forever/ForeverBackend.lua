@@ -62,6 +62,8 @@ function Backend.ScanDiagnostics(summary)
         pending = summary.pending, failed = summary.failed, nilLink = summary.nilLink,
         notAllInfo = summary.notAllInfo, retried = summary.retried, refreshSeconds = summary.refreshSeconds,
         pendingRows = summary.pendingRows, readSeconds = summary.readSeconds,
+        stopLoaded = summary.stopLoaded, stopRequested = summary.stopRequested,
+        stopFailed = summary.stopFailed, stopUnknown = summary.stopUnknown,
         eventSeconds = summary.timeToEventMs and summary.timeToEventMs / 1000 or nil,
     }
     local flavour = ns.Flavour
@@ -81,6 +83,11 @@ function Backend.ScanDiagnostics(summary)
         tostring(entry.rows), tostring(entry.keys), tostring(entry.pending), tostring(entry.pendingRows),
         tostring(entry.failed), tostring(entry.nilLink), tostring(entry.notAllInfo), tostring(entry.retried),
         entry.eventSeconds or 0, entry.readSeconds or 0, entry.refreshSeconds or 0)
+    if (entry.pending or 0) > 0 then
+        line = line .. string.format("; open at stop: loaded %s, requested %s, failed %s, unknown %s",
+            tostring(entry.stopLoaded or 0), tostring(entry.stopRequested or 0),
+            tostring(entry.stopFailed or 0), tostring(entry.stopUnknown or 0))
+    end
     log("info", "scan details: %s", line)
     return line
 end
