@@ -265,6 +265,7 @@ The formula language stays as in the reference (§4.3). AuctionDB sources are re
 - No TSM, an error or a nil result gives no price (the source is invalid, as for a missing price). There is no error and no chat line.
 - Item string (D20): a bare item ID and a variant key `<id>#...` both map to the base item `i:<id>`. `TsmPrices.ItemString(link)` wraps `TSM_API.ToItemString` for a link.
 - The names show in the Formula page help and work in every formula (tooltip lines, operations, custom sources). They are `available` in the list even when TSM is not loaded.
+- Number sources: `tsmRegionSaleRate` (a fraction, for example 0.12), `tsmRegionSoldPerDay` and `tsmNumAuctions` (counts) are not money (`TsmPrices.IsNumber`). If a tooltip line formula or the Formula page formula is only one of these names, the value shows as a plain number with up to 2 decimals and no trailing zeros (`0.12`, `3.5`, `40`), not as a percent and not as gold, silver and copper. The stack multiplier does not apply. `FormulaRun` puts the raw value in `info.number`; the copper result is unchanged. A formula that mixes these sources with others keeps the money format.
 
 Carried over: `avgBuy`, `avgSell`, `SmartAvgBuy`, `min`/`maxBuy`, `min`/`maxSell`, `Crafting`, `matPrice`, `Destroy`, `vendorBuy`, `vendorSell`, and the operation sources.
 

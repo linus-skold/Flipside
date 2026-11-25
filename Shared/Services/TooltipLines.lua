@@ -69,6 +69,16 @@ function TooltipLines.FormatMoney(copper)
     return sign .. table.concat(parts, " ")
 end
 
+-- Returns a plain number with up to 2 decimals and no trailing zeros: 12, 0.12, 3.5. A rate is not a percent.
+function TooltipLines.FormatNumber(value)
+    local text = string.format("%.2f", value or 0)
+    text = text:gsub("0+$", ""):gsub("%.$", "")
+    if text == "-0" or text == "" then
+        return "0"
+    end
+    return text
+end
+
 function TooltipLines.FormatAge(hours)
     if hours < 1 then
         return "< 1 h"
@@ -113,11 +123,15 @@ local function dataRow(line, ctx, state)
     local stack = ctx.stackCount
     local right
     if copper then
-        if ctx.stackMode and line.altStack ~= false and stack and stack > 1 then
-            copper = copper * stack
-            label = stackLabel(label, stack)
+        if info and info.number ~= nil then
+            right = TooltipLines.FormatNumber(info.number)
+        else
+            if ctx.stackMode and line.altStack ~= false and stack and stack > 1 then
+                copper = copper * stack
+                label = stackLabel(label, stack)
+            end
+            right = TooltipLines.FormatMoney(copper)
         end
-        right = TooltipLines.FormatMoney(copper)
         if line.showAge or line.showSamples then
             local sources = state.sources(info and info.key)
             if line.showAge and sources and sources.scanAge then

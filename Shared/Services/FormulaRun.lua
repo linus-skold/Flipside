@@ -55,7 +55,9 @@ function Run:Compile(text)
             later[#later + 1] = name
         end
     end
-    local compiled = { text = text, tree = tree, names = result, later = later }
+    -- A formula that is only one number source (a rate or a count) shows as a plain number, not money.
+    local isNumber = tree.kind == "name" and sources.IsNumber ~= nil and sources:IsNumber(tree.name)
+    local compiled = { text = text, tree = tree, names = result, later = later, number = isNumber or nil }
     self.compiled[text] = compiled
     return compiled
 end
@@ -78,11 +80,17 @@ function Run:_evaluate(compiled, input, options)
     end)
     table.sort(missing)
     local copper = ns.FormulaFunctions.RoundCopper(value)
+    -- info.number is the raw value (2 decimals) of a formula that is one number source; nil for money.
+    local number
+    if compiled.number and copper ~= nil then
+        number = math.floor(value * 100 + 0.5) / 100
+    end
     return copper, {
         kind = copper ~= nil and "ok" or "invalid",
         key = key,
         missing = missing,
         later = compiled.later,
+        number = number,
     }
 end
 
