@@ -32,8 +32,10 @@ local PAGE_SIZE = 50
 local PAGE_QUERY_WAIT_SECONDS = 30
 local PAGE_EVENT_WAIT_SECONDS = 20
 local REFRESH_INTERVAL_SECONDS = 1
--- Forever: the most item load requests that are open at the same time (api.loadWindow overrides it).
+-- Forever: the most item load requests that wait for an answer at the same time (api.loadWindow overrides it).
+-- A request that has no answer after LOAD_TIMEOUT_SECONDS counts as lost: it frees its slot and is sent again.
 local LOAD_WINDOW = 200
+local LOAD_TIMEOUT_SECONDS = 5
 
 local REQUIRED_FUNCTIONS = { "startJob", "serverTime", "seconds", "ms", "isAuctionHouseOpen", "report" }
 local REQUIRED_TABLES = { "bus", "store", "cooldown", "cache", "api" }
@@ -682,9 +684,11 @@ function Engine:_LoadRows(jobView, rows, noProgressSeconds, run)
             if deps.seconds() >= nextPoll then
                 nextPoll = deps.seconds() + interval
                 deps.cache:ResetFailed()
-                -- Send again each item that was sent at least one interval ago and is not done.
+                -- Send again each item that is not done. An item with an answer waits one interval. An item
+                -- that still waits for an answer keeps its slot until the timeout, so the window holds.
                 for itemID in pairs(outstanding) do
-                    if sentAt[itemID] and deps.seconds() - sentAt[itemID] >= interval then
+                    local wait = asked[itemID] and math.max(interval, LOAD_TIMEOUT_SECONDS) or interval
+                    if sentAt[itemID] and deps.seconds() - sentAt[itemID] >= wait then
                         run.retriedSet[itemID] = true
                         if asked[itemID] then
                             asked[itemID] = nil

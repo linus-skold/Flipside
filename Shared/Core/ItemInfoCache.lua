@@ -152,7 +152,8 @@ function Cache:Resend(itemID)
 end
 
 -- Always sends a load request, also if the cache has the item as loaded. The caller needs it when the client data
--- of the item is not complete (for example a scan row without all item info). The entry goes to "requested".
+-- of the item is not complete (for example a scan row without all item info). A loaded entry stays "loaded", so
+-- readers of GetState do not see it as waiting. Another entry goes to "requested".
 -- The callback is added once, so a repeated call keeps one callback. The result comes through OnLoadResult.
 function Cache:Reload(itemID, callback)
     checkID(itemID)
@@ -167,10 +168,13 @@ function Cache:Reload(itemID, callback)
             entry.callbacks[#entry.callbacks + 1] = callback
         end
     end
-    entry.state = "requested"
+    local wasLoaded = entry.state == "loaded"
+    if not wasLoaded then
+        entry.state = "requested"
+    end
     local ok, err = pcall(self.requestLoad, itemID)
     if not ok then
-        entry.state = "failed"
+        entry.state = wasLoaded and "loaded" or "failed"
         self:_report("requestLoad failed for " .. itemID .. ": " .. tostring(err))
         self:_runCallbacks(itemID, entry)
     end
