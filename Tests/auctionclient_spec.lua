@@ -362,6 +362,7 @@ describe("AuctionClient", function()
         end)
 
         it("has no page count and ignores a page", function()
+            mock.commodity[5] = true
             assert.is_nil(ns.AuctionClient.LivePageCount())
             assert.is_true(ns.AuctionClient.LiveSearch(5, 2))
             assert.are.equal(5, mock.searchQueries[1].itemKey.itemID)

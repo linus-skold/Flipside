@@ -96,8 +96,11 @@ function Capture:_RequestMore(id, count, request)
     if state and count < state.rows then
         state = nil -- a new search of the same item starts again
     end
-    if state and state.requests > 0 and (count == state.rows or state.requests >= MAX_MORE_REQUESTS) then
-        self.paging[id] = nil -- the last request gave no new row, or the cap is reached
+    if state and state.requests >= MAX_MORE_REQUESTS then
+        return -- the cap is reached; the state stays until a new search gives fewer rows
+    end
+    if state and state.requests > 0 and count == state.rows then
+        self.paging[id] = nil -- the last request gave no new row
         return
     end
     if not state then
