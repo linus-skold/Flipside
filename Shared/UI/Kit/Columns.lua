@@ -258,6 +258,7 @@ function Kit.MakeHeaderSortable(header, columns, onSort)
             button:SetScript("OnClick", function()
                 onSort(column.key)
             end)
+            Kit.AddHoverGlow(button, { pad = 2 })
             header.buttons[column.key] = button
         end
     end

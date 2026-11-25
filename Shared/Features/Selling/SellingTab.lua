@@ -4051,6 +4051,7 @@ function Tab:_BuildContent()
         button:SetScript("OnClick", function()
             self:SetManualMax()
         end)
+        Kit.AddHoverGlow(button, { pad = 2 })
         Kit.Tooltip(button, "Click to post the maximum", { "Fills the boxes with the most that the bags allow.",
             "Then click Post." })
         d[key .. "Button"] = button

@@ -131,6 +131,7 @@ function Kit.CreatePageTabs(window, pages, options)
             Kit.PlaySound("tab")
             self:Select(page.key)
         end)
+        Kit.AddHoverGlow(tab)
         -- Run after the client OnShow resize.
         tab:HookScript("OnShow", function()
             self:Layout()
@@ -226,6 +227,7 @@ function Kit.CreateTopTabs(parent, tabs, options)
             Kit.PlaySound("tab")
             self:Select(key)
         end)
+        Kit.AddHoverGlow(tab)
         self.buttons[index] = tab
         self.indexByKey[key] = index
 

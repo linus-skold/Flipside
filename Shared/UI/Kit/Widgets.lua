@@ -612,6 +612,43 @@ function Kit.Inset(parent, skin)
     return inset
 end
 
+-- Add a soft yellow glow behind clickable text. It shows while the mouse is over the frame and hides on leave.
+-- The texture is the client row highlight (soft edges, on Forever and TBC), tinted with the Theme glow color
+-- in the ADD blend mode, so a selected row (its own texture) stays visible under it.
+-- By default the texture is on the HIGHLIGHT layer, which the client shows on mouse-over for a Button, with no script.
+-- opts: target (the region to cover; default the frame), pad (pixels around the target), alpha, and scripts = true
+-- for a frame that is not a Button: then the texture is shown by OnEnter and OnLeave hooks (HookScript keeps every
+-- other handler, for example a tooltip). Returns the texture. A second call returns the same texture.
+function Kit.AddHoverGlow(frame, opts)
+    if frame.kitGlow then
+        return frame.kitGlow
+    end
+    opts = opts or {}
+    local glow = Kit.Theme.glow
+    local texture = frame:CreateTexture(nil, opts.scripts and "BACKGROUND" or "HIGHLIGHT")
+    texture:SetTexture(Kit.Theme.rowHighlight)
+    texture:SetBlendMode("ADD")
+    texture:SetVertexColor(glow.r, glow.g, glow.b, opts.alpha or glow.alpha)
+    local target, pad = opts.target or frame, opts.pad or 0
+    if pad == 0 then
+        texture:SetAllPoints(target)
+    else
+        texture:SetPoint("TOPLEFT", target, "TOPLEFT", -pad, pad)
+        texture:SetPoint("BOTTOMRIGHT", target, "BOTTOMRIGHT", pad, -pad)
+    end
+    if opts.scripts then
+        texture:Hide()
+        frame:HookScript("OnEnter", function()
+            texture:Show()
+        end)
+        frame:HookScript("OnLeave", function()
+            texture:Hide()
+        end)
+    end
+    frame.kitGlow = texture
+    return texture
+end
+
 -- Skin a list row once: a stripe texture and a hover texture from the atlases of the skin.
 -- alternate (optional) picks the stripe atlas: true gives the first, false the second.
 -- Without a skin the row gets the Kit highlight texture. Returns true when the row has the skin.
@@ -620,6 +657,7 @@ function Kit.SkinRow(row, skin, alternate)
         if not row.kitSkinned then
             row.kitSkinned = true
             row:SetHighlightTexture(Kit.Theme.rowHighlight, "ADD")
+            Kit.AddHoverGlow(row)
         end
         return false
     end
@@ -637,6 +675,7 @@ function Kit.SkinRow(row, skin, alternate)
         else
             row:SetHighlightTexture(Kit.Theme.rowHighlight, "ADD")
         end
+        Kit.AddHoverGlow(row)
     end
     if row.kitStripe and alternate ~= nil then
         row.kitStripe:SetAtlas(alternate and skin.stripeAtlases[1] or skin.stripeAtlases[2])
