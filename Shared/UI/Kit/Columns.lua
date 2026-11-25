@@ -16,6 +16,8 @@ local Kit = ns.Kit
 --   number   true for money and numbers: the default justify is then "RIGHT"
 --   format   optional function(value, data) that returns the cell text (default tostring)
 --   owned    true if the caller draws the cell itself (the header still shows)
+--   spanStart true to let the cell grow to the left edge of the row (share columns only). It keeps its right
+--            edge. Use it for a totals row with a long text in one cell.
 --   hidden   true to leave the column out: it takes no space and its label and cell are hidden.
 --            Change the flag, then call Kit.LayoutColumnLabels to place the labels again.
 --
@@ -103,7 +105,12 @@ function Kit.ColumnLayout(columns, totalWidth, options)
         else
             width = index == fill and fillWidth or column.width
         end
-        layout[index] = { key = column.key, x = x, width = width, justify = Kit.ColumnJustify(column) }
+        local entry = { key = column.key, x = x, width = width, justify = Kit.ColumnJustify(column) }
+        if column.spanStart then
+            -- The cell keeps its right edge and grows to the left edge of the row.
+            entry.width, entry.x = width + x - left, left
+        end
+        layout[index] = entry
         x = x + width + gap
     end
     return layout
