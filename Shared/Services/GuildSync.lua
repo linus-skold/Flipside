@@ -269,7 +269,8 @@ function Sync:_OnRequest(sender, request, kind)
     local seq = self.dataSeq[kind]
     local delay
     if kind == "group" then
-        delay = deps.random(0, GuildSync.GROUP_REPLY_JITTER)
+        -- Steps of 0.01 s, so many members of a raid do not pick the same whole second.
+        delay = deps.random(0, GuildSync.GROUP_REPLY_JITTER * 100) / 100
     else
         delay = deps.random(GuildSync.REPLY_DELAY_MIN, GuildSync.REPLY_DELAY_MAX)
     end
@@ -281,7 +282,10 @@ function Sync:_OnRequest(sender, request, kind)
             return
         end
         self.lastReply[kind] = deps.clock()
-        self:SendSet("reply", kind)
+        -- The build takes time. A set that arrives during the build still cancels the reply.
+        self:SendSet("reply", kind, function()
+            return seq == self.dataSeq[kind]
+        end)
     end)
 end
 
@@ -376,14 +380,40 @@ function Sync:_Prune(share)
 end
 
 -- Build the next set of the share and add its messages to the queue, one time for each open channel.
+-- An item in share.skip goes only to the channels that are not in share.skipKinds (they sent it already).
 function Sync:_PushNextSet(share, kinds)
     local from = share.pos
     local last = math.min(#share.entries, from + GuildSync.SET_ITEMS - 1)
-    local slice = {}
+    local slice, late = {}, {}
     for i = from, last do
-        slice[#slice + 1] = share.entries[i]
+        local entry = share.entries[i]
+        if share.skip and share.skip[entry.key] then
+            late[#late + 1] = entry
+        else
+            slice[#slice + 1] = entry
+        end
     end
     share.pos = last + 1
+    if #late > 0 then
+        local others = {}
+        for _, kind in ipairs(kinds) do
+            if not share.skipKinds[kind] then
+                others[#others + 1] = kind
+            end
+        end
+        if #others > 0 then
+            self:_PushSet(share, late, others, from)
+        else
+            share.sentItems = share.sentItems + #late
+        end
+    end
+    if #slice > 0 then
+        self:_PushSet(share, slice, kinds, from)
+    end
+end
+
+-- Build one set from the items and add its messages to the queue for each channel in kinds.
+function Sync:_PushSet(share, slice, kinds, from)
     self.setId = math.max(self.setId + 1, self.deps.clock())
     local messages, problem = ns.GuildSyncCodec.BuildSet(self.deps.scope, self.setId, slice)
     if not messages then
@@ -409,6 +439,20 @@ end
 function Sync:_Feed()
     local share = self.share
     if not share or self.feeding or share.paused then
+        return
+    end
+    -- A channel that closed (the player left the group or the guild) leaves the share. Without a channel the
+    -- share ends, so it does not run for ever and a later resume does not send it to another channel.
+    for _, kind in ipairs(KINDS) do
+        if share.channels[kind] and self:_Closed(kind) == "not-in-" .. kind then
+            share.channels[kind] = nil
+            self:_Log("info", "share: the %s channel closed", kind)
+        end
+    end
+    if next(share.channels) == nil then
+        self.share = nil
+        self.marker.done = true
+        self:_Log("info", "share ended: no open channel")
         return
     end
     local kinds = self:_ShareKinds(share)
@@ -483,7 +527,8 @@ end
 -- Return entries (newest first) and the number of items that the share skips, for a new collection of
 -- entries while the share runs. Sent items that did not change are skipped. The unsent items stay, and an
 -- item in both lists gets the newest record. The messages of the old share leave the queue.
--- With grew (the new share has a channel that the old one has not), no item counts as sent.
+-- Also return skip, a table key -> true of the unchanged items that the old channels sent already. With grew (the
+-- new share has a channel that the old one has not), these items stay in the list, but only for the new channel.
 function Sync:_MergeShare(old, entries, grew)
     self:_Prune(old)
     local pos = old.pos
@@ -498,15 +543,21 @@ function Sync:_MergeShare(old, entries, grew)
         pos = old.out[1].set.from
     end
     local sent = {}
-    for i = 1, grew and 0 or pos - 1 do
+    for i = 1, pos - 1 do
         sent[old.entries[i].key] = old.entries[i]
     end
-    local merged, index, skipped = {}, {}, 0
+    local merged, index, skipped, skip = {}, {}, 0, {}
     for _, entry in ipairs(entries) do
         local was = sent[entry.key]
         if was and was.time == entry.time and was.min == entry.min and was.market == entry.market
             and was.qty == entry.qty then
-            skipped = skipped + 1
+            if grew then
+                skip[entry.key] = true
+                merged[#merged + 1] = entry
+                index[entry.key] = #merged
+            else
+                skipped = skipped + 1
+            end
         else
             merged[#merged + 1] = entry
             index[entry.key] = #merged
@@ -518,28 +569,37 @@ function Sync:_MergeShare(old, entries, grew)
         if not at then
             merged[#merged + 1] = entry
             index[entry.key] = #merged
+            -- An unsent item that was in a catch-up before stays for the new channel only.
+            if old.skip and old.skip[entry.key] then
+                skip[entry.key] = true
+            end
         elseif entry.time > merged[at].time then
             merged[at] = entry
+            skip[entry.key] = nil
         end
     end
     sortEntries(merged)
-    return merged, skipped
+    return merged, skipped, skip
 end
 
 -- Start (or merge into the running) share of the newest known prices, for the channels in kinds.
 -- A merged share keeps the channels of the old share and adds the new ones.
 function Sync:_StartShare(why, entries, kinds)
     local old, skipped = self.share, 0
-    local channels, grew = {}, false
+    local channels, grew, skip, skipKinds = {}, false, nil, nil
     for _, kind in ipairs(kinds) do
         channels[kind] = true
         grew = grew or not (old and old.channels[kind])
     end
     if old then
+        skipKinds = old.skipKinds or old.channels
+        if grew then
+            skipKinds = old.channels
+        end
         for kind in pairs(old.channels) do
             channels[kind] = true
         end
-        entries, skipped = self:_MergeShare(old, entries, grew)
+        entries, skipped, skip = self:_MergeShare(old, entries, grew)
     end
     if #entries == 0 then
         self.share = nil
@@ -551,7 +611,7 @@ function Sync:_StartShare(why, entries, kinds)
     end
     local now = self.deps.clock()
     self.share = { entries = entries, pos = 1, out = {}, sentItems = skipped, total = #entries + skipped,
-        paused = false, channels = channels }
+        paused = false, channels = channels, skip = skip, skipKinds = skipKinds }
     self.marker.time, self.marker.done = now, false
     self.stats.lastSend = now
     self.stats.sent = self.stats.sent + #entries
@@ -574,7 +634,8 @@ end
 -- the queue in small sets when the queue has room. A running share takes the new items in (see _MergeShare).
 -- Return true if the work started. One build serves all open channels. With only (a kind), the share goes to that
 -- channel only. The job yields between items, so the reading is not inside a pcall (Lua 5.1 cannot yield there).
-function Sync:SendSet(why, only)
+-- With guard (a function), the share starts only if guard() is true after the build.
+function Sync:SendSet(why, only, guard)
     local kinds, blocked = self:_OpenKinds(only)
     if #kinds == 0 then
         self:_Log("info", "send %s skipped: %s", tostring(why), tostring(blocked))
@@ -590,6 +651,10 @@ function Sync:SendSet(why, only)
         local entries = self:_Collect(job)
         self.building = nil
         -- The next lines do not yield, so the old share cannot change before the merge.
+        if guard and not guard() then
+            self:_Log("info", "send %s cancelled: someone answered", tostring(why))
+            return
+        end
         local kinds2, blocked2 = self:_OpenKinds(only)
         if #kinds2 == 0 then
             self:_Log("info", "send %s skipped: %s", tostring(why), tostring(blocked2))
@@ -645,6 +710,9 @@ function Sync:OnGroupChanged()
         local inGroup = self:GroupChannel() ~= nil
         local joined = inGroup and not self.wasInGroup
         self.wasInGroup = inGroup
+        if self.share then
+            self:_Feed() -- a running share drops a channel that closed
+        end
         if joined and self:_KindEnabled("group") then
             self:_Log("info", "joined a group: request")
             self:SendRequest(false, "group")
