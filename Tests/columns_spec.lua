@@ -145,6 +145,18 @@ describe("Kit columns", function()
             Kit.ColumnLayout(three, 102, { gap = 6 })[2].width, Kit.ColumnLayout(three, 102, { gap = 6 })[3].width })
     end)
 
+    it("lets a spanStart cell grow to the left edge and keeps its right edge and the other columns", function()
+        local cols = { { key = "a", width = { share = 1 } }, { key = "b", width = { share = 1 }, spanStart = true },
+            { key = "c", width = { share = 1 } } }
+        local layout = Kit.ColumnLayout(cols, 116, { gap = 6, left = 4, right = 4 })
+        assert.are.equal(32, layout[1].width)
+        assert.are.equal(4, layout[2].x)
+        assert.are.equal(32 + 6 + 32, layout[2].width)
+        assert.are.equal(layout[1].x + layout[1].width + 6 + 32, layout[2].x + layout[2].width)
+        assert.are.equal(4 + 32 + 6 + 32 + 6, layout[3].x)
+        assert.are.equal(32, layout[3].width)
+    end)
+
     it("gives a weighted share and keeps fixed columns", function()
         local cols = { { key = "a", width = 50 }, { key = "b", width = { share = 1 } },
             { key = "c", width = { share = 3 } } }

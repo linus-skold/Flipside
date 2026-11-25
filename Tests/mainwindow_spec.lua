@@ -275,6 +275,103 @@ describe("MainWindow", function()
         end)
     end)
 
+    describe("market value source on the About page", function()
+        local written
+
+        -- The text box of the formula: the only box that is not a number box.
+        local function findInput()
+            for _, object in ipairs(mock.objects) do
+                if object.kind == "EditBox" and not object.SetNumber then
+                    return object
+                end
+            end
+        end
+
+        local function enter(input, text)
+            input:SetText(text)
+            input.scripts.OnEnterPressed(input)
+        end
+
+        before_each(function()
+            written = nil
+            ns.BuyingTab = {
+                DEFAULT_MARKET_SOURCE = "scanmarket",
+                ReadMarketSource = function()
+                    return "tsmmarket"
+                end,
+                WriteMarketSource = function(db, text)
+                    written = { db = db, text = text }
+                    return true
+                end,
+            }
+            deps.db = {}
+            deps.formulaRun = {
+                Compile = function(_, text)
+                    if text == "bad(" then
+                        return nil, { message = "syntax error" }
+                    end
+                    return {}
+                end,
+            }
+        end)
+
+        it("shows the saved formula and saves a valid change", function()
+            local win = ns.MainWindow.Create(deps)
+            win:SelectPage("about")
+            assert.is_true(strings["Buying market value source (formula)"])
+            local input = findInput()
+            assert.is_not_nil(input)
+            assert.are.equal("tsmmarket", input:GetText())
+            enter(input, "scanmarket * 2")
+            assert.are.same({ db = deps.db, text = "scanmarket * 2" }, written)
+        end)
+
+        it("saves one time for Enter and the focus loss that follows", function()
+            local writes = 0
+            ns.BuyingTab.WriteMarketSource = function(db, text)
+                writes = writes + 1
+                written = { db = db, text = text }
+                return true
+            end
+            local win = ns.MainWindow.Create(deps)
+            win:SelectPage("about")
+            local input = findInput()
+            enter(input, "scanmarket * 2")
+            input.scripts.OnEditFocusLost(input)
+            assert.are.equal(1, writes)
+        end)
+
+        it("reads the setting again when the box gets the focus", function()
+            local win = ns.MainWindow.Create(deps)
+            win:SelectPage("about")
+            local input = findInput()
+            input:SetText("typed")
+            input.scripts.OnEditFocusGained(input)
+            assert.are.equal("tsmmarket", input:GetText())
+        end)
+
+        it("does not save a formula that does not compile", function()
+            local win = ns.MainWindow.Create(deps)
+            win:SelectPage("about")
+            enter(findInput(), "bad(")
+            assert.is_nil(written)
+        end)
+
+        it("goes back to the default for an empty formula", function()
+            local win = ns.MainWindow.Create(deps)
+            win:SelectPage("about")
+            enter(findInput(), "   ")
+            assert.are.same({ db = deps.db, text = "scanmarket" }, written)
+        end)
+
+        it("is not there with no settings database", function()
+            deps.db = nil
+            local win = ns.MainWindow.Create(deps)
+            win:SelectPage("about")
+            assert.is_nil(findInput())
+        end)
+    end)
+
     describe("guild sharing check on the About page", function()
         local enabled, changes
 

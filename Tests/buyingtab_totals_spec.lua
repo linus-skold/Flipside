@@ -224,24 +224,35 @@ describe("BuyingTab totals, amount and columns", function()
             frame.scripts.OnSizeChanged(frame, width, 18)
         end
 
-        it("gives Unit Price and Quantity one quarter each, right-aligned", function()
+        it("gives Unit Price, Available and % MV one third each, right-aligned", function()
+            search()
+            local edge = ui.rowsList.contentInsets
+            local room = 400 - edge.left - edge.right - 12
+            resize(ui.levelHeader.frame, 400)
+            local w = widths(ui.levelHeader.labels, { "unitPrice", "quantity", "percent" })
+            assert.are.same({ room / 3, room / 3, room / 3 }, w)
+            assert.are.equal("RIGHT", ui.levelHeader.labels.unitPrice.justifyH)
+            assert.are.equal("RIGHT", ui.levelHeader.labels.quantity.justifyH)
+            assert.are.equal("RIGHT", ui.levelHeader.labels.percent.justifyH)
+        end)
+
+        it("has no Data age column", function()
+            search()
+            assert.is_nil(ui.levelHeader.labels.age)
+            assert.is_nil(ui.totalCells.age)
+            assert.are.equal("% MV", ui.levelHeader.labels.percent.text)
+            local rows = drawLevels()
+            assert.is_nil(rows[1].cells.age)
+        end)
+
+        it("gives four columns one quarter each for items", function()
+            ns.Flavour.hasCommodityMarket = false
             search()
             local edge = ui.rowsList.contentInsets
             local room = 400 - edge.left - edge.right - 18
             resize(ui.levelHeader.frame, 400)
-            assert.are.same({ room / 4, room / 4 }, widths(ui.levelHeader.labels, { "unitPrice", "quantity" }))
-            assert.are.equal("RIGHT", ui.levelHeader.labels.unitPrice.justifyH)
-            assert.are.equal("RIGHT", ui.levelHeader.labels.quantity.justifyH)
-        end)
-
-        it("gives five columns one fifth each for items", function()
-            ns.Flavour.hasCommodityMarket = false
-            search()
-            local edge = ui.rowsList.contentInsets
-            local room = 400 - edge.left - edge.right - 24
-            resize(ui.levelHeader.frame, 400)
-            local w = widths(ui.levelHeader.labels, { "unitPrice", "stackPrice", "quantity" })
-            assert.are.same({ room / 5, room / 5, room / 5 }, w)
+            local w = widths(ui.levelHeader.labels, { "unitPrice", "stackPrice", "quantity", "percent" })
+            assert.are.same({ room / 4, room / 4, room / 4, room / 4 }, w)
             assert.are.equal("RIGHT", ui.levelHeader.labels.stackPrice.justifyH)
         end)
 
@@ -250,6 +261,41 @@ describe("BuyingTab totals, amount and columns", function()
             assert.is_nil(ui.totalLabel)
             assert.are.equal("RIGHT", ui.totalCells.unitPrice.justifyH)
             assert.is_truthy(ui.totalCells.unitPrice.text:find("^Total  "))
+        end)
+
+        it("puts the cost under Stack Price on Forever when item levels show it, at full width", function()
+            local function item(price, id)
+                return { unitPrice = price, quantity = 1, isCommodity = false, ownerItem = false, auctionID = id }
+            end
+            search({ item(50, 1), item(60, 2) })
+            local edge = ui.rowsList.contentInsets
+            resize(ui.levelHeader.frame, 400)
+            resize(ui.totals, 400)
+            assert.is_truthy(ui.totalCells.stackPrice.text:find("^Total  "))
+            assert.are.equal("", ui.totalCells.unitPrice.text)
+            -- The cell starts at the left edge of the row and ends on the right edge of the Stack Price column.
+            local cell, header = ui.totalCells.stackPrice, ui.levelHeader.labels
+            assert.are.equal(edge.left, cell.points[1][4])
+            assert.are.equal(header.stackPrice.points[1][4] + header.stackPrice.width, cell.points[1][4] + cell.width)
+            assert.is_true(cell.width > 2 * header.unitPrice.width)
+        end)
+
+        it("lets the cost cell of the totals row grow to the left edge of the row", function()
+            search()
+            local edge = ui.rowsList.contentInsets
+            resize(ui.levelHeader.frame, 400)
+            resize(ui.totals, 400)
+            -- The first column starts at the left edge already, so the cell is as wide as the column.
+            assert.are.equal(ui.levelHeader.labels.unitPrice.width, ui.totalCells.unitPrice.width)
+            assert.are.equal(edge.left, ui.totalCells.unitPrice.points[1][4])
+        end)
+
+        it("lines up the amount row with the list edges", function()
+            local edge = ui.rowsList.contentInsets
+            local list = ui.rowsList.frame.points[1]
+            assert.are.equal(list[4] + edge.left, ui.amountLabel.points[1][4])
+            assert.are.equal("RIGHT", ui.amountTotal.justifyH)
+            assert.are.equal(-edge.right, ui.amountTotal.points[1][4])
         end)
 
         it("uses the same columns in the totals row and in the list rows", function()
