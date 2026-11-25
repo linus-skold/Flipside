@@ -26,6 +26,7 @@ describe("SellingTab level pane and the buy menu", function()
         c.LiveRows = function(itemID) return c.rows[itemID] or {} end
         c.LiveResultEvents = function() return "COMMODITY_RESULTS", "ITEM_RESULTS" end
         c.ReadyEvent = function() return "READY" end
+        c.CloseEvent = function() return "AH_CLOSED" end
         c.PostedEvent = function() return "CREATED" end
         c.ItemIsCommodity = function(itemID) return c.commodity[itemID] end
         c.CanReadOwned = function() return false end
@@ -547,6 +548,77 @@ describe("SellingTab level pane and the buy menu", function()
             assert.is_nil(config.validate("2"))
             assert.is_truthy(config.validate("3"))
             assert.is_truthy(config.onOK("3"))
+            assert.are.same({}, client.calls)
+        end)
+
+        describe("the amount window", function()
+            local function prompt()
+                return ns.Kit.Prompt("FlipsideSellingBuyAmount")
+            end
+
+            local function open()
+                choose(11, { crow(150, 2), crow(160, 3), crow(170, 4) })
+                tab:LevelMenuEntries(levelId(2))[2].onClick()
+                return prompt()
+            end
+
+            it("shows the item name and icon", function()
+                local dialog = open()
+                assert.is_true(dialog:IsShown())
+                assert.are.equal("Item11", dialog.heading:GetText())
+                assert.are.equal(1, dialog.icon.texture)
+                assert.is_true(dialog.icon:IsShown())
+            end)
+
+            it("closes when the item changes", function()
+                local dialog = open()
+                choose(10, { arow(100, 1) })
+                assert.is_false(dialog:IsShown())
+            end)
+
+            it("closes when the tab is left", function()
+                local dialog = open()
+                tab:Deselect()
+                assert.is_false(dialog:IsShown())
+            end)
+
+            it("closes when the AH closes", function()
+                local dialog = open()
+                bus:Emit("AH_CLOSED")
+                assert.is_false(dialog:IsShown())
+            end)
+
+            it("refuses OK after the item changed and starts no buy", function()
+                local dialog = open()
+                local config = dialog.config
+                ui.tree:Select("i10")
+                assert.is_false(dialog:IsShown())
+                assert.are.equal("the item changed", config.onOK("2"))
+                assert.are.same({}, client.calls)
+            end)
+
+            it("refuses OK after the live list changed", function()
+                local dialog = open()
+                local config = dialog.config
+                tab.live = { itemID = 11, rows = tab.live.rows }
+                assert.is_truthy(config.onOK("2"):find("prices changed", 1, true))
+                assert.are.same({}, client.calls)
+            end)
+
+            it("closes with the X button", function()
+                local dialog = open()
+                dialog.CloseButton.scripts.OnClick(dialog.CloseButton)
+                assert.is_false(dialog:IsShown())
+            end)
+        end)
+
+        it("shows a message and opens no menu on a right click when MenuUtil is missing", function()
+            _G.MenuUtil = nil
+            choose(11, { crow(150, 2), crow(160, 3) })
+            local row = ui.levelList.rows[2]
+            row.scripts.OnClick(row, "RightButton")
+            assert.are.equal("the buy menu is not available", ui.details.warn.text)
+            assert.is_nil(tab.menu)
             assert.are.same({}, client.calls)
         end)
 
