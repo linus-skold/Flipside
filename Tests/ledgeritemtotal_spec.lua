@@ -48,8 +48,133 @@ describe("LedgerItemTotal", function()
                 rec({ type = "post", source = "ahPost", item = PLAIN, qty = 1, buyout = 9000, deposit = 50 }),
                 rec({ type = "expense", source = "ahDeposit", item = PLAIN, qty = 1, money = 50 }),
             }, nil, PLAIN)
-            assert.are.equal(50, total.deposits)
+            assert.are.equal(0, total.deposits)
+            assert.are.equal(50, total.activeDeposits)
             assert.are.equal(-50, total.net)
+        end)
+
+        describe("outcomes", function()
+            local function post(time, qty, deposit)
+                return rec({ type = "post", source = "ahPost", item = PLAIN, qty = qty, deposit = deposit,
+                    time = time })
+            end
+            local function paid(time, money)
+                return rec({ type = "expense", source = "ahDeposit", item = PLAIN, qty = 1, money = money,
+                    time = time })
+            end
+            local function compute(records)
+                return ns.LedgerItemTotal.Compute(records, nil, PLAIN)
+            end
+
+            it("takes the returned deposit out of a sale", function()
+                local total = compute({
+                    post(100, 1, 50), paid(100, 50),
+                    rec({ type = "sale", source = "ahSale", item = PLAIN, qty = 1, money = 940, cut = 110,
+                        deposit = 50, bid = 1000, time = 200 }),
+                })
+                assert.are.equal(890, total.soldMoney)
+                assert.are.equal(0, total.deposits)
+                assert.are.equal(0, total.activeDeposits)
+                assert.are.equal(890, total.net)
+                assert.are.equal(1, total.postedQty)
+                assert.are.equal(1, total.soldQty)
+            end)
+
+            it("counts the deposit of an expired auction as lost", function()
+                local total = compute({
+                    post(100, 1, 50), paid(100, 50),
+                    rec({ type = "expired", source = "ahExpired", item = PLAIN, qty = 1, time = 300 }),
+                })
+                assert.are.equal(50, total.deposits)
+                assert.are.equal(0, total.activeDeposits)
+                assert.are.equal(-50, total.net)
+                assert.are.equal(1, total.expiredQty)
+            end)
+
+            it("counts the deposit of a cancelled auction as lost", function()
+                local total = compute({
+                    post(100, 2, 80), paid(100, 80),
+                    rec({ type = "cancelled", source = "ahCancelled", item = PLAIN, qty = 2, time = 150 }),
+                })
+                assert.are.equal(80, total.deposits)
+                assert.are.equal(2, total.cancelledQty)
+                assert.are.equal(-80, total.net)
+            end)
+
+            it("keeps the deposit of a repost after an expiry: one lost, one active", function()
+                local total = compute({
+                    post(100, 1, 50), paid(100, 50),
+                    rec({ type = "expired", source = "ahExpired", item = PLAIN, qty = 1, time = 300 }),
+                    post(400, 1, 60), paid(400, 60),
+                })
+                assert.are.equal(2, total.postedQty)
+                assert.are.equal(1, total.expiredQty)
+                assert.are.equal(50, total.deposits)
+                assert.are.equal(60, total.activeDeposits)
+                assert.are.equal(-110, total.net)
+            end)
+
+            it("shows the deposit of a running auction as active, not lost", function()
+                local total = compute({ post(100, 3, 90), paid(100, 90) })
+                assert.are.equal(0, total.deposits)
+                assert.are.equal(90, total.activeDeposits)
+                assert.are.equal(-90, total.net)
+            end)
+
+            it("takes only the open units of a part sale", function()
+                local total = compute({
+                    post(100, 4, 80), paid(100, 80),
+                    rec({ type = "sale", source = "ahSale", item = PLAIN, qty = 1, money = 120, deposit = 20,
+                        cut = 5, time = 200 }),
+                })
+                assert.are.equal(60, total.activeDeposits)
+                assert.are.equal(0, total.deposits)
+                assert.are.equal(100, total.soldMoney)
+                assert.are.equal(40, total.net)
+            end)
+
+            it("caps the deposit back at the deposit paid in the range (post before the range)", function()
+                local total = compute({
+                    rec({ type = "sale", source = "ahSale", item = PLAIN, qty = 1, money = 1000, deposit = 50,
+                        time = 200 }),
+                })
+                assert.are.equal(1000, total.soldMoney)
+                assert.are.equal(0, total.deposits)
+                assert.are.equal(0, total.activeDeposits)
+                assert.are.equal(1000, total.net)
+                assert.are.equal(0, total.postedQty)
+            end)
+
+            it("keeps the net equal to payouts - bought - deposits paid", function()
+                local total = compute({
+                    post(100, 2, 100), paid(100, 100),
+                    rec({ type = "sale", source = "ahSale", item = PLAIN, qty = 1, money = 480, deposit = 50,
+                        cut = 20, time = 200 }),
+                    rec({ type = "purchase", source = "ahPurchase", item = PLAIN, qty = 1, money = 30, time = 250 }),
+                })
+                assert.are.equal(480 - 30 - 100, total.net)
+            end)
+
+            it("gives nil counts when a record has no quantity, and 0 when no record exists", function()
+                local total = compute({
+                    rec({ type = "post", source = "ahPost", item = PLAIN, deposit = 10 }),
+                    rec({ type = "sale", source = "ahSale", item = PLAIN, money = 5 }),
+                })
+                assert.is_nil(total.postedQty)
+                assert.is_nil(total.soldQty)
+                assert.are.equal(0, total.expiredQty)
+                assert.are.equal(0, total.cancelledQty)
+            end)
+
+            it("keeps the whole payout in Sold if the sale has no deposit field", function()
+                local total = compute({
+                    paid(100, 50),
+                    rec({ type = "sale", source = "ahSale", item = PLAIN, qty = 1, money = 700, time = 200 }),
+                })
+                assert.are.equal(700, total.soldMoney)
+                assert.are.equal(50, total.deposits)
+                assert.are.equal(650, total.net)
+            end)
         end)
 
         it("lets a deposit refund and an outbid refund reduce the costs", function()
