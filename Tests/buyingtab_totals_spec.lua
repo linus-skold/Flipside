@@ -191,17 +191,19 @@ describe("BuyingTab totals, amount and columns", function()
             ui.amount:SetText("4")
             ui.amount.scripts.OnTextChanged(ui.amount)
             tab:SelectLevel(60)
-            assert.are.equal("1", ui.amount.text)
+            -- A new click makes a new range: the units of the levels 50 and 60.
+            assert.are.equal("5", ui.amount.text)
         end)
 
-        it("starts at 1 unit for a new selection and a new level", function()
+        it("starts at 1 unit for a new item, and counts the range for a new level", function()
             search()
             tab:Select_("11")
             assert.are.equal(1, tab.amount)
             tab:Select_("10")
             tab:SelectLevel(70)
-            assert.are.equal(1, tab.amount)
-            assert.are.equal("1", ui.amount.text)
+            -- Levels 50 x3 and 70 x4. The level 60 is yours and is left out.
+            assert.are.equal(7, tab.amount)
+            assert.are.equal("7", ui.amount.text)
         end)
 
         it("does not read its own fill as a typed amount", function()

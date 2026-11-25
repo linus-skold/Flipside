@@ -2062,12 +2062,54 @@ function Tab:SetAmount(text)
     end
 end
 
+-- True if the shown item is a commodity on a client with a commodity market: a click on a level then selects a range.
+-- An item auction (armor, weapons) and every TBC level keep the single selection.
+function Tab:_RangeMode()
+    local entry = self:_Selected()
+    local done = entry and self.results[entry.key]
+    local first = done and done.rows[1]
+    return hasCommodityMarket() and first ~= nil and first.isCommodity ~= false
+end
+
+-- A click on a level of a commodity: select all levels from the cheapest up to the clicked level (in price order,
+-- whatever the sort on screen) and set the Amount to their units. Your own levels are not selected and not counted.
+-- A second click on the same level keeps the range; a click on another level makes a new range.
+-- Returns true, or false and a reason.
+function Tab:_SelectRange(price)
+    local entry = self:_Selected()
+    local levels = self:_Levels(self.results[entry.key].rows)
+    local target = findLevel(levels, price)
+    if not target then
+        return false, REASON.none
+    end
+    if target.own then
+        self:_Say(REASON.own)
+        return false, REASON.own
+    end
+    local total = 0
+    for _, level in ipairs(levels) do
+        if not level.own and level.unitPrice <= target.unitPrice then
+            total = total + level.quantity
+        end
+    end
+    self.levelSel = price
+    self.amount, self.amountBad, self.amountEdit = total, false, false
+    self:_Update()
+    self:_EnsureLive(entry)
+    local _, _, _, reason = self:_NextBuy()
+    self:_Say(reason or "")
+    return true, reason
+end
+
 -- Select a price level of the item by its key (the unit price; the auction index on TBC).
 -- A second click on the same level clears the selection.
 -- The selection never starts a buy. Returns true, or false and a reason.
 function Tab:SelectLevel(price)
     if not self:_Selected() then
         return false, "pick an item first"
+    end
+    if self:_RangeMode() then
+        return self:_SelectRange(price)
     end
     self.levelSel = (self.levelSel ~= price) and price or nil
     self.amount, self.amountBad, self.amountEdit = self:_StartAmount(self:_Selected()), false, false
@@ -3004,6 +3046,11 @@ function Tab:_InitLevelRow(row, data)
     end
     local id = data.id or data.unitPrice
     local selected = self.levelSel ~= nil and self.levelSel == id
+    -- A commodity range: every level of the range has the selection highlight, and only these levels. Your own
+    -- levels are never in it.
+    if self.range ~= nil then
+        selected = self.range[id] == true and data.state ~= "own"
+    end
     row.selection:SetShown(selected)
     -- The rows that the next click buys get a fainter highlight. The selected row keeps the selection highlight.
     if not row.cover then
@@ -3184,7 +3231,7 @@ function Tab:_UpdateGroup()
         text = string.format("%s: searched %d of %d", self.groupView.text or "", searched, #rows)
     end
     ui.summary:SetText(text)
-    self.covered = {}
+    self.covered, self.range = {}, nil
     local sort = self.groupSort
     ui.groupList:SetData(BuyingTab.SortRows(rows, sort and sort.key, sort and sort.descending))
 end
@@ -3355,7 +3402,7 @@ function Tab:_Update()
         self:_FillAmount(nil)
         ui.totals:Hide()
         ui.loadMore:Hide()
-        self.covered = {}
+        self.covered, self.range = {}, nil
         ui.rowsList:SetData({})
         return
     end
@@ -3385,6 +3432,10 @@ function Tab:_Update()
     local isItem = done ~= nil and done.rows[1] ~= nil and done.rows[1].isCommodity == false
     ui.amount:SetEnabled(not isItem)
     self.covered = (reason == nil and cover) and cover.covered or {}
+    -- A commodity range shows while a level is selected: the levels that the amount covers, cheapest first. It
+    -- follows the amount that the user types.
+    local rangeOn = self.levelSel ~= nil and hasCommodityMarket() and not isItem and cover ~= nil
+    self.range = rangeOn and cover.covered or nil
     -- The line shows only the reason why the button is off.
     local text = reason and (verb .. ": " .. reason) or ""
     if self.searchResults then
@@ -3394,6 +3445,10 @@ function Tab:_Update()
     self:_FillAmount(cover)
     ui.totals:SetShown(done ~= nil)
     local totals = BuyingTab.DescribeTotals(described)
+    if self.range then
+        -- With a range the Total row shows the units and the cost of the range.
+        totals = { quantity = cover.quantity, cost = cover.cost }
+    end
     ns.Kit.SetColumnCells(ui.totalCells, LEVEL_COLUMNS,
         { unitPrice = totals.cost, stackPrice = totals.cost, quantity = totals.quantity })
     -- The label is in the same text as the cost, so the two never overlap.
@@ -3466,7 +3521,9 @@ function Tab:_FillAmount(cover)
     local ui = self.ui
     if not self.amountEdit then
         self.fillingAmount = true
-        ui.amount:SetText(cover and tostring(cover.quantity) or "")
+        -- A range shows the units that it counts (your own levels left out); else the units that the cover takes.
+        local units = self.range and type(self.amount) == "number" and self.amount or (cover and cover.quantity)
+        ui.amount:SetText(units and tostring(units) or "")
         self.fillingAmount = false
     end
     ui.amountTotal:SetText(cover and money(cover.cost) or "")
