@@ -203,7 +203,8 @@ end
 -- Build the price level rows to show. state is "buy", "above" or "own".
 -- Levels above the maximum show only if the operation sets showAboveMax.
 -- scan is optional: { market } is the market value of the item in copper. It adds the percent.
--- A row also holds itemLink (the link of its first auction, if the client gives one), itemKey and itemID for the tooltip.
+-- A row also holds itemLink (the link of its first auction, if the client gives one), itemKey and itemID.
+-- The row tooltip uses them.
 function BuyingTab.DescribeLevels(entry, levels, showAboveMax, scan)
     local out = {}
     for _, level in ipairs(levels or {}) do

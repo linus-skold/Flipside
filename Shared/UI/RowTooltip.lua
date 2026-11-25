@@ -1,8 +1,8 @@
 local _, ns = ...
 
 -- The item tooltip of a list row (Buying tab and Selling tab). One helper for both tabs.
--- It sets only the OnEnter and OnLeave scripts of the row. The hover glow of the Kit is a HIGHLIGHT texture, so it needs
--- no script and stays.
+-- It sets only the OnEnter and OnLeave scripts of the row. The hover glow of the Kit is a HIGHLIGHT texture,
+-- so it needs no script and stays.
 local RowTooltip = {}
 ns.RowTooltip = RowTooltip
 
