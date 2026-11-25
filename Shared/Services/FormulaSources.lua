@@ -41,6 +41,16 @@ FormulaSources.DOCS = {
     importmarket = {
         text = "Market value from an optional imported file. Not available yet. It comes with the import feature.",
     },
+    tsmmarket = { text = "TSM market value (DBMarket). Needs the TSM addon." },
+    tsmminbuyout = { text = "TSM minimum buyout (DBMinBuyout). Needs the TSM addon." },
+    tsmrecent = { text = "TSM recent market value (DBRecent). Needs the TSM addon." },
+    tsmhistorical = { text = "TSM historical price (DBHistorical). Needs the TSM addon." },
+    tsmregionmarket = { text = "TSM region market average (DBRegionMarketAvg). Needs the TSM addon." },
+    tsmregionhistorical = { text = "TSM region historical price (DBRegionHistorical). Needs the TSM addon." },
+    tsmregionsaleavg = { text = "TSM region average sale price (DBRegionSaleAvg). Needs the TSM addon." },
+    tsmregionsalerate = { text = "TSM region sale rate (DBRegionSaleRate). Needs the TSM addon." },
+    tsmregionsoldperday = { text = "TSM region sales each day (DBRegionSoldPerDay). Needs the TSM addon." },
+    tsmnumauctions = { text = "TSM number of auctions (DBNumAuctions). Needs the TSM addon." },
     invalid = {
         text = "A value that means no price. A formula with a missing price is invalid. Missing never counts as 0.",
     },
@@ -74,6 +84,11 @@ function FormulaSources.New(options)
     end
     for _, name in ipairs(LATER) do
         self.kind[name] = "later"
+    end
+    if ns.TsmPrices then
+        for key in pairs(ns.TsmPrices.KEYS) do
+            self.kind[key] = "tsm"
+        end
     end
     return self
 end
@@ -169,6 +184,8 @@ function Sources:Read(name, ctx)
         return ctx._scan[self.field[key]]
     elseif kind == "vendor" then
         return self:_vendorSell(ctx.itemID)
+    elseif kind == "tsm" then
+        return ns.TsmPrices.Get(key, ctx.itemID)
     elseif kind == nil and key and self.custom then
         return self:_readCustom(key, ctx)
     end
