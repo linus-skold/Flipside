@@ -86,6 +86,15 @@ describe("LedgerCsv", function()
             assert.matches(",purchase,ahPurchase,7,,1,%-200,1,", out[2])
         end)
 
+        it("writes a reconcile gain as positive and a reconcile loss as negative", function()
+            local out = lines(ns.LedgerCsv.Build({
+                { time = 5, char = "A-R", type = "income", source = "reconcile", money = 70 },
+                { time = 6, char = "A-R", type = "expense", source = "reconcile", money = 30 },
+            }, {}))
+            assert.matches(",income,reconcile,,,,70,1,", out[2])
+            assert.matches(",expense,reconcile,,,,%-30,1,", out[3])
+        end)
+
         it("leaves the money empty for a type with no money flow", function()
             local out = lines(ns.LedgerCsv.Build({
                 { time = 5, char = "A-R", type = "post", source = "ahPost", item = "7", qty = 3, money = 90 },

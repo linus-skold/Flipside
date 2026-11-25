@@ -22,7 +22,7 @@ describe("LedgerRecord", function()
         assert.are.same({ "ahCancelled", "ahDeposit", "ahDepositRefund",
             "ahExpired", "ahOutbidRefund", "ahPost",
             "ahPurchase", "ahSale", "bankSlot", "barber", "flight", "guildBank",
-            "loot", "mailMoney", "mailMoneySent", "mailPostage", "mailSent", "quest", "repair", "stable",
+            "loot", "mailMoney", "mailMoneySent", "mailPostage", "mailSent", "quest", "reconcile", "repair", "stable",
             "talentReset", "trade", "training", "unknown", "vendorPurchase", "vendorSale" }, R.SOURCES)
     end)
 
