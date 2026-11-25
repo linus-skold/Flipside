@@ -57,6 +57,9 @@ function ItemInfoCache.New(options)
     self.getInfo = options.getInfo
     self.requestLoad = options.requestLoad
     self.onError = options.onError
+    -- after(fn) runs fn on a later frame. Get uses it for the callbacks that it finds waiting.
+    -- Without it they run at once.
+    self.after = options.after
     self.items = {} -- itemID -> { state, info, callbacks }
     return self
 end
@@ -87,17 +90,26 @@ function Cache:_tryGetInfo(itemID)
     return info
 end
 
-function Cache:_runCallbacks(itemID, entry)
+-- Takes the waiting callbacks off the entry and runs them. With a "defer" function they run when it calls them.
+function Cache:_runCallbacks(itemID, entry, defer)
     local callbacks = entry.callbacks
     entry.callbacks = nil
     if not callbacks then
         return
     end
-    for i = 1, #callbacks do
-        local ok, err = pcall(callbacks[i], itemID, entry.info, entry.state)
-        if not ok then
-            self:_report("callback failed for " .. itemID .. ": " .. tostring(err))
+    local info, state = entry.info, entry.state
+    local function run()
+        for i = 1, #callbacks do
+            local ok, err = pcall(callbacks[i], itemID, info, state)
+            if not ok then
+                self:_report("callback failed for " .. itemID .. ": " .. tostring(err))
+            end
         end
+    end
+    if defer then
+        defer(run)
+    else
+        run()
     end
 end
 
@@ -113,7 +125,8 @@ function Cache:Get(itemID)
         entry.state = "loaded"
         entry.info = info
         -- The client has the data but no result event came: do not strand the waiting callbacks.
-        self:_runCallbacks(itemID, entry)
+        -- Run them on a later frame, so a callback cannot change a list that is in the middle of a draw.
+        self:_runCallbacks(itemID, entry, self.after)
         return info, "loaded"
     end
     return nil, entry and entry.state or "unknown"

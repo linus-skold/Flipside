@@ -322,7 +322,7 @@ function FormulaPage.Build(content, deps)
     end
 
     local function evaluate(formula, input)
-        local copper, info = run:Evaluate(formula, input)
+        local copper, info = run:Evaluate(formula, input, { itemIdVariants = true })
         money:SetCopper(copper)
         status:SetText(table.concat(FormulaPage.Describe(copper, info, nil, formula), "\n"))
     end

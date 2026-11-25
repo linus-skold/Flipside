@@ -60,9 +60,9 @@ function Run:Compile(text)
     return compiled
 end
 
-function Run:_evaluate(compiled, input)
+function Run:_evaluate(compiled, input, options)
     local store = self.store or NO_STORE
-    local record, key, itemID = ns.FormulaLookup.Find(store, input)
+    local record, key, itemID = ns.FormulaLookup.Find(store, input, options)
     if itemID == nil then
         return nil, { kind = "error", message = "not an item" }
     end
@@ -87,7 +87,8 @@ function Run:_evaluate(compiled, input)
 end
 
 -- Returns copper (or nil) and an info table.
-function Run:Evaluate(text, input)
+-- options.itemIdVariants: see FormulaLookup.Find. Only the formula page, the tooltip and the slash command set it.
+function Run:Evaluate(text, input, options)
     local compiled, err = self:Compile(text)
     if not compiled then
         return nil, { kind = "error", message = err.message, pos = err.pos }
@@ -95,12 +96,13 @@ function Run:Evaluate(text, input)
     local version = self.store and self.store:GetVersion() or 0
     local minute = math.floor(self.serverTime() / 60)
     local custom = self.sources.custom and self.sources.custom:Version() or 0
-    local memoKey = table.concat({ text, tostring(input), version, minute, custom }, "\0")
+    local variants = options and options.itemIdVariants and "v" or ""
+    local memoKey = table.concat({ text, tostring(input), version, minute, custom, variants }, "\0")
     local hit = self.memo[memoKey]
     if hit then
         return hit.copper, hit.info
     end
-    local copper, info = self:_evaluate(compiled, input)
+    local copper, info = self:_evaluate(compiled, input, options)
     if self.memoCount >= MAX_MEMO then
         self.memo = {}
         self.memoCount = 0

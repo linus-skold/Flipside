@@ -149,6 +149,24 @@ describe("ItemInfoCache", function()
         assert.equals(1, count)
     end)
 
+    it("Get runs the callbacks on a later frame when after is set", function()
+        local queue, count = {}, 0
+        cache = IIC.New({
+            getInfo = function(id) return client[id] end,
+            requestLoad = function() end,
+            after = function(fn) queue[#queue + 1] = fn end,
+        })
+        cache:Request(10, function() count = count + 1 end)
+        client[10] = { name = "a" }
+        cache:Get(10)
+        assert.equals(0, count)
+        assert.equals(1, #queue)
+        cache:OnLoadResult(10, true)
+        assert.equals(0, count)
+        queue[1]()
+        assert.equals(1, count)
+    end)
+
     it("Request on a pending item keeps both callbacks and sends one request", function()
         local calls = {}
         cache:Request(10, function() calls[#calls + 1] = "a" end)
