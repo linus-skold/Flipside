@@ -96,7 +96,7 @@ function BuyingTab.StackPrice(level)
     return size and level.unitPrice * size or nil
 end
 
--- The unit price as a whole percent of the market value (ScanMarket), or nil if there is no market value.
+-- The unit price as a whole percent of the market value, or nil if there is no market value.
 function BuyingTab.MarketPercent(unitPrice, market)
     if type(unitPrice) ~= "number" or type(market) ~= "number" or market <= 0 then
         return nil
@@ -104,26 +104,67 @@ function BuyingTab.MarketPercent(unitPrice, market)
     return math.floor(unitPrice / market * 100 + 0.5)
 end
 
--- The text of the age of the scan data in hours, or nil if the age is not known.
-function BuyingTab.AgeText(hours)
-    if type(hours) ~= "number" then
+-- The text of a market percent: "87%", or a dash if the percent is not known.
+function BuyingTab.PercentText(percent)
+    return type(percent) == "number" and (tostring(percent) .. "%") or "—"
+end
+
+local COLOR_GREEN, COLOR_YELLOW, COLOR_RED = { 0.2, 0.85, 0.2 }, { 1, 0.85, 0.1 }, { 1, 0.25, 0.25 }
+local PERCENT_FULL, PERCENT_HIGH = 100, 150
+
+local function mix(from, to, part)
+    local function channel(index)
+        return from[index] + (to[index] - from[index]) * part
+    end
+    return channel(1), channel(2), channel(3)
+end
+
+-- The color of a market percent: 0% green, 100% yellow, 150% and more red, and a straight blend between them.
+-- Returns r, g, b, or nil if the percent is not a number.
+function BuyingTab.PercentColor(percent)
+    if type(percent) ~= "number" then
         return nil
     end
-    if hours < 1 then
-        return "< 1 h"
+    if percent <= 0 then
+        return COLOR_GREEN[1], COLOR_GREEN[2], COLOR_GREEN[3]
     end
-    if hours >= 48 then
-        return string.format("%d d", math.floor(hours / 24 + 0.5))
+    if percent < PERCENT_FULL then
+        return mix(COLOR_GREEN, COLOR_YELLOW, percent / PERCENT_FULL)
     end
-    return string.format("%d h", math.floor(hours + 0.5))
+    if percent < PERCENT_HIGH then
+        return mix(COLOR_YELLOW, COLOR_RED, (percent - PERCENT_FULL) / (PERCENT_HIGH - PERCENT_FULL))
+    end
+    return COLOR_RED[1], COLOR_RED[2], COLOR_RED[3]
+end
+
+-- The formula of the market value (the 100% of the % MV column). It is saved in the profile (buying.marketSource).
+-- The default is the market value of the Flipside scan data. The About page of the Flipside window sets it.
+local MARKET_KEY = "buying.marketSource"
+BuyingTab.DEFAULT_MARKET_SOURCE = "scanmarket"
+
+function BuyingTab.ReadMarketSource(db)
+    local value = db and db:Get("profile", MARKET_KEY)
+    if type(value) ~= "string" or value:match("^%s*$") then
+        return BuyingTab.DEFAULT_MARKET_SOURCE
+    end
+    return value
+end
+
+-- Save the formula text. Returns true, or false if the text is empty or there is no settings DB.
+function BuyingTab.WriteMarketSource(db, text)
+    text = type(text) == "string" and text:match("^%s*(.-)%s*$") or ""
+    if text == "" or not db then
+        return false
+    end
+    db:Set("profile", MARKET_KEY, text)
+    return true
 end
 
 -- Build the price level rows to show. state is "buy", "above" or "own".
 -- Levels above the maximum show only if the operation sets showAboveMax.
--- scan is optional: { market, ageHours } of the item from the scan data. It adds the percent and the age text.
+-- scan is optional: { market } is the market value of the item in copper. It adds the percent.
 function BuyingTab.DescribeLevels(entry, levels, showAboveMax, scan)
     local out = {}
-    local ageText = scan and BuyingTab.AgeText(scan.ageHours) or nil
     for _, level in ipairs(levels or {}) do
         local state
         if level.own then
@@ -139,7 +180,7 @@ function BuyingTab.DescribeLevels(entry, levels, showAboveMax, scan)
                 stackPrice = BuyingTab.StackPrice(level), id = level.id, stacks = level.stacks,
                 stackSize = level.stackSize, owner = level.own and OWN_TEXT or level.owner,
                 timeLeft = level.timeLeft,
-                percent = scan and BuyingTab.MarketPercent(level.unitPrice, scan.market) or nil, age = ageText,
+                percent = scan and BuyingTab.MarketPercent(level.unitPrice, scan.market) or nil,
             }
         end
     end
@@ -157,6 +198,45 @@ function BuyingTab.DescribeTotals(described)
     end
     return totals
 end
+-- The item entries of a group node of the tree, with the items of its subgroups, in tree order.
+function BuyingTab.GroupEntries(node)
+    local out = {}
+    local function collect(parent)
+        for _, child in ipairs(parent.children or {}) do
+            if child.kind == "item" then
+                out[#out + 1] = child.entry
+            else
+                collect(child)
+            end
+        end
+    end
+    collect(node or {})
+    return out
+end
+
+-- One row of the group item list. levels are the price levels of the last search of the item (nil if the item was
+-- not searched). market is the market value in copper. The row has the lowest unit price and the units for sale
+-- without your own levels, and the percent of the market value. An item that was searched and has none for sale
+-- has no price and 0 units.
+function BuyingTab.DescribeGroupRow(levels, market)
+    local row = { searched = levels ~= nil }
+    if not levels then
+        return row
+    end
+    local quantity = 0
+    for _, level in ipairs(levels) do
+        if not level.own then
+            if row.price == nil or level.unitPrice < row.price then
+                row.price = level.unitPrice
+            end
+            quantity = quantity + level.quantity
+        end
+    end
+    row.quantity = quantity
+    row.percent = BuyingTab.MarketPercent(row.price, market)
+    return row
+end
+
 -- The log decision of one evaluation: "would buy N at X", or the stop reason.
 function BuyingTab.DescribeDecision(result)
     if result.first then
@@ -1044,6 +1124,7 @@ local NAME_SETTLE_SECONDS = 1 -- a name search ends after this many seconds with
 -- Forget the name search results and the saved selection. The caller sets the new selection.
 function Tab:_DropSearch()
     self.searchResults, self.searchText, self.preSearchKey = nil, nil, nil
+    self.groupView = nil
     if self.ui then
         self.ui.searchInput:SetText("")
     end
@@ -1150,6 +1231,7 @@ function Tab:_ShowSearch(text, items, keep)
         self.preSearchKey = self.selectedKey
     end
     self.searchText = text
+    self.groupView = nil
     self.searchResults = self.deps.plan.ListEntries(items, { formulaRun = self.deps.formulaRun, label = "Search" })
     if not keep then
         self.selectedKey, self.levelSel, self.run = nil, nil, nil
@@ -2581,6 +2663,16 @@ local function setColor(label, grey)
     end
 end
 
+-- Color a % MV cell with the gradient. A cell with no percent is grey.
+local function setPercentColor(label, percent)
+    local r, g, b = BuyingTab.PercentColor(percent)
+    if r then
+        label:SetTextColor(r, g, b)
+    else
+        label:SetTextColor(0.5, 0.5, 0.5)
+    end
+end
+
 local ROW_HEIGHT = 22
 local TREE_INDENT = 14
 local NAME_WIDTH = 140
@@ -2688,16 +2780,18 @@ function Tab:_InitTreeRow(row, node, depth, isCollapsed, hasChildren)
     row.toggle:SetScript("OnClick", function()
         tree:SetCollapsed(node.id, not isCollapsed)
     end)
-    row.selection:SetShown(node.kind == "item" and tree.selected ~= nil and tree.selected == node.id)
+    local groupOpen = node.kind == "group" and self.groupView ~= nil and self.groupView.id == node.id
+        and self.selectedKey == nil
+    row.selection:SetShown(groupOpen or (node.kind == "item" and tree.selected ~= nil and tree.selected == node.id))
     row.label:ClearAllPoints()
     row.label:SetJustifyH("LEFT")
     if row.label.SetWordWrap then
         row.label:SetWordWrap(false)
     end
     if node.kind == "group" then
-        -- A click on a group only collapses or expands it.
+        -- A click on a group shows its items and searches them. The +/- button collapses or expands it.
         row:SetScript("OnClick", function()
-            tree:SetCollapsed(node.id, not isCollapsed)
+            self:OpenGroup(node)
         end)
         parts.icon:Hide()
         parts.price:SetText("")
@@ -2751,6 +2845,16 @@ function Tab:_OnTreeSelect(node)
     if node.kind ~= "item" then
         return
     end
+    -- An item outside the open group ends the group view; Back then has nothing to go back to.
+    if self.groupView then
+        local inGroup = false
+        for _, entry in ipairs(self.groupView.entries) do
+            inGroup = inGroup or entry.key == node.entry.key
+        end
+        if not inGroup then
+            self.groupView = nil
+        end
+    end
     self:Select_(node.entry.key)
     if not self.deps.client.CanLiveSearch() then
         return
@@ -2790,14 +2894,7 @@ local LEVEL_COLUMNS = {
             end
             return "x" .. tostring(value)
         end },
-    { key = "percent", title = "% of market", width = { share = 1 }, number = true,
-        format = function(value)
-            return value and (tostring(value) .. "%") or "-"
-        end },
-    { key = "age", title = "Data age", width = { share = 1 }, number = true,
-        format = function(value)
-            return value or "-"
-        end },
+    { key = "percent", title = "% MV", width = { share = 1 }, number = true, format = BuyingTab.PercentText },
     { key = "owner", title = "Seller", width = { share = 1 }, hidden = true,
         format = function(value)
             return value or ""
@@ -2809,7 +2906,22 @@ local LEVEL_COLUMNS = {
 }
 local LEVEL_OPTIONS = { gap = 6 }
 local STACK_COLUMN, QUANTITY_COLUMN = LEVEL_COLUMNS[2], LEVEL_COLUMNS[3]
-local OWNER_COLUMN, TIME_COLUMN = LEVEL_COLUMNS[6], LEVEL_COLUMNS[7]
+local OWNER_COLUMN, TIME_COLUMN = LEVEL_COLUMNS[5], LEVEL_COLUMNS[6]
+
+-- The columns of the totals row: the columns of the list. The cell with the cost grows to the left edge of the
+-- row, so that "Total" and the cost never get cut off. The columns are read live (hidden flags, shares).
+local function totalColumn(column)
+    return setmetatable({}, { __index = function(_, field)
+        if field == "spanStart" then
+            return column.key == (hasCommodityMarket() and "unitPrice" or "stackPrice")
+        end
+        return column[field]
+    end })
+end
+local TOTAL_COLUMNS = {}
+for index, column in ipairs(LEVEL_COLUMNS) do
+    TOTAL_COLUMNS[index] = totalColumn(column)
+end
 -- The share of the Available column when it shows the text of a stack group.
 local WIDE_SHARE = 1.6
 
@@ -2831,6 +2943,7 @@ local function initRowsRow(row, data)
     setColor(cells.unitPrice, grey)
     setColor(cells.stackPrice, grey)
     setColor(cells.quantity, grey)
+    setPercentColor(cells.percent, data.percent)
 end
 
 -- Draw one price level row: the cells, the selection highlight and the click that selects the level.
@@ -2850,6 +2963,167 @@ function Tab:_InitLevelRow(row, data)
     row:SetScript("OnClick", function()
         self:SelectLevel(id)
     end)
+end
+
+-- The columns of the item list of a clicked group. The name fills the rest, so the name cell is drawn by the row
+-- (icon and name). The header, and the cells of the number columns, use the same definition.
+local GROUP_COLUMNS = {
+    { key = "name", title = "Item", owned = true },
+    { key = "price", title = "Lowest", width = 90, number = true,
+        format = function(value)
+            return value and money(value) or "—"
+        end },
+    { key = "percent", title = "% MV", width = 56, number = true, format = BuyingTab.PercentText },
+    { key = "quantity", title = "Available", width = 70, number = true,
+        format = function(value)
+            return value and tostring(value) or "—"
+        end },
+}
+local GROUP_OPTIONS = { gap = 6 }
+
+-- Draw one row of the group item list: icon, name, lowest unit price, % MV and the units for sale. A click on the
+-- row opens the price levels of the item.
+function Tab:_InitGroupRow(row, data)
+    local Kit = ns.Kit
+    if not row.cells then
+        row.cells = Kit.CreateColumnCells(row, GROUP_COLUMNS, GROUP_OPTIONS)
+        row.icon = row:CreateTexture(nil, "ARTWORK")
+        row.icon:SetSize(16, 16)
+        row.icon:SetPoint("LEFT", row, "LEFT", 2, 0)
+        row.nameLabel = Kit.Label(row, "", "small")
+        row.nameLabel:SetPoint("LEFT", row.icon, "RIGHT", 4, 0)
+        row.nameLabel:SetPoint("RIGHT", row.cells.price, "LEFT", -GROUP_OPTIONS.gap, 0)
+        row.nameLabel:SetJustifyH("LEFT")
+    end
+    local _, icon = self.deps.itemInfo(data.itemID or 0)
+    row.icon:SetTexture(icon)
+    row.nameLabel:SetText(data.name or "")
+    Kit.SetColumnCells(row.cells, GROUP_COLUMNS, data)
+    local grey = not data.searched
+    setColor(row.nameLabel, grey)
+    setColor(row.cells.price, grey)
+    setColor(row.cells.quantity, grey)
+    setPercentColor(row.cells.percent, data.percent)
+    row:SetScript("OnClick", function()
+        self:_OnGroupItemClick(data.entry)
+    end)
+end
+
+-- The tree node with this id, or nil.
+local function findNode(nodes, id)
+    for _, node in ipairs(nodes or {}) do
+        if node.id == id then
+            return node
+        end
+        local found = node.children and findNode(node.children, id)
+        if found then
+            return found
+        end
+    end
+    return nil
+end
+
+-- A click on a group of the tree: show the items of the group (also the items of its subgroups) in the right pane
+-- and search them one after the other with the queue of Search all (one search at a time, the ready check and the
+-- retry timer of the queue). Returns true, or false and a text.
+function Tab:OpenGroup(node)
+    if not node or node.kind ~= "group" or self.source ~= "groups" or self.searchResults then
+        return false, "not a group"
+    end
+    local entries = BuyingTab.GroupEntries(node)
+    if #entries == 0 then
+        return false, "the group has no items"
+    end
+    self.groupView = { id = node.id, text = node.text, entries = entries }
+    if self.selectedKey then
+        self:Select_(nil)
+    end
+    self.nextSearchKey = nil
+    self:_CancelRead("read stopped")
+    self.queue = nil
+    if self.deps.client.CanLiveSearch() then
+        self.queue = { list = { unpack(entries) }, pos = 0 }
+        self:_Next()
+    end
+    self:_Update()
+    return true
+end
+
+-- Leave the price levels of an item and show the item list of the group again. Returns true, or false.
+function Tab:Back()
+    if not (self.groupView and self.selectedKey) then
+        return false
+    end
+    self.nextSearchKey = nil
+    self:Select_(nil)
+    return true
+end
+
+-- A click on an item of the group list: show its price levels and search it (the click of the tree).
+function Tab:_OnGroupItemClick(entry)
+    if entry and self:_Entry(entry.key) then
+        self:_OnTreeSelect({ kind = "item", entry = entry })
+    end
+end
+
+-- The rows of the group item list, in the order of the tree.
+function Tab:_GroupRows()
+    local rows = {}
+    for _, entry in ipairs(self.groupView.entries) do
+        local done = self.results[entry.key]
+        local row = BuyingTab.DescribeGroupRow(done and self:_Levels(done.rows) or nil, self:MarketValue(entry))
+        row.entry, row.key, row.itemID, row.name = entry, entry.key, entry.itemID, self:_ItemName(entry)
+        rows[#rows + 1] = row
+    end
+    return rows
+end
+
+-- Keep the group view in step with the tree: it gets the items of the group again, or it ends if the group is gone.
+function Tab:_SyncGroupView()
+    local view = self.groupView
+    if not view then
+        return
+    end
+    local node = self.source == "groups" and not self.searchResults and findNode(self.nodes, view.id) or nil
+    local entries = node and BuyingTab.GroupEntries(node) or {}
+    if #entries == 0 then
+        self.groupView = nil
+        return
+    end
+    view.entries = entries
+end
+
+-- Show the group item list, or the price levels of an item. The group list shows while a group is open and no item
+-- is selected. The Back button shows with the price levels of an item of an open group.
+function Tab:_ShowPanes(groupMode)
+    local ui = self.ui
+    for _, widget in ipairs(ui.levelPane) do
+        widget:SetShown(not groupMode)
+    end
+    ui.groupHeader.frame:SetShown(groupMode)
+    ui.groupList.frame:SetShown(groupMode)
+    ui.back:SetShown(self.groupView ~= nil and not groupMode)
+    if groupMode then
+        ui.totals:Hide()
+        ui.loadMore:Hide()
+    end
+end
+
+-- Update the group item list and the line over it.
+function Tab:_UpdateGroup()
+    local ui = self.ui
+    local rows = self:_GroupRows()
+    local searched = 0
+    for _, row in ipairs(rows) do
+        searched = searched + (row.searched and 1 or 0)
+    end
+    local text = string.format("%s: %d items", self.groupView.text or "", #rows)
+    if self.queue ~= nil then
+        text = string.format("%s: searched %d of %d", self.groupView.text or "", searched, #rows)
+    end
+    ui.summary:SetText(text)
+    self.covered = {}
+    ui.groupList:SetData(rows)
 end
 
 -- Update the source buttons, the search list controls and the place of the list.
@@ -2948,6 +3222,25 @@ function Tab:_ScanInfo(entry)
     }
 end
 
+-- The formula of the market value (the setting "Market value source").
+function Tab:GetMarketSource()
+    return BuyingTab.ReadMarketSource(self.deps.db)
+end
+
+-- The market value of an item in copper (the 100% of the % MV column): the result of the setting formula for the
+-- item. Returns nil if there is no formula run, the formula gives no value or the value is not above 0.
+function Tab:MarketValue(entry)
+    local run = self.deps.formulaRun
+    if not (entry and entry.key and run and run.Evaluate) then
+        return nil
+    end
+    local ok, value = pcall(run.Evaluate, run, self:GetMarketSource(), entry.key)
+    if not ok or type(value) ~= "number" or value <= 0 then
+        return nil
+    end
+    return value
+end
+
 -- Update the buttons, the list and the right side from the state.
 function Tab:_Update()
     local ui = self.ui
@@ -2972,8 +3265,15 @@ function Tab:_Update()
         end)
     end
     ui.searchClear:SetEnabled(self.searchResults ~= nil)
+    self:_SyncGroupView()
     ui.tree.selected = nodeID(self.selectedKey)
     ui.tree:SetNodes(self.nodes)
+    local groupMode = self.groupView ~= nil and not selected
+    self:_ShowPanes(groupMode)
+    if groupMode then
+        self:_UpdateGroup()
+        return
+    end
     if not selected then
         local text = canSearch and "" or "Live search is not available."
         if self.source == "lists" and not self.listID then
@@ -3004,7 +3304,8 @@ function Tab:_Update()
         ui.loadMore:SetEnabled(self.pending == nil and self.buy == nil)
     end
     local levels = done and self:_Levels(done.rows) or {}
-    local described = BuyingTab.DescribeLevels(selected, levels, selected.showAboveMax, self:_ScanInfo(selected))
+    local described = BuyingTab.DescribeLevels(selected, levels, selected.showAboveMax,
+        { market = self:MarketValue(selected) })
     -- The selection stays on the same unit price if the level is still in the list. Else it clears.
     if self.levelSel then
         local shown = false
@@ -3038,7 +3339,6 @@ function Tab:_Update()
     ui.totalCells.unitPrice:SetText("")
     ui.totalCells.stackPrice:SetText("")
     ui.totalCells.percent:SetText("")
-    ui.totalCells.age:SetText("")
     ui.totalCells[costKey]:SetText("Total  " .. money(totals.cost))
     ui.buyNext:SetText(verb)
     ui.buyNext:SetEnabled(nextLevel ~= nil and reason == nil)
@@ -3068,7 +3368,7 @@ function Tab:_ShowColumns(levels)
     local edge = ui.rowsList.contentInsets or { left = 0, right = 0 }
     local options = { gap = LEVEL_OPTIONS.gap, left = edge.left, right = edge.right }
     Kit.LayoutColumnLabels(ui.levelHeader.labels, ui.levelHeader.frame, LEVEL_COLUMNS, options)
-    Kit.LayoutColumnLabels(ui.totalCells, ui.totals, LEVEL_COLUMNS, options)
+    Kit.LayoutColumnLabels(ui.totalCells, ui.totals, TOTAL_COLUMNS, options)
 end
 
 -- Show the units and the total price of the purchase in the amount box and next to it.
@@ -3305,7 +3605,7 @@ function Tab:_BuildContent()
     local rightX = LIST_WIDTH + padding
     ui.summary = place(Kit.Label(content, "", "small"), rightX, -4)
     ui.summary:SetJustifyH("LEFT")
-    ui.summary:SetWidth(330)
+    ui.summary:SetWidth(300)
     -- Shown only if sorted pages are not all read (TBC). It reads the next page of the item.
     ui.loadMore = Kit.Button(content, "Load more", 100, function()
         self:LoadMore()
@@ -3337,13 +3637,13 @@ function Tab:_BuildContent()
     ui.totalsBackground:SetBlendMode("ADD")
     ui.totalsBackground:SetAlpha(0.6)
     ui.totalsBackground:SetAllPoints(ui.totals)
-    ui.totalCells = Kit.CreateColumnCells(ui.totals, LEVEL_COLUMNS, options)
+    ui.totalCells = Kit.CreateColumnCells(ui.totals, TOTAL_COLUMNS, options)
     Kit.Tooltip(ui.totals, "Total to buy", { "All units and the cost of all price levels that you can buy.",
         "Your own levels and levels above the max price are not in the total." })
     ui.totals:Hide()
     -- The amount box: units to buy for a commodity. Empty means all units up to the level.
     ui.amountLabel = Kit.Label(content, "Amount", "small")
-    ui.amountLabel:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", rightX, 0)
+    ui.amountLabel:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", rightX + edge.left, 0)
     ui.amount = Kit.Input(content, 70, nil, nil, { placeholder = "all" })
     ui.amount:SetNumeric(true)
     ui.amount:SetPoint("LEFT", ui.amountLabel, "RIGHT", 8, 0)
@@ -3359,9 +3659,34 @@ function Tab:_BuildContent()
     end)
     ui.buyNext:SetPoint("LEFT", ui.amount, "RIGHT", 10, 0)
     ui.buyNext:SetEnabled(false)
-    -- The total price of the purchase, on the right of the Buy button.
+    -- The total price of the purchase, on the amount row. It is right-aligned to the right edge of the list columns.
     ui.amountTotal = Kit.Label(content, "", "highlight")
-    ui.amountTotal:SetPoint("LEFT", ui.buyNext, "RIGHT", 10, 0)
+    ui.amountTotal:SetPoint("RIGHT", content, "BOTTOMRIGHT", -edge.right, 11)
+    ui.amountTotal:SetJustifyH("RIGHT")
+    -- The item list of a clicked group takes the place of the price level list.
+    ui.groupList = Kit.CreateList(content, { rowHeight = 18, inset = true, skin = skin, initRow = function(row, data)
+        self:_InitGroupRow(row, data)
+    end })
+    ui.groupList.frame:SetPoint("TOPLEFT", content, "TOPLEFT", rightX, -38)
+    ui.groupList.frame:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", 0, 0)
+    ui.groupHeader = Kit.CreateColumnHeader(content, GROUP_COLUMNS,
+        { gap = GROUP_OPTIONS.gap, left = edge.left, right = edge.right })
+    ui.groupHeader.frame:SetPoint("TOPLEFT", content, "TOPLEFT", rightX, -20)
+    ui.groupHeader.frame:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, -20)
+    ui.groupHeader.frame:SetHeight(18)
+    ui.groupList.frame:Hide()
+    ui.groupHeader.frame:Hide()
+    -- Back shows the item list of the group again. It shows only with the price levels of an item of a group.
+    ui.back = Kit.Button(content, "Back", 56, function()
+        self:Back()
+    end)
+    ui.back:SetHeight(18)
+    ui.back:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, 0)
+    ui.back:Hide()
+    ui.loadMore:ClearAllPoints()
+    ui.loadMore:SetPoint("TOPRIGHT", content, "TOPRIGHT", -60, 0)
+    -- The widgets of the price level view: they hide while the group item list shows.
+    ui.levelPane = { ui.levelHeader.frame, ui.rowsList.frame, ui.amountLabel, ui.amount, ui.buyNext, ui.amountTotal }
 end
 
 -- Build the panel in the parent frame and listen for the search events.
@@ -3507,7 +3832,8 @@ end
 -- (the Scan and buy button of the Vendor source; the button shows only with both),
 -- searchLists, itemNameIndex, ahNameSearch, keyFor(link) and isAuctionHouseOpen()
 -- (search lists and the item box), openLists(id) (the Edit lists button: it opens the Lists page of the Flipside
--- window), and getRecord(key) with now() (the % of market and data age columns).
+-- window), and getRecord(key) with now() (the scan price text of an item with no max price). The % MV column uses
+-- formulaRun and the setting "Market value source" (db).
 function BuyingTab.New(deps)
     if type(deps) ~= "table" or type(deps.bus) ~= "table" then
         error("deps.bus must be a table", 2)
