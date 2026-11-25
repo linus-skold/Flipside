@@ -24,5 +24,31 @@ function FormulaLookup.Find(store, input)
     if record then
         return record, base, itemID
     end
+    if type(input) == "number" or (type(input) == "string" and input:match("^%d+$")) then
+        local variant, variantKey = FormulaLookup.FindVariant(store, base)
+        if variant then
+            return variant, variantKey, itemID
+        end
+    end
     return nil, nil, itemID
+end
+
+-- Returns the record and key of the exact-key variant of an item (gear is stored under "<id>#...") that has
+-- the lowest latest minimum buyout. Returns nil if the item has no variant with data.
+function FormulaLookup.FindVariant(store, base)
+    if type(store.Keys) ~= "function" then
+        return nil
+    end
+    local prefix = base .. "#"
+    local bestRecord, bestKey, bestMin
+    for _, key in ipairs(store:Keys()) do
+        if key:sub(1, #prefix) == prefix then
+            local record = store:Get(key)
+            local min = record and record.latest and record.latest.min
+            if min and (not bestMin or min < bestMin) then
+                bestRecord, bestKey, bestMin = record, key, min
+            end
+        end
+    end
+    return bestRecord, bestKey
 end

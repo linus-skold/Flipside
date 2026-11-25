@@ -138,6 +138,42 @@ describe("ItemInfoCache", function()
         assert.same({ 10, 10 }, requests)
     end)
 
+    it("Get runs the callbacks of a requested item when the client has the data", function()
+        local count = 0
+        cache:Request(10, function() count = count + 1 end)
+        client[10] = { name = "a" }
+        cache:Get(10)
+        assert.equals(1, count)
+        assert.equals("loaded", cache:GetState(10))
+        cache:OnLoadResult(10, true)
+        assert.equals(1, count)
+    end)
+
+    it("Request on a pending item keeps both callbacks and sends one request", function()
+        local calls = {}
+        cache:Request(10, function() calls[#calls + 1] = "a" end)
+        cache:Request(10, function() calls[#calls + 1] = "b" end)
+        assert.same({ 10 }, requests)
+        client[10] = { name = "a" }
+        cache:OnLoadResult(10, true)
+        assert.same({ "a", "b" }, calls)
+    end)
+
+    it("Resend sends the request again and keeps the callback", function()
+        local count = 0
+        cache:Request(10, function() count = count + 1 end)
+        assert.is_true(cache:Resend(10))
+        assert.same({ 10, 10 }, requests)
+        client[10] = { name = "a" }
+        cache:OnLoadResult(10, true)
+        assert.equals(1, count)
+    end)
+
+    it("Resend returns false for an item that is not requested", function()
+        assert.is_false(cache:Resend(10))
+        assert.same({}, requests)
+    end)
+
     it("counts pending items", function()
         cache:Request(1)
         cache:Request(2)

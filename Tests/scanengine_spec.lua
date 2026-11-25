@@ -785,6 +785,30 @@ describe("ScanEngine Forever retry", function()
         assert.is_truthy(Joined(w):find("full scan complete with 1 pending:", 1, true))
     end)
 
+    it("sends a lost item request again at the poll and counts the item once", function()
+        local rows = { gearRow(1), gearRow(2) }
+        rows[2].late = true
+        local w = MakeWorld({ rows = rows, forever = true })
+        w.neverLoad[1002] = true
+        assert.is_true(w.engine:Start())
+        for _ = 1, 300 do
+            if not w.engine:IsRunning() then
+                break
+            end
+            Tick(w)
+            if (w.requestCount[1002] or 0) >= 2 then
+                w.neverLoad[1002] = nil
+            end
+        end
+        assert.are.same({}, w.errors)
+        local s = w.finished[#w.finished]
+        assert.is_true(w.requestCount[1002] >= 2)
+        assert.are.equal(0, s.pending)
+        assert.are.equal(1, s.retried)
+        assert.is_not_nil(w.store:Get("1002#b6002"))
+        assert.are.equal(1, #w.store:Get("1002#b6002").today.snaps)
+    end)
+
     it("counts an item whose load keeps failing", function()
         local rows = { gearRow(1), gearRow(2) }
         rows[2].late = true
