@@ -112,9 +112,30 @@ function Cache:Get(itemID)
         entry = self:_entry(itemID)
         entry.state = "loaded"
         entry.info = info
+        -- The client has the data but no result event came: do not strand the waiting callbacks.
+        self:_runCallbacks(itemID, entry)
         return info, "loaded"
     end
     return nil, entry and entry.state or "unknown"
+end
+
+-- Sends the load request again for an item that is still requested. The waiting callbacks stay as they are.
+-- Returns false if the item is not in the requested state (no entry, unknown, failed or loaded).
+-- The caller then asks with Request, which runs its callback at once for a loaded item.
+function Cache:Resend(itemID)
+    checkID(itemID)
+    local _, state = self:Get(itemID)
+    if state ~= "requested" then
+        return false
+    end
+    local entry = self.items[itemID]
+    local ok, err = pcall(self.requestLoad, itemID)
+    if not ok then
+        entry.state = "failed"
+        self:_report("requestLoad failed for " .. itemID .. ": " .. tostring(err))
+        self:_runCallbacks(itemID, entry)
+    end
+    return true
 end
 
 function Cache:GetState(itemID)
