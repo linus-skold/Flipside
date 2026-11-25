@@ -34,6 +34,7 @@ local SOURCE_TYPES = {
     barber = { expense = true },
     talentReset = { expense = true },
     guildBank = { income = true, expense = true },
+    reconcile = { income = true, expense = true },
     unknown = { income = true, expense = true },
 }
 LedgerRecord.SOURCE_TYPES = SOURCE_TYPES

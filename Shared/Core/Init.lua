@@ -1379,11 +1379,43 @@ local function saveBalance()
     ns.LedgerBalance.WriteSnapshot(ns.db, copper, GetServerTime())
 end
 
+-- At login: if the gold differs from the saved balance, write one reconcile record (SPEC 5.8). It runs once, before
+-- the first saveBalance. Money changes of the session update the saved balance, so they never give a difference.
+local function reconcileBalance()
+    if not (ns.db and ns.ledgerBuffer and ns.LedgerBalance and type(GetMoney) == "function") then
+        return
+    end
+    local copper = GetMoney()
+    if type(issecretvalue) == "function" and issecretvalue(copper) then
+        return
+    end
+    local ok, err, reason = pcall(ns.LedgerBalance.Reconcile, {
+        db = ns.db, buffer = ns.ledgerBuffer, char = characterKey(), copper = copper, time = GetServerTime(),
+    })
+    if not ok then
+        ns.ReportError("the gold reconcile failed: " .. tostring(err))
+    elseif reason == "zero" then
+        log("ledger", "warn", "gold reconcile skipped: GetMoney() gave 0 and a balance was saved")
+    end
+end
+
+-- The first reconcile and the first save wait for the first PLAYER_ENTERING_WORLD of the UI load: GetMoney() can give
+-- 0 earlier on some clients. Until then, PLAYER_MONEY saves nothing, so the saved balance stays for the compare.
 local function openBalance()
-    saveBalance()
+    local started = false
     -- Not at PLAYER_LOGOUT: GetMoney() gives 0 there on TBC Anniversary.
-    ns.bus:Subscribe("PLAYER_ENTERING_WORLD", "Flipside.LedgerBalance", saveBalance)
-    ns.bus:Subscribe("PLAYER_MONEY", "Flipside.LedgerBalance", saveBalance)
+    ns.bus:Subscribe("PLAYER_ENTERING_WORLD", "Flipside.LedgerBalance", function()
+        if not started then
+            started = true
+            reconcileBalance()
+        end
+        saveBalance()
+    end)
+    ns.bus:Subscribe("PLAYER_MONEY", "Flipside.LedgerBalance", function()
+        if started then
+            saveBalance()
+        end
+    end)
 end
 
 -- Create the tooltip settings and attach the tooltip lines; they need the settings DB.

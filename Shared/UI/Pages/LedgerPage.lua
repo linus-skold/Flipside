@@ -69,6 +69,7 @@ local SOURCE_LABELS = {
     barber = "Barber",
     talentReset = "Talent reset",
     guildBank = "Guild bank",
+    reconcile = "Reconcile",
     unknown = "Unknown",
 }
 
@@ -115,6 +116,7 @@ local TYPE_LABELS = {
     barber = "Barber",
     talentReset = "Talent reset",
     guildBank = "Guild bank",
+    reconcile = "Reconcile",
     unknown = "Unknown",
 }
 LedgerPage.TYPE_LABELS = TYPE_LABELS
