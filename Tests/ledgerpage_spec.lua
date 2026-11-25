@@ -814,6 +814,21 @@ describe("LedgerPage", function()
             assert.are.same({ moneyIn = 105, moneyOut = 30, net = 75, count = 3 }, totals)
         end)
 
+        it("counts a reconcile gain as income and a reconcile loss as expense", function()
+            assert.is_true(ns.LedgerRecord.Validate({
+                time = 1, char = "Me-Realm", type = "income", source = "reconcile", money = 40,
+            }))
+            assert.is_true(ns.LedgerRecord.Validate({
+                time = 1, char = "Me-Realm", type = "expense", source = "reconcile", money = 15,
+            }))
+            assert.are.equal("Reconcile", ns.LedgerPage.TypeLabel("reconcile"))
+            assert.are.equal("Reconcile", ns.LedgerPage.SourceLabel("reconcile"))
+            local totals = ns.LedgerPage.Totals({
+                { moneyIn = 40, moneyOut = 0 }, { moneyIn = 0, moneyOut = 15 },
+            })
+            assert.are.same({ moneyIn = 40, moneyOut = 15, net = 25, count = 2 }, totals)
+        end)
+
         it("shows the totals of the visible rows", function()
             local view = page.views.sales
             assert.are.equal("7700c", view.totals.moneyIn:GetText())

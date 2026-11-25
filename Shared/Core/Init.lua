@@ -1379,7 +1379,26 @@ local function saveBalance()
     ns.LedgerBalance.WriteSnapshot(ns.db, copper, GetServerTime())
 end
 
+-- At login: if the gold differs from the saved balance, write one reconcile record (SPEC 5.8). It runs once, before
+-- the first saveBalance. Money changes of the session update the saved balance, so they never give a difference.
+local function reconcileBalance()
+    if not (ns.db and ns.ledgerBuffer and ns.LedgerBalance and type(GetMoney) == "function") then
+        return
+    end
+    local copper = GetMoney()
+    if type(issecretvalue) == "function" and issecretvalue(copper) then
+        return
+    end
+    local ok, err = pcall(ns.LedgerBalance.Reconcile, {
+        db = ns.db, buffer = ns.ledgerBuffer, char = characterKey(), copper = copper, time = GetServerTime(),
+    })
+    if not ok then
+        ns.ReportError("the gold reconcile failed: " .. tostring(err))
+    end
+end
+
 local function openBalance()
+    reconcileBalance()
     saveBalance()
     -- Not at PLAYER_LOGOUT: GetMoney() gives 0 there on TBC Anniversary.
     ns.bus:Subscribe("PLAYER_ENTERING_WORLD", "Flipside.LedgerBalance", saveBalance)

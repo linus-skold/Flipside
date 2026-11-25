@@ -49,6 +49,28 @@ function LedgerBalance.ReadSnapshot(db, character)
     return nil
 end
 
+-- Gold reconcile at login (SPEC 5.8). Call it once, before the first WriteSnapshot of the session. args: db,
+-- buffer (LedgerBuffer), char (the character key), copper (GetMoney()), time (server time). If the saved balance of
+-- the character differs from copper, it adds one record with the source "reconcile": the type is "income" for a gain
+-- and "expense" for a loss, and the money is the size of the difference. It returns the signed difference, or nil if it
+-- wrote no record (no saved balance, no change, a bad value or a rejected record).
+function LedgerBalance.Reconcile(args)
+    local copper, time, char = args.copper, args.time, args.char
+    if type(copper) ~= "number" or copper < 0 or type(time) ~= "number" or type(char) ~= "string" or char == "" then
+        return nil
+    end
+    local saved = LedgerBalance.ReadSnapshot(args.db, char)
+    if not saved or saved.copper == copper or not args.buffer then
+        return nil
+    end
+    local delta = copper - saved.copper
+    local ok = args.buffer:Add({
+        time = time, char = char, source = "reconcile", type = delta > 0 and "income" or "expense",
+        money = math.abs(delta),
+    })
+    return ok and delta or nil
+end
+
 -- Returns the money changes of one character, oldest first: a list of { time, delta }. A daily sum is placed at the
 -- start of its day. buffered is an optional list of records that are not in the store yet.
 function LedgerBalance.Events(store, character, fromTime, buffered)

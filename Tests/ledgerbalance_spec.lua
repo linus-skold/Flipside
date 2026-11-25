@@ -270,6 +270,98 @@ describe("LedgerBalance", function()
         end)
     end)
 
+    describe("Reconcile", function()
+        local function setup(saved)
+            local added = {}
+            local db = {
+                GetFor = function(_, character, key)
+                    if saved and character == ME and key == LB.KEY then
+                        return { copper = saved, time = NOW - 100 }
+                    end
+                    return nil
+                end,
+            }
+            local buffer = {
+                Add = function(_, fields)
+                    local ok, message = ns.LedgerRecord.Validate(fields)
+                    if ok then
+                        added[#added + 1] = fields
+                    end
+                    return ok, message
+                end,
+            }
+            return function(copper, char)
+                local delta = LB.Reconcile({ db = db, buffer = buffer, char = char or ME, copper = copper, time = NOW })
+                return delta, added
+            end
+        end
+
+        it("writes no record on the first login (no saved balance)", function()
+            local delta, added = setup(nil)(5000)
+            assert.is_nil(delta)
+            assert.are.equal(0, #added)
+        end)
+
+        it("writes no record on a reload or a login when the gold did not change", function()
+            local run = setup(5000)
+            local delta, added = run(5000)
+            assert.is_nil(delta)
+            delta, added = run(5000)
+            assert.is_nil(delta)
+            assert.are.equal(0, #added)
+        end)
+
+        it("writes an income record for a gain", function()
+            local delta, added = setup(5000)(5001)
+            assert.are.equal(1, delta)
+            assert.are.same({
+                { time = NOW, char = ME, source = "reconcile", type = "income", money = 1 },
+            }, added)
+        end)
+
+        it("writes an expense record for a loss", function()
+            local delta, added = setup(5000)(1200)
+            assert.are.equal(-3800, delta)
+            assert.are.same({
+                { time = NOW, char = ME, source = "reconcile", type = "expense", money = 3800 },
+            }, added)
+        end)
+
+        it("works with a GUID character key (Forever)", function()
+            local guid = "Player-1234-0ABCDEF0"
+            local db = {
+                GetFor = function(_, character)
+                    return character == guid and { copper = 100, time = 1 } or nil
+                end,
+            }
+            local added = {}
+            local buffer = {
+                Add = function(_, fields)
+                    added[#added + 1] = fields
+                    return true
+                end,
+            }
+            assert.are.equal(50, LB.Reconcile({ db = db, buffer = buffer, char = guid, copper = 150, time = NOW }))
+            assert.are.equal(guid, added[1].char)
+        end)
+
+        it("writes nothing for a bad value or a missing character", function()
+            local run = setup(5000)
+            assert.is_nil(run(nil))
+            assert.is_nil(run(-1))
+            assert.is_nil(run(6000, ""))
+            local _, added = run(5000)
+            assert.are.equal(0, #added)
+        end)
+
+        it("counts in the balance curve like a normal record", function()
+            local gain = { time = 1, char = ME, type = "income", source = "reconcile", money = 70 }
+            local loss = { time = 2, char = ME, type = "expense", source = "reconcile", money = 20 }
+            assert.are.equal(70, LB.Delta(gain))
+            assert.are.equal(-20, LB.Delta(loss))
+        end)
+    end)
+
     describe("MoneyScale", function()
         it("starts at 0 and has a clean maximum above the value", function()
             local scale = LB.MoneyScale(12345678)
