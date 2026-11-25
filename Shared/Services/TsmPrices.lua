@@ -28,6 +28,13 @@ TsmPrices.NAMES = {
     "tsmRegionSaleAvg", "tsmRegionSaleRate", "tsmRegionSoldPerDay", "tsmNumAuctions",
 }
 
+-- Sources that are not money: a rate (0 to 1) or a count. Tooltips and the formula page show them as plain numbers.
+TsmPrices.NUMBER = { tsmregionsalerate = true, tsmregionsoldperday = true, tsmnumauctions = true }
+
+function TsmPrices.IsNumber(name)
+    return type(name) == "string" and TsmPrices.NUMBER[name:lower()] == true
+end
+
 local function api()
     local tsm = _G.TSM_API
     if type(tsm) == "table" and type(tsm.GetCustomPriceValue) == "function" then

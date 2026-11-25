@@ -1,6 +1,7 @@
 local _, ns = ...
 
--- The gold balance over time for the Ledger page graph (SPEC 5.8 point 9). Pure: it reads a store, writes nothing.
+-- The gold balance over time for the Ledger page graph (SPEC 5.8 point 9).
+-- The series functions read a store and write nothing. WriteSnapshot saves the balance, and Reconcile adds one record.
 -- The balance at time t is: anchor + (money change up to t) - (money change up to the anchor time).
 -- The anchor is the live GetMoney() of the current character, or the last saved balance of another one.
 local LedgerBalance = {}
@@ -47,6 +48,32 @@ function LedgerBalance.ReadSnapshot(db, character)
         return value
     end
     return nil
+end
+
+-- Gold reconcile at login (SPEC 5.8). Call it once, before the first WriteSnapshot of the session. args: db,
+-- buffer (LedgerBuffer), char (the character key), copper (GetMoney()), time (server time). If the saved balance of
+-- the character differs from copper, it adds one record with the source "reconcile": the type is "income" for a gain
+-- and "expense" for a loss, and the money is the size of the difference. It returns the signed difference, or nil if it
+-- wrote no record (no saved balance, no change, a bad value or a rejected record).
+function LedgerBalance.Reconcile(args)
+    local copper, time, char = args.copper, args.time, args.char
+    if type(copper) ~= "number" or copper < 0 or type(time) ~= "number" or type(char) ~= "string" or char == "" then
+        return nil
+    end
+    local saved = LedgerBalance.ReadSnapshot(args.db, char)
+    if not saved or saved.copper == copper or not args.buffer then
+        return nil
+    end
+    -- A read of 0 with a saved balance is more likely a client that is not ready than a real loss of all gold.
+    if copper == 0 then
+        return nil, "zero"
+    end
+    local delta = copper - saved.copper
+    local ok = args.buffer:Add({
+        time = time, char = char, source = "reconcile", type = delta > 0 and "income" or "expense",
+        money = math.abs(delta),
+    })
+    return ok and delta or nil
 end
 
 -- Returns the money changes of one character, oldest first: a list of { time, delta }. A daily sum is placed at the

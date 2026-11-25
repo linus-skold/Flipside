@@ -174,6 +174,63 @@ describe("FormulaRun", function()
         end)
     end)
 
+    describe("TSM number sources", function()
+        local tsmValues
+
+        local function runWithTsm()
+            load(manifest.path("TsmPrices"))
+            _G.TSM_API = {
+                GetCustomPriceValue = function(key)
+                    return tsmValues[key]
+                end,
+            }
+            local real = ns.FormulaSources.New({})
+            return ns.FormulaRun.New({
+                store = store,
+                sources = real,
+                serverTime = function()
+                    return now
+                end,
+            })
+        end
+
+        before_each(function()
+            tsmValues = { DBRegionSaleRate = 0.123, DBRegionSoldPerDay = 3.456, DBNumAuctions = 40, DBMarket = 5000 }
+        end)
+
+        after_each(function()
+            _G.TSM_API = nil
+        end)
+
+        it("gives the raw value with 2 decimals in info.number for a rate or a count", function()
+            local r = runWithTsm()
+            local _, info = r:Evaluate("tsmRegionSaleRate", "123")
+            assert.are.equal(0.12, info.number)
+            _, info = r:Evaluate("tsmRegionSoldPerDay", "123")
+            assert.are.equal(3.46, info.number)
+            _, info = r:Evaluate("tsmNumAuctions", "123")
+            assert.are.equal(40, info.number)
+        end)
+
+        it("gives no info.number for money or for a mixed formula", function()
+            local r = runWithTsm()
+            local copper, info = r:Evaluate("tsmMarket", "123")
+            assert.are.equal(5000, copper)
+            assert.is_nil(info.number)
+            local times = select(2, r:Evaluate("tsmNumAuctions * 2", "123"))
+            assert.is_nil(times.number)
+            local mixed = select(2, r:Evaluate("tsmNumAuctions + tsmMarket", "123"))
+            assert.is_nil(mixed.number)
+        end)
+
+        it("gives no info.number without data", function()
+            tsmValues = {}
+            local _, info = runWithTsm():Evaluate("tsmNumAuctions", "123")
+            assert.is_nil(info.number)
+            assert.are.equal("invalid", info.kind)
+        end)
+    end)
+
     describe("Compile", function()
         it("returns the tree, the names and the later names", function()
             local compiled = assert(run:Compile(DEFAULT))
