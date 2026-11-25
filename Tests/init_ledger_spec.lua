@@ -209,12 +209,16 @@ describe("Init ledger", function()
         assert.is_truthy(table.concat(mock.messages, "\n"):find("ledger mail: 1 sales", 1, true))
     end)
 
-    it("saves the gold balance at login, at PLAYER_ENTERING_WORLD and on PLAYER_MONEY, not at logout", function()
+    it("saves the gold balance at PLAYER_ENTERING_WORLD and on PLAYER_MONEY, not at login or logout", function()
         local function saved()
             return ns.LedgerBalance.ReadSnapshot(ns.db, key())
         end
         mock.money = 4200
         login()
+        assert.is_nil(saved())
+        mock.fire("PLAYER_MONEY")
+        assert.is_nil(saved())
+        mock.fire("PLAYER_ENTERING_WORLD")
         assert.are.equal(4200, saved().copper)
         assert.are.equal(mock.serverBase, saved().time)
         mock.money = 5000
@@ -227,5 +231,69 @@ describe("Init ledger", function()
         mock.money = 0
         mock.fire("PLAYER_LOGOUT")
         assert.are.equal(9900, saved().copper)
+    end)
+
+    describe("gold reconcile", function()
+        -- The loader can flush the buffer at PLAYER_ENTERING_WORLD, so the spec records each Add call.
+        local added
+        local function reconciles()
+            local list = {}
+            for _, record in ipairs(added) do
+                if record.source == "reconcile" then
+                    list[#list + 1] = record
+                end
+            end
+            return list
+        end
+
+        local function start(savedCopper, money)
+            mock.money = money
+            login()
+            added = {}
+            local buffer = ns.ledgerBuffer
+            local add = buffer.Add
+            buffer.Add = function(self, fields)
+                added[#added + 1] = fields
+                return add(self, fields)
+            end
+            if savedCopper then
+                ns.LedgerBalance.WriteSnapshot(ns.db, savedCopper, 1)
+            end
+            mock.fire("PLAYER_ENTERING_WORLD")
+        end
+
+        it("writes no record on the first login", function()
+            start(nil, 4200)
+            assert.are.equal(0, #reconciles())
+        end)
+
+        it("writes no record when the gold did not change", function()
+            start(4200, 4200)
+            assert.are.equal(0, #reconciles())
+        end)
+
+        it("writes one record for a gain and none at a later PLAYER_ENTERING_WORLD", function()
+            start(4000, 4200)
+            local list = reconciles()
+            assert.are.equal(1, #list)
+            assert.are.equal("income", list[1].type)
+            assert.are.equal(200, list[1].money)
+            assert.are.equal(key(), list[1].char)
+            mock.fire("PLAYER_ENTERING_WORLD")
+            assert.are.equal(1, #reconciles())
+        end)
+
+        it("writes one record for a loss", function()
+            start(5000, 4200)
+            local list = reconciles()
+            assert.are.equal(1, #list)
+            assert.are.equal("expense", list[1].type)
+            assert.are.equal(800, list[1].money)
+        end)
+
+        it("writes no record when GetMoney() gives 0 and a balance was saved", function()
+            start(5000, 0)
+            assert.are.equal(0, #reconciles())
+        end)
     end)
 end)
