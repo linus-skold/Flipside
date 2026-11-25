@@ -181,4 +181,28 @@ describe("Kit columns", function()
         assert.are.equal("RIGHT", header.labels.a.justifyH)
         frame.GetWidth = function() return 206 end
         frame.scripts.OnSizeChanged(frame)
-        assert.are.same({ 100, 100 }, { header.labels.a.width, header.labels.b.width })    end)end)
+        assert.are.same({ 100, 100 }, { header.labels.a.width, header.labels.b.width })
+    end)
+
+    it("makes sortable headers clickable and shows the sort marker", function()
+        local cols = { { key = "a", title = "A", width = { share = 1 }, sortable = true },
+            { key = "b", title = "B", width = { share = 1 } },
+            { key = "c", title = "C", width = { share = 1 }, sortable = true } }
+        local header = Kit.CreateColumnHeader(CreateFrame("Frame"), cols, { gap = 6 })
+        local clicked = {}
+        Kit.MakeHeaderSortable(header, cols, function(key) clicked[#clicked + 1] = key end)
+        assert.is_nil(header.buttons.b)
+        header.buttons.a.scripts.OnClick(header.buttons.a)
+        header.buttons.c.scripts.OnClick(header.buttons.c)
+        assert.are.same({ "a", "c" }, clicked)
+        Kit.UpdateHeaderSort(header, "a", false)
+        assert.are.equal("A ^", header.labels.a.text)
+        Kit.UpdateHeaderSort(header, "c", true)
+        assert.are.equal("A", header.labels.a.text)
+        assert.are.equal("C v", header.labels.c.text)
+        cols[3].hidden = true
+        Kit.UpdateHeaderSort(header, nil)
+        assert.is_false(header.buttons.c:IsShown())
+        assert.is_true(header.buttons.a:IsShown())
+    end)
+end)

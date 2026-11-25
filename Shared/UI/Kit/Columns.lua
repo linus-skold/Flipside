@@ -246,6 +246,39 @@ function Kit.CreateColumnHeader(parent, columns, options)
     return header
 end
 
+-- Make the header labels of the columns with sortable = true clickable. A click calls onSort(key). The caller
+-- decides what a sort is; the Kit only gives the click and the marker (see Kit.UpdateHeaderSort).
+function Kit.MakeHeaderSortable(header, columns, onSort)
+    header.columns, header.buttons = columns, {}
+    for _, column in ipairs(columns) do
+        local label = header.labels[column.key]
+        if label and column.sortable then
+            local button = CreateFrame("Button", nil, header.frame)
+            button:SetAllPoints(label)
+            button:SetScript("OnClick", function()
+                onSort(column.key)
+            end)
+            header.buttons[column.key] = button
+        end
+    end
+end
+
+-- Show the active sort in the title of a column: " ^" for ascending and " v" for descending. key is the sorted
+-- column (nil for none). A button of a hidden column is hidden.
+function Kit.UpdateHeaderSort(header, key, descending)
+    for _, column in ipairs(header.columns or {}) do
+        local label = header.labels[column.key]
+        if label then
+            local marker = column.key == key and (descending and " v" or " ^") or ""
+            label:SetText((column.title or "") .. marker)
+        end
+        local button = header.buttons and header.buttons[column.key]
+        if button then
+            button:SetShown(not column.hidden)
+        end
+    end
+end
+
 -- Create the cell labels of one row, with the same anchors as the header.
 -- Returns { [key] = fontString }. A column with owned = true gets no cell.
 function Kit.CreateColumnCells(row, columns, options)
