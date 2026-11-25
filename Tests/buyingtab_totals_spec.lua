@@ -263,6 +263,23 @@ describe("BuyingTab totals, amount and columns", function()
             assert.is_truthy(ui.totalCells.unitPrice.text:find("^Total  "))
         end)
 
+        it("puts the cost under Stack Price on Forever when item levels show it, at full width", function()
+            local function item(price, id)
+                return { unitPrice = price, quantity = 1, isCommodity = false, ownerItem = false, auctionID = id }
+            end
+            search({ item(50, 1), item(60, 2) })
+            local edge = ui.rowsList.contentInsets
+            resize(ui.levelHeader.frame, 400)
+            resize(ui.totals, 400)
+            assert.is_truthy(ui.totalCells.stackPrice.text:find("^Total  "))
+            assert.are.equal("", ui.totalCells.unitPrice.text)
+            -- The cell starts at the left edge of the row and ends on the right edge of the Stack Price column.
+            local cell, header = ui.totalCells.stackPrice, ui.levelHeader.labels
+            assert.are.equal(edge.left, cell.points[1][4])
+            assert.are.equal(header.stackPrice.points[1][4] + header.stackPrice.width, cell.points[1][4] + cell.width)
+            assert.is_true(cell.width > 2 * header.unitPrice.width)
+        end)
+
         it("lets the cost cell of the totals row grow to the left edge of the row", function()
             search()
             local edge = ui.rowsList.contentInsets

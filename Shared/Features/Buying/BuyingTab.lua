@@ -1124,7 +1124,7 @@ local NAME_SETTLE_SECONDS = 1 -- a name search ends after this many seconds with
 -- Forget the name search results and the saved selection. The caller sets the new selection.
 function Tab:_DropSearch()
     self.searchResults, self.searchText, self.preSearchKey = nil, nil, nil
-    self.groupView = nil
+    self.groupView, self.queuePaused = nil, nil
     if self.ui then
         self.ui.searchInput:SetText("")
     end
@@ -1231,7 +1231,7 @@ function Tab:_ShowSearch(text, items, keep)
         self.preSearchKey = self.selectedKey
     end
     self.searchText = text
-    self.groupView = nil
+    self.groupView, self.queuePaused = nil, nil
     self.searchResults = self.deps.plan.ListEntries(items, { formulaRun = self.deps.formulaRun, label = "Search" })
     if not keep then
         self.selectedKey, self.levelSel, self.run = nil, nil, nil
@@ -1594,6 +1594,8 @@ function Tab:_Start(entry, silent, range)
         return "wait", text or "the search was refused"
     end
     log("info", "search for item %s started (page %d)", entry.itemID, first)
+    -- The client list is for another item until this search ends: no buy can use it.
+    self.liveKey = nil
     self.token = self.token + 1
     local pending = {
         entry = entry, itemID = entry.itemID, token = self.token, silent = silent, at = first,
@@ -1721,8 +1723,8 @@ end
 -- Stop the queue and a read of several pages. A search of one page in flight still ends with its result.
 function Tab:Stop()
     local reading = self:_CancelRead("read stopped")
-    local queued = self.queue ~= nil
-    self.queue = nil
+    local queued = self.queue ~= nil or self.queuePaused ~= nil
+    self.queue, self.queuePaused = nil, nil
     if queued or not reading then
         self:_Say("search all stopped")
     end
@@ -1732,6 +1734,7 @@ end
 -- The search of the item came to its end: store the rows and go on with the buy box, the held search and the queue.
 function Tab:_Complete(pending, rows)
     self.pending = nil
+    self.liveKey = pending.entry.key -- the client list is for this item now
     self:_Finish(pending.entry, rows, pending.silent, pending.more)
     self:_Say("")
     if self.continueKey and self.continueKey == pending.entry.key then
@@ -2060,6 +2063,11 @@ function Tab:_NextBuy()
     if self.pending then
         return entry, nil, nil, self:_Reading() and "reading the pages" or "a search is running"
     end
+    if self.liveKey ~= entry.key then
+        -- The client list is for another item (a later search of a queue replaced it): a new search is needed.
+        local why = self.queue and "searching the group, wait" or "the list is for another item, search it"
+        return entry, nil, nil, why
+    end
     local plan = self.deps.plan
     local levels = self:_Levels(done.rows)
     local isItem = done.rows[1] ~= nil and done.rows[1].isCommodity == false
@@ -2351,7 +2359,8 @@ end
 -- Make the page of the next stack the page that the client list shows: a buy click needs that list. The selection
 -- of a group and the end of a read call this. It reads one page and returns true, or returns false.
 function Tab:_EnsureLive(entry)
-    if self.livePage == nil or self.buy or self.pending or entry.key ~= self.selectedKey then
+    if self.livePage == nil or self.buy or self.pending or entry.key ~= self.selectedKey
+        or self.liveKey ~= entry.key then
         return false
     end
     local _, _, _, reason, cover = self:_NextBuy()
@@ -2852,7 +2861,7 @@ function Tab:_OnTreeSelect(node)
             inGroup = inGroup or entry.key == node.entry.key
         end
         if not inGroup then
-            self.groupView = nil
+            self.groupView, self.queuePaused = nil, nil
         end
     end
     self:Select_(node.entry.key)
@@ -2913,7 +2922,7 @@ local OWNER_COLUMN, TIME_COLUMN = LEVEL_COLUMNS[5], LEVEL_COLUMNS[6]
 local function totalColumn(column)
     return setmetatable({}, { __index = function(_, field)
         if field == "spanStart" then
-            return column.key == (hasCommodityMarket() and "unitPrice" or "stackPrice")
+            return column.key == (STACK_COLUMN.hidden and "unitPrice" or "stackPrice")
         end
         return column[field]
     end })
@@ -3040,7 +3049,7 @@ function Tab:OpenGroup(node)
     end
     self.nextSearchKey = nil
     self:_CancelRead("read stopped")
-    self.queue = nil
+    self.queue, self.queuePaused = nil, nil
     if self.deps.client.CanLiveSearch() then
         self.queue = { list = { unpack(entries) }, pos = 0 }
         self:_Next()
@@ -3056,12 +3065,24 @@ function Tab:Back()
     end
     self.nextSearchKey = nil
     self:Select_(nil)
+    -- The queue that the item click paused goes on with the next item of the group.
+    local paused = self.queuePaused
+    self.queuePaused = nil
+    if paused and not self.queue then
+        self.queue = paused
+        self:_Next()
+        self:_Update()
+    end
     return true
 end
 
 -- A click on an item of the group list: show its price levels and search it (the click of the tree).
 function Tab:_OnGroupItemClick(entry)
     if entry and self:_Entry(entry.key) then
+        -- Later searches of the queue would replace the client list of the item: pause the queue until Back.
+        if self.queue then
+            self.queuePaused, self.queue = self.queue, nil
+        end
         self:_OnTreeSelect({ kind = "item", entry = entry })
     end
 end
@@ -3334,8 +3355,11 @@ function Tab:_Update()
     ns.Kit.SetColumnCells(ui.totalCells, LEVEL_COLUMNS,
         { unitPrice = totals.cost, stackPrice = totals.cost, quantity = totals.quantity })
     -- The label is in the same text as the cost, so the two never overlap.
-    -- With no commodity market (TBC) the cost is a sum of stack prices, so it sits under the Stack Price column.
-    local costKey = hasCommodityMarket() and "unitPrice" or "stackPrice"
+    -- With Stack Price (TBC, and Forever item levels) the cost is a sum of stack prices, so it sits under the Stack
+    -- Price column. That cell spans from the left edge of the row, so the text cannot clip. A commodity has no stack
+    -- price: the cost sits under Unit Price.
+    local noStack = levels[1] ~= nil and BuyingTab.StackSize(levels[1]) == nil
+    local costKey = noStack and "unitPrice" or "stackPrice"
     ui.totalCells.unitPrice:SetText("")
     ui.totalCells.stackPrice:SetText("")
     ui.totalCells.percent:SetText("")
