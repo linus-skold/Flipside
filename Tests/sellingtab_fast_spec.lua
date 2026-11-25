@@ -386,6 +386,25 @@ describe("SellingTab fast clicks and the loading pane", function()
         end)
     end)
 
+    describe("the search timeout", function()
+        after_each(function()
+            ns.Flavour = nil
+        end)
+
+        it("is 4 s where the result event names the item", function()
+            pickItem(11)
+            assert.are.equal(4, timers[#timers].seconds)
+        end)
+
+        it("stays 10 s where the result event has no item ID (TBC)", function()
+            ns.Flavour = { hasCommodityMarket = false }
+            pickItem(11)
+            assert.are.equal(10, timers[#timers].seconds)
+            assert.are.equal(0, runTimers(4))
+            assert.is_not_nil(tab.pending)
+        end)
+    end)
+
     describe("a fast queue", function()
         local function answerAny(itemID)
             answer(itemID, itemID == 10 and { arow(160, 1) } or { crow(150, 5) })
