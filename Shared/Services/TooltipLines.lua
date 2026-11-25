@@ -99,13 +99,15 @@ local function lineColor(line)
     return { c[1], c[2], c[3] }
 end
 
+local ITEM_ID_VARIANTS = { itemIdVariants = true }
+
 local function dataRow(line, ctx, state)
     if line.kind == "table" then
         return ctx.tableRow(line)
     end
     local copper, info
     if ctx.formulaRun then
-        copper, info = ctx.formulaRun:Evaluate(line.formula or "", ctx.input)
+        copper, info = ctx.formulaRun:Evaluate(line.formula or "", ctx.input, ITEM_ID_VARIANTS)
     end
     local label = line.label or ""
     local stack = ctx.stackCount

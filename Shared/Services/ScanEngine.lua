@@ -652,7 +652,11 @@ function Engine:_LoadRows(jobView, rows, noProgressSeconds, run)
                 deps.cache:ResetFailed()
                 for itemID in pairs(outstanding) do
                     run.retriedSet[itemID] = true
-                    ask(itemID)
+                    -- A requested item keeps its callback: send the request again. Else ask again.
+                    if not deps.cache:Resend(itemID) then
+                        asked[itemID] = nil
+                        ask(itemID)
+                    end
                 end
             end
             jobView:Yield()

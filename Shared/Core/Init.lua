@@ -74,6 +74,9 @@ ns.itemCache = ns.ItemInfoCache.New({
         C_Item.RequestLoadItemDataByID(itemID)
     end,
     onError = ns.ReportError,
+    after = function(fn)
+        C_Timer.After(0, fn)
+    end,
 })
 ns.bus:Subscribe("ITEM_DATA_LOAD_RESULT", ns.itemCache, function(_, itemID, success)
     ns.itemCache:OnLoadResult(itemID, success)
@@ -2477,7 +2480,7 @@ local function formulaCommand(text)
         end
         return
     end
-    local copper, info = run:Evaluate(formula, item)
+    local copper, info = run:Evaluate(formula, item, { itemIdVariants = true })
     if info.kind == "error" and info.pos then
         printFormulaError(formula, info)
     elseif info.kind == "error" then
