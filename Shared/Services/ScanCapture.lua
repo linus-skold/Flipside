@@ -17,6 +17,17 @@ local function UnitPriceFromBuyout(buyoutAmount, count)
     return buyoutAmount / count
 end
 
+-- A search result comes in pages. While the client says the result is not full, the capture asks for the next page
+-- (api.commodityMore(itemID), api.itemMore(itemKey)). It stops at a full result, at a page with no new row and after
+-- MAX_MORE_REQUESTS requests. api.isReady (optional) is the throttle gate: if it says false, the request waits.
+local MAX_MORE_REQUESTS = 100
+local MAX_READY_TRIES = 20
+local READY_DELAY = 0.5
+-- A row of an item result can have no link while the item data loads. The capture reads the result again after
+-- LINK_DELAY seconds, at most MAX_LINK_TRIES times, before it saves the rest as a partial result.
+local MAX_LINK_TRIES = 6
+local LINK_DELAY = 0.5
+
 -- A legacy browse page holds at most 50 rows. A longer list is a get-all result, which Flipside does not capture.
 local MAX_PAGE_ROWS = 50
 
@@ -37,8 +48,78 @@ function ScanCapture.New(deps)
         onCaptured = deps.onCaptured,
         isScanRunning = deps.isScanRunning,
         keyFor = deps.keyFor,
+        after = deps.after,
+        paging = {},
+        linkTries = {},
         failed = false,
     }, Capture)
+end
+
+-- Text key of an item key table, for the paging and link state.
+local function ItemKeyText(itemKey)
+    if type(itemKey) ~= "table" then
+        return tostring(itemKey)
+    end
+    return table.concat({ tostring(itemKey.itemID), tostring(itemKey.itemLevel or 0),
+        tostring(itemKey.itemSuffix or 0), tostring(itemKey.battlePetSpeciesID or 0) }, ":")
+end
+
+-- Send one request for more rows, if the throttle gate is open. Else try again after a short wait.
+function Capture:_SendMore(id, state, request, tries)
+    local isReady = self.api.isReady
+    if isReady then
+        local ok, ready = pcall(isReady)
+        if ok and ready == false then
+            if self.after and tries < MAX_READY_TRIES then
+                self.after(READY_DELAY, function()
+                    if self.paging[id] == state then
+                        self:_SendMore(id, state, request, tries + 1)
+                    end
+                end)
+            end
+            return
+        end
+    end
+    state.requests = state.requests + 1
+    local ok, err = pcall(request)
+    if not ok then
+        self:_Fail(err)
+    end
+end
+
+-- Ask for the next page of a result that is not full. count is the number of rows now.
+function Capture:_RequestMore(id, count, request)
+    if type(request) ~= "function" or count < 1 then
+        return
+    end
+    local state = self.paging[id]
+    if state and count < state.rows then
+        state = nil -- a new search of the same item starts again
+    end
+    if state and state.requests > 0 and (count == state.rows or state.requests >= MAX_MORE_REQUESTS) then
+        self.paging[id] = nil -- the last request gave no new row, or the cap is reached
+        return
+    end
+    if not state then
+        state = { rows = count, requests = 0 }
+        self.paging[id] = state
+    end
+    state.rows = count
+    self:_SendMore(id, state, request, 0)
+end
+
+-- Read an item result again after a short wait, if rows have no link yet. Gives true if it waits.
+function Capture:_WaitForLinks(id, itemKey)
+    local tries = self.linkTries[id] or 0
+    if not self.after or tries >= MAX_LINK_TRIES then
+        self.linkTries[id] = nil
+        return false
+    end
+    self.linkTries[id] = tries + 1
+    self.after(LINK_DELAY, function()
+        self:OnItemResults(itemKey)
+    end)
+    return true
 end
 
 -- Report the first failure of a session.
@@ -87,7 +168,8 @@ function Capture:_ReadCommodity(itemID)
     return auctions
 end
 
--- Returns a map of exact key to auctions, or nil after a failure.
+-- Returns a map of exact key to auctions, the number of rows with no link yet and the row count; or nil after a
+-- failure.
 function Capture:_ReadItems(itemKey)
     local api = self.api
     local ok, n = pcall(api.itemNum, itemKey)
@@ -95,14 +177,17 @@ function Capture:_ReadItems(itemKey)
         self:_Fail(ok and "bad row count" or n)
         return nil
     end
-    local byKey = {}
+    local byKey, missing = {}, 0
     for index = 1, n do
         local okRow, info = pcall(api.itemInfo, itemKey, index)
         if not okRow then
             self:_Fail(info)
             return nil
         end
-        if type(info) == "table" and type(info.itemLink) == "string" and not ns.ScanKey.IsBattlePet(info.itemLink)
+        if type(info) == "table" and type(info.itemLink) ~= "string" and type(info.buyoutAmount) == "number"
+            and info.buyoutAmount > 0 and IsPositiveInteger(info.quantity) then
+            missing = missing + 1 -- no link yet: the item data is still loading
+        elseif type(info) == "table" and type(info.itemLink) == "string" and not ns.ScanKey.IsBattlePet(info.itemLink)
             and type(info.buyoutAmount) == "number" and info.buyoutAmount > 0
             and IsPositiveInteger(info.quantity) then
             local key = ns.ItemString.ToExactKey(info.itemLink)
@@ -119,7 +204,7 @@ function Capture:_ReadItems(itemKey)
             end
         end
     end
-    return byKey
+    return byKey, missing, n
 end
 
 -- Save one item. A partial result keeps the old market value, quantity and auction count.
@@ -200,14 +285,23 @@ function Capture:OnCommodityResults(itemID)
         self:_Fail(full)
         return
     end
+    local id = "c" .. tostring(itemID)
+    if full == true then
+        self.paging[id] = nil
+    else
+        local more = self.api.commodityMore
+        self:_RequestMore(id, #auctions, more and function() return more(itemID) end)
+    end
     self:_Save(key, auctions, full == true)
 end
 
+-- A result that is not full is saved as partial and the next page is requested. A full result with rows that have
+-- no link waits for the links; if they do not come, the result is saved as partial.
 function Capture:OnItemResults(itemKey)
     if not self:_CanCapture() then
         return
     end
-    local byKey = self:_ReadItems(itemKey)
+    local byKey, missing, count = self:_ReadItems(itemKey)
     if not byKey then
         return
     end
@@ -216,7 +310,21 @@ function Capture:OnItemResults(itemKey)
         self:_Fail(full)
         return
     end
+    local id = "i" .. ItemKeyText(itemKey)
+    if full == true then
+        self.paging[id] = nil
+        if missing > 0 and self:_WaitForLinks(id, itemKey) then
+            return
+        end
+    else
+        local more = self.api.itemMore
+        self:_RequestMore(id, count, more and function() return more(itemKey) end)
+    end
+    if missing == 0 then
+        self.linkTries[id] = nil
+    end
+    local complete = full == true and missing == 0
     for key, auctions in pairs(byKey) do
-        self:_Save(key, auctions, full == true)
+        self:_Save(key, auctions, complete)
     end
 end

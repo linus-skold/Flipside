@@ -942,6 +942,16 @@ function M.reset(options)
     ah.IsThrottledMessageSystemReady = function()
         return M.throttleReady
     end
+    -- M.moreRequests records the RequestMore...SearchResults calls.
+    M.moreRequests = {}
+    ah.RequestMoreCommoditySearchResults = function(itemID)
+        table.insert(M.moreRequests, { itemID = itemID })
+        return M.searchFull
+    end
+    ah.RequestMoreItemSearchResults = function(itemKey)
+        table.insert(M.moreRequests, { itemKey = itemKey })
+        return M.searchFull
+    end
     ah.QueryOwnedAuctions = function(sorts)
         table.insert(M.ownedQueries, sorts)
     end

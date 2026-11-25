@@ -126,9 +126,47 @@ function Backend.CanTargetSearch()
     return has("SendSearchQuery") and has("MakeItemKey")
 end
 
+-- GetItemKeyInfo gives nothing until the client has the item data, and it asks the client to load the data. A search
+-- that goes out before that can come back with no rows. So a search waits for the key info: it checks again every
+-- KEY_INFO_DELAY seconds, and it goes out anyway after KEY_INFO_TRIES checks. A newer search drops a waiting one.
+local KEY_INFO_TRIES = 10
+local KEY_INFO_DELAY = 0.2
+local searchToken = 0
+
+local function keyInfoKnown(itemKey)
+    return not has("GetItemKeyInfo") or call("GetItemKeyInfo", itemKey) ~= nil
+end
+
+-- Calls send(itemKey) when the key info exists, or after the wait. Gives nothing.
+local function sendWhenKnown(itemID, send)
+    searchToken = searchToken + 1
+    local token = searchToken
+    local itemKey = call("MakeItemKey", itemID)
+    local timer = _G.C_Timer
+    if keyInfoKnown(itemKey) or type(timer) ~= "table" or type(timer.After) ~= "function" then
+        send(itemKey)
+        return
+    end
+    local tries = 0
+    local function check()
+        if token ~= searchToken then
+            return
+        end
+        tries = tries + 1
+        if tries >= KEY_INFO_TRIES or keyInfoKnown(itemKey) then
+            send(itemKey)
+            return
+        end
+        timer.After(KEY_INFO_DELAY, check)
+    end
+    timer.After(KEY_INFO_DELAY, check)
+end
+
 -- Search the listings of one item by item key; the capture events carry the result.
 function Backend.TargetedSearch(itemID)
-    return call("SendSearchQuery", call("MakeItemKey", itemID), {}, true)
+    sendWhenKnown(itemID, function(itemKey)
+        call("SendSearchQuery", itemKey, {}, true)
+    end)
 end
 
 function Backend.NameResultEvent()
@@ -167,6 +205,10 @@ function Backend.Capture()
             itemNum = api.GetNumItemSearchResults,
             itemInfo = api.GetItemSearchResultInfo,
             itemFull = api.HasFullItemSearchResults,
+            -- Next page of a result (doc 939-966); isReady is the throttle gate (doc 809-816).
+            commodityMore = api.RequestMoreCommoditySearchResults,
+            itemMore = api.RequestMoreItemSearchResults,
+            isReady = api.IsThrottledMessageSystemReady,
         },
         commodityEvent = "COMMODITY_SEARCH_RESULTS_UPDATED",
         itemEvent = "ITEM_SEARCH_RESULTS_UPDATED",
@@ -196,7 +238,9 @@ function Backend.LiveSearch(itemID)
         return false, "search limit, wait"
     end
     searchTimes[#searchTimes + 1] = now
-    call("SendSearchQuery", call("MakeItemKey", itemID), {}, true)
+    sendWhenKnown(itemID, function(itemKey)
+        call("SendSearchQuery", itemKey, {}, true)
+    end)
     return true
 end
 
