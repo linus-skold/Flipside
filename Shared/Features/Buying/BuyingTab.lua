@@ -2789,8 +2789,6 @@ end
 
 local ROW_HEIGHT = 22
 local TREE_INDENT = 14
-local NAME_WIDTH = 140
-local PRICE_WIDTH = 96
 local NONE_ID = "none"
 local BASE_GROUP = 1
 
@@ -2850,35 +2848,16 @@ local function makeItemParts(row)
     local Kit = ns.Kit
     local parts = {
         icon = row:CreateTexture(nil, "ARTWORK"),
-        price = Kit.Label(row, "", "highlight"),
     }
     parts.icon:SetSize(16, 16)
-    parts.price:SetWidth(PRICE_WIDTH)
-    parts.price:SetJustifyH("RIGHT")
     parts.remove = Kit.IconButton(row, "close", nil, "Remove from the list")
     parts.remove:SetSize(16, 16)
     parts.remove:SetPoint("RIGHT", row, "RIGHT", -2, 0)
     return parts
 end
 
--- The price text of an item with no max price: the latest scan price, else the 14-day average. For the selected
--- commodity with a known amount, it is the total for that amount. "-" if no price is known.
-function Tab:_MarketText(entry)
-    local info = self:_ScanInfo(entry)
-    local market = info and info.price
-    if type(market) ~= "number" or market <= 0 then
-        return "-"
-    end
-    local done = self.results[entry.key]
-    local first = done and done.rows and done.rows[1]
-    local commodity = first ~= nil and first.isCommodity ~= false
-    if entry.key == self.selectedKey and commodity and type(self.amount) == "number" and self.amount > 0 then
-        return money(market * self.amount)
-    end
-    return money(market)
-end
-
--- Draw one tree row: a group (toggle and name) or an item (icon, name and max price).
+-- Draw one tree row: a group (toggle and name) or an item (icon and name). The row shows no price: the prices are
+-- in the right pane.
 function Tab:_InitTreeRow(row, node, depth, isCollapsed, hasChildren)
     local parts = row.parts
     if not parts then
@@ -2908,10 +2887,9 @@ function Tab:_InitTreeRow(row, node, depth, isCollapsed, hasChildren)
             self:OpenGroup(node)
         end)
         parts.icon:Hide()
-        parts.price:SetText("")
         parts.remove:Hide()
-        row.label:SetWidth(NAME_WIDTH + PRICE_WIDTH)
         row.label:SetPoint("LEFT", row.toggle, "RIGHT", 2, 0)
+        row.label:SetPoint("RIGHT", row, "RIGHT", -4, 0)
         row.label:SetText(node.text)
         row.label:SetTextColor(1, 0.82, 0)
         return
@@ -2922,31 +2900,20 @@ function Tab:_InitTreeRow(row, node, depth, isCollapsed, hasChildren)
     parts.icon:ClearAllPoints()
     parts.icon:SetPoint("LEFT", row.toggle, "RIGHT", 2, 0)
     parts.icon:Show()
-    row.label:SetWidth(math.max(20, NAME_WIDTH - (depth - 1) * TREE_INDENT))
+    local removable = self.source == "lists" and entry.listIndex ~= nil
+    -- The name takes all the room between the icon and the right edge (the remove button of a list item).
     row.label:SetPoint("LEFT", parts.icon, "RIGHT", 4, 0)
+    row.label:SetPoint("RIGHT", row, "RIGHT", removable and -22 or -4, 0)
     row.label:SetText(node.text)
     if node.id == tree.selected then
         row.label:SetTextColor(1, 0.82, 0)
     else
         row.label:SetTextColor(1, 1, 1)
     end
-    local removable = self.source == "lists" and entry.listIndex ~= nil
     parts.remove:SetShown(removable)
     parts.remove:SetScript("OnClick", function()
         self:RemoveListItem(entry.listIndex)
     end)
-    parts.price:ClearAllPoints()
-    parts.price:SetPoint("RIGHT", row, "RIGHT", removable and -20 or -4, 0)
-    if entry.noMax then
-        parts.price:SetText(self:_MarketText(entry))
-        setColor(parts.price, false)
-    elseif entry.maxPrice then
-        parts.price:SetText(money(entry.maxPrice))
-        setColor(parts.price, false)
-    else
-        parts.price:SetText(entry.reason or "no data")
-        setColor(parts.price, true)
-    end
 end
 
 -- The tree id of an entry.
@@ -3335,24 +3302,6 @@ function Tab:_UpdateCraft()
     end
     ui.craftMargin:SetText(BuyingTab.MarginLine(margin))
     self.marginTip = BuyingTab.MarginTip(margin)
-end
-
--- The scan data of an item, or nil if the item has no scan data: the market value (ScanMarket, the 14-day average,
--- for the deal percent), the price (ScanRecent, else ScanMarket, for the price text) and the age in hours.
-function Tab:_ScanInfo(entry)
-    local deps = self.deps
-    local record = deps.getRecord and entry.key and deps.getRecord(entry.key)
-    if type(record) ~= "table" or not ns.ScanSources then
-        return nil
-    end
-    local now = deps.now and deps.now() or nil
-    if type(now) ~= "number" then
-        return nil
-    end
-    local values = ns.ScanSources.Compute(record, now)
-    return {
-        market = values.scanMarket, price = values.scanRecent or values.scanMarket, ageHours = values.scanAge,
-    }
 end
 
 -- The formula of the market value (the setting "Market value source").
@@ -4017,7 +3966,7 @@ end
 -- (the Scan and buy button of the Vendor source; the button shows only with both),
 -- searchLists, itemNameIndex, ahNameSearch, keyFor(link) and isAuctionHouseOpen()
 -- (search lists and the item box), openLists(id) (the Edit lists button: it opens the Lists page of the Flipside
--- window), and getRecord(key) with now() (the scan price text of an item with no max price). The % MV column uses
+-- window), and getRecord(key) with now() (the scan prices of the craft margin). The % MV column uses
 -- formulaRun and the setting "Market value source" (db).
 function BuyingTab.New(deps)
     if type(deps) ~= "table" or type(deps.bus) ~= "table" then

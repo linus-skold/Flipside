@@ -95,7 +95,7 @@ describe("BuyingTab name search", function()
         assert.are.equal("Peacebloom", tab:_ItemName(tab.list[1]))
         assert.are.equal(2, #tab.nodes)
         assert.are.equal("item", tab.nodes[1].kind)
-        assert.are.equal("-", ui.tree.list.rows[1].parts.price.text)
+        assert.is_nil(ui.tree.list.rows[1].parts.price)
     end)
 
     it("adds the items of a later update to the list and keeps the selection", function()
