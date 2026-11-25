@@ -56,6 +56,25 @@ describe("GuildSyncQueue", function()
         assert.are.same({ "m1", "m2", "m3", "m5" }, sent)
     end)
 
+    it("gives the channel to send, shares one rate limit and keeps the channels apart", function()
+        local channels = {}
+        queue.send = function(text, channel)
+            channels[#channels + 1] = text .. "@" .. tostring(channel)
+        end
+        for i = 1, 4 do
+            queue:Push("m" .. i, false, i % 2 == 0 and "group" or "guild")
+        end
+        assert.are.same({ "m1@guild", "m2@group", "m3@guild" }, channels)
+        assert.are.equal(1, queue:Pending())
+        assert.is_true(queue:Has("m4", "group"))
+        assert.is_false(queue:Has("m4", "guild"))
+        local removed = queue:RemoveIf(function(_, channel)
+            return channel == "group"
+        end)
+        assert.are.equal(1, removed)
+        assert.are.equal(0, queue:Pending())
+    end)
+
     it("sends an urgent message before the waiting ones", function()
         for i = 1, 5 do
             queue:Push("m" .. i)

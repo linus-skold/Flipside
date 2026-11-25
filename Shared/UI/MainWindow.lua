@@ -20,7 +20,8 @@ local SOUNDS_TEXT = "Play interface sounds"
 local SHARE_TEXT = "Share prices with my guild"
 local JUMP_TEXT = "Buying price jump warning %"
 local MARKET_TEXT = "Buying market value source (formula)"
-local SHARE_HINT = "Off by default. Guild members share scan prices. Your own scans always win over shared prices."
+local GROUP_TEXT = "Share prices with my group"
+local SHARE_HINT = "Off by default. Guild or group members share scan prices. Your own scans win over shared prices."
 
 -- A page that says why it cannot open.
 local function buildUnavailable(content)
@@ -66,8 +67,20 @@ local function buildAbout(content, deps)
         check:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 0, -Kit.Theme.gap * 2)
         check:SetChecked(sync.isEnabled())
         about.shareCheck = check
+        local hintAnchor = check
+        if sync.setGroupEnabled then
+            local groupCheck = Kit.Check(content, GROUP_TEXT, function(checked)
+                if not sync.setGroupEnabled(checked) then
+                    about.groupCheck:SetChecked(sync.isGroupEnabled())
+                end
+            end)
+            groupCheck:SetPoint("TOPLEFT", check, "BOTTOMLEFT", 0, -Kit.Theme.gap)
+            groupCheck:SetChecked(sync.isGroupEnabled())
+            about.groupCheck = groupCheck
+            hintAnchor = groupCheck
+        end
         local hint = Kit.Label(content, SHARE_HINT, "highlight")
-        hint:SetPoint("TOPLEFT", check, "BOTTOMLEFT", 4, -Kit.Theme.gap)
+        hint:SetPoint("TOPLEFT", hintAnchor, "BOTTOMLEFT", 4, -Kit.Theme.gap)
         about.shareHint = hint
         anchor = hint
     end
