@@ -900,12 +900,94 @@ describe("GuildSync", function()
                 return high
             end
             receive(Codec.BuildRequest(SCOPE, 0), nil, "PARTY")
-            assert.are.same({ 0, ns.GuildSync.GROUP_REPLY_JITTER }, range)
+            assert.are.same({ 0, ns.GuildSync.GROUP_REPLY_JITTER * 100 }, range)
             assert.are.equal(1, #timers)
             assert.are.equal(clock + 5, timers[1].at)
             runTimers()
             assert.is_true(sentOn("group") >= 1)
             assert.are.equal(0, sentOn("guild"))
+        end)
+
+        it("uses a fractional group delay", function()
+            addLocal(5)
+            deps.random = function()
+                return 250
+            end
+            receive(Codec.BuildRequest(SCOPE, 0), nil, "PARTY")
+            assert.are.equal(clock + 2.5, timers[1].at)
+        end)
+
+        it("cancels the group reply when a set arrives during the build", function()
+            enabled = true
+            addLocal(5)
+            receive(Codec.BuildRequest(SCOPE, 0), nil, "PARTY")
+            local keys = deps.localStore.Keys
+            deps.localStore.Keys = function(store)
+                receive(remoteSet(2)[1], "Ann-Realm", "PARTY")
+                return keys(store)
+            end
+            runTimers()
+            assert.are.equal(0, #wire)
+            assert.is_true(logged("cancelled: someone answered"))
+        end)
+
+        -- Count the items that went out on a channel (an item that went out twice counts twice).
+        local function itemsOn(kind)
+            local count = 0
+            for index, text in ipairs(wire) do
+                local chunk = assert(Codec.Parse(text))
+                if wireKind[index] == kind and chunk.kind == "D" then
+                    count = count + #Codec.ParseItems(chunk.items, chunk.time)
+                end
+            end
+            return count
+        end
+
+        -- Run the clock until the share ends.
+        local function drainShare()
+            for _ = 1, 800 do
+                clock = clock + 1
+                runTimers()
+                if not sync:Status().shareTotal and deps.queue:Pending() == 0 then
+                    return
+                end
+            end
+        end
+
+        it("sends the sent items again to the new channel only, not to the old one", function()
+            enabled, groupOn = true, false
+            addLocal(100)
+            deps.queue = makeQueue(1)
+            sync = ns.GuildSync.New(deps)
+            sync:SendSet("scan")
+            for _ = 1, 12 do
+                clock = clock + 1
+                runTimers()
+            end
+            local before = itemsOn("guild")
+            assert.is_true(before >= 60)
+            groupOn = true
+            sync:SendSet("join", "group")
+            drainShare()
+            assert.is_nil(sync:Status().shareTotal)
+            assert.are.equal(100, itemsOn("group"))
+            -- The guild gets each item once, and at most the set that was in flight a second time.
+            assert.is_true(itemsOn("guild") >= 100)
+            assert.is_true(itemsOn("guild") <= 130)
+        end)
+
+        it("ends a group share when the player leaves the group, and marks it done", function()
+            enabled = false
+            addLocal(100)
+            deps.queue = makeQueue(1)
+            sync = ns.GuildSync.New(deps)
+            sync:SendSet("scan")
+            assert.is_not_nil(sync:Status().shareTotal)
+            channel = nil
+            drainShare()
+            assert.is_nil(sync:Status().shareTotal)
+            assert.is_true(sync.marker.done)
+            assert.are.same({ false, "nothing to resume" }, { sync:ResumeShare() })
         end)
 
         it("does not answer a group request when its data is not newer", function()
