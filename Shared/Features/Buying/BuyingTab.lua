@@ -1295,6 +1295,9 @@ function Tab:ClearSearch()
     self.levelSel, self.run = nil, nil
     self:RefreshList()
     self.selectedKey = key and self:_Entry(key) and key or nil
+    -- A range amount of the item before the search must not stay.
+    local restored = self.selectedKey and self:_Entry(self.selectedKey) or nil
+    self.amount, self.amountBad, self.amountEdit = self:_StartAmount(restored), false, false
     self:_Update()
     self:_Say("")
     return true
@@ -2071,6 +2074,25 @@ function Tab:_RangeMode()
     return hasCommodityMarket() and first ~= nil and first.isCommodity ~= false
 end
 
+-- The units of the range up to the level target: the levels that are not yours, from the next level that Buy takes
+-- (the cheapest level, or the first level at or above the price of the last buy of the run) up to the target. It is
+-- the start that BuyFlow.CoverPlan uses, so the Amount box and the buy agree.
+function Tab:_RangeUnits(levels, target)
+    local entry = self:_Selected()
+    local run = self.run
+    local lastPrice = run and entry and run.key == entry.key and run.lastPrice or nil
+    local first = self.deps.plan.NextLevel(levels, lastPrice)
+    local total = 0
+    if first then
+        for _, level in ipairs(levels) do
+            if not level.own and level.unitPrice >= first.unitPrice and level.unitPrice <= target.unitPrice then
+                total = total + level.quantity
+            end
+        end
+    end
+    return total
+end
+
 -- A click on a level of a commodity: select all levels from the cheapest up to the clicked level (in price order,
 -- whatever the sort on screen) and set the Amount to their units. Your own levels are not selected and not counted.
 -- A second click on the same level keeps the range; a click on another level makes a new range.
@@ -2086,14 +2108,8 @@ function Tab:_SelectRange(price)
         self:_Say(REASON.own)
         return false, REASON.own
     end
-    local total = 0
-    for _, level in ipairs(levels) do
-        if not level.own and level.unitPrice <= target.unitPrice then
-            total = total + level.quantity
-        end
-    end
     self.levelSel = price
-    self.amount, self.amountBad, self.amountEdit = total, false, false
+    self.amount, self.amountBad, self.amountEdit = self:_RangeUnits(levels, target), false, false
     self:_Update()
     self:_EnsureLive(entry)
     local _, _, _, reason = self:_NextBuy()
@@ -2255,7 +2271,7 @@ function Tab:_StartBuy(entry, cover, jump)
         return true
     end
     local buy = { entry = entry, level = level, row = first, phase = "quoting", itemID = entry.itemID,
-        quantity = cover.quantity, complete = cover.complete }
+        quantity = cover.quantity, complete = cover.complete, fromRange = self.range ~= nil }
     if self.previewQuote then
         -- StartCommodityPurchase is protected: no event may call it. The box shows an estimate and the
         -- Get quote button (a click) asks for the quote.
@@ -2517,6 +2533,13 @@ function Tab:_Succeed(buy)
     run.bought = run.bought + buy.quantity
     -- A buy changes the list: the failed auctions (list places) of before are not valid any more.
     run.dropped, run.dropWatch = nil, nil
+    if buy.fromRange then
+        -- The range is the limit of the user. After its buy the chain ends: no box for the next level above it. The
+        -- range clears and the Amount goes back to its start value.
+        self.levelSel = nil
+        self.amount, self.amountBad, self.amountEdit = self:_StartAmount(buy.entry), false, false
+        self:_CloseConfirm()
+    end
     log("info", "bought %s of item %s, total %s", buy.quantity, buy.itemID, buy.total)
     self.deps.log:Add(buy.entry, string.format("bought %d at %s", buy.quantity, money(buy.level.unitPrice)),
         "total " .. money(buy.total))
@@ -3426,6 +3449,14 @@ function Tab:_Update()
             self.levelSel = nil
         end
     end
+    -- A range keeps its Amount in step with the rows: after a live update or a buy it counts again from the same
+    -- start that the cover plan uses. A typed amount stays.
+    if self.levelSel ~= nil and not self.amountEdit and self:_RangeMode() then
+        local target = findLevel(levels, self.levelSel)
+        if target and not target.own then
+            self.amount = self:_RangeUnits(levels, target)
+        end
+    end
     local _, nextLevel, _, reason, cover = self:_NextBuy()
     local verb = "Buy"
     -- The amount box does not apply to an item: an item buy is one stack.
@@ -3445,8 +3476,9 @@ function Tab:_Update()
     self:_FillAmount(cover)
     ui.totals:SetShown(done ~= nil)
     local totals = BuyingTab.DescribeTotals(described)
-    if self.range then
-        -- With a range the Total row shows the units and the cost of the range.
+    if self.range and not cover.own then
+        -- With a range the Total row shows the units and the cost of the range. With a level of yours below the
+        -- range (Buy is off) it shows the normal total.
         totals = { quantity = cover.quantity, cost = cover.cost }
     end
     ns.Kit.SetColumnCells(ui.totalCells, LEVEL_COLUMNS,
