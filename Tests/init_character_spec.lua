@@ -29,6 +29,8 @@ local function session(options)
     _G.FlipsideDB, _G.FlipsideLedgerDB = savedDB, savedLedger
     mock.fire("ADDON_LOADED", "Flipside")
     mock.fire("PLAYER_LOGIN")
+    -- The balance save starts at the first PLAYER_ENTERING_WORLD.
+    mock.fire("PLAYER_ENTERING_WORLD")
     mock.advance(0.5)
 end
 
