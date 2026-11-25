@@ -100,6 +100,45 @@ describe("TooltipLines", function()
         }
     end)
 
+    describe("FormatNumber", function()
+        it("shows up to 2 decimals without trailing zeros", function()
+            assert.are.equal("0.12", TL.FormatNumber(0.12))
+            assert.are.equal("3.5", TL.FormatNumber(3.5))
+            assert.are.equal("40", TL.FormatNumber(40))
+            assert.are.equal("100", TL.FormatNumber(100))
+            assert.are.equal("0", TL.FormatNumber(0))
+        end)
+    end)
+
+    describe("number line", function()
+        it("shows a number source as a plain number, without the stack multiplier", function()
+            local c = ctx({
+                stackMode = true,
+                stackCount = 5,
+                formulaRun = {
+                    Evaluate = function()
+                        return 0, { kind = "ok", number = 0.12 }
+                    end,
+                },
+                config = { lines = { { label = "Rate", formula = "tsmRegionSaleRate", enabled = true } } },
+            })
+            local row = TL.Build(c)[1]
+            assert.are.equal("0.12", row.right)
+            assert.are.equal("Rate", row.left)
+        end)
+
+        it("keeps the money format when info.number is nil", function()
+            local c = ctx({
+                formulaRun = {
+                    Evaluate = function()
+                        return 124000, { kind = "ok" }
+                    end,
+                },
+            })
+            assert.are.equal("12g 40s", TL.Build(c)[1].right)
+        end)
+    end)
+
     describe("FormatMoney", function()
         it("formats copper, silver and gold", function()
             assert.are.equal("0c", TL.FormatMoney(0))

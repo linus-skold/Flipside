@@ -113,6 +113,12 @@ function Sources:Status(name)
     return kind and "available" or "unknown"
 end
 
+-- True if the source is a plain number (a rate or a count), not money.
+function Sources:IsNumber(name)
+    local key = lowerName(name)
+    return self.kind[key] == "tsm" and ns.TsmPrices.IsNumber(key)
+end
+
 function Sources:_vendorSell(itemID)
     local cache = self.itemCache
     if not cache or type(itemID) ~= "number" then

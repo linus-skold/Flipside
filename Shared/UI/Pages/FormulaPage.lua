@@ -323,7 +323,11 @@ function FormulaPage.Build(content, deps)
 
     local function evaluate(formula, input)
         local copper, info = run:Evaluate(formula, input, { itemIdVariants = true })
-        money:SetCopper(copper)
+        if info and info.number ~= nil and ns.TooltipLines and ns.TooltipLines.FormatNumber then
+            money:SetText(ns.TooltipLines.FormatNumber(info.number))
+        else
+            money:SetCopper(copper)
+        end
         status:SetText(table.concat(FormulaPage.Describe(copper, info, nil, formula), "\n"))
     end
 

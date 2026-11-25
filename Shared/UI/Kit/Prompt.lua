@@ -12,6 +12,7 @@ end
 -- One window for each name. options: width.
 -- dialog:Open(config) shows it. config:
 --   title, label (text above the box), text (start text),
+--   icon (optional texture id or path) and heading (optional text next to the icon: a row above the label),
 --   choices ({ { value, text } }: a drop-down above the box), choice (start value), choiceLabel,
 --   validate(text, choice) (optional: gives an error text, or nil when the text is good),
 --   onOK(text, choice) (runs on OK with the trimmed text; if it gives a text, that text shows as an error
@@ -30,6 +31,13 @@ function Kit.Prompt(name, options)
     dialog:SetFrameStrata("DIALOG")
     dialog:SetToplevel(true)
 
+    dialog.icon = dialog:CreateTexture(nil, "ARTWORK")
+    dialog.icon:SetSize(24, 24)
+    dialog.icon:Hide()
+    dialog.heading = Kit.Label(dialog, "", "highlight")
+    dialog.heading:SetWidth(inner - 30)
+    dialog.heading:SetJustifyH("LEFT")
+    dialog.heading:Hide()
     dialog.choiceLabel = Kit.Label(dialog, "", "highlight")
     dialog.label = Kit.Label(dialog, "", "highlight")
     dialog.error = Kit.Label(dialog, "", "bad")
@@ -93,6 +101,14 @@ function Kit.Prompt(name, options)
     dialog:HookScript("OnHide", function()
         dialog.config = nil
     end)
+    -- The X button does the same as Cancel. The window template close path can fail for a frame that is no panel.
+    dialog.onCloseCallback = function()
+        close()
+        return false
+    end
+    if dialog.CloseButton then
+        dialog.CloseButton:SetScript("OnClick", close)
+    end
 
     local function place(frame, y)
         frame:ClearAllPoints()
@@ -106,6 +122,18 @@ function Kit.Prompt(name, options)
         local y = 36
         if self.SetTitle then
             self:SetTitle(config.title or "")
+        end
+        -- An optional heading row: the icon and the text next to it.
+        local hasHeading = config.icon ~= nil or config.heading ~= nil
+        self.icon:SetShown(config.icon ~= nil)
+        self.heading:SetShown(hasHeading)
+        if hasHeading then
+            self.icon:SetTexture(config.icon)
+            place(self.icon, y - 4)
+            self.heading:SetText(config.heading or "")
+            self.heading:ClearAllPoints()
+            self.heading:SetPoint("TOPLEFT", self, "TOPLEFT", pad + 8 + (config.icon and 30 or 0), -(y + 2))
+            y = y + 30
         end
         self.choiceLabel:SetShown(choices ~= nil)
         self.choice:SetShown(choices ~= nil)

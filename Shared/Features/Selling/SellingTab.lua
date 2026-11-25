@@ -3010,6 +3010,10 @@ function Tab:OpenLevelMenu(row, id)
         end
         return false, reason
     end
+    if not (MenuUtil and MenuUtil.CreateContextMenu) then
+        self:_ShowBusy("the buy menu is not available")
+        return false, "the buy menu is not available"
+    end
     self.menu = ns.Kit.ContextMenu(row, entries, { title = reason })
     return true
 end
@@ -3045,8 +3049,14 @@ function Tab:BuyAmountPrompt(id)
         end
         return nil
     end
-    ns.Kit.Prompt(AMOUNT_PROMPT):Open({
+    -- The prompt belongs to this item and this list. OK refuses if either one changed.
+    local entry = plan.entry
+    local itemID, live = entry.item.itemID, self.live
+    local _, icon = self.deps.itemInfo(itemID or 0)
+    local config = {
         title = "Buy amount",
+        heading = tostring(self:_Name(entry) or ""),
+        icon = icon,
         label = string.format("Units (1 to %d)", cap),
         text = tostring(math.min(plan.cover.quantity, cap)),
         validate = function(text)
@@ -3055,6 +3065,13 @@ function Tab:BuyAmountPrompt(id)
             end
         end,
         onOK = function(text)
+            local now = self:_Focus()
+            if not (now and now.item.itemID == itemID) then
+                return "the item changed"
+            end
+            if self.live ~= live then
+                return "the prices changed. Close this window and try again."
+            end
             local number = parse(text)
             if not number then
                 return "enter a whole number from 1 to " .. cap
@@ -3064,8 +3081,32 @@ function Tab:BuyAmountPrompt(id)
                 return why or "the buy did not start"
             end
         end,
-    })
+    }
+    self.amountPrompt = { itemID = itemID, config = config }
+    ns.Kit.Prompt(AMOUNT_PROMPT):Open(config)
     return true
+end
+
+-- Close the "Buy amount..." window if it is open. It stays closed for another item, a tab leave or an AH close.
+function Tab:_ClosePrompt()
+    local open = self.amountPrompt
+    self.amountPrompt = nil
+    local dialog = open and ns.Kit and ns.Kit.Prompt and ns.Kit.Prompt(AMOUNT_PROMPT)
+    if dialog and dialog.config == open.config then
+        dialog:Hide()
+    end
+end
+
+-- Close the "Buy amount..." window when the shown item is not the item of the window.
+function Tab:_CheckPrompt()
+    local open = self.amountPrompt
+    if not open then
+        return
+    end
+    local entry = self:_Focus()
+    if not (entry and entry.item.itemID == open.itemID) then
+        self:_ClosePrompt()
+    end
 end
 
 -- Start the buy. cover is a commodity cover plan, picks is a list of item auctions { level, row } (the first opens
@@ -3830,6 +3871,7 @@ function Tab:_Update()
         return
     end
     self:_CheckHeld()
+    self:_CheckPrompt()
     ui.stop:SetShown(self.queue ~= nil)
     self:_Layout()
     ui.tree:Refresh()
@@ -3852,6 +3894,7 @@ function Tab:Deselect()
     self.active = false
     -- A quote or a confirm box that is open ends with the tab.
     self:_CancelBuy("the tab was left")
+    self:_ClosePrompt()
     -- A Blizzard tab or a hide takes over: its sale slot must not hold our item.
     self:_Release()
     if self.content then
@@ -4171,6 +4214,7 @@ function Tab:Mount(parent, api)
         bus:Subscribe(closeEvent, OWNER, function()
             -- A scan cannot go on without the AH: end it so that Post is not locked for ever.
             self.queue, self.pending = nil, nil
+            self:_ClosePrompt()
             -- A search that was in flight gets no result now: its entry waits again (it would stay "searching").
             for _, entry in ipairs(self.entries) do
                 if entry.status == "searching" then
