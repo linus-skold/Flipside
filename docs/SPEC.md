@@ -243,7 +243,7 @@ The formula language stays as in the reference (§4.3). AuctionDB sources are re
 | `ImportMarket` | Market value from the optional external file | `DBRegionMarketAvg` (only if imported) |
 | `SaleRate` | Your own sold ÷ (sold + expired) for the item, from the ledger (loads `Flipside_Ledger`; §5.8) | `DBRegionSaleRate` (personal, not regional) |
 
-**TSM sources (optional, decided 2026-11-25).** If the TSM addon is loaded, ten more sources read its AuctionDB values. The name is `tsm` plus the TSM price key without `DB`. Flipside has its own names and calls only the public global `TSM_API`.
+**TSM sources (optional, decided 2026-11-25).** If the TSM addon is loaded, ten more sources read its AuctionDB values. The name is `tsm` plus the TSM price key without `DB`. One name has a short form: `tsmRegionMarket` is `DBRegionMarketAvg` without `Avg`. Flipside has its own names and calls only the public global `TSM_API`.
 
 | Source | TSM key |
 | --- | --- |
@@ -1310,7 +1310,7 @@ The `legacy scan:` line and the `diag` entries of the scan DB have `mode`, `keys
 - Are auctions shared across connected realms?
 ## Architecture
 
-The whole "outside the game" layer from the reference (§2) is gone: no servers, no desktop app, no AppHelper. Price data enters only through the Auction House API and is stored in its own Scan DB.
+The whole "outside the game" layer from the reference (§2) is gone: no servers, no desktop app, no AppHelper. Price data enters only through the Auction House API, with one exception: the optional `tsm*` sources read the public `TSM_API` when TSM is loaded (D1, D2). Scan data is stored in its own Scan DB.
 
 &#91;embedded content: In-game-only architecture · 2 layers, 3 addon tiers\]
 

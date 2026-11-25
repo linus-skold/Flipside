@@ -41,7 +41,7 @@ FormulaSources.DOCS = {
     importmarket = {
         text = "Market value from an optional imported file. Not available yet. It comes with the import feature.",
     },
-    tsmmarket = { text = "TSM market value (DBMarket). Needs the TSM addon. Invalid if TSM is not loaded." },
+    tsmmarket = { text = "TSM market value (DBMarket). Needs the TSM addon." },
     tsmminbuyout = { text = "TSM minimum buyout (DBMinBuyout). Needs the TSM addon." },
     tsmrecent = { text = "TSM recent market value (DBRecent). Needs the TSM addon." },
     tsmhistorical = { text = "TSM historical price (DBHistorical). Needs the TSM addon." },
