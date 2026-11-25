@@ -1270,19 +1270,28 @@ describe("BuyingTab", function()
                 end
                 return out
             end
+            local function selectedRows()
+                local out = {}
+                for index = 1, #ui.rowsList.rows do
+                    out[index] = ui.rowsList.rows[index].selection:IsShown()
+                end
+                return out
+            end
             assert.are.same({ true, false, false }, covered())
+            -- A click on a commodity level selects the range from the cheapest level: the rows have the
+            -- selection highlight, so the faint cover highlight is off.
             pick(3)
-            assert.are.same({ true, true, false }, covered())
-            assert.is_true(ui.rowsList.rows[3].selection:IsShown())
+            assert.are.same({ true, true, true }, selectedRows())
+            assert.are.same({ false, false, false }, covered())
+            -- The range follows the typed amount.
             tab:SetAmount("4")
-            assert.are.same({ true, true, false }, covered())
+            assert.are.same({ true, true, false }, selectedRows())
             tab:SetAmount("2")
-            assert.are.same({ true, false, false }, covered())
-            assert.is_true(ui.rowsList.rows[3].selection:IsShown())
+            assert.are.same({ true, false, false }, selectedRows())
             tab:SetAmount("")
             pick(3)
             tab:SetAmount("1")
-            assert.are.same({ true, false, false }, covered())
+            assert.are.same({ true, false, false }, selectedRows())
         end)
 
         it("refuses a selected level when an own level lies below it", function()
@@ -1319,6 +1328,136 @@ describe("BuyingTab", function()
             click(ui.buyNext)
             click(dialog("FlipsideBuyConfirm").yesButton)
             assert.are.same({ { "bid", 2, 36 } }, client.calls)
+        end)
+
+        describe("a range of commodity levels", function()
+            local function selectedRows()
+                local out = {}
+                for index = 1, #ui.rowsList.rows do
+                    out[index] = ui.rowsList.rows[index].selection:IsShown()
+                end
+                return out
+            end
+
+            local function prices()
+                local out = {}
+                for _, data in ipairs(ui.rowsList.data) do
+                    out[#out + 1] = data.unitPrice
+                end
+                return out
+            end
+
+            it("selects from the cheapest level to the clicked level and sets the amount", function()
+                searchCommodity()
+                assert.is_true(tab:SelectLevel(70))
+                assert.are.equal(9, tab.amount)
+                assert.are.equal("9", ui.amount.text)
+                assert.are.same({ true, true, true }, selectedRows())
+                -- The price row and the Total row show the cost of the range.
+                assert.are.equal(tostring(3 * 50 + 2 * 60 + 4 * 70) .. "c", ui.amountTotal.text)
+                assert.are.equal("x9", ui.totalCells.quantity.text)
+                assert.are.equal("Total  550c", ui.totalCells.unitPrice.text)
+            end)
+
+            it("leaves your own levels out of the count and the highlight", function()
+                searchCommodity({ row(50, 3), row(60, 2, true), row(70, 4) })
+                tab:SelectLevel(70)
+                assert.are.equal(7, tab.amount)
+                assert.are.equal("7", ui.amount.text)
+                assert.are.same({ true, false, true }, selectedRows())
+                assert.is_false(ui.buyNext.enabled)
+                local ok, reason = tab:SelectLevel(60)
+                assert.is_false(ok)
+                assert.are.equal("own listing", reason)
+                assert.are.equal(70, tab.levelSel)
+            end)
+
+            it("keeps the range on a second click and makes a new range on another level", function()
+                searchCommodity()
+                tab:SelectLevel(60)
+                assert.are.equal(5, tab.amount)
+                tab:SelectLevel(60)
+                assert.are.equal(60, tab.levelSel)
+                assert.are.equal(5, tab.amount)
+                assert.are.same({ true, true, false }, selectedRows())
+                tab:SelectLevel(50)
+                assert.are.equal(3, tab.amount)
+                assert.are.same({ true, false, false }, selectedRows())
+                tab:SelectLevel(70)
+                assert.are.equal(9, tab.amount)
+            end)
+
+            it("selects the cheapest levels in a descending sort", function()
+                searchCommodity()
+                local button = ui.levelHeader.buttons.unitPrice
+                button.scripts.OnClick(button)
+                button.scripts.OnClick(button)
+                assert.are.same({ 70, 60, 50 }, prices())
+                tab:SelectLevel(60)
+                assert.are.equal(5, tab.amount)
+                -- The rows on screen are 70, 60, 50: the range is the levels 50 and 60.
+                assert.are.same({ false, true, true }, selectedRows())
+                click(ui.buyNext)
+                assert.are.same({ { "start", 10, 5 } }, client.calls)
+            end)
+
+            it("follows the amount that the user types", function()
+                searchCommodity()
+                tab:SelectLevel(70)
+                tab:SetAmount("4")
+                assert.are.same({ true, true, false }, selectedRows())
+                assert.are.equal("210c", ui.amountTotal.text)
+                assert.are.equal("x4", ui.totalCells.quantity.text)
+                tab:SetAmount("2")
+                assert.are.same({ true, false, false }, selectedRows())
+            end)
+
+            it("buys the amount of the range through the quote and the confirm", function()
+                searchCommodity()
+                tab:SelectLevel(60)
+                click(ui.buyNext)
+                assert.are.same({ { "start", 10, 5 } }, client.calls)
+                fire("QUOTE", 54, 270)
+                click(dialog("FlipsideBuyConfirm").yesButton)
+                assert.are.same({ { "start", 10, 5 }, { "confirm", 10, 5 } }, client.calls)
+                assert.are.same({}, client.violations)
+            end)
+
+            it("makes no protected call at the level click", function()
+                searchCommodity()
+                tab:SelectLevel(70)
+                assert.are.same({}, client.calls)
+                assert.are.same({}, client.violations)
+            end)
+
+            it("keeps the single selection for an item auction", function()
+                client.rows[10] = { { auctionID = 1, unitPrice = 30, quantity = 1, isCommodity = false },
+                    { auctionID = 2, unitPrice = 40, quantity = 1, isCommodity = false } }
+                tab:Select_("10")
+                tab:Search()
+                fire("ITEM_RESULTS", 10)
+                local id = ns.BuyingPlan.GroupKey(client.rows[10][2])
+                tab:SelectLevel(id)
+                assert.is_nil(tab.range)
+                assert.are.equal(id, tab.levelSel)
+                assert.are.same({ false, true }, selectedRows())
+                tab:SelectLevel(id)
+                assert.is_nil(tab.levelSel)
+            end)
+
+            it("keeps the single selection on a client with no commodity market", function()
+                ns.Flavour.hasCommodityMarket = false
+                local rows = { { auctionID = 1, unitPrice = 30, quantity = 1, ownerItem = false },
+                    { auctionID = 2, unitPrice = 40, quantity = 1, ownerItem = false } }
+                client.rows[10] = rows
+                tab:Select_("10")
+                tab:Search()
+                fire("ITEM_RESULTS", 10)
+                local id = ns.BuyingPlan.GroupKey(rows[2])
+                tab:SelectLevel(id)
+                assert.is_nil(tab.range)
+                assert.are.equal(id, tab.levelSel)
+            end)
         end)
 
         it("turns the amount box on for a commodity", function()
