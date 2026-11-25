@@ -1,7 +1,7 @@
 local _, ns = ...
 
--- The gold balance over time for the Ledger page graph (SPEC 5.8 point 9). The series functions read a store and write nothing.
--- WriteSnapshot saves the balance, and Reconcile adds one ledger record.
+-- The gold balance over time for the Ledger page graph (SPEC 5.8 point 9).
+-- The series functions read a store and write nothing. WriteSnapshot saves the balance, and Reconcile adds one record.
 -- The balance at time t is: anchor + (money change up to t) - (money change up to the anchor time).
 -- The anchor is the live GetMoney() of the current character, or the last saved balance of another one.
 local LedgerBalance = {}
