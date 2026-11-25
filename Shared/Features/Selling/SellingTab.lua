@@ -2704,6 +2704,10 @@ function Tab:_InitLevelRow(row, data)
             self:SelectLevel(data.id)
         end
     end)
+    -- The tooltip of the auction of the level. A shift-click selects a range here, so it does not link in the chat.
+    if ns.RowTooltip then
+        ns.RowTooltip.Link(row, { link = data.link, itemID = data.itemID })
+    end
 end
 
 -- The index of the level with this id in levels, or nil.
@@ -2824,7 +2828,8 @@ function Tab:_RefreshLevels()
         return
     end
     self.levelShown = { live = live, entry = entry, sel = self.levelSel, range = self.levelRange }
-    ui.levelList:SetData(SellingTab.LevelRows(levels, entry and entry.marketValue))
+    ui.levelList:SetData(SellingTab.LevelRows(levels, entry and entry.marketValue, entry and entry.item
+        and entry.item.itemID))
 end
 
 -- Search the item of an entry again, so that its decision and its post price use the new lowest price.
@@ -3367,7 +3372,8 @@ end
 -- Row: { id, unitPrice, price, available, mine, deal }. A commodity level shows its quantity. An item level
 -- (a stack group) shows "stacks x size" for a stack above 1, else the count. mine is true for your own level (the row
 -- is yellow). deal is true if the price is a deal (see SellingTab.DealText); the price is green.
-function SellingTab.LevelRows(levels, market)
+-- itemID (optional) is the item of the list. A level row shows its tooltip with the link of its own auction, if any.
+function SellingTab.LevelRows(levels, market, itemID)
     local rows = {}
     for _, level in ipairs(levels or {}) do
         if #rows >= LEVEL_MAX then
@@ -3384,6 +3390,7 @@ function SellingTab.LevelRows(levels, market)
             id = level.id or level.unitPrice, unitPrice = level.unitPrice, price = money(level.unitPrice),
             available = available, mine = level.own == true,
             deal = SellingTab.DealText(level.unitPrice, market) ~= nil,
+            itemID = itemID, link = level.rows and level.rows[1] and level.rows[1].itemLink or nil,
         }
     end
     return rows
@@ -3409,31 +3416,10 @@ end
 
 -- Make an item row a link: the mouse shows the item tooltip, a shift-click puts the link in the chat box.
 -- A row without a link (a group row) loses both. The tree sets the OnClick script again each time it draws a row.
-function Tab._LinkRow(_, row, link)
-    local payload = link and link:match("|H(.-)|h")
-    if not payload then
-        row:SetScript("OnEnter", nil)
-        row:SetScript("OnLeave", nil)
-        return
+function Tab._LinkRow(_, row, link, itemID)
+    if ns.RowTooltip then
+        ns.RowTooltip.Link(row, { link = link, itemID = itemID }, { chatLink = link })
     end
-    row:SetScript("OnEnter", function(frame)
-        GameTooltip:SetOwner(frame, "ANCHOR_RIGHT")
-        GameTooltip:SetHyperlink(payload)
-        GameTooltip:Show()
-    end)
-    row:SetScript("OnLeave", function()
-        GameTooltip:Hide()
-    end)
-    local onSelect = row:GetScript("OnClick")
-    row:SetScript("OnClick", function(frame, button, ...)
-        local insert, modified = ChatEdit_InsertLink, _G.IsModifiedClick
-        if button ~= "RightButton" and insert and modified and modified("CHATLINK") and insert(link) then
-            return
-        end
-        if onSelect then
-            onSelect(frame, button, ...)
-        end
-    end)
 end
 
 -- Draw one tree row: a group (toggle and name) or a bag item (icon, name and the columns).
@@ -3489,7 +3475,8 @@ function Tab:_InitTreeRow(row, node, depth, isCollapsed, hasChildren)
     row.label:SetPoint("LEFT", parts.icon, "RIGHT", 4, 0)
     local link = self:_ItemLink(entry)
     row.label:SetText((link or self:_Name(entry)) .. " x" .. tostring(entry.item.count))
-    self:_LinkRow(row, link)
+    -- The tooltip needs only the item id: the link is nil while the client has no item data.
+    self:_LinkRow(row, link, entry.item.itemID)
     local cells = SellingTab.Cells(entry, self:_Vendor(entry))
     local grey = entry.status ~= "ready"
     Kit.SetColumnCells(parts.cells, COLUMNS, cells)

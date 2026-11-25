@@ -6,7 +6,7 @@ local function loadModules()
     for _, name in ipairs({ "EventBus", "ItemString", "BuyingPlan",
         "BuyFlow", "Theme", "Widgets", "Window", "List", "Tree",
         "Tabs",
-        "Columns", "AuctionTabs", "BuyDialog", "BuyingTab" }) do
+        "Columns", "AuctionTabs", "RowTooltip", "BuyDialog", "BuyingTab" }) do
         assert(loadfile(manifest.path(name)))("Flipside", ns)
     end
     return ns
@@ -183,6 +183,65 @@ describe("BuyingTab item tree", function()
             assert.are.equal("auctionhouse-ui-row-select", row.selection.atlas)
             assert.are.equal("auctionhouse-ui-row-select", row.cover.atlas)
             assert.are.equal(0.4, row.cover.alpha)
+        end)
+    end)
+
+    describe("the item tooltip of a row", function()
+        local function enter(row)
+            row.scripts.OnEnter(row)
+            return mock.tooltip.hyperlink
+        end
+
+        it("shows the item of a tree row, and none on a group row", function()
+            local row = draw("i10")
+            assert.are.equal("item:10", enter(row))
+            assert.are.equal(row, mock.tooltip.owner)
+            row.scripts.OnLeave(row)
+            assert.is_false(mock.tooltip.shown)
+            local group = draw("g2")
+            assert.is_nil(group.scripts.OnEnter)
+        end)
+
+        it("removes the tooltip when a reused row becomes a group row", function()
+            local row = CreateFrame("Button")
+            local nodes = ui.tree.box.dataProvider:GetVisible()
+            for _, treeNode in ipairs(nodes) do
+                views[ui.tree.box].initializer(row, treeNode)
+                local data = treeNode:GetData()
+                assert.are.equal(data.kind == "item", row.scripts.OnEnter ~= nil)
+            end
+        end)
+
+        it("keeps the select click of a tree row", function()
+            local row = draw("i10")
+            row.scripts.OnClick(row, "LeftButton")
+            assert.are.equal("10", tab.selectedKey)
+        end)
+
+        it("shows the link of the auction on a level row, else the key of the open item", function()
+            local link = "|cffffffff|Hitem:10::::::::70:::::|h[Item10]|h|r"
+            local row = CreateFrame("Button")
+            tab:_InitLevelRow(row, { unitPrice = 5, state = "buy", itemLink = link })
+            assert.are.equal("item:10::::::::70:::::", enter(row))
+            tab:_InitLevelRow(row, { unitPrice = 5, state = "buy", itemKey = "10#s-3", itemID = 10 })
+            assert.are.equal("item:10::::::-3", enter(row))
+        end)
+
+        it("puts the auction link in the level rows from DescribeLevels", function()
+            local link = "|Hitem:10::::::::70:::::|h[x]|h"
+            local out = ns.BuyingTab.DescribeLevels({ key = "10", itemID = 10, maxPrice = 100 },
+                { { unitPrice = 5, quantity = 1, rows = { { itemLink = link } } }, { unitPrice = 6, quantity = 1 } },
+                false)
+            assert.are.equal(link, out[1].itemLink)
+            assert.is_nil(out[2].itemLink)
+            assert.are.equal("10", out[2].itemKey)
+            assert.are.equal(10, out[2].itemID)
+        end)
+
+        it("shows the item of a group item row", function()
+            local row = CreateFrame("Button")
+            tab:_InitGroupRow(row, { name = "Item10", itemID = 10, entry = { key = "10", itemID = 10 } })
+            assert.are.equal("item:10", enter(row))
         end)
     end)
 
