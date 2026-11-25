@@ -12,6 +12,7 @@ read_globals = {
     "hooksecurefunc",
     "PlaySound",
     "SOUNDKIT",
+    "TSM_API",
     "Minimap",
     "ChatEdit_InsertLink",
     "CANCEL",
