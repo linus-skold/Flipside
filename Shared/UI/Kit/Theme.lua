@@ -19,6 +19,8 @@ Kit.Theme = {
     gap = 6,
     insetPadding = 4,
     rowHighlight = "Interface\\QuestFrame\\UI-QuestTitleHighlight",
+    -- The hover glow of clickable text (Kit.AddHoverGlow): the gold of the client title font, with a low alpha.
+    glow = { r = 1, g = 0.82, b = 0, alpha = 0.35 },
     divider = "Options_HorizontalDivider",
 }
 
