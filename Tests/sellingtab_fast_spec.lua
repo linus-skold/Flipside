@@ -386,6 +386,34 @@ describe("SellingTab fast clicks and the loading pane", function()
         end)
     end)
 
+    describe("the search timeout", function()
+        -- The longest timer of a new search is its timeout (the others are the 0.4 s dots and short delays).
+        local function longest()
+            local most = 0
+            for _, timer in ipairs(timers) do
+                most = math.max(most, timer.seconds)
+            end
+            return most
+        end
+
+        after_each(function()
+            ns.Flavour = nil
+        end)
+
+        it("is 4 s where the result event names the item", function()
+            pickItem(11)
+            assert.are.equal(4, longest())
+        end)
+
+        it("stays 10 s where the result event has no item ID (TBC)", function()
+            ns.Flavour = { hasCommodityMarket = false }
+            pickItem(11)
+            assert.are.equal(10, longest())
+            assert.are.equal(0, runTimers(4))
+            assert.is_not_nil(tab.pending)
+        end)
+    end)
+
     describe("a fast queue", function()
         local function answerAny(itemID)
             answer(itemID, itemID == 10 and { arow(160, 1) } or { crow(150, 5) })

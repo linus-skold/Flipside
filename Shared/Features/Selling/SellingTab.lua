@@ -14,6 +14,8 @@ local BuyDialog = ns.BuyDialog -- the confirm box of a buy
 local OWNER = "Flipside.SellingTab"
 local DIALOG = "FLIPSIDE_CONFIRM_POST"
 local SEARCH_TIMEOUT = 4 -- seconds that a search waits for its result before the next search starts
+local LEGACY_SEARCH_TIMEOUT = 10 -- the same, where the result event has no item ID (TBC): a late event of an old search
+-- must not end a new search, so the wait stays long
 local RETRY_SECONDS = 1 -- fallback timer for a refused search; the ready event starts the next search first
 local MULTI_TIMEOUT = 15
 local MULTI_TIMEOUT_PER_STACK = 3
@@ -977,7 +979,9 @@ function Tab:_Launch(entry, rowsOnly)
     end
     self.pending = { entry = entry, itemID = candidate.itemID, token = token, rowsOnly = rowsOnly }
     -- A search that gets no result ends with the timeout, so that the next search can start.
-    self.deps.after(SEARCH_TIMEOUT, function()
+    local flavour = ns.Flavour
+    local timeout = flavour and flavour.hasCommodityMarket == false and LEGACY_SEARCH_TIMEOUT or SEARCH_TIMEOUT
+    self.deps.after(timeout, function()
         local pending = self.pending
         if pending and pending.token == token then
             self:_Batch(function()
