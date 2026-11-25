@@ -603,7 +603,8 @@ function Engine:_LoadRows(jobView, rows, noProgressSeconds, run)
     local startAt = deps.seconds()
     local window = api.loadWindow or LOAD_WINDOW
     local outstanding, ready, asked, sentAt, queued = {}, {}, {}, {}, {}
-    local queue, head, inflight = {}, 1, 0
+    -- The queue has an explicit head and tail: the length operator is not safe on a table with holes.
+    local queue, head, tail, inflight = {}, 1, 0, 0
     local function onData(itemID)
         if asked[itemID] then
             asked[itemID] = nil
@@ -613,7 +614,7 @@ function Engine:_LoadRows(jobView, rows, noProgressSeconds, run)
     end
     -- Sends the queued requests, not more than "window" at the same time. Each one is a real client request.
     local function pump()
-        while head <= #queue and inflight < window do
+        while head <= tail and inflight < window do
             local itemID = queue[head]
             queue[head] = nil
             head = head + 1
@@ -625,14 +626,15 @@ function Engine:_LoadRows(jobView, rows, noProgressSeconds, run)
                 deps.cache:Reload(itemID, onData)
             end
         end
-        if head > #queue then
-            queue, head = {}, 1
+        if head > tail then
+            queue, head, tail = {}, 1, 0
         end
     end
     local function enqueue(itemID)
         if not queued[itemID] then
             queued[itemID] = true
-            queue[#queue + 1] = itemID
+            tail = tail + 1
+            queue[tail] = itemID
         end
     end
     for _, itemID in ipairs(needItems(jobView, rows, resolver)) do
