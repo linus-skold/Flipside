@@ -616,7 +616,32 @@ local function guildSyncEnabled()
     return ns.db ~= nil and ns.db:Get("account", "sync.guildEnabled") == true
 end
 
--- Create the guild price sharing; it needs the scan store and the settings DB.
+-- Setting sync.groupEnabled (account scope, default off): share scan prices with the party or raid (SPEC 3.5).
+local function groupSyncEnabled()
+    return ns.db ~= nil and ns.db:Get("account", "sync.groupEnabled") == true
+end
+
+-- The chat type for the home group: "RAID" in a raid, "PARTY" in a party, nil if the player is in no group.
+local function groupChannel()
+    local home = _G.LE_PARTY_CATEGORY_HOME
+    if IsInRaid and IsInRaid(home) then
+        return "RAID"
+    end
+    if IsInGroup and IsInGroup(home) then
+        return "PARTY"
+    end
+    return nil
+end
+
+-- Return the chat type for a queue channel: "GUILD", "RAID" or "PARTY", or nil if the group is gone.
+local function chatTypeOf(channel)
+    if channel == "group" then
+        return groupChannel()
+    end
+    return "GUILD"
+end
+
+-- Create the price sharing (guild and group); it needs the scan store and the settings DB.
 local function openGuildSync()
     ns.guildSync, ns.priceReader, ns.IsGuildPrice = nil, nil, nil
     if not (ns.GuildSync and ns.GuildSyncCodec and ns.GuildSyncQueue and ns.GuildPriceStore and ns.scanStore
@@ -642,20 +667,27 @@ local function openGuildSync()
             markers[scope] = {}
         end
         local queue = ns.GuildSyncQueue.New({
-            send = function(text)
-                return C_ChatInfo.SendAddonMessage(ns.GuildSyncCodec.PREFIX, text, "GUILD")
+            send = function(text, channel)
+                local chatType = chatTypeOf(channel)
+                if not chatType then
+                    return -1 -- the player left the group: the queue drops the message
+                end
+                return C_ChatInfo.SendAddonMessage(ns.GuildSyncCodec.PREFIX, text, chatType)
             end,
             after = C_Timer.After,
             clock = GetTime,
-            onSent = function(text)
-                log("sync", "debug", "sent a message of %d bytes", #text)
+            onSent = function(text, channel)
+                log("sync", "debug", "sent a message of %d bytes (%s)", #text, tostring(channel))
             end,
-            onDrop = function(text, reason, result)
-                log("sync", "warn", "message of %d bytes dropped: %s %s", #text, reason, tostring(result))
+            onDrop = function(text, reason, result, channel)
+                log("sync", "warn", "message of %d bytes dropped (%s): %s %s", #text, tostring(channel), reason,
+                    tostring(result))
             end,
         })
         ns.guildSync = ns.GuildSync.New({
             isEnabled = guildSyncEnabled,
+            isGroupEnabled = groupSyncEnabled,
+            groupChannel = groupChannel,
             isInGuild = IsInGuild,
             selfName = function()
                 -- Saved or client realm, else the surname (Forever), else the name alone. Never "Name-nil".
@@ -691,7 +723,9 @@ local function openGuildSync()
         ns.priceReader = ns.GuildPriceStore.NewReader({
             localStore = scan,
             guildStore = guildStore,
-            isEnabled = guildSyncEnabled,
+            isEnabled = function()
+                return guildSyncEnabled() or groupSyncEnabled()
+            end,
         })
         ns.IsGuildPrice = function(key)
             local reader = ns.priceReader
@@ -704,6 +738,9 @@ local function openGuildSync()
         end)
         ns.bus:Subscribe("Flipside.ScanFinished", "Flipside.GuildSync", function(...)
             sync:OnScanFinished(...)
+        end)
+        ns.bus:Subscribe("GROUP_ROSTER_UPDATE", "Flipside.GuildSync", function()
+            sync:OnGroupChanged()
         end)
         sync:EnsureRegistered()
         C_Timer.After(30, function()
@@ -720,6 +757,16 @@ end
 -- Turn guild sharing on or off. Return false if settings are read-only or the feature is missing.
 function ns.SetGuildSync(on)
     if not (ns.guildSync and ns.db) or not ns.db:Set("account", "sync.guildEnabled", on and true or false) then
+        return false
+    end
+    ns.guildSync:OnSettingChanged()
+    return true
+end
+
+-- Turn price sharing with the party or raid on or off. Return false if settings are read-only or the feature
+-- is missing.
+function ns.SetGroupSync(on)
+    if not (ns.guildSync and ns.db) or not ns.db:Set("account", "sync.groupEnabled", on and true or false) then
         return false
     end
     ns.guildSync:OnSettingChanged()
@@ -2034,7 +2081,8 @@ local function withMainWindow(action)
             after = C_Timer.After,
             getVersionLine = ns.VersionLine,
             openLog = ns.OpenLogWindow,
-            guildSync = ns.guildSync and { isEnabled = guildSyncEnabled, setEnabled = ns.SetGuildSync } or nil,
+            guildSync = ns.guildSync and { isEnabled = guildSyncEnabled, setEnabled = ns.SetGuildSync,
+                isGroupEnabled = groupSyncEnabled, setGroupEnabled = ns.SetGroupSync } or nil,
             sounds = { isEnabled = uiSoundsEnabled, setEnabled = ns.SetUISounds },
         })
         action(window)
@@ -2647,8 +2695,9 @@ local function syncCommand(argument)
         return
     end
     if argument == "request" then
-        local sent, reason = sync:SendRequest(true)
-        printLine(sent and "request sent to the guild" or ("request not sent: " .. tostring(reason)))
+        local sent, kinds = sync:SendRequest(true)
+        printLine(sent and ("request sent to the " .. table.concat(kinds, " and the ")) or
+            ("request not sent: " .. tostring(kinds)))
         return
     end
     for _, line in ipairs(ns.GuildSync.StatusLines(sync:Status(), GetServerTime())) do

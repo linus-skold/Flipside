@@ -31,8 +31,9 @@ local RETRY = {
 local Q = {}
 Q.__index = Q
 
--- options: send(text) -> result code, after(seconds, fn), clock() -> seconds (fractions allowed), rate, burst,
--- onSent(text), onDrop(text, reason, result). A nil, true or 0 result from send means success.
+-- options: send(text, channel) -> result code, after(seconds, fn), clock() -> seconds (fractions allowed), rate,
+-- burst, onSent(text, channel), onDrop(text, reason, result, channel). A nil, true or 0 result from send means
+-- success. The channel is a name that the owner chooses (nil if not used). All channels share one rate limit.
 function Queue.New(options)
     return setmetatable({
         send = options.send,
@@ -63,17 +64,17 @@ function Q:Clear()
     self.scheduled = false
 end
 
--- Remove the waiting messages for which test(text) is true. Return the number removed.
+-- Remove the waiting messages for which test(text, channel) is true. Return the number removed.
 function Q:RemoveIf(test)
     local kept, removed = {}, 0
-    for index, text in ipairs(self.items) do
-        if test(text) then
+    for index, item in ipairs(self.items) do
+        if test(item.text, item.channel) then
             removed = removed + 1
             if index == 1 then
                 self.tries = 0
             end
         else
-            kept[#kept + 1] = text
+            kept[#kept + 1] = item
         end
     end
     self.items = kept
@@ -85,10 +86,10 @@ function Q:Waiting()
     return self.tries > 0
 end
 
--- Return true if the text waits in the queue.
-function Q:Has(text)
+-- Return true if the text waits in the queue for the channel.
+function Q:Has(text, channel)
     for _, item in ipairs(self.items) do
-        if item == text then
+        if item.text == text and item.channel == channel then
             return true
         end
     end
@@ -97,17 +98,18 @@ end
 
 -- Add a message to the end of the queue. Return false when the queue is full.
 -- With urgent, the message goes before the other waiting messages (not before a message that waits for a retry).
-function Q:Push(text, urgent)
+function Q:Push(text, urgent, channel)
     if #self.items >= Queue.MAX_LENGTH then
         if self.onDrop then
-            self.onDrop(text, "full")
+            self.onDrop(text, "full", nil, channel)
         end
         return false
     end
+    local item = { text = text, channel = channel }
     if urgent then
-        table.insert(self.items, self.tries > 0 and 2 or 1, text)
+        table.insert(self.items, self.tries > 0 and 2 or 1, item)
     else
-        self.items[#self.items + 1] = text
+        self.items[#self.items + 1] = item
     end
     self:_Pump()
     return true
@@ -157,14 +159,15 @@ function Q:_Run()
             self:_Wake((1 - self.tokens) / self.rate)
             return
         end
-        local text = self.items[1]
-        local result = self.send(text)
+        local item = self.items[1]
+        local text, channel = item.text, item.channel
+        local result = self.send(text, channel)
         if result == nil or result == true or result == Queue.RESULT.Success then
             table.remove(self.items, 1)
             self.tokens = self.tokens - 1
             self.tries = 0
             if self.onSent then
-                self.onSent(text)
+                self.onSent(text, channel)
             end
         elseif RETRY[result] and self.tries + 1 < Queue.MAX_TRIES then
             self.tries = self.tries + 1
@@ -174,7 +177,7 @@ function Q:_Run()
             table.remove(self.items, 1)
             self.tries = 0
             if self.onDrop then
-                self.onDrop(text, RETRY[result] and "retries" or "refused", result)
+                self.onDrop(text, RETRY[result] and "retries" or "refused", result, channel)
             end
         end
     end

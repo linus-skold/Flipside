@@ -19,7 +19,8 @@ local GLOBAL_NAMES = {
     "CreateScrollBoxListLinearView", "CreateTreeDataProvider", "CreateScrollBoxListTreeListView", "MenuUtil",
     "Enum", "TooltipDataProcessor", "IsAltKeyDown", "GetInboxNumItems", "GetInboxItemLink", "GetInboxItem",
     "FlipsideDB_TBC", "FlipsideScanDB_TBC", "FlipsideLedgerDB", "FlipsideLedgerDB_TBC", "C_AddOns", "LoadAddOn",
-    "C_ChatInfo", "IsInGuild", "FlipsideLogDB", "NUM_BAG_SLOTS", "NUM_BANKBAGSLOTS", "BANK_CONTAINER",
+    "C_ChatInfo", "IsInGuild", "IsInRaid", "IsInGroup", "FlipsideLogDB", "NUM_BAG_SLOTS", "NUM_BANKBAGSLOTS",
+    "BANK_CONTAINER",
     "GetInboxHeaderInfo", "GetInboxInvoiceInfo", "GetInboxText", "hooksecurefunc",
     "AUCTION_SOLD_MAIL_SUBJECT", "AUCTION_EXPIRED_MAIL_SUBJECT", "AUCTION_REMOVED_MAIL_SUBJECT",
     "AUCTION_OUTBID_MAIL_SUBJECT", "AUCTION_WON_MAIL_SUBJECT",
@@ -546,6 +547,8 @@ function M.reset(options)
     M.ownedAuctions = {} -- rows that GetOwnedAuctions gives
     M.bags = {} -- bag index -> array of slot tables (as GetContainerItemInfo gives); a missing bag has no slots
     M.inGuild = false -- result of IsInGuild()
+    M.inGroup = false -- result of IsInGroup() (true also when inRaid)
+    M.inRaid = false -- result of IsInRaid()
     M.addonPrefixes = {} -- prefixes passed to C_ChatInfo.RegisterAddonMessagePrefix
     M.addonSent = {} -- calls of C_ChatInfo.SendAddonMessage: { prefix, text, chatType, target }
     M.addonResult = 0 -- result of C_ChatInfo.SendAddonMessage (0 is Success, 3 is AddonMessageThrottle)
@@ -815,6 +818,12 @@ function M.reset(options)
 
     _G.IsInGuild = function()
         return M.inGuild
+    end
+    _G.IsInRaid = function()
+        return M.inRaid
+    end
+    _G.IsInGroup = function()
+        return M.inGroup or M.inRaid
     end
     _G.C_ChatInfo = {
         RegisterAddonMessagePrefix = function(prefix)

@@ -21,6 +21,8 @@ read_globals = {
     "C_ChatInfo",
     "Constants",
     "IsInGuild",
+    "IsInRaid",
+    "IsInGroup",
     "C_Container",
     "C_GameRules",
     "C_Item",

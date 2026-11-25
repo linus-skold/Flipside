@@ -2,15 +2,16 @@ local manifest = require("Tests.manifest")
 
 describe("GuildSync", function()
     local ns, Codec, sync, deps, enabled, inGuild, clock, timers, wire, logs, localData, lastScan, prefixes
-    local sendResult
+    local sendResult, wireKind
 
     local SCOPE = "EU._.standard"
     local NOW = 1760000000
 
     local function makeQueue(burst)
         return ns.GuildSyncQueue.New({
-            send = function(text)
+            send = function(text, channel)
                 wire[#wire + 1] = text
+                wireKind[#wire] = channel
                 return sendResult
             end,
             after = function(seconds, fn)
@@ -31,7 +32,7 @@ describe("GuildSync", function()
         end
         Codec = ns.GuildSyncCodec
         enabled, inGuild, clock, timers, wire, logs, prefixes = true, true, NOW, {}, {}, {}, {}
-        sendResult = 0
+        sendResult, wireKind = 0, {}
         localData = {}
         lastScan = NOW - 100
         local queue = makeQueue(1000)
@@ -763,6 +764,317 @@ describe("GuildSync", function()
             enabled = false
             sync:OnSettingChanged()
             assert.are.equal(0, deps.queue:Pending())
+        end)
+    end)
+
+    describe("group sharing", function()
+        local groupOn, channel
+
+        -- Count the sent messages of a queue channel.
+        local function sentOn(kind)
+            local count = 0
+            for index = 1, #wire do
+                if wireKind[index] == kind then
+                    count = count + 1
+                end
+            end
+            return count
+        end
+
+        before_each(function()
+            groupOn, channel = true, "PARTY"
+            enabled = false
+            deps.isGroupEnabled = function()
+                return groupOn
+            end
+            deps.groupChannel = function()
+                return channel
+            end
+        end)
+
+        it("sends a share to the group only when the guild setting is off, and registers the prefix", function()
+            addLocal(5)
+            sync:OnScanFinished("Flipside.ScanFinished", { result = "ok" })
+            assert.is_true(#wire >= 1)
+            assert.are.equal(#wire, sentOn("group"))
+            assert.are.equal(5, countWire())
+            assert.same({ Codec.PREFIX }, prefixes)
+        end)
+
+        it("sends nothing while the group setting is off or the player is in no group", function()
+            addLocal(5)
+            groupOn = false
+            assert.are.same({ false, "disabled" }, { sync:SendSet("test") })
+            groupOn, channel = true, nil
+            assert.are.same({ false, "not-in-group" }, { sync:SendSet("test") })
+            assert.are.same({ false, "not-in-group" }, { sync:SendRequest(true) })
+            assert.are.equal(0, #wire)
+        end)
+
+        it("shares to the guild and the group with one build and one queue", function()
+            enabled = true
+            addLocal(5)
+            sync:SendSet("test")
+            assert.is_true(sentOn("guild") >= 1)
+            assert.are.equal(sentOn("guild"), sentOn("group"))
+            assert.are.equal(5, countWire())
+        end)
+
+        it("sends a request to each open channel, or to the one that is named", function()
+            enabled = true
+            assert.are.same({ true, { "guild", "group" } }, { sync:SendRequest(true) })
+            assert.are.equal(1, sentOn("guild"))
+            assert.are.equal(1, sentOn("group"))
+            wire, wireKind = {}, {}
+            assert.are.same({ true, { "group" } }, { sync:SendRequest(true, "group") })
+            assert.are.equal(1, #wire)
+            assert.are.equal("group", wireKind[1])
+        end)
+
+        it("keeps the cooldown of a request for each channel", function()
+            assert.is_true(sync:SendRequest(false, "group"))
+            assert.are.same({ false, "recent" }, { sync:SendRequest(false, "group") })
+            enabled = true
+            assert.are.same({ true, { "guild" } }, { sync:SendRequest() })
+        end)
+
+        it("stores the data of a party or raid message", function()
+            for _, text in ipairs(remoteSet(30)) do
+                receive(text, nil, "RAID")
+            end
+            assert.are.equal(30, deps.guildStore:Count())
+        end)
+
+        it("ignores the instance channel, and the guild channel while the guild setting is off", function()
+            for _, text in ipairs(remoteSet(30)) do
+                receive(text, nil, "INSTANCE_CHAT")
+                receive(text, nil, "GUILD")
+            end
+            assert.are.equal(0, deps.guildStore:Count())
+        end)
+
+        it("ignores group messages while the group setting is off", function()
+            groupOn = false
+            enabled = true
+            for _, text in ipairs(remoteSet(30)) do
+                receive(text, nil, "PARTY")
+            end
+            assert.are.equal(0, deps.guildStore:Count())
+        end)
+
+        it("drops its own group messages", function()
+            for _, text in ipairs(remoteSet(30)) do
+                receive(text, "Me-Realm", "PARTY")
+                receive(text, "Me", "PARTY")
+            end
+            assert.are.equal(0, deps.guildStore:Count())
+            addLocal(5)
+            receive(Codec.BuildRequest(SCOPE, 0), "Me-Realm", "PARTY")
+            assert.are.equal(0, #timers)
+        end)
+
+        it("drops a group message of another scope", function()
+            for _, text in ipairs(remoteSet(30, 5, "US._.standard")) do
+                receive(text, nil, "PARTY")
+            end
+            assert.are.equal(0, deps.guildStore:Count())
+        end)
+
+        it("keeps the guild and the group sets of one sender apart", function()
+            enabled = true
+            local texts = remoteSet(60)
+            receive(texts[1], nil, "GUILD")
+            for index = 1, #texts do
+                receive(texts[index], nil, "PARTY")
+            end
+            assert.are.equal(60, deps.guildStore:Count())
+            assert.are.equal(1, sync:Status().incoming)
+        end)
+
+        it("answers a group request after a random delay of 0 to 5 s, on the group channel only", function()
+            enabled = true
+            addLocal(5)
+            local range
+            deps.random = function(low, high)
+                range = { low, high }
+                return high
+            end
+            receive(Codec.BuildRequest(SCOPE, 0), nil, "PARTY")
+            assert.are.same({ 0, ns.GuildSync.GROUP_REPLY_JITTER * 100 }, range)
+            assert.are.equal(1, #timers)
+            assert.are.equal(clock + 5, timers[1].at)
+            runTimers()
+            assert.is_true(sentOn("group") >= 1)
+            assert.are.equal(0, sentOn("guild"))
+        end)
+
+        it("uses a fractional group delay", function()
+            addLocal(5)
+            deps.random = function()
+                return 250
+            end
+            receive(Codec.BuildRequest(SCOPE, 0), nil, "PARTY")
+            assert.are.equal(clock + 2.5, timers[1].at)
+        end)
+
+        it("cancels the group reply when a set arrives during the build", function()
+            enabled = true
+            addLocal(5)
+            receive(Codec.BuildRequest(SCOPE, 0), nil, "PARTY")
+            local keys = deps.localStore.Keys
+            deps.localStore.Keys = function(store)
+                receive(remoteSet(2)[1], "Ann-Realm", "PARTY")
+                return keys(store)
+            end
+            runTimers()
+            assert.are.equal(0, #wire)
+            assert.is_true(logged("cancelled: someone answered"))
+        end)
+
+        -- Count the items that went out on a channel (an item that went out twice counts twice).
+        local function itemsOn(kind)
+            local count = 0
+            for index, text in ipairs(wire) do
+                local chunk = assert(Codec.Parse(text))
+                if wireKind[index] == kind and chunk.kind == "D" then
+                    count = count + #Codec.ParseItems(chunk.items, chunk.time)
+                end
+            end
+            return count
+        end
+
+        -- Run the clock until the share ends.
+        local function drainShare()
+            for _ = 1, 800 do
+                clock = clock + 1
+                runTimers()
+                if not sync:Status().shareTotal and deps.queue:Pending() == 0 then
+                    return
+                end
+            end
+        end
+
+        it("sends the sent items again to the new channel only, not to the old one", function()
+            enabled, groupOn = true, false
+            addLocal(100)
+            deps.queue = makeQueue(1)
+            sync = ns.GuildSync.New(deps)
+            sync:SendSet("scan")
+            for _ = 1, 12 do
+                clock = clock + 1
+                runTimers()
+            end
+            local before = itemsOn("guild")
+            assert.is_true(before >= 60)
+            groupOn = true
+            sync:SendSet("join", "group")
+            drainShare()
+            assert.is_nil(sync:Status().shareTotal)
+            assert.are.equal(100, itemsOn("group"))
+            -- The guild gets each item once, and at most the set that was in flight a second time.
+            assert.is_true(itemsOn("guild") >= 100)
+            assert.is_true(itemsOn("guild") <= 130)
+        end)
+
+        it("ends a group share when the player leaves the group, and marks it done", function()
+            enabled = false
+            addLocal(100)
+            deps.queue = makeQueue(1)
+            sync = ns.GuildSync.New(deps)
+            sync:SendSet("scan")
+            assert.is_not_nil(sync:Status().shareTotal)
+            channel = nil
+            drainShare()
+            assert.is_nil(sync:Status().shareTotal)
+            assert.is_true(sync.marker.done)
+            assert.are.same({ false, "nothing to resume" }, { sync:ResumeShare() })
+        end)
+
+        it("does not answer a group request when its data is not newer", function()
+            addLocal(5)
+            receive(Codec.BuildRequest(SCOPE, lastScan), nil, "PARTY")
+            assert.are.equal(0, #timers)
+        end)
+
+        it("cancels the group reply when a set arrives from another member first", function()
+            addLocal(5)
+            receive(Codec.BuildRequest(SCOPE, 0), nil, "PARTY")
+            receive(remoteSet(2)[1], "Ann-Realm", "PARTY")
+            runTimers()
+            assert.are.equal(0, #wire)
+            assert.is_true(logged("reply cancelled %(group%)"))
+        end)
+
+        it("keeps the group reply when the set arrives on the guild channel", function()
+            enabled = true
+            addLocal(5)
+            receive(Codec.BuildRequest(SCOPE, 0), nil, "PARTY")
+            receive(remoteSet(2)[1], "Ann-Realm", "GUILD")
+            runTimers()
+            assert.is_true(sentOn("group") >= 1)
+        end)
+
+        it("sends one request after the roster settles when the player joins a group", function()
+            sync:OnGroupChanged()
+            sync:OnGroupChanged()
+            assert.are.equal(2, #timers)
+            assert.are.equal(clock + ns.GuildSync.JOIN_DEBOUNCE, timers[1].at)
+            runTimers()
+            assert.are.equal(1, #wire)
+            assert.are.equal("group", wireKind[1])
+            assert.are.equal("Q", assert(Codec.Parse(wire[1])).kind)
+        end)
+
+        it("sends no request for a change inside a group, and a new one after leaving and joining again", function()
+            sync:OnGroupChanged()
+            runTimers()
+            wire, wireKind = {}, {}
+            clock = clock + 1000
+            channel = "RAID"
+            sync:OnGroupChanged()
+            runTimers()
+            assert.are.equal(0, #wire)
+            channel = nil
+            sync:OnGroupChanged()
+            runTimers()
+            channel = "PARTY"
+            sync:OnGroupChanged()
+            runTimers()
+            assert.are.equal(1, #wire)
+        end)
+
+        it("sends no join request while the group setting is off or when the player is in no group", function()
+            groupOn = false
+            sync:OnGroupChanged()
+            runTimers()
+            groupOn, channel = true, nil
+            sync:OnGroupChanged()
+            runTimers()
+            assert.are.equal(0, #wire)
+        end)
+
+        it("removes the group messages from the queue when the group setting goes off", function()
+            enabled = true
+            addLocal(25)
+            sendResult = 3
+            sync:SendSet("test")
+            groupOn = false
+            sync:OnSettingChanged()
+            sendResult = 0
+            wire, wireKind = {}, {}
+            clock = clock + 100
+            runTimers()
+            assert.is_true(#wire > 0)
+            assert.are.equal(0, sentOn("group"))
+            assert.is_true(sync:IsEnabled())
+        end)
+
+        it("shows the group state in the status lines", function()
+            local lines = ns.GuildSync.StatusLines(sync:Status(), clock)
+            assert.are.equal("group sharing: on, channel PARTY", lines[2])
+            channel = nil
+            lines = ns.GuildSync.StatusLines(sync:Status(), clock)
+            assert.are.equal("group sharing: on, not in a group", lines[2])
         end)
     end)
 
