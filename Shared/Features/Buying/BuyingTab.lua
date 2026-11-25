@@ -203,6 +203,8 @@ end
 -- Build the price level rows to show. state is "buy", "above" or "own".
 -- Levels above the maximum show only if the operation sets showAboveMax.
 -- scan is optional: { market } is the market value of the item in copper. It adds the percent.
+-- A row also holds itemLink (the link of its first auction, if the client gives one), itemKey and itemID.
+-- The row tooltip uses them.
 function BuyingTab.DescribeLevels(entry, levels, showAboveMax, scan)
     local out = {}
     for _, level in ipairs(levels or {}) do
@@ -220,6 +222,8 @@ function BuyingTab.DescribeLevels(entry, levels, showAboveMax, scan)
                 stackPrice = BuyingTab.StackPrice(level), id = level.id, stacks = level.stacks,
                 stackSize = level.stackSize, owner = level.own and OWN_TEXT or level.owner,
                 timeLeft = level.timeLeft,
+                itemLink = level.rows and level.rows[1] and level.rows[1].itemLink or nil,
+                itemKey = entry and entry.key, itemID = entry and entry.itemID,
                 percent = scan and BuyingTab.MarketPercent(level.unitPrice, scan.market) or nil,
             }
         end
@@ -2856,6 +2860,14 @@ local function makeItemParts(row)
     return parts
 end
 
+-- Show the item tooltip on a row (RowTooltip). A nil source clears it. chatLink: a shift-click puts it in the chat box.
+-- Call it after the row sets its OnClick script (the tree and the list set it again at each draw).
+local function linkRow(row, source, chatLink)
+    if ns.RowTooltip then
+        ns.RowTooltip.Link(row, source, { chatLink = chatLink })
+    end
+end
+
 -- Draw one tree row: a group (toggle and name) or an item (icon and name). The row shows no price: the prices are
 -- in the right pane.
 function Tab:_InitTreeRow(row, node, depth, isCollapsed, hasChildren)
@@ -2892,6 +2904,7 @@ function Tab:_InitTreeRow(row, node, depth, isCollapsed, hasChildren)
         row.label:SetPoint("RIGHT", row, "RIGHT", -4, 0)
         row.label:SetText(node.text)
         row.label:SetTextColor(1, 0.82, 0)
+        linkRow(row, nil)
         return
     end
     local entry = node.entry
@@ -2914,6 +2927,7 @@ function Tab:_InitTreeRow(row, node, depth, isCollapsed, hasChildren)
     parts.remove:SetScript("OnClick", function()
         self:RemoveListItem(entry.listIndex)
     end)
+    linkRow(row, { key = entry.key, itemID = entry.itemID }, self:_ItemLink(entry))
 end
 
 -- The tree id of an entry.
@@ -3050,6 +3064,10 @@ function Tab:_InitLevelRow(row, data)
     row:SetScript("OnClick", function()
         self:SelectLevel(id)
     end)
+    -- The auction of the level, else the item of the open search.
+    local shown = self:_Selected()
+    linkRow(row, { link = data.itemLink, key = data.itemKey or (shown and shown.key),
+        itemID = data.itemID or (shown and shown.itemID) })
 end
 
 -- The columns of the item list of a clicked group. The name fills the rest, so the name cell is drawn by the row
@@ -3094,6 +3112,8 @@ function Tab:_InitGroupRow(row, data)
     row:SetScript("OnClick", function()
         self:_OnGroupItemClick(data.entry)
     end)
+    local entry = data.entry
+    linkRow(row, { key = entry and entry.key, itemID = data.itemID }, entry and self:_ItemLink(entry))
 end
 
 -- The tree node with this id, or nil.

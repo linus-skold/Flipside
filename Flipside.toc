@@ -105,6 +105,7 @@ Shared\UI\Pages\GroupsPage.lua
 Shared\UI\Pages\OperationsPage.lua
 Shared\UI\Pages\ListsPage.lua
 Shared\UI\TooltipTable.lua
+Shared\UI\RowTooltip.lua
 Shared\UI\Pages\TooltipPage.lua
 Shared\UI\Pages\LedgerEdit.lua
 Shared\UI\Pages\LedgerItemPanel.lua

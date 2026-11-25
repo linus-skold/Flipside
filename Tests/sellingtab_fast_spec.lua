@@ -4,7 +4,7 @@ local mock = require("Tests.wow_mock")
 local function loadModules()
     local ns = { ReportError = function() end }
     for _, name in ipairs({ "EventBus", "ItemString", "ScanKey", "BagItems", "SellingPlan", "BuyingPlan", "BuyFlow",
-        "Theme", "Widgets", "MoneyInput", "Window", "List", "Columns", "Tree", "AuctionTabs", "BuyDialog",
+        "Theme", "Widgets", "MoneyInput", "Window", "List", "Columns", "Tree", "AuctionTabs", "RowTooltip", "BuyDialog",
         "SellingTab" }) do
         assert(loadfile(manifest.path(name)))("Flipside", ns)
     end
@@ -517,6 +517,55 @@ describe("SellingTab fast clicks and the loading pane", function()
 
         it("is the quantity for a commodity", function()
             assert.are.equal("12", available({ crow(5, 12) }))
+        end)
+    end)
+
+    describe("the item tooltip of a row", function()
+        local LINK = "|cffffffff|Hitem:10::::::::70:::::|h[Linen Cloth]|h|r"
+
+        it("shows the item of a tree row and puts the link in the chat on a shift-click", function()
+            tab = mount()
+            local row, inserted = CreateFrame("Button"), {}
+            _G.IsModifiedClick = function() return true end
+            _G.ChatEdit_InsertLink = function(link) inserted[#inserted + 1] = link return true end
+            tab:_LinkRow(row, LINK, 10)
+            row.scripts.OnEnter(row)
+            assert.are.equal("item:10::::::::70:::::", mock.tooltip.hyperlink)
+            row.scripts.OnClick(row, "LeftButton")
+            assert.are.same({ LINK }, inserted)
+            _G.IsModifiedClick, _G.ChatEdit_InsertLink = nil, nil
+        end)
+
+        it("shows the item id while the client has no link, and none on a group row", function()
+            tab = mount()
+            local row = CreateFrame("Button")
+            tab:_LinkRow(row, nil, 10)
+            row.scripts.OnEnter(row)
+            assert.are.equal("item:10", mock.tooltip.hyperlink)
+            tab:_LinkRow(row, nil, nil)
+            assert.is_nil(row.scripts.OnEnter)
+            assert.is_nil(row.scripts.OnLeave)
+        end)
+
+        it("puts the auction link and the item id in the level rows", function()
+            local rows = ns.SellingTab.LevelRows({
+                { unitPrice = 5, quantity = 1, rows = { { itemLink = LINK } } }, { unitPrice = 6, quantity = 1 },
+            }, nil, 10)
+            assert.are.equal(LINK, rows[1].link)
+            assert.is_nil(rows[2].link)
+            assert.are.equal(10, rows[2].itemID)
+        end)
+
+        it("shows the tooltip of a level row and keeps the click that selects", function()
+            tab = mount()
+            local row = CreateFrame("Button")
+            tab:_InitLevelRow(row, { id = 5, unitPrice = 5, price = "5c", available = "1", link = LINK, itemID = 10 })
+            row.scripts.OnEnter(row)
+            assert.are.equal("item:10::::::::70:::::", mock.tooltip.hyperlink)
+            tab:_InitLevelRow(row, { id = 6, unitPrice = 6, price = "6c", available = "1", itemID = 10 })
+            row.scripts.OnEnter(row)
+            assert.are.equal("item:10", mock.tooltip.hyperlink)
+            assert.is_function(row.scripts.OnClick)
         end)
     end)
 end)
