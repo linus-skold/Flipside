@@ -8,6 +8,7 @@ local TsmPrices = {}
 ns.TsmPrices = TsmPrices
 
 -- Source name in formulas (lower case) -> TSM price key. The scheme: "tsm" + the TSM key without "DB".
+-- One short form: tsmRegionMarket is DBRegionMarketAvg.
 TsmPrices.KEYS = {
     tsmmarket = "DBMarket",
     tsmminbuyout = "DBMinBuyout",
