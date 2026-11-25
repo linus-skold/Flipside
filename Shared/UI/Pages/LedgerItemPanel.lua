@@ -6,14 +6,33 @@ local LedgerItemPanel = {}
 ns.LedgerItemPanel = LedgerItemPanel
 
 local WINDOW_NAME = "FlipsideLedgerItemTotal"
-local WIDTH, HEIGHT = 340, 232
+local WIDTH, HEIGHT = 340, 290
 local ROWS = {
     { key = "sold", label = "Sold", qty = "soldQty", money = "soldMoney" },
     { key = "bought", label = "Bought", qty = "boughtQty", money = "boughtMoney" },
-    { key = "deposits", label = "Deposits", money = "deposits" },
-    { key = "cut", label = "AH cut (in Sold)", money = "cut" },
+    { key = "deposits", label = "Deposits lost", money = "deposits" },
+    { key = "active", label = "Deposits active", money = "activeDeposits" },
+    { key = "cut", label = "AH cut (out of Sold)", money = "cut" },
     { key = "net", label = "Net profit", money = "net" },
 }
+-- The count line: posted, sold, expired, cancelled. A count that is nil shows a dash.
+local COUNTS = {
+    { label = "Posted", field = "postedQty" },
+    { label = "Sold", field = "soldQty" },
+    { label = "Expired", field = "expiredQty" },
+    { label = "Cancelled", field = "cancelledQty" },
+}
+LedgerItemPanel.NO_COUNT = "\226\128\148"
+
+-- Returns the text of the count line of a total.
+function LedgerItemPanel.CountsText(total)
+    local parts = {}
+    for _, count in ipairs(COUNTS) do
+        local value = total[count.field]
+        parts[#parts + 1] = count.label .. " " .. (value ~= nil and tostring(value) or LedgerItemPanel.NO_COUNT)
+    end
+    return table.concat(parts, "  ")
+end
 LedgerItemPanel.NOTE_SUMS = "Older records that the ledger keeps as daily totals are not included."
 
 local window
@@ -48,8 +67,12 @@ local function build()
         window.rows[row.key] = cells
         previous = cells.label
     end
+    window.counts = Kit.Label(window, "", "small")
+    window.counts:SetPoint("TOPLEFT", previous, "BOTTOMLEFT", 0, -12)
+    window.counts:SetWidth(WIDTH - 2 * pad - 16)
+    window.counts:SetJustifyH("LEFT")
     window.note = Kit.Label(window, "", "disabled")
-    window.note:SetPoint("TOPLEFT", previous, "BOTTOMLEFT", 0, -12)
+    window.note:SetPoint("TOPLEFT", window.counts, "BOTTOMLEFT", 0, -8)
     window.note:SetWidth(WIDTH - 2 * pad - 16)
     window.note:SetJustifyH("LEFT")
     window:HookScript("OnHide", function(self)
@@ -77,7 +100,8 @@ function LedgerItemPanel.Show(info)
         local value = total[row.money]
         cells.money:SetCopper(value)
         if row.qty then
-            cells.qty:SetText(tostring(total[row.qty]) .. " items")
+            local qty = total[row.qty]
+            cells.qty:SetText((qty ~= nil and tostring(qty) or LedgerItemPanel.NO_COUNT) .. " items")
         end
         if row.key == "net" then
             if value > 0 then
@@ -89,6 +113,7 @@ function LedgerItemPanel.Show(info)
             end
         end
     end
+    window.counts:SetText(LedgerItemPanel.CountsText(total))
     window.note:SetText(total.hasSums and LedgerItemPanel.NOTE_SUMS or "")
     window:ClearAllPoints()
     if info.anchor then
