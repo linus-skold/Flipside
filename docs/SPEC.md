@@ -43,8 +43,8 @@ Start with Spike 0 (§8), then follow the MVP build order. Everything below appl
 
 | # | Decision | Replaces in TSM | Date |
 | --- | --- | --- | --- |
-| D1 | Price data comes only from in-game scans (full scan + passive learning) | Desktop app, AppHelper, AuctionDB downloads | 2026-10-13 |
-| D2 | Optional external data import slot exists but ships empty | AppHelper as a required addon | 2026-10-13 |
+| D1 | Price data comes from in-game scans (full scan + passive learning). Changed 2026-11-25 (user approval): if the TSM addon is loaded, its AuctionDB values are an optional extra source through D2. Flipside never needs TSM and never copies its code or data | Desktop app, AppHelper, AuctionDB downloads | 2026-10-13 |
+| D2 | Optional external data import slot exists but ships empty. Changed 2026-11-25: one optional external source exists, the `tsm*` sources (§Price sources), which read the public `TSM_API` at run time | AppHelper as a required addon | 2026-10-13 |
 | D3 | Separate spec tab; TSM analysis kept as reference | — | 2026-10-13 |
 | D4 | A price "day" follows server (realm) time | — | 2026-10-13 |
 | D5 | A targeted search newer than the day's full scan overrides that day's value for the item | — | 2026-10-13 |
@@ -242,6 +242,26 @@ The formula language stays as in the reference (§4.3). AuctionDB sources are re
 | `ScanHigh` | Highest daily market value in the 14-day window, including today (decided 2026-10-14) | — (new) |
 | `ImportMarket` | Market value from the optional external file | `DBRegionMarketAvg` (only if imported) |
 | `SaleRate` | Your own sold ÷ (sold + expired) for the item, from the ledger (loads `Flipside_Ledger`; §5.8) | `DBRegionSaleRate` (personal, not regional) |
+
+**TSM sources (optional, decided 2026-11-25).** If the TSM addon is loaded, ten more sources read its AuctionDB values. The name is `tsm` plus the TSM price key without `DB`. One name has a short form: `tsmRegionMarket` is `DBRegionMarketAvg` without `Avg`. Flipside has its own names and calls only the public global `TSM_API`.
+
+| Source | TSM key |
+| --- | --- |
+| `tsmMarket` | `DBMarket` |
+| `tsmMinBuyout` | `DBMinBuyout` |
+| `tsmRecent` | `DBRecent` |
+| `tsmHistorical` | `DBHistorical` |
+| `tsmRegionMarket` | `DBRegionMarketAvg` |
+| `tsmRegionHistorical` | `DBRegionHistorical` |
+| `tsmRegionSaleAvg` | `DBRegionSaleAvg` |
+| `tsmRegionSaleRate` | `DBRegionSaleRate` |
+| `tsmRegionSoldPerDay` | `DBRegionSoldPerDay` |
+| `tsmNumAuctions` | `DBNumAuctions` |
+
+- Code: `Shared/Services/TsmPrices.lua` (adapter) and `FormulaSources`. Each read calls `TSM_API.GetCustomPriceValue(key, itemString)` with a dot, inside `pcall`. TSM sends no load event, so each read tests for `TSM_API` again.
+- No TSM, an error or a nil result gives no price (the source is invalid, as for a missing price). There is no error and no chat line.
+- Item string (D20): a bare item ID and a variant key `<id>#...` both map to the base item `i:<id>`. `TsmPrices.ItemString(link)` wraps `TSM_API.ToItemString` for a link.
+- The names show in the Formula page help and work in every formula (tooltip lines, operations, custom sources). They are `available` in the list even when TSM is not loaded.
 
 Carried over: `avgBuy`, `avgSell`, `SmartAvgBuy`, `min`/`maxBuy`, `min`/`maxSell`, `Crafting`, `matPrice`, `Destroy`, `vendorBuy`, `vendorSell`, and the operation sources.
 
@@ -1290,7 +1310,7 @@ The `legacy scan:` line and the `diag` entries of the scan DB have `mode`, `keys
 - Are auctions shared across connected realms?
 ## Architecture
 
-The whole "outside the game" layer from the reference (§2) is gone: no servers, no desktop app, no AppHelper. Price data enters only through the Auction House API and is stored in its own Scan DB.
+The whole "outside the game" layer from the reference (§2) is gone: no servers, no desktop app, no AppHelper. Price data enters only through the Auction House API, with one exception: the optional `tsm*` sources read the public `TSM_API` when TSM is loaded (D1, D2). Scan data is stored in its own Scan DB.
 
 &#91;embedded content: In-game-only architecture · 2 layers, 3 addon tiers\]
 
