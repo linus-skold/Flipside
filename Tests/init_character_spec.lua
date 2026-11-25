@@ -29,8 +29,11 @@ local function session(options)
     _G.FlipsideDB, _G.FlipsideLedgerDB = savedDB, savedLedger
     mock.fire("ADDON_LOADED", "Flipside")
     mock.fire("PLAYER_LOGIN")
-    -- The balance save starts at the first PLAYER_ENTERING_WORLD.
-    mock.fire("PLAYER_ENTERING_WORLD")
+    -- The balance save starts at the first PLAYER_ENTERING_WORLD. It also lets the loader flush a buffer that is not
+    -- empty, so only the specs that read the balance set world.
+    if options.world then
+        mock.fire("PLAYER_ENTERING_WORLD")
+    end
     mock.advance(0.5)
 end
 
@@ -61,9 +64,9 @@ describe("Init character key", function()
         end)
 
         it("keeps two characters with the same first name and realm apart", function()
-            session({ surname = "Smith", guid = SMITH, money = 0 })
+            session({ surname = "Smith", guid = SMITH, money = 0, world = true })
             sell(150)
-            session({ surname = "Jones", guid = JONES, money = 0 })
+            session({ surname = "Jones", guid = JONES, money = 0, world = true })
             sell(250)
             local db = ns.db
             assert.are.equal("Smith", db:GetFor(SMITH, "surname"))
@@ -75,10 +78,10 @@ describe("Init character key", function()
             local chars = ns.holdings:Characters()
             assert.are.same({ SMITH, JONES }, { chars[1], chars[2] })
             assert.are.equal(2, #chars)
+            -- The first PLAYER_ENTERING_WORLD of the Jones session flushed the record of Smith to the store.
             local buffer = ns.ledgerBuffer:Peek()
-            assert.are.equal(2, #buffer)
-            assert.are.equal(SMITH, buffer[1].char)
-            assert.are.equal(JONES, buffer[2].char)
+            assert.are.equal(1, #buffer)
+            assert.are.equal(JONES, buffer[1].char)
         end)
 
         describe("legacy Name-Realm data", function()
