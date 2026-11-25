@@ -93,10 +93,16 @@ local function buildAbout(content, deps)
         local label = Kit.Label(content, MARKET_TEXT, "normal")
         label:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", anchor == about.shareHint and -4 or 0, -Kit.Theme.gap * 2)
         local status = Kit.Label(content, "", "bad")
+        -- The text that is saved now. Enter, then the focus loss, must save one time.
+        local saved = Buying.ReadMarketSource(deps.db)
         local function save(text)
             text = text:match("^%s*(.-)%s*$")
             if text == "" then
                 text = Buying.DEFAULT_MARKET_SOURCE
+            end
+            if text == saved then
+                about.marketInput:SetText(text)
+                return
             end
             local run = deps.formulaRun
             local _, err
@@ -110,10 +116,17 @@ local function buildAbout(content, deps)
             status:SetText("")
             about.marketInput:SetText(text)
             Buying.WriteMarketSource(deps.db, text)
+            saved = text
         end
         local input = Kit.Input(content, 260, save, save)
         input:SetPoint("LEFT", label, "RIGHT", 6, 0)
-        input:SetText(Buying.ReadMarketSource(deps.db))
+        input:SetText(saved)
+        -- A profile change gives another value: read the setting again when the box gets the focus.
+        input:SetScript("OnEditFocusGained", function(box)
+            saved = Buying.ReadMarketSource(deps.db)
+            box:SetText(saved)
+            status:SetText("")
+        end)
         status:SetPoint("TOPLEFT", label, "BOTTOMLEFT", 0, -Kit.Theme.gap)
         about.marketLabel, about.marketInput, about.marketStatus = label, input, status
     end

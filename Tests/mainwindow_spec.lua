@@ -326,6 +326,30 @@ describe("MainWindow", function()
             assert.are.same({ db = deps.db, text = "scanmarket * 2" }, written)
         end)
 
+        it("saves one time for Enter and the focus loss that follows", function()
+            local writes = 0
+            ns.BuyingTab.WriteMarketSource = function(db, text)
+                writes = writes + 1
+                written = { db = db, text = text }
+                return true
+            end
+            local win = ns.MainWindow.Create(deps)
+            win:SelectPage("about")
+            local input = findInput()
+            enter(input, "scanmarket * 2")
+            input.scripts.OnEditFocusLost(input)
+            assert.are.equal(1, writes)
+        end)
+
+        it("reads the setting again when the box gets the focus", function()
+            local win = ns.MainWindow.Create(deps)
+            win:SelectPage("about")
+            local input = findInput()
+            input:SetText("typed")
+            input.scripts.OnEditFocusGained(input)
+            assert.are.equal("tsmmarket", input:GetText())
+        end)
+
         it("does not save a formula that does not compile", function()
             local win = ns.MainWindow.Create(deps)
             win:SelectPage("about")
