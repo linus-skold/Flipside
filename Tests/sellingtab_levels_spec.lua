@@ -637,6 +637,10 @@ describe("SellingTab level pane and the buy menu", function()
             local entries = tab:LevelMenuEntries(levelId(1))
             assert.are.equal(1, #entries)
             assert.are.equal("Buy this auction (" .. GetMoneyString(300) .. ")", entries[1].text)
+            -- A new tab: a second search for the same item in one tab would not replace the rows.
+            tab:Unmount()
+            tab = mount()
+            ui = tab.ui
             choose(10, { { unitPrice = 449, quantity = 40, ownerItem = false, auctionID = 7, isCommodity = false,
                 buyout = 449, owner = "Bob", perItem = true } })
             entries = tab:LevelMenuEntries(levelId(1))
@@ -744,6 +748,9 @@ describe("SellingTab level pane and the buy menu", function()
         end)
 
         it("counts each item of a Forever row as one auction", function()
+            tab:Unmount()
+            tab = mount()
+            ui = tab.ui
             choose(10, {
                 { unitPrice = 449, quantity = 3, ownerItem = false, auctionID = 7, isCommodity = false,
                     buyout = 449, owner = "Bob", perItem = true },
