@@ -35,6 +35,7 @@ Shared\Services\GuildSyncQueue.lua
 Shared\Services\GuildSync.lua
 Shared\Services\FormulaParse.lua
 Shared\Services\FormulaFunctions.lua
+Shared\Services\TsmPrices.lua
 Shared\Services\FormulaSources.lua
 Shared\Services\FormulaLookup.lua
 Shared\Services\FormulaEval.lua
