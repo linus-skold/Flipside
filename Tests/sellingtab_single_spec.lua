@@ -267,6 +267,25 @@ describe("SellingTab single items", function()
             assert.are.same({}, client.searches)
         end)
 
+        it("asks for the data again every half second while no event comes", function()
+            ui.tree:Select("i20")
+            local first = #requested
+            local resend = {}
+            for _, timer in ipairs(timers) do
+                if timer.seconds == 0.5 then
+                    resend[#resend + 1] = timer
+                end
+            end
+            assert.are.equal(1, #resend)
+            resend[1].fn()
+            assert.are.equal(first + 1, #requested)
+            local again = 0
+            for _, timer in ipairs(timers) do
+                again = again + (timer.seconds == 0.5 and timer ~= resend[1] and 1 or 0)
+            end
+            assert.are.equal(1, again)
+        end)
+
         it("searches at a timeout when the data is there but no event came", function()
             ui.tree:Select("i20")
             stackSizes[20] = 1
