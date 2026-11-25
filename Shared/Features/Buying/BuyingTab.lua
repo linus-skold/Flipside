@@ -109,6 +109,46 @@ function BuyingTab.PercentText(percent)
     return type(percent) == "number" and (tostring(percent) .. "%") or "—"
 end
 
+-- The next sort state after a click on the header of a column. The first click sorts ascending, a second click on
+-- the same column sorts descending, a third goes back to ascending. sort is { key, descending } or nil.
+function BuyingTab.NextSort(sort, key)
+    if sort and sort.key == key then
+        return { key = key, descending = not sort.descending }
+    end
+    return { key = key, descending = false }
+end
+
+-- The rows in the order of the sort (a new table; the rows are not changed). key is a field of the rows. Text sorts
+-- with no regard to case. A row with no value (nil) is last in both directions, and equal values keep their order.
+-- With no key the rows come back as they are.
+function BuyingTab.SortRows(rows, key, descending)
+    if not key then
+        return rows
+    end
+    local items = {}
+    for index, row in ipairs(rows) do
+        local value = row[key]
+        items[index] = { row = row, value = type(value) == "string" and value:lower() or value, index = index }
+    end
+    table.sort(items, function(a, b)
+        if (a.value == nil) ~= (b.value == nil) then
+            return a.value ~= nil
+        end
+        if a.value ~= b.value then
+            if descending then
+                return a.value > b.value
+            end
+            return a.value < b.value
+        end
+        return a.index < b.index
+    end)
+    local out = {}
+    for index, item in ipairs(items) do
+        out[index] = item.row
+    end
+    return out
+end
+
 local COLOR_GREEN, COLOR_YELLOW, COLOR_RED = { 0.2, 0.85, 0.2 }, { 1, 0.85, 0.1 }, { 1, 0.25, 0.25 }
 local PERCENT_FULL, PERCENT_HIGH = 100, 150
 
@@ -2891,19 +2931,20 @@ end
 -- The Available column shows "50 stacks of 1" for a stack group (an item), and "x5" for a commodity level.
 -- The seller and the time left show only for stack groups (the time left on TBC only).
 local LEVEL_COLUMNS = {
-    { key = "unitPrice", title = "Unit Price", width = { share = 1 }, number = true, format = money },
-    { key = "stackPrice", title = "Stack Price", width = { share = 1 }, number = true,
+    { key = "unitPrice", title = "Unit Price", width = { share = 1 }, number = true, format = money, sortable = true },
+    { key = "stackPrice", title = "Stack Price", width = { share = 1 }, number = true, sortable = true,
         format = function(value)
             return value and money(value) or ""
         end },
-    { key = "quantity", title = "Available", width = { share = 1 }, number = true,
+    { key = "quantity", title = "Available", width = { share = 1 }, number = true, sortable = true,
         format = function(value, data)
             if data and data.stacks then
                 return ns.BuyingPlan.AvailableText(data.stacks, data.stackSize)
             end
             return "x" .. tostring(value)
         end },
-    { key = "percent", title = "% MV", width = { share = 1 }, number = true, format = BuyingTab.PercentText },
+    { key = "percent", title = "% MV", width = { share = 1 }, number = true, format = BuyingTab.PercentText,
+        sortable = true },
     { key = "owner", title = "Seller", width = { share = 1 }, hidden = true,
         format = function(value)
             return value or ""
@@ -2977,13 +3018,13 @@ end
 -- The columns of the item list of a clicked group. The name fills the rest, so the name cell is drawn by the row
 -- (icon and name). The header, and the cells of the number columns, use the same definition.
 local GROUP_COLUMNS = {
-    { key = "name", title = "Item", owned = true },
-    { key = "price", title = "Lowest", width = 90, number = true,
+    { key = "name", title = "Item", owned = true, sortable = true },
+    { key = "price", title = "Lowest", width = 90, number = true, sortable = true,
         format = function(value)
             return value and money(value) or "—"
         end },
-    { key = "percent", title = "% MV", width = 56, number = true, format = BuyingTab.PercentText },
-    { key = "quantity", title = "Available", width = 70, number = true,
+    { key = "percent", title = "% MV", width = 56, number = true, format = BuyingTab.PercentText, sortable = true },
+    { key = "quantity", title = "Available", width = 70, number = true, sortable = true,
         format = function(value)
             return value and tostring(value) or "—"
         end },
@@ -3144,7 +3185,8 @@ function Tab:_UpdateGroup()
     end
     ui.summary:SetText(text)
     self.covered = {}
-    ui.groupList:SetData(rows)
+    local sort = self.groupSort
+    ui.groupList:SetData(BuyingTab.SortRows(rows, sort and sort.key, sort and sort.descending))
 end
 
 -- Update the source buttons, the search list controls and the place of the list.
@@ -3367,7 +3409,9 @@ function Tab:_Update()
     ui.buyNext:SetText(verb)
     ui.buyNext:SetEnabled(nextLevel ~= nil and reason == nil)
     self:_ShowColumns(levels)
-    ui.rowsList:SetData(described)
+    -- The sort changes only the order of the rows on screen. The buy logic reads the levels in price order.
+    local sort = self.levelSort
+    ui.rowsList:SetData(BuyingTab.SortRows(described, sort and sort.key, sort and sort.descending))
 end
 
 -- Show or hide the Stack Price column and the Seller and Time left columns (header and cells). A commodity level has
@@ -3393,6 +3437,27 @@ function Tab:_ShowColumns(levels)
     local options = { gap = LEVEL_OPTIONS.gap, left = edge.left, right = edge.right }
     Kit.LayoutColumnLabels(ui.levelHeader.labels, ui.levelHeader.frame, LEVEL_COLUMNS, options)
     Kit.LayoutColumnLabels(ui.totalCells, ui.totals, TOTAL_COLUMNS, options)
+    -- A hidden column has no click area.
+    local sort = self.levelSort
+    Kit.UpdateHeaderSort(ui.levelHeader, sort and sort.key, sort and sort.descending)
+end
+
+-- A click on a column header of the price level list or of the group item list: sort by that column, ascending;
+-- a second click on the same header sorts descending. Each view keeps its own sort for the session.
+function Tab:SortLevels(key)
+    self.levelSort = BuyingTab.NextSort(self.levelSort, key)
+    if self.ui then
+        ns.Kit.UpdateHeaderSort(self.ui.levelHeader, self.levelSort.key, self.levelSort.descending)
+        self:_Update()
+    end
+end
+
+function Tab:SortGroup(key)
+    self.groupSort = BuyingTab.NextSort(self.groupSort, key)
+    if self.ui then
+        ns.Kit.UpdateHeaderSort(self.ui.groupHeader, self.groupSort.key, self.groupSort.descending)
+        self:_Update()
+    end
 end
 
 -- Show the units and the total price of the purchase in the amount box and next to it.
@@ -3646,6 +3711,9 @@ function Tab:_BuildContent()
     local edge = ui.rowsList.contentInsets or { left = 0, right = 0 }
     ui.levelHeader = Kit.CreateColumnHeader(content, LEVEL_COLUMNS,
         { gap = LEVEL_OPTIONS.gap, left = edge.left, right = edge.right })
+    Kit.MakeHeaderSortable(ui.levelHeader, LEVEL_COLUMNS, function(key)
+        self:SortLevels(key)
+    end)
     ui.levelHeader.frame:SetPoint("TOPLEFT", content, "TOPLEFT", rightX, -20)
     ui.levelHeader.frame:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, -20)
     ui.levelHeader.frame:SetHeight(18)
@@ -3695,6 +3763,9 @@ function Tab:_BuildContent()
     ui.groupList.frame:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", 0, 0)
     ui.groupHeader = Kit.CreateColumnHeader(content, GROUP_COLUMNS,
         { gap = GROUP_OPTIONS.gap, left = edge.left, right = edge.right })
+    Kit.MakeHeaderSortable(ui.groupHeader, GROUP_COLUMNS, function(key)
+        self:SortGroup(key)
+    end)
     ui.groupHeader.frame:SetPoint("TOPLEFT", content, "TOPLEFT", rightX, -20)
     ui.groupHeader.frame:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, -20)
     ui.groupHeader.frame:SetHeight(18)
