@@ -165,12 +165,14 @@ describe("BuyingTab", function()
             assert.are.equal("no data", tab.list[4].reason)
         end)
 
-        it("shows the list rows with the name and the max price", function()
+        it("shows the list rows with the name and no price", function()
             local group, first = ui.tree.list.rows[1], ui.tree.list.rows[2]
             assert.are.equal("Herbs", group.label.text)
             assert.are.equal("Item10", first.label.text)
-            assert.are.equal("100c", first.parts.price.text)
-            assert.are.equal("no data", ui.tree.list.rows[5].parts.price.text)
+            assert.is_nil(first.parts.price)
+            assert.is_nil(ui.tree.list.rows[5].parts.price)
+            -- The name takes the room: it is anchored to the right edge of the row, not set to a fixed width.
+            assert.is_nil(first.label.width)
         end)
 
         it("refreshes the list on demand", function()
@@ -312,7 +314,7 @@ describe("BuyingTab", function()
             tab.deps.rules = rules
             tab:RefreshList()
             assert.is_true(tab.list[1].noMax)
-            assert.are.equal("-", ui.tree.list.rows[2].parts.price.text)
+            assert.is_nil(ui.tree.list.rows[2].parts.price)
             client.rows[20] = { row(50, 1), row(90000, 1) }
             tab:Select_("20")
             tab:Search()
@@ -323,57 +325,26 @@ describe("BuyingTab", function()
             assert.are.equal(50, level.unitPrice)
         end)
 
-        it("shows the market price, or the total for the amount, for an item with no max price", function()
+        it("shows no price on an item row with no max price, also the selected commodity with an amount", function()
             rules = makeRules({ "20" })
             rules.GetOperation = function()
                 return { name = "Default", settings = { maxPrice = "", showAboveMax = false } }
             end
             tab.deps.rules = rules
-            tab._ScanInfo = function()
-                return { price = 500 }
-            end
             tab.amount = nil
             tab:RefreshList()
-            assert.are.equal("500c", ui.tree.list.rows[2].parts.price.text)
-            -- A row that is not the selected commodity shows the market price only.
+            assert.is_nil(ui.tree.list.rows[2].parts.price)
             tab.amount = 3
             tab:RefreshList()
-            assert.are.equal("500c", ui.tree.list.rows[2].parts.price.text)
+            assert.is_nil(ui.tree.list.rows[2].parts.price)
             client.rows[20] = { row(50, 1) }
             tab:Select_("20")
             tab:Search()
             fire("COMMODITY_RESULTS", 20)
             tab.amount = 3
             tab:RefreshList()
-            assert.are.equal("1500c", ui.tree.list.rows[2].parts.price.text)
-            tab._ScanInfo = function()
-                return { price = nil }
-            end
-            tab:RefreshList()
-            assert.are.equal("-", ui.tree.list.rows[2].parts.price.text)
-        end)
-
-        it("takes the price text from the latest scan, and from the average if there is no latest scan", function()
-            local now = 20 * 86400 + 3600
-            local day = ns.ScanClock.DayOf(now) - 1
-            local older = { day = day, min = 900, market = 1000, qty = 5, auctions = 2 }
-            local record = {
-                latest = { time = now - 600, min = 400, market = 450, qty = 5, auctions = 2 }, days = { older },
-            }
-            tab.deps.getRecord = function()
-                return record
-            end
-            tab.deps.now = function()
-                return now
-            end
-            local info = tab:_ScanInfo({ key = "20" })
-            assert.are.equal(450, info.price)
-            -- The deal percent still compares with the 14-day average.
-            assert.are.equal(1000, info.market)
-            record = { days = { older } }
-            info = tab:_ScanInfo({ key = "20" })
-            assert.are.equal(1000, info.price)
-            assert.are.equal(1000, info.market)
+            assert.is_nil(ui.tree.list.rows[2].parts.price)
+            assert.are.equal("Item20", ui.tree.list.rows[2].label.text)
         end)
 
         it("needs a selected item", function()
