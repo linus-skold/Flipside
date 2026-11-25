@@ -120,13 +120,11 @@ function Cache:Get(itemID)
 end
 
 -- Sends the load request again for an item that is still requested. The waiting callbacks stay as they are.
--- Returns false if the item is not in the requested state (no entry, unknown or failed).
+-- Returns false if the item is not in the requested state (no entry, unknown, failed or loaded).
+-- The caller then asks with Request, which runs its callback at once for a loaded item.
 function Cache:Resend(itemID)
     checkID(itemID)
     local _, state = self:Get(itemID)
-    if state == "loaded" then
-        return true
-    end
     if state ~= "requested" then
         return false
     end
