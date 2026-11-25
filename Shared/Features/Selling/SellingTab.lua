@@ -2760,7 +2760,7 @@ function Tab:_Research(entry)
 end
 
 -- The buy state of one item auction (a Forever row item or a TBC stack). pick is { level, row }.
-function Tab:_ItemBuy(entry, buyEntry, pick)
+function Tab._ItemBuy(_, entry, buyEntry, pick)
     local row = pick.row
     return {
         entry = buyEntry, source = entry, level = pick.level, row = row, isItem = true, phase = "quoted",
