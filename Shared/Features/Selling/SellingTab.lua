@@ -19,6 +19,8 @@ local LEGACY_SEARCH_TIMEOUT = 10 -- the same, where the result event has no item
 local RETRY_SECONDS = 1 -- fallback timer for a refused search; the ready event starts the next search first
 local MULTI_TIMEOUT = 15
 local MULTI_TIMEOUT_PER_STACK = 3
+local MULTI_STEP_TIMEOUT = 10 -- seconds without progress that end a run of auctions
+local SETTLE_SECONDS = 2 -- Post stays off after an early end of a run, for late events of the client
 local RESULT_SECONDS = 5 -- how long the bar keeps the result of a post of several auctions
 local SECONDS_PER_HOUR = 3600
 local POST_TIMEOUT = 5 -- seconds after which the post lock ends, with or without a result
@@ -1718,10 +1720,11 @@ function Tab:_Reload()
 end
 
 -- Log one post of a unit.
-function Tab:_Record(entry, quantity, kind, price, duration)
+function Tab:_Record(entry, quantity, kind, price, duration, auctions)
     local decision = entry.decision
     self.deps.log:Add(entry.candidate, {
-        action = kind, reason = decision.reason, price = price or decision.price, quantity = quantity, auctions = 1,
+        action = kind, reason = decision.reason, price = price or decision.price, quantity = quantity,
+        auctions = auctions or 1,
         duration = duration or decision.duration,
     })
 end
@@ -2461,7 +2464,11 @@ end
 -- check gets a new timer: the client makes the auctions one after the other, so the whole run can last long.
 function Tab:_WatchMulti(token)
     local m = self.multi
-    self.deps.after(MULTI_TIMEOUT + MULTI_TIMEOUT_PER_STACK * math.max(m.stacks, m.total), function()
+    local window = MULTI_TIMEOUT + MULTI_TIMEOUT_PER_STACK * math.max(m.stacks, m.total)
+    if m.auctions then
+        window = MULTI_STEP_TIMEOUT
+    end
+    self.deps.after(window, function()
         local now = self.multi
         if not now or now.token ~= token then
             return
@@ -2555,6 +2562,27 @@ function Tab:_LockPost(token)
     end)
 end
 
+-- The lock after a run of auctions (Forever). The run can last longer than postTimeout, so postDelay counts from
+-- the end of the run. After an early end (cancel, AH close, failure, timeout) the client can still send late
+-- events: Post stays off for SETTLE_SECONDS at least, so that a late event cannot hit the next post.
+function Tab:_HoldAfterRun(m, early)
+    local deps = self.deps
+    local wait = deps.postDelay
+    if early then
+        wait = math.max(wait, SETTLE_SECONDS)
+    end
+    local lock = { token = m.token, resulted = true, delayed = wait <= 0 }
+    self.lock = lock
+    if wait > 0 then
+        deps.after(wait, function()
+            if self.lock == lock then
+                lock.delayed = true
+                self:_TryUnlock()
+            end
+        end)
+    end
+end
+
 -- End the lock if the result came and the delay passed.
 function Tab:_TryUnlock()
     local lock = self.lock
@@ -2571,6 +2599,16 @@ function Tab:_OnMultisell(kind, created, total, text)
         return
     end
     log("debug", string.format("multisell %s %s of %s", tostring(kind), tostring(created), tostring(total)))
+    local hasTotal = kind ~= "failure" and type(total) == "number" and total > 0
+    -- The events carry no post token. An update for another total than this post knows, with no START of this post,
+    -- is a late event of an older run: drop it.
+    if kind == "update" and hasTotal and total ~= m.total then
+        log("debug", "multisell update of another run dropped")
+        return
+    end
+    if kind == "start" then
+        m.started = true
+    end
     if type(created) == "number" then
         if created > m.created then
             m.moved = true
@@ -2578,10 +2616,11 @@ function Tab:_OnMultisell(kind, created, total, text)
         m.created = math.max(m.created, created)
     end
     -- A failure event can carry a dummy total (Forever sends none): the total of the post stays.
-    if kind ~= "failure" and type(total) == "number" and total > 0 then
+    if hasTotal then
         m.total = total
         -- One stack of several items: the client makes one auction for each item (Forever, a quantity above 1).
-        if m.stacks == 1 and total > 1 then
+        -- Only the START of this post switches to it.
+        if m.stacks == 1 and total > 1 and m.started then
             m.auctions = true
         end
     end
@@ -2625,7 +2664,7 @@ function Tab:_EndMulti(failure)
     local units = m.auctions and math.min(created, 1) or created
     if m.auctions then
         if created > 0 then
-            self:_Record(entry, created, "post", m.price, m.duration)
+            self:_Record(entry, created, "post", m.price, m.duration, created)
         end
     else
         for _ = 1, created do
@@ -2637,7 +2676,9 @@ function Tab:_EndMulti(failure)
         self:_ShowPostResult(string.format(done and "Posted %d / %d" or "Stopped: %d / %d", created, m.total),
             created / math.max(1, m.total))
     end
-    if self.lock then
+    if m.auctions then
+        self:_HoldAfterRun(m, failure ~= nil)
+    elseif self.lock then
         self.lock.resulted = true
     end
     local total = m.auctions and m.total or m.stacks

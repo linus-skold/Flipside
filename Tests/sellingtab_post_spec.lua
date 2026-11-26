@@ -1826,7 +1826,7 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
         local MULTI = "MULTI"
 
         -- Mount again with the multisell event. The post call sends START, as the client does during PostItem.
-        local function postFive()
+        local function postFive(extra)
             bus = ns.EventBus.New({})
             client.MultisellEvent = function() return MULTI end
             client.cancels = 0
@@ -1838,8 +1838,9 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
                 fire(MULTI, "start", 0, 5)
                 return result
             end
+            client.CloseEvent = function() return "AH_CLOSED" end
             autoCreate = false
-            tab = mount()
+            tab = mount(extra)
             ui = tab.ui
             selectCloth()
             pick("i10")
@@ -1875,6 +1876,7 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
             local list = ns.SellingPlan.Log:List()
             assert.are.equal("post", list[#list].decision)
             assert.are.equal(5, list[#list].quantity)
+            assert.are.equal(5, list[#list].auctions)
             assert.is_true(ui.postBar.shown)
             assert.are.equal("Posted 5 / 5", ui.postBar.text.text)
             assert.is_false(ui.postCancel.shown)
@@ -1915,6 +1917,91 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
             assert.are.equal("failed", entryOf("10").status)
         end)
 
+        -- The timer that waits for the given seconds, the newest one.
+        local function timerOf(seconds)
+            local found
+            for _, each in ipairs(delays) do
+                found = each.seconds == seconds and each or found
+            end
+            return found
+        end
+
+        it("keeps Post off after a cancel until the settle time, and drops a late update of the old run", function()
+            postFive()
+            fire(MULTI, "update", 2, 5)
+            ui.postCancel.scripts.OnClick(ui.postCancel)
+            assert.is_nil(tab.multi)
+            assert.is_false(ui.postNext.enabled)
+            local ok, why = tab:PostNext()
+            assert.is_false(ok)
+            assert.are.equal("wait for the last post to end", why)
+            fire(MULTI, "update", 5, 5)
+            assert.is_nil(tab.multi)
+            timerOf(2).fn()
+            assert.is_nil(tab.lock)
+            -- A new one-item post: a late update of the old run must not end it or turn it into a run.
+            pick("i11")
+            fire("COMMODITY_RESULTS", 11)
+            click(ui.postNext)
+            assert.is_not_nil(tab.multi)
+            fire(MULTI, "update", 5, 5)
+            fire(MULTI, "update", 13, 40)
+            assert.is_not_nil(tab.multi)
+            assert.are.equal(0, tab.multi.created)
+            assert.is_nil(tab.multi.auctions)
+            fire("CREATED")
+            assert.are.equal("done", entryOf("11").status)
+        end)
+
+        it("drops a late failure of an old run and keeps Post off for the settle time", function()
+            postFive()
+            fire(MULTI, "update", 2, 5)
+            fire(MULTI, "failure", 0, nil, "the Auction House stopped the post")
+            assert.is_nil(tab.multi)
+            assert.is_false((tab:PostNext()))
+            -- The second failure event of the same run comes late.
+            fire(MULTI, "failure", 0, 1, "the Auction House refused the post")
+            assert.is_nil(tab.multi)
+            timerOf(2).fn()
+            assert.is_nil(tab.lock)
+            pick("i11")
+            fire("COMMODITY_RESULTS", 11)
+            click(ui.postNext)
+            fire("CREATED")
+            assert.are.equal("done", entryOf("11").status)
+        end)
+
+        it("counts postDelay from the end of the run, not from the post call", function()
+            postFive({ postDelay = 0.5, postTimeout = 5 })
+            -- The post timeout of the call passes during the run: Post is still off, the run is open.
+            timerOf(5).fn()
+            fire(MULTI, "update", 5, 5)
+            assert.is_nil(tab.multi)
+            assert.is_not_nil(tab.lock)
+            assert.is_false(ui.postNext.enabled)
+            timerOf(0.5).fn()
+            assert.is_nil(tab.lock)
+        end)
+
+        it("ends a run of auctions when the Auction House closes", function()
+            postFive()
+            fire(MULTI, "update", 2, 5)
+            fire("AH_CLOSED")
+            assert.is_nil(tab.multi)
+            assert.are.equal("failed", entryOf("10").status)
+            assert.is_truthy(entryOf("10").note:find("the Auction House closed (2 of 5 auctions made)", 1, true))
+            assert.are.equal("Stopped: 2 / 5", ui.postBar.text.text)
+            local list = ns.SellingPlan.Log:List()
+            local posts = {}
+            for _, record in ipairs(list) do
+                if record.decision == "post" then
+                    posts[#posts + 1] = record
+                end
+            end
+            assert.are.equal(1, #posts)
+            assert.are.equal(2, posts[1].auctions)
+        end)
+
         it("has no Cancel for a client without CancelSell", function()
             postFive()
             client.CanCancelSell = nil
@@ -1926,11 +2013,11 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
         it("keeps the timer alive while the client makes progress, and ends it when there is none", function()
             postFive()
             fire(MULTI, "update", 1, 5)
-            -- The watch timer: 15 s plus 3 s for each of the 5 auctions.
+            -- The watch timer of a run of auctions: 10 s without progress.
             local function watch()
                 local found
                 for _, each in ipairs(delays) do
-                    found = each.seconds == 30 and each or found
+                    found = each.seconds == 10 and each or found
                 end
                 return found
             end
