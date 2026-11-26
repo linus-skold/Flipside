@@ -19,6 +19,7 @@ local LEGACY_SEARCH_TIMEOUT = 10 -- the same, where the result event has no item
 local RETRY_SECONDS = 1 -- fallback timer for a refused search; the ready event starts the next search first
 local MULTI_TIMEOUT = 15
 local MULTI_TIMEOUT_PER_STACK = 3
+local RESULT_SECONDS = 5 -- how long the bar keeps the result of a post of several auctions
 local SECONDS_PER_HOUR = 3600
 local POST_TIMEOUT = 5 -- seconds after which the post lock ends, with or without a result
 local BUSY_TEXT = "The auction house is busy. Wait a moment."
@@ -1640,12 +1641,12 @@ function Tab:_OnReady()
     end)
 end
 
--- The client made an auction. It ends a one-stack post that waits for it (_EndMulti). A multi-stack post
--- counts its stacks from the multisell events.
+-- The client made an auction. It ends a one-stack post that waits for it (_EndMulti). A multi-stack post, and a
+-- post of several items (Forever, m.auctions), count their parts from the multisell events.
 function Tab:_OnPosted()
     self.live = nil -- a post changes the AH list
     local m = self.multi
-    if m and m.stacks == 1 and m.created < 1 then
+    if m and m.stacks == 1 and not m.auctions and m.created < 1 then
         m.created = 1
         if m.armed then
             self:_CheckMulti()
@@ -2423,18 +2424,25 @@ end
 -- client confirms the post or fails it.
 function Tab:_StartMulti(entry, quantity, stacks, price, duration)
     self.multiToken = (self.multiToken or 0) + 1
+    self.postResult = nil
     self.multi = { entry = entry, quantity = quantity, stacks = stacks, price = price, duration = duration,
         created = 0, total = stacks, token = self.multiToken }
     entry.postText = self:_MultiText()
 end
 
+-- The word for the parts of a post: "auctions" when the client makes one auction for each item (Forever), else
+-- "stacks".
+local function partsWord(m)
+    return m.auctions and "auctions" or "stacks"
+end
+
 -- The text of the Info column of the entry that posts.
 function Tab:_MultiText()
     local m = self.multi
-    if m.stacks == 1 then
+    if m.stacks == 1 and not m.auctions then
         return "posting"
     end
-    return string.format("posting %d of %d stacks", m.created, m.total)
+    return string.format("posting %d of %d %s", m.created, m.total, partsWord(m))
 end
 
 -- The call returned: wait for the events. A timer ends a post that gets no answer.
@@ -2444,15 +2452,83 @@ function Tab:_ArmMulti()
         return
     end
     m.armed = true
-    local token = m.token
-    self:_LockPost(token)
-    self.deps.after(MULTI_TIMEOUT + MULTI_TIMEOUT_PER_STACK * m.stacks, function()
-        if self.multi and self.multi.token == token then
-            log("warn", "no answer from the Auction House")
-            self:_EndMulti("no answer from the Auction House")
+    self:_LockPost(m.token)
+    self:_WatchMulti(m.token)
+    self:_CheckMulti()
+end
+
+-- The timer of a post that waits for the client. A post of several auctions that made progress since the last
+-- check gets a new timer: the client makes the auctions one after the other, so the whole run can last long.
+function Tab:_WatchMulti(token)
+    local m = self.multi
+    self.deps.after(MULTI_TIMEOUT + MULTI_TIMEOUT_PER_STACK * math.max(m.stacks, m.total), function()
+        local now = self.multi
+        if not now or now.token ~= token then
+            return
+        end
+        if now.auctions and now.moved then
+            now.moved = false
+            self:_WatchMulti(token)
+            return
+        end
+        log("warn", "no answer from the Auction House")
+        self:_EndMulti("no answer from the Auction House")
+    end)
+end
+
+-- Stop a run of several auctions (Forever, CancelSell, not a protected call; it needs a click). The auctions that the
+-- client made stay made. The entry shows "failed: cancelled" with the count.
+function Tab:CancelPost()
+    local m = self.multi
+    local client = self.deps.client
+    if not (m and m.auctions and client.CanCancelSell and client.CanCancelSell()) then
+        return false, "nothing to cancel"
+    end
+    local ok, err = pcall(client.CancelSell)
+    if not ok then
+        log("error", "cancel failed: " .. tostring(err))
+        return false, tostring(err)
+    end
+    log("info", "post cancelled by user")
+    self:_EndMulti("cancelled")
+    return true
+end
+
+-- The bar of a post of several auctions or stacks, and its short result after the end. The progress text hides
+-- while the bar shows. This does no tree redraw: it is cheap enough for each client event.
+function Tab:_RefreshPostBar()
+    local ui = self.ui
+    if not (ui and ui.postBar) then
+        return
+    end
+    local m, result = self.multi, self.postResult
+    local text, fraction
+    if m and m.armed and (m.auctions or m.stacks > 1) then
+        text = string.format("Posting %d / %d", m.created, m.total)
+        fraction = m.created / math.max(1, m.total)
+    elseif not m and result then
+        text, fraction = result.text, result.fraction
+    end
+    ui.postBar:SetShown(text ~= nil)
+    ui.progress:SetShown(text == nil)
+    if text then
+        ui.postBar:SetProgress(fraction, text)
+    end
+    local client = self.deps.client
+    ui.postCancel:SetShown(m ~= nil and m.auctions == true and client.CanCancelSell ~= nil
+        and client.CanCancelSell() == true)
+end
+
+-- Keep the short result on the bar for a few seconds after a post of several auctions or stacks.
+function Tab:_ShowPostResult(text, fraction)
+    local result = { text = text, fraction = fraction }
+    self.postResult = result
+    self.deps.after(RESULT_SECONDS, function()
+        if self.postResult == result then
+            self.postResult = nil
+            self:_RefreshPostBar()
         end
     end)
-    self:_CheckMulti()
 end
 
 -- Keep Post off after a post call until the result came and postDelay seconds passed. A timeout ends the lock too.
@@ -2496,10 +2572,18 @@ function Tab:_OnMultisell(kind, created, total, text)
     end
     log("debug", string.format("multisell %s %s of %s", tostring(kind), tostring(created), tostring(total)))
     if type(created) == "number" then
+        if created > m.created then
+            m.moved = true
+        end
         m.created = math.max(m.created, created)
     end
-    if type(total) == "number" and total > 0 then
+    -- A failure event can carry a dummy total (Forever sends none): the total of the post stays.
+    if kind ~= "failure" and type(total) == "number" and total > 0 then
         m.total = total
+        -- One stack of several items: the client makes one auction for each item (Forever, a quantity above 1).
+        if m.stacks == 1 and total > 1 then
+            m.auctions = true
+        end
     end
     if kind == "failure" then
         m.failure = text or "the Auction House stopped the post"
@@ -2517,33 +2601,52 @@ function Tab:_CheckMulti()
         self:_EndMulti()
     else
         m.entry.postText = self:_MultiText()
-        self:_Update()
+        -- Only the bar and the text change. A full redraw for each client event would slow a long run.
+        if self.ui then
+            self.ui.progress:SetText(self:ProgressText())
+        end
+        self:_RefreshPostBar()
     end
 end
 
--- End a multi-stack post: log each stack that the client made. A failure marks the entry failed with the count.
+-- End a post of several stacks or auctions: log what the client made. A failure marks the entry failed with the count.
+-- A run of auctions (Forever) is one unit and one ledger record with the number of items that the client made.
 function Tab:_EndMulti(failure)
     local m = self.multi
     self.multi, self.live = nil, nil
     local entry = m.entry
     entry.postText = nil
-    local created = math.min(m.created, m.stacks)
-    for _ = 1, created do
-        self:_Record(entry, m.quantity, "post", m.price, m.duration)
+    local parts = partsWord(m)
+    local created = math.min(m.created, m.auctions and m.total or m.stacks)
+    local units = m.auctions and math.min(created, 1) or created
+    if m.auctions then
+        if created > 0 then
+            self:_Record(entry, created, "post", m.price, m.duration)
+        end
+    else
+        for _ = 1, created do
+            self:_Record(entry, m.quantity, "post", m.price, m.duration)
+        end
+    end
+    if m.auctions or m.stacks > 1 then
+        local done = not failure
+        self:_ShowPostResult(string.format(done and "Posted %d / %d" or "Stopped: %d / %d", created, m.total),
+            created / math.max(1, m.total))
     end
     if self.lock then
         self.lock.resulted = true
     end
+    local total = m.auctions and m.total or m.stacks
     if failure then
-        entry.posted = entry.posted + created
-        self.postedCount = self.postedCount + created
-        log("error", string.format("post failed: %s (%d of %d stacks made)", failure, created, m.stacks))
-        local ok, text = self:_Fail(entry, string.format("%s (%d of %d stacks made)", failure, created, m.stacks))
+        entry.posted = entry.posted + units
+        self.postedCount = self.postedCount + units
+        log("error", string.format("post failed: %s (%d of %d %s made)", failure, created, total, parts))
+        local ok, text = self:_Fail(entry, string.format("%s (%d of %d %s made)", failure, created, total, parts))
         self:_TryUnlock()
         return ok, text
     end
     log("info", string.format("post ok: %d x %d", created, m.quantity))
-    self:_Advance(entry, true, created)
+    self:_Advance(entry, true, units)
     self:_TryUnlock()
 end
 
@@ -3554,7 +3657,7 @@ end
 -- With nothing ready and items waiting for a price, it says "2 waiting".
 function Tab:ProgressText()
     if self.multi then
-        return string.format("Posting %d of %d stacks", self.multi.created, self.multi.total)
+        return string.format("Posting %d of %d %s", self.multi.created, self.multi.total, partsWord(self.multi))
     end
     local total, done = self:_Progress()
     local waiting = self:_WaitingCount()
@@ -3869,6 +3972,7 @@ function Tab:_Update()
     self:_RefreshLevels()
     ui.skip:SetEnabled(not busy and (self.awaiting ~= nil or self:_Focus() ~= nil))
     ui.progress:SetText(self:ProgressText())
+    self:_RefreshPostBar()
     self:_UpdateDetails()
 end
 
@@ -4052,6 +4156,15 @@ function Tab:_BuildContent()
     else
         ui.progress = line("small", 350, 22, 110)
     end
+    -- The bar of a post of several auctions. It takes the place of the progress text while the post runs.
+    local barParent = band and content or pane
+    ui.postBar = Kit.ProgressBar(barParent, band and 300 or 90, 16)
+    ui.postBar:SetPoint("LEFT", ui.progress, "LEFT", 0, 0)
+    ui.postCancel = Kit.Button(barParent, "Cancel", 52, function()
+        self:CancelPost()
+    end)
+    ui.postCancel:SetPoint("LEFT", ui.postBar, "RIGHT", 4, 0)
+    ui.postCancel:Hide()
     -- The duration, the buttons, and the deposit and total price block, along the right edge of the pane.
     local durationLabel = rline("small", 312, 6, 100)
     durationLabel:SetText("Duration (hours)")
@@ -4216,6 +4329,11 @@ function Tab:Mount(parent, api)
                 self:_AbortBuy(self.buy, "the Auction House closed")
             end
             self.live, self.levelSel, self.levelRange = nil, nil, nil
+            -- A run of several auctions or stacks ends with the AH: the bar shows the result.
+            local running = self.multi
+            if running and (running.auctions or running.stacks > 1) then
+                self:_EndMulti("the Auction House closed")
+            end
             self:_Release()
             self:_Update()
         end)

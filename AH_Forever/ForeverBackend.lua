@@ -580,16 +580,45 @@ local function onPostError()
     ns.bus:Emit(FAILURE_EVENT, "failure", 0, 1, "the Auction House refused the post")
 end
 
--- The event of a post error. It carries "failure", 0, 1 and a text, as the legacy multisell event does. The sender
--- of the post ignores it when no post waits. It comes from AUCTION_HOUSE_SHOW_ERROR (error: AuctionHouseError,
--- doc 1236-1244) and AUCTION_HOUSE_POST_ERROR (doc 1186-1195).
+-- AUCTION_MULTISELL_START(numRepetitions), AUCTION_MULTISELL_UPDATE(createdCount, totalToCreate) and
+-- AUCTION_MULTISELL_FAILURE (doc AuctionHouseDocumentation 1314-1340): the client sends them for a PostItem with a
+-- quantity above 1 (one auction for each item). Blizzard's sell frame shows its progress bar from them.
+local function onMultisellStart(_, total)
+    ns.bus:Emit(FAILURE_EVENT, "start", 0, total)
+end
+
+local function onMultisellUpdate(_, created, total)
+    ns.bus:Emit(FAILURE_EVENT, "update", created, total)
+end
+
+local function onMultisellFailure()
+    ns.bus:Emit(FAILURE_EVENT, "failure", 0, nil, "the Auction House stopped the post")
+end
+
+-- The event of a post. It carries the kind ("start", "update" or "failure"), the created count, the total and, for
+-- a failure, a text, as the legacy multisell event does. The sender of the post ignores it when no post waits.
+-- A failure comes from AUCTION_HOUSE_SHOW_ERROR (error: AuctionHouseError, doc 1236-1244), AUCTION_HOUSE_POST_ERROR
+-- (doc 1186-1195) and AUCTION_MULTISELL_FAILURE.
 function Backend.MultisellEvent()
     if not failureSubscribed and ns.bus then
         failureSubscribed = true
         ns.bus:Subscribe("AUCTION_HOUSE_SHOW_ERROR", FAILURE_OWNER, onShowError)
         ns.bus:Subscribe("AUCTION_HOUSE_POST_ERROR", FAILURE_OWNER, onPostError)
+        ns.bus:Subscribe("AUCTION_MULTISELL_START", FAILURE_OWNER, onMultisellStart)
+        ns.bus:Subscribe("AUCTION_MULTISELL_UPDATE", FAILURE_OWNER, onMultisellUpdate)
+        ns.bus:Subscribe("AUCTION_MULTISELL_FAILURE", FAILURE_OWNER, onMultisellFailure)
     end
     return FAILURE_EVENT
+end
+
+-- CancelSell (doc AuctionHouseDocumentation line 75) stops a running multisell. It has no HasRestrictions flag: it is
+-- not protected, and Blizzard's sell frame calls it from OnHide with no click.
+function Backend.CanCancelSell()
+    return has("CancelSell")
+end
+
+function Backend.CancelSell()
+    return call("CancelSell")
 end
 
 ns.AuctionClient.Use(Backend)

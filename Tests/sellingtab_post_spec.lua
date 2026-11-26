@@ -1822,6 +1822,128 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
             assert.is_nil(ui.message)
         end)
     end)
+    describe("a post of several items on Forever (progress bar)", function()
+        local MULTI = "MULTI"
+
+        -- Mount again with the multisell event. The post call sends START, as the client does during PostItem.
+        local function postFive()
+            bus = ns.EventBus.New({})
+            client.MultisellEvent = function() return MULTI end
+            client.cancels = 0
+            client.CanCancelSell = function() return true end
+            client.CancelSell = function() client.cancels = client.cancels + 1 end
+            local plain = client.PostItem
+            client.PostItem = function(...)
+                local result = plain(...)
+                fire(MULTI, "start", 0, 5)
+                return result
+            end
+            autoCreate = false
+            tab = mount()
+            ui = tab.ui
+            selectCloth()
+            pick("i10")
+            tab:SetManualQuantity(5)
+            click(ui.postNext)
+        end
+
+        it("shows the bar and counts the updates, with the created events ignored", function()
+            postFive()
+            assert.are.equal(1, #client.posts)
+            assert.is_true(tab.multi.auctions)
+            assert.is_true(ui.postBar.shown)
+            assert.is_false(ui.progress.shown)
+            assert.are.equal("Posting 0 / 5", ui.postBar.text.text)
+            fire(MULTI, "update", 2, 5)
+            fire("CREATED")
+            assert.is_not_nil(tab.multi)
+            assert.are.equal("Posting 2 / 5", ui.postBar.text.text)
+            assert.are.equal(0.4, ui.postBar.fraction)
+            assert.are.equal("Posting 2 of 5 auctions", tab:ProgressText())
+            assert.is_true(ui.postCancel.shown)
+            assert.is_false(ui.postNext.enabled)
+            local ok, why = tab:PostNext()
+            assert.is_false(ok)
+            assert.are.equal("posting", why)
+        end)
+
+        it("ends at the total with one ledger record for the items made and shows the result", function()
+            postFive()
+            fire(MULTI, "update", 5, 5)
+            assert.is_nil(tab.multi)
+            assert.are.equal(1, entryOf("10").posted)
+            local list = ns.SellingPlan.Log:List()
+            assert.are.equal("post", list[#list].action)
+            assert.are.equal(5, list[#list].quantity)
+            assert.is_true(ui.postBar.shown)
+            assert.are.equal("Posted 5 / 5", ui.postBar.text.text)
+            assert.is_false(ui.postCancel.shown)
+            for _, each in ipairs(delays) do
+                each.fn()
+            end
+            assert.is_false(ui.postBar.shown)
+            assert.is_true(ui.progress.shown)
+        end)
+
+        it("ends at a failure with the count made", function()
+            postFive()
+            fire(MULTI, "update", 2, 5)
+            fire(MULTI, "failure", 0, nil, "the Auction House stopped the post")
+            assert.is_nil(tab.multi)
+            assert.are.equal("failed", entryOf("10").status)
+            assert.is_truthy(entryOf("10").note:find("2 of 5 auctions made", 1, true))
+            local list = ns.SellingPlan.Log:List()
+            local posts = {}
+            for _, record in ipairs(list) do
+                if record.action == "post" then
+                    posts[#posts + 1] = record
+                end
+            end
+            assert.are.equal(1, #posts)
+            assert.are.equal(2, posts[1].quantity)
+            assert.are.equal("Stopped: 2 / 5", ui.postBar.text.text)
+        end)
+
+        it("stops the run with the Cancel button and ignores the late events", function()
+            postFive()
+            fire(MULTI, "update", 2, 5)
+            ui.postCancel.scripts.OnClick(ui.postCancel)
+            assert.are.equal(1, client.cancels)
+            assert.is_nil(tab.multi)
+            assert.is_truthy(entryOf("10").note:find("cancelled (2 of 5 auctions made)", 1, true))
+            fire(MULTI, "update", 3, 5)
+            assert.are.equal("failed", entryOf("10").status)
+        end)
+
+        it("has no Cancel for a client without CancelSell", function()
+            postFive()
+            client.CanCancelSell = nil
+            local ok = tab:CancelPost()
+            assert.is_false(ok)
+            assert.is_not_nil(tab.multi)
+        end)
+
+        it("keeps the timer alive while the client makes progress, and ends it when there is none", function()
+            postFive()
+            fire(MULTI, "update", 1, 5)
+            -- The watch timer: 15 s plus 3 s for each of the 5 auctions.
+            local function watch()
+                local found
+                for _, each in ipairs(delays) do
+                    found = each.seconds == 30 and each or found
+                end
+                return found
+            end
+            local before = #delays
+            watch().fn()
+            assert.is_not_nil(tab.multi)
+            assert.are.equal(before + 1, #delays)
+            watch().fn()
+            assert.is_nil(tab.multi)
+            assert.are.equal("failed", entryOf("10").status)
+            assert.is_truthy(entryOf("10").note:find("no answer", 1, true))
+        end)
+    end)
     describe("the bag sync after a post", function()
         it("drops an item from the list after its last post", function()
             selectCloth()
