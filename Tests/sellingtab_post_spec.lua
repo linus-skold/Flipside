@@ -1941,8 +1941,14 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
             assert.is_nil(tab.lock)
             -- A new one-item post: a late update of the old run must not end it or turn it into a run.
             pick("i11")
-            fire("COMMODITY_RESULTS", 11)
+            -- The failed post made the tab read the bags again: the searches run one after the other.
+            for _ = 1, 2 do
+                fire("ITEM_RESULTS", 10)
+                fire("COMMODITY_RESULTS", 11)
+            end
+            assert.are.equal("ready", entryOf("11").status)
             click(ui.postNext)
+            assert.are.equal("commodity", client.posts[#client.posts].kind)
             assert.is_not_nil(tab.multi)
             fire(MULTI, "update", 5, 5)
             fire(MULTI, "update", 13, 40)
@@ -1965,8 +1971,13 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
             timerOf(2).fn()
             assert.is_nil(tab.lock)
             pick("i11")
-            fire("COMMODITY_RESULTS", 11)
+            for _ = 1, 2 do
+                fire("ITEM_RESULTS", 10)
+                fire("COMMODITY_RESULTS", 11)
+            end
+            assert.are.equal("ready", entryOf("11").status)
             click(ui.postNext)
+            assert.are.equal("commodity", client.posts[#client.posts].kind)
             fire("CREATED")
             assert.are.equal("done", entryOf("11").status)
         end)
