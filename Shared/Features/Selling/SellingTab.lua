@@ -2601,11 +2601,15 @@ function Tab:_CheckMulti()
         self:_EndMulti()
     else
         m.entry.postText = self:_MultiText()
-        -- Only the bar and the text change. A full redraw for each client event would slow a long run.
-        if self.ui then
+        -- The first pass is a full redraw: it sets the buttons (Post and Skip off). Then only the bar and the text
+        -- change. A full redraw for each client event would slow a long run.
+        if not m.drawn then
+            m.drawn = true
+            self:_Update()
+        elseif self.ui then
             self.ui.progress:SetText(self:ProgressText())
+            self:_RefreshPostBar()
         end
-        self:_RefreshPostBar()
     end
 end
 

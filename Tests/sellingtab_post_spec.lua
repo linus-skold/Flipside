@@ -1873,7 +1873,7 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
             assert.is_nil(tab.multi)
             assert.are.equal(1, entryOf("10").posted)
             local list = ns.SellingPlan.Log:List()
-            assert.are.equal("post", list[#list].action)
+            assert.are.equal("post", list[#list].decision)
             assert.are.equal(5, list[#list].quantity)
             assert.is_true(ui.postBar.shown)
             assert.are.equal("Posted 5 / 5", ui.postBar.text.text)
@@ -1895,7 +1895,7 @@ describe("SellingTab price box, warnings, post all and bag sync", function()
             local list = ns.SellingPlan.Log:List()
             local posts = {}
             for _, record in ipairs(list) do
-                if record.action == "post" then
+                if record.decision == "post" then
                     posts[#posts + 1] = record
                 end
             end
