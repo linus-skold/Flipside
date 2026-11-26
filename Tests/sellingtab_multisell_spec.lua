@@ -402,6 +402,23 @@ describe("SellingTab multisell on TBC", function()
             assert.are.equal(0, logCount("post"))
         end)
 
+        it("ends the run when the Auction House closes, with the count made", function()
+            bus = ns.EventBus.New({})
+            client.CloseEvent = function() return "AH_CLOSED" end
+            tab = mount()
+            ui = tab.ui
+            selectLinen(60, FULL)
+            local entry = entryOf("10")
+            click(ui.postNext)
+            fire("MULTI", "update", 1, 3)
+            fire("AH_CLOSED")
+            assert.is_nil(tab.multi)
+            assert.are.equal("failed", entry.status)
+            assert.is_truthy(entry.note:find("the Auction House closed (1 of 3 stacks made)", 1, true))
+            assert.are.equal(1, logCount("post"))
+            assert.are.equal("Stopped: 1 / 3", ui.postBar.text.text)
+        end)
+
         it("ends the multisell for a database error, frees the lock and shows the error text", function()
             selectLinen(60, FULL)
             local entry = entryOf("10")
