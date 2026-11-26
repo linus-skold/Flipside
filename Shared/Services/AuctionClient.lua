@@ -150,9 +150,14 @@ query("ReleaseSlot")
 query("AvailablePostCount")
 query("IsSellItemValid")
 query("PostedEvent")
--- MultisellEvent() gives the event name of a multi-stack post (legacy client only). The event carries "start",
+-- MultisellEvent() gives the event name of a multi-stack post (legacy) or of a post of several items (Forever).
+-- The event carries "start",
 -- "update" or "failure", the number of stacks created, the total, and for a failure a text.
 query("MultisellEvent")
+-- CanCancelSell() tells if the client can stop a running multisell (Forever only). CancelSell() stops it. It is not
+-- protected, but the tab calls it only from a click.
+query("CanCancelSell", false)
+action("CancelSell")
 -- CanSendPost() tells if the client takes a post now (the throttle gate); it is true without a backend function.
 -- ThrottleEvents() gives the list of events after which the gate can change; nil means the client has none, so the
 -- caller polls CanSendPost.

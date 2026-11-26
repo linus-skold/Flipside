@@ -22,6 +22,36 @@ function Kit.Label(parent, text, role)
     return label
 end
 
+-- Create a progress bar: a dark back, a fill and a text on top. It uses client art only and starts hidden.
+-- bar:SetProgress(fraction, text) sets the fill (0 to 1) and the text. bar.text is the text label.
+local BAR_TEXTURE = "Interface\\TargetingFrame\\UI-StatusBar"
+
+function Kit.ProgressBar(parent, width, height)
+    local bar = CreateFrame("Frame", nil, parent)
+    bar:SetSize(width, height or 18)
+    local back = bar:CreateTexture(nil, "BACKGROUND")
+    back:SetAllPoints(bar)
+    back:SetColorTexture(0, 0, 0, 0.6)
+    local fill = bar:CreateTexture(nil, "BORDER")
+    fill:SetTexture(BAR_TEXTURE)
+    fill:SetVertexColor(0.1, 0.5, 0.9, 0.9)
+    fill:SetPoint("TOPLEFT", bar, "TOPLEFT", 0, 0)
+    fill:SetPoint("BOTTOMLEFT", bar, "BOTTOMLEFT", 0, 0)
+    fill:SetWidth(1)
+    bar.fill = fill
+    bar.text = Kit.Label(bar, "", "small")
+    bar.text:SetPoint("CENTER", bar, "CENTER", 0, 0)
+    function bar:SetProgress(fraction, text)
+        fraction = math.max(0, math.min(1, tonumber(fraction) or 0))
+        self.fraction = fraction
+        fill:SetWidth(math.max(1, width * fraction))
+        fill:SetShown(fraction > 0)
+        self.text:SetText(text or "")
+    end
+    bar:Hide()
+    return bar
+end
+
 -- Create a text box. Enter calls onEnter(text). Escape clears focus.
 -- The optional onFocusLost(text) runs when the box loses focus.
 -- options.placeholder is a grey text that shows while the box is empty and has no focus.

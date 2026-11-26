@@ -191,6 +191,27 @@ describe("AuctionClient post functions", function()
             assert.are.equal("failure", failures[1][1])
         end)
 
+        it("sends the multisell events of the client as start, update and failure", function()
+            ns.bus:Emit("AUCTION_MULTISELL_START", 40)
+            ns.bus:Emit("AUCTION_MULTISELL_UPDATE", 3, 40)
+            ns.bus:Emit("AUCTION_MULTISELL_FAILURE")
+            assert.are.same({ "start", 0, 40 }, failures[1])
+            assert.are.same({ "update", 3, 40 }, failures[2])
+            assert.are.equal("failure", failures[3][1])
+            assert.is_nil(failures[3][3])
+            assert.is_string(failures[3][4])
+        end)
+
+        it("can cancel a sell when the client has CancelSell", function()
+            assert.is_false(ns.AuctionClient.CanCancelSell())
+            _G.C_AuctionHouse.CancelSell = function()
+                calls[#calls + 1] = { name = "CancelSell", args = {} }
+            end
+            assert.is_true(ns.AuctionClient.CanCancelSell())
+            ns.AuctionClient.CancelSell()
+            assert.are.equal("CancelSell", calls[#calls].name)
+        end)
+
         it("subscribes once", function()
             ns.AuctionClient.MultisellEvent()
             ns.bus:Emit("AUCTION_HOUSE_POST_ERROR")
