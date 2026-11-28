@@ -18,6 +18,8 @@ LedgerMail.PENDING_SECONDS = 10
 LedgerMail.FINGERPRINT_DAYS = 31
 -- The most mails that one read looks at.
 LedgerMail.MAX_MAILS = 100
+-- A scheduled read that takes this many milliseconds or more goes to deps.slow (SPEC 7.5).
+LedgerMail.SLOW_MS = 25
 
 local SECONDS_PER_DAY = 86400
 
@@ -583,14 +585,51 @@ function Mail:_ExpirePending()
     self._pending = keep
 end
 
+-- Drop the snapshot, the signature and the caches (a new mailbox visit).
+function Mail:_Reset()
+    self._cheap = false
+    self._snapshot = nil
+    self._signature = nil
+    self._textRead = {}
+    self._cache = {}
+end
+
+-- Take a cheap snapshot of the headers (no invoice read, no text read, no fingerprint) as the baseline of a new
+-- visit. A money gain before the first full read can then pair with the mail whose money went down: the full read
+-- matches the baseline and finds the drop. No baseline (snapshot nil) if the inbox cannot be read.
+function Mail:_Baseline()
+    local api = self._api
+    local total = api.numItems()
+    if type(total) ~= "number" or self:_Secret(total) then
+        return
+    end
+    local list = {}
+    for index = 1, math.min(total, LedgerMail.MAX_MAILS) do
+        local header = api.header(index)
+        if type(header) == "table" then
+            if self:_AnySecret(header) then
+                return
+            end
+            list[#list + 1] = {
+                index = index,
+                sender = text(header.sender) or "",
+                subject = text(header.subject) or "",
+                money = count(header.money) or 0,
+                itemCount = count(header.itemCount) or 0,
+                qty = count(header.itemQuantity),
+                link = text(header.itemLink),
+            }
+        end
+    end
+    self._snapshot = list
+    self._cheap = true
+end
+
 -- Read the inbox, compare it with the snapshot, write the first-sight records and keep the drops. If reset is
 -- true the old snapshot is dropped first (a new mailbox visit).
 function Mail:Refresh(reset)
     if reset then
-        self._snapshot = nil
-        self._signature = nil
-        self._textRead = {}
-        self._cache = {}
+        self:_Reset()
     end
     -- The header signature is cheap. If it is the same as at the last full read, the inbox did not change.
     local signature = self._snapshot and self:_Signature() or nil
@@ -610,6 +649,13 @@ function Mail:Refresh(reset)
     end
     self._signature = signature or self:_Signature()
     local drops = self._snapshot and self._Match(self._snapshot, list) or {}
+    if self._cheap then
+        -- The baseline has only headers. Each mail is still new to the full read: it gets its first-sight records.
+        for _, entry in ipairs(list) do
+            entry.matched = nil
+        end
+        self._cheap = false
+    end
     for _, entry in ipairs(list) do
         self:_Classify(entry)
     end
@@ -672,7 +718,15 @@ function Mail:_Schedule()
         self._scheduled = false
         -- After the close the inbox reads empty, and the close handler has done the last read.
         if not self._closed then
+            local clock = self._clock
+            local started = clock and clock()
             self:Refresh()
+            if started and self._slow then
+                local elapsed = clock() - started
+                if elapsed >= LedgerMail.SLOW_MS then
+                    pcall(self._slow, "ledger mail read", elapsed)
+                end
+            end
         end
     end)
 end
@@ -728,7 +782,8 @@ end
 -- saveFingerprints(table). Optional: isSecret, strings(name) -> client global string, itemKeyByName(name),
 -- invoices (false turns the invoice read off), busy() (true while a client mail command is in flight: the text
 -- read waits), report, fillSeller(item, qty, seller) -> true when it set the seller
--- on a purchase record that had none.
+-- on a purchase record that had none, clock() -> milliseconds and slow(label, ms): the scheduled read reports a
+-- time of SLOW_MS or more.
 function LedgerMail.Attach(deps)
     local patterns = {}
     for kind, globalName in pairs(LedgerMail.SUBJECT_GLOBALS) do
@@ -750,6 +805,8 @@ function LedgerMail.Attach(deps)
         _itemKeyByName = deps.itemKeyByName,
         _isSecret = type(deps.isSecret) == "function" and deps.isSecret or nil,
         _report = deps.report,
+        _clock = type(deps.clock) == "function" and deps.clock or nil,
+        _slow = deps.slow,
         _fps = deps.fingerprints or {},
         _fpSet = deps.saveFingerprints,
         _fill = deps.fillSeller,
@@ -770,7 +827,11 @@ function LedgerMail.Attach(deps)
     local bus = deps.bus
     bus:Subscribe("MAIL_SHOW", OWNER, function()
         mail._closed = false
-        mail:Refresh(true)
+        -- The first full read of a visit can be long (up to MAX_MAILS invoices and text reads). It runs after the
+        -- debounce, not inside the MAIL_SHOW frame. The old snapshot ends now. A header-only baseline stays, so
+        -- that a money gain or a close before the read still finds the mail whose money went down.
+        mail:_Reset()
+        mail:_Baseline()
         mail:_Schedule()
     end)
     bus:Subscribe("MAIL_CLOSED", OWNER, function()

@@ -32,7 +32,16 @@ local function isGameEvent(event)
     return event:match(GAME_EVENT_PATTERN) ~= nil and not ALWAYS_REGISTERED[event]
 end
 
+-- Write one perf line (SPEC 7.5): a step that took too long. The bus, the ledger loader and the mailbox host call it.
+local function perfLine(label, ms)
+    log("perf", "warn", "%s took %.1f ms", label, ms)
+end
+
 ns.bus = ns.EventBus.New({
+    clock = debugprofilestop,
+    onSlow = function(event, ownerName, ms)
+        perfLine("handler " .. tostring(ownerName) .. " for " .. tostring(event), ms)
+    end,
     onError = function(event, _, err, stack)
         ns.ReportError("handler for " .. tostring(event) .. " failed: " .. tostring(err))
         log("core", "error", "handler for %s failed: %s%s", event, err, stack and (" | " .. stack) or "")
@@ -1045,6 +1054,8 @@ local function openLedger()
             inCombat = InCombatLockdown,
             now = GetServerTime,
             after = C_Timer.After,
+            clock = debugprofilestop,
+            slow = perfLine,
             startJob = ns.Scheduler and function(name, fn)
                 return ns.StartJob(name, fn)
             end or nil,
@@ -1255,6 +1266,8 @@ local function openLedgerMail()
             bus = ns.bus,
             buffer = ns.ledgerBuffer,
             tracker = ns.ledgerMoney,
+            clock = debugprofilestop,
+            slow = perfLine,
             api = {
                 numItems = GetInboxNumItems, header = mailHeader, invoice = mailInvoice,
                 text = type(GetInboxText) == "function" and function(index)
@@ -1673,6 +1686,8 @@ local function openMailing()
         end
         host = ns.MailHost.Attach({
             bus = ns.bus,
+            clock = debugprofilestop,
+            slow = perfLine,
             after = C_Timer.After,
             take = mailTake(),
             frame = function()

@@ -163,6 +163,99 @@ describe("LedgerMail", function()
         mail = attach()
     end)
 
+    describe("the first read of a visit", function()
+        it("does not read the inbox inside the MAIL_SHOW event", function()
+            inbox[1] = saleMail("Rich", 9500, 100, 550)
+            bus:Emit("MAIL_SHOW")
+            assert.are.equal(0, calls.invoice, "no invoice read")
+            assert.are.equal(0, mail:Stats().reads, "no full read")
+        end)
+
+        it("writes the sale record when the money comes before the first full read", function()
+            inbox[1] = saleMail("Rich", 9500, 100, 550)
+            bus:Emit("MAIL_SHOW")
+            inbox[1].money = 0
+            change(9050)
+            advance(0.4)
+            advance(2)
+            assert.are.equal(1, #bySource("ahSale"))
+            assert.are.equal(0, #bySource("mailMoney"))
+            assert.are.equal("Rich", bySource("ahSale")[1].counterparty)
+        end)
+
+        it("writes the first-sight record of a returned mail at the first full read", function()
+            inbox[1] = { sender = "AH", subject = "Expired: Linen Cloth", money = 0, itemCount = 1,
+                itemLink = "link:1", itemQuantity = 5 }
+            bus:Emit("MAIL_SHOW")
+            advance(0.4)
+            assert.are.equal(1, #bySource("ahExpired"))
+        end)
+
+        it("reads the inbox at the close when the close comes before the first full read", function()
+            inbox[1] = saleMail("Rich", 9500, 100, 550)
+            bus:Emit("MAIL_SHOW")
+            inbox[1].money = 0
+            change(9050)
+            bus:Emit("MAIL_CLOSED")
+            advance(2)
+            assert.are.equal(1, #bySource("ahSale"))
+            assert.are.equal(0, #bySource("mailMoney"))
+        end)
+
+        it("pairs the baseline mail when the inbox reads empty at the close", function()
+            inbox[1] = saleMail("Rich", 9500, 100, 550)
+            bus:Emit("MAIL_SHOW")
+            change(9050)
+            inbox[1] = nil
+            bus:Emit("MAIL_CLOSED")
+            advance(2)
+            assert.are.equal(1, #bySource("ahSale"))
+            assert.are.equal(0, #bySource("mailMoney"))
+        end)
+
+        it("reads once after the debounce and writes the first-sight record", function()
+            inbox[1] = saleMail("Rich", 9500, 100, 550)
+            bus:Emit("MAIL_SHOW")
+            advance(0.4)
+            assert.are.equal(1, mail:Stats().reads)
+            inbox[1].money = 0
+            bus:Emit("MAIL_INBOX_UPDATE")
+            advance(0.4)
+            change(9050)
+            advance(2)
+            assert.are.equal(1, #bySource("ahSale"))
+        end)
+
+        it("reports a slow scheduled read", function()
+            local now, lines = 0, {}
+            inbox[1] = saleMail("Rich", 9500, 100, 550)
+            attach({
+                clock = function()
+                    return now
+                end,
+                slow = function(label, ms)
+                    lines[#lines + 1] = { label, ms }
+                end,
+                api = {
+                    numItems = function()
+                        now = now + 30
+                        return #inbox
+                    end,
+                    header = function(index)
+                        return inbox[index]
+                    end,
+                    invoice = function(index)
+                        return inbox[index].invoice
+                    end,
+                },
+            })
+            bus:Emit("MAIL_SHOW")
+            advance(0.4)
+            assert.are.equal("ledger mail read", lines[1][1])
+            assert.is_true(lines[1][2] >= 25)
+        end)
+    end)
+
     describe("an invoice that needs the mail text", function()
         local textCalls
 
@@ -290,6 +383,7 @@ describe("LedgerMail", function()
             inbox[1] = saleMail("Rich", 9500, 100, 550)
             open()
             bus:Emit("MAIL_SHOW")
+            advance(0.4)
             inbox[1].money = 0
             bus:Emit("MAIL_INBOX_UPDATE")
             advance(0.4)
@@ -408,6 +502,7 @@ describe("LedgerMail", function()
             advance(11)
             assert.are.equal(1, #bySource("ahSale"))
             bus:Emit("MAIL_SHOW")
+            advance(0.4)
             change(9050)
             advance(3)
             assert.are.equal(0, #bySource("mailMoney"))

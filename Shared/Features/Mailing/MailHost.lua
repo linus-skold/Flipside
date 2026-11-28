@@ -61,6 +61,24 @@ local function moveOpenMail(openMail, mailFrame)
     return saved
 end
 
+-- The time of a step at or above this many milliseconds goes to deps.slow(label, ms) (SPEC 7.5).
+MailHost.SLOW_MS = 25
+
+-- Run fn. If deps.clock and deps.slow exist and fn is slow, report the label and the time.
+local function timed(deps, label, fn)
+    local clock = deps.clock
+    if type(clock) ~= "function" or not deps.slow then
+        fn()
+        return
+    end
+    local started = clock()
+    fn()
+    local elapsed = clock() - started
+    if elapsed >= MailHost.SLOW_MS then
+        pcall(deps.slow, label, elapsed)
+    end
+end
+
 -- Layouts. Each one is function(deps, host) returning { Open(mailFrame), Close() }. Open makes the view if it does
 -- not exist (host.view = deps.create(parent, size)), places it and shows it. Close hides it and undoes the change
 -- to the Blizzard frames.
@@ -221,6 +239,8 @@ end
 -- (optional; returns the compact inbox list, an InboxList, or nil), tabs() (optional; returns the tab list of
 -- watchTabs, one entry for each of Inbox and Send Mail). The inbox list does not depend on the layout:
 -- it shows on MAIL_SHOW, refreshes on MAIL_INBOX_UPDATE and hides on MAIL_CLOSED.
+-- clock() -> milliseconds and slow(label, ms) (optional): a step of the mailbox open that takes MailHost.SLOW_MS
+-- or more calls slow.
 -- take (optional, a MailTake): while it is active, the view does not read the bags; it reads once when the take ends.
 -- Forever layouts "plain" and "window": mode is a function that gives the key; createToggle(mailFrame) (the button
 -- on MailFrame that switches to the window), createWindow() (a MailboxWindow); in "window" create(parent) makes the
@@ -254,7 +274,10 @@ function MailHost.Attach(deps)
             return
         end
         pickLayout()
-        layout.Open(mailFrame)
+        local first = host.view == nil
+        timed(deps, first and "mailbox first build" or "mailbox layout", function()
+            layout.Open(mailFrame)
+        end)
         open = mailFrame
         if layout.plain then
             return
@@ -266,14 +289,18 @@ function MailHost.Attach(deps)
         if host.view.run:IsRunning() or (deps.take and deps.take.IsActive()) then
             viewDirty = true
         else
-            host.view:Refresh()
+            timed(deps, "mailbox view refresh", function()
+                host.view:Refresh()
+            end)
             viewDirty = false
         end
         if deps.createInbox and not layout.ownInbox then
             host.inbox = host.inbox or deps.createInbox(mailFrame)
         end
         if host.inbox then
-            host.inbox:Show()
+            timed(deps, "mailbox inbox show", function()
+                host.inbox:Show()
+            end)
             -- Show reads the inbox, so an update that came before it needs no second read.
             inboxDirty = false
         end

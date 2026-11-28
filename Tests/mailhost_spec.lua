@@ -300,4 +300,54 @@ describe("MailHost", function()
         bus2:Emit("MAIL_SHOW")
         assert.are.equal(2, #host.markers, "the markers are made once")
     end)
+
+    describe("the open timing", function()
+        local now, lines
+
+        local function attachTimed(cost)
+            local bus3 = ns.EventBus.New()
+            ns.MailHost.Attach({
+                bus = bus3,
+                clock = function()
+                    return now
+                end,
+                slow = function(label, ms)
+                    lines[#lines + 1] = { label, ms }
+                end,
+                frame = function()
+                    return mailFrame
+                end,
+                children = function()
+                    return {}
+                end,
+                create = function(parent, size)
+                    now = now + cost
+                    return makeView(parent, size)
+                end,
+                after = function() end,
+            })
+            return bus3
+        end
+
+        before_each(function()
+            now, lines = 0, {}
+        end)
+
+        it("reports a slow first build and then a normal open under another label", function()
+            local bus3 = attachTimed(60)
+            bus3:Emit("MAIL_SHOW")
+            assert.are.equal("mailbox first build", lines[1][1])
+            assert.are.equal(60, lines[1][2])
+            bus3:Emit("MAIL_CLOSED")
+            lines = {}
+            bus3:Emit("MAIL_SHOW")
+            assert.are.same({}, lines, "the second open builds nothing")
+        end)
+
+        it("reports nothing for a fast open", function()
+            local bus3 = attachTimed(3)
+            bus3:Emit("MAIL_SHOW")
+            assert.are.same({}, lines)
+        end)
+    end)
 end)
