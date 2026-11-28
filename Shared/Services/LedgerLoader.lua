@@ -167,6 +167,33 @@ function Loader:_StartSliced()
     return true
 end
 
+-- True if the mailbox holds the flush: it is open, or it closed less than MAIL_CLOSE_DELAY seconds ago. The hold
+-- ends when the buffer is near the hard limit (the buffer would drop its oldest records).
+function Loader:_MailHolds()
+    if not (self._mailOpen or self._closeHold) then
+        return false
+    end
+    local buffer = self._buffer
+    if buffer.HardLimit and buffer.Cap and buffer:Count() >= buffer:HardLimit() - buffer:Cap() then
+        return false
+    end
+    return true
+end
+
+-- The close timer ended: the hold ends. If the buffer is at the cap, or a request waited, ask for the flush.
+function Loader:_CloseTimer(token)
+    if token ~= self._closeToken or self._mailOpen then
+        return
+    end
+    self._closeHold = false
+    local buffer = self._buffer
+    local full = buffer.Cap and buffer:Count() >= buffer:Cap()
+    if self._mailWait or full then
+        self._mailWait = false
+        self:RequestFlush()
+    end
+end
+
 -- Called by the buffer at the cap. It loads the addon later, out of the call. After a failed load it does
 -- nothing again in this session; Ensure still tries. With a startJob option it flushes in slices;
 -- a second call while a flush runs does nothing.
@@ -174,8 +201,9 @@ function Loader:RequestFlush()
     if self._failed or self._requested or self._flushing then
         return
     end
-    if self._mailOpen then
-        -- The load parses the saved variables in one frame. Not while the mailbox opens: wait for the close.
+    if self:_MailHolds() then
+        -- The load parses the saved variables in one frame. Not while the mailbox is open, and not in the
+        -- close frame: wait for the close timer.
         self._mailWait = true
         return
     end
@@ -224,19 +252,18 @@ function Loader:Attach()
         self._mailOpen = true
     end)
     self._bus:Subscribe("MAIL_CLOSED", self, function()
+        -- The mail reader writes its last records in its own MAIL_CLOSED handler, maybe after this one. The hold
+        -- stays until the timer ends, so such a record does not start the load in the close frame.
         self._mailOpen = false
-        if not self._mailWait then
-            return
-        end
-        self._mailWait = false
+        self._closeToken = self._closeToken + 1
+        local token = self._closeToken
         if self._after then
+            self._closeHold = true
             self._after(LedgerLoader.MAIL_CLOSE_DELAY, function()
-                if not self._mailOpen then
-                    self:RequestFlush()
-                end
+                self:_CloseTimer(token)
             end)
         else
-            self:RequestFlush()
+            self:_CloseTimer(token)
         end
     end)
     self._bus:Subscribe("PLAYER_ENTERING_WORLD", self, function()
@@ -275,6 +302,8 @@ function LedgerLoader.New(options)
         ownerName = "Flipside.LedgerLoader",
         _mailOpen = false,
         _mailWait = false,
+        _closeHold = false,
+        _closeToken = 0,
         _compacted = false,
         _flushing = false,
         _addonName = options.addonName or "Flipside_Ledger",

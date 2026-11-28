@@ -587,10 +587,42 @@ end
 
 -- Drop the snapshot, the signature and the caches (a new mailbox visit).
 function Mail:_Reset()
+    self._cheap = false
     self._snapshot = nil
     self._signature = nil
     self._textRead = {}
     self._cache = {}
+end
+
+-- Take a cheap snapshot of the headers (no invoice read, no text read, no fingerprint) as the baseline of a new
+-- visit. A money gain before the first full read can then pair with the mail whose money went down: the full read
+-- matches the baseline and finds the drop. No baseline (snapshot nil) if the inbox cannot be read.
+function Mail:_Baseline()
+    local api = self._api
+    local total = api.numItems()
+    if type(total) ~= "number" or self:_Secret(total) then
+        return
+    end
+    local list = {}
+    for index = 1, math.min(total, LedgerMail.MAX_MAILS) do
+        local header = api.header(index)
+        if type(header) == "table" then
+            if self:_AnySecret(header) then
+                return
+            end
+            list[#list + 1] = {
+                index = index,
+                sender = text(header.sender) or "",
+                subject = text(header.subject) or "",
+                money = count(header.money) or 0,
+                itemCount = count(header.itemCount) or 0,
+                qty = count(header.itemQuantity),
+                link = text(header.itemLink),
+            }
+        end
+    end
+    self._snapshot = list
+    self._cheap = true
 end
 
 -- Read the inbox, compare it with the snapshot, write the first-sight records and keep the drops. If reset is
@@ -617,6 +649,13 @@ function Mail:Refresh(reset)
     end
     self._signature = signature or self:_Signature()
     local drops = self._snapshot and self._Match(self._snapshot, list) or {}
+    if self._cheap then
+        -- The baseline has only headers. Each mail is still new to the full read: it gets its first-sight records.
+        for _, entry in ipairs(list) do
+            entry.matched = nil
+        end
+        self._cheap = false
+    end
     for _, entry in ipairs(list) do
         self:_Classify(entry)
     end
@@ -788,9 +827,11 @@ function LedgerMail.Attach(deps)
     local bus = deps.bus
     bus:Subscribe("MAIL_SHOW", OWNER, function()
         mail._closed = false
-        -- The first read of a visit can be long (up to MAX_MAILS headers, invoices and text reads). It runs after
-        -- the debounce, not inside the MAIL_SHOW frame. The old snapshot ends now.
+        -- The first full read of a visit can be long (up to MAX_MAILS invoices and text reads). It runs after the
+        -- debounce, not inside the MAIL_SHOW frame. The old snapshot ends now. A header-only baseline stays, so
+        -- that a money gain or a close before the read still finds the mail whose money went down.
         mail:_Reset()
+        mail:_Baseline()
         mail:_Schedule()
     end)
     bus:Subscribe("MAIL_CLOSED", OWNER, function()

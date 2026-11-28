@@ -167,9 +167,50 @@ describe("LedgerMail", function()
         it("does not read the inbox inside the MAIL_SHOW event", function()
             inbox[1] = saleMail("Rich", 9500, 100, 550)
             bus:Emit("MAIL_SHOW")
-            assert.are.equal(0, calls.header)
-            assert.are.equal(0, calls.invoice)
-            assert.are.equal(0, mail:Stats().reads)
+            assert.are.equal(0, calls.invoice, "no invoice read")
+            assert.are.equal(0, mail:Stats().reads, "no full read")
+        end)
+
+        it("writes the sale record when the money comes before the first full read", function()
+            inbox[1] = saleMail("Rich", 9500, 100, 550)
+            bus:Emit("MAIL_SHOW")
+            inbox[1].money = 0
+            change(9050)
+            advance(0.4)
+            advance(2)
+            assert.are.equal(1, #bySource("ahSale"))
+            assert.are.equal(0, #bySource("mailMoney"))
+            assert.are.equal("Rich", bySource("ahSale")[1].counterparty)
+        end)
+
+        it("writes the first-sight record of a returned mail at the first full read", function()
+            inbox[1] = { sender = "AH", subject = "Expired: Linen Cloth", money = 0, itemCount = 1,
+                itemLink = "link:1", itemQuantity = 5 }
+            bus:Emit("MAIL_SHOW")
+            advance(0.4)
+            assert.are.equal(1, #bySource("ahExpired"))
+        end)
+
+        it("reads the inbox at the close when the close comes before the first full read", function()
+            inbox[1] = saleMail("Rich", 9500, 100, 550)
+            bus:Emit("MAIL_SHOW")
+            inbox[1].money = 0
+            change(9050)
+            bus:Emit("MAIL_CLOSED")
+            advance(2)
+            assert.are.equal(1, #bySource("ahSale"))
+            assert.are.equal(0, #bySource("mailMoney"))
+        end)
+
+        it("pairs the baseline mail when the inbox reads empty at the close", function()
+            inbox[1] = saleMail("Rich", 9500, 100, 550)
+            bus:Emit("MAIL_SHOW")
+            change(9050)
+            inbox[1] = nil
+            bus:Emit("MAIL_CLOSED")
+            advance(2)
+            assert.are.equal(1, #bySource("ahSale"))
+            assert.are.equal(0, #bySource("mailMoney"))
         end)
 
         it("reads once after the debounce and writes the first-sight record", function()
