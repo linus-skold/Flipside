@@ -15,7 +15,26 @@ function EventBus.New(options)
     self.onEmit = options.onEmit
     self.onFirstSubscriber = options.onFirstSubscriber
     self.onLastUnsubscribed = options.onLastUnsubscribed
+    -- Handler timing (SPEC 7.5): clock() gives milliseconds. Without a clock, no handler is timed. A handler that
+    -- takes slowMs or more calls onSlow(event, ownerName, ms).
+    self.clock = type(options.clock) == "function" and options.clock or nil
+    self.slowMs = options.slowMs or EventBus.SLOW_MS
+    self.onSlow = options.onSlow
     return self
+end
+
+-- The default limit of the handler timing, in milliseconds.
+EventBus.SLOW_MS = 25
+
+-- A readable name of an owner for the log: a string is its own name, a table can have the field ownerName.
+function EventBus.OwnerName(owner)
+    if type(owner) == "string" then
+        return owner
+    end
+    if type(owner) == "table" and type(owner.ownerName) == "string" then
+        return owner.ownerName
+    end
+    return tostring(owner)
 end
 
 -- Set or clear the function that receives handler failures.
@@ -120,13 +139,21 @@ function Bus:Emit(event, ...)
     local function run()
         return entry.handler(event, unpack(args, 1, count))
     end
+    local clock = self.clock
     for i = 1, #snapshot do
         entry = snapshot[i]
         if entry.active then
             stack = nil
+            local started = clock and clock()
             local ok, err = xpcall(run, keepStack)
             if not ok and self.onError then
                 pcall(self.onError, event, entry.owner, err, stack)
+            end
+            if started and self.onSlow then
+                local elapsed = clock() - started
+                if elapsed >= self.slowMs then
+                    pcall(self.onSlow, event, EventBus.OwnerName(entry.owner), elapsed)
+                end
             end
         end
     end

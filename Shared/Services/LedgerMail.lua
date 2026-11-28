@@ -18,6 +18,8 @@ LedgerMail.PENDING_SECONDS = 10
 LedgerMail.FINGERPRINT_DAYS = 31
 -- The most mails that one read looks at.
 LedgerMail.MAX_MAILS = 100
+-- A scheduled read that takes this many milliseconds or more goes to deps.slow (SPEC 7.5).
+LedgerMail.SLOW_MS = 25
 
 local SECONDS_PER_DAY = 86400
 
@@ -583,14 +585,19 @@ function Mail:_ExpirePending()
     self._pending = keep
 end
 
+-- Drop the snapshot, the signature and the caches (a new mailbox visit).
+function Mail:_Reset()
+    self._snapshot = nil
+    self._signature = nil
+    self._textRead = {}
+    self._cache = {}
+end
+
 -- Read the inbox, compare it with the snapshot, write the first-sight records and keep the drops. If reset is
 -- true the old snapshot is dropped first (a new mailbox visit).
 function Mail:Refresh(reset)
     if reset then
-        self._snapshot = nil
-        self._signature = nil
-        self._textRead = {}
-        self._cache = {}
+        self:_Reset()
     end
     -- The header signature is cheap. If it is the same as at the last full read, the inbox did not change.
     local signature = self._snapshot and self:_Signature() or nil
@@ -672,7 +679,15 @@ function Mail:_Schedule()
         self._scheduled = false
         -- After the close the inbox reads empty, and the close handler has done the last read.
         if not self._closed then
+            local clock = self._clock
+            local started = clock and clock()
             self:Refresh()
+            if started and self._slow then
+                local elapsed = clock() - started
+                if elapsed >= LedgerMail.SLOW_MS then
+                    pcall(self._slow, "ledger mail read", elapsed)
+                end
+            end
         end
     end)
 end
@@ -728,7 +743,8 @@ end
 -- saveFingerprints(table). Optional: isSecret, strings(name) -> client global string, itemKeyByName(name),
 -- invoices (false turns the invoice read off), busy() (true while a client mail command is in flight: the text
 -- read waits), report, fillSeller(item, qty, seller) -> true when it set the seller
--- on a purchase record that had none.
+-- on a purchase record that had none, clock() -> milliseconds and slow(label, ms): the scheduled read reports a
+-- time of SLOW_MS or more.
 function LedgerMail.Attach(deps)
     local patterns = {}
     for kind, globalName in pairs(LedgerMail.SUBJECT_GLOBALS) do
@@ -750,6 +766,8 @@ function LedgerMail.Attach(deps)
         _itemKeyByName = deps.itemKeyByName,
         _isSecret = type(deps.isSecret) == "function" and deps.isSecret or nil,
         _report = deps.report,
+        _clock = type(deps.clock) == "function" and deps.clock or nil,
+        _slow = deps.slow,
         _fps = deps.fingerprints or {},
         _fpSet = deps.saveFingerprints,
         _fill = deps.fillSeller,
@@ -770,7 +788,9 @@ function LedgerMail.Attach(deps)
     local bus = deps.bus
     bus:Subscribe("MAIL_SHOW", OWNER, function()
         mail._closed = false
-        mail:Refresh(true)
+        -- The first read of a visit can be long (up to MAX_MAILS headers, invoices and text reads). It runs after
+        -- the debounce, not inside the MAIL_SHOW frame. The old snapshot ends now.
+        mail:_Reset()
         mail:_Schedule()
     end)
     bus:Subscribe("MAIL_CLOSED", OWNER, function()

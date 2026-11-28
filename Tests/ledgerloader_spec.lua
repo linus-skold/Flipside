@@ -228,6 +228,97 @@ describe("LedgerLoader", function()
         end)
     end)
 
+    describe("the mailbox", function()
+        it("holds the load at the cap while the mailbox is open and runs it after the close", function()
+            Build({ deferred = true })
+            loader:Attach()
+            db:Set("account", "ledger.bufferCap", 2)
+            bus:Emit("MAIL_SHOW")
+            buffer:Add(rec(1))
+            buffer:Add(rec(2))
+            buffer:Add(rec(3))
+            assert.are.equal(0, #later, "no timer while the mailbox is open")
+            assert.are.equal(0, loadCalls)
+            bus:Emit("MAIL_CLOSED")
+            assert.are.equal(1, #later, "one timer after the close")
+            later[1]()
+            assert.are.equal(2, #later, "the close timer asks for the flush")
+            later[2]()
+            assert.are.equal(1, loadCalls)
+            assert.are.equal(0, buffer:Count())
+        end)
+
+        it("does not load after the close if the buffer never reached the cap", function()
+            Build({ deferred = true })
+            loader:Attach()
+            bus:Emit("MAIL_SHOW")
+            buffer:Add(rec(1))
+            bus:Emit("MAIL_CLOSED")
+            assert.are.equal(0, #later)
+            assert.are.equal(0, loadCalls)
+        end)
+
+        it("waits again if the mailbox opens before the close timer ends", function()
+            Build({ deferred = true })
+            loader:Attach()
+            db:Set("account", "ledger.bufferCap", 1)
+            bus:Emit("MAIL_SHOW")
+            buffer:Add(rec(1))
+            bus:Emit("MAIL_CLOSED")
+            bus:Emit("MAIL_SHOW")
+            later[1]()
+            assert.are.equal(1, #later)
+            assert.are.equal(0, loadCalls)
+        end)
+    end)
+
+    describe("the timing", function()
+        it("reports a slow addon load and a slow store open", function()
+            local now, lines = 0, {}
+            local timed = ns.LedgerLoader.New({
+                bus = bus, buffer = buffer, now = function() return 1 end, inCombat = function() return false end,
+                clock = function() return now end,
+                slow = function(label, ms)
+                    lines[#lines + 1] = { label, ms }
+                end,
+                loadAddOn = function()
+                    now = now + 40
+                    return true
+                end,
+                openStore = function()
+                    now = now + 30
+                    return ns.LedgerStore.New({}, { region = "EU", ruleset = "standard" })
+                end,
+            })
+            assert.is_true(timed:Ensure())
+            assert.are.same({ { "ledger LoadAddOn", 40 }, { "ledger store open", 30 } }, lines)
+        end)
+
+        it("reports nothing for a fast load", function()
+            local now, lines = 0, {}
+            local timed = ns.LedgerLoader.New({
+                bus = bus, buffer = buffer, now = function() return 1 end, inCombat = function() return false end,
+                clock = function() return now end,
+                slow = function(label)
+                    lines[#lines + 1] = label
+                end,
+                loadAddOn = function()
+                    now = now + 5
+                    return true
+                end,
+                openStore = function()
+                    return ns.LedgerStore.New({}, { region = "EU", ruleset = "standard" })
+                end,
+            })
+            assert.is_true(timed:Ensure())
+            assert.are.same({}, lines)
+        end)
+
+        it("has a readable owner name", function()
+            assert.are.equal("Flipside.LedgerLoader", ns.EventBus.OwnerName(loader))
+        end)
+    end)
+
     it("needs its options", function()
         assert.has_error(function()
             ns.LedgerLoader.New({ bus = bus })

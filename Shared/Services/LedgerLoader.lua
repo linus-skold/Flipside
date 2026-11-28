@@ -7,6 +7,10 @@ ns.LedgerLoader = LedgerLoader
 
 LedgerLoader.EVENT_LOADED = "Flipside.LedgerLoaded"
 LedgerLoader.EVENT_FAILED = "Flipside.LedgerLoadFailed"
+-- A step of the load that takes this many milliseconds or more goes to options.slow (SPEC 7.5).
+LedgerLoader.SLOW_MS = 25
+-- After the mailbox closes, a flush that waited for it starts after this many seconds.
+LedgerLoader.MAIL_CLOSE_DELAY = 3
 
 local Loader = {}
 Loader.__index = Loader
@@ -56,11 +60,27 @@ end
 
 -- Loads the addon and opens the store (synchronous). Returns true, or false and a reason.
 function Loader:_Open()
+    local clock = self._clock
+    local started = clock and clock()
     local loaded, reason = self._loadAddOn(self._addonName)
+    if started and self._slow then
+        -- The client parses the saved variables of the ledger inside this call, in one frame.
+        local elapsed = clock() - started
+        if elapsed >= LedgerLoader.SLOW_MS then
+            pcall(self._slow, "ledger LoadAddOn", elapsed)
+        end
+    end
     if not loaded then
         return false, reason or "unknown"
     end
+    started = clock and clock()
     local store = self._openStore()
+    if started and self._slow then
+        local elapsed = clock() - started
+        if elapsed >= LedgerLoader.SLOW_MS then
+            pcall(self._slow, "ledger store open", elapsed)
+        end
+    end
     if not store then
         return false, "the ledger data is not available"
     end
@@ -154,6 +174,11 @@ function Loader:RequestFlush()
     if self._failed or self._requested or self._flushing then
         return
     end
+    if self._mailOpen then
+        -- The load parses the saved variables in one frame. Not while the mailbox opens: wait for the close.
+        self._mailWait = true
+        return
+    end
     self._requested = true
     local function run()
         self._requested = false
@@ -195,6 +220,25 @@ function Loader:Attach()
             self:Ensure()
         end
     end)
+    self._bus:Subscribe("MAIL_SHOW", self, function()
+        self._mailOpen = true
+    end)
+    self._bus:Subscribe("MAIL_CLOSED", self, function()
+        self._mailOpen = false
+        if not self._mailWait then
+            return
+        end
+        self._mailWait = false
+        if self._after then
+            self._after(LedgerLoader.MAIL_CLOSE_DELAY, function()
+                if not self._mailOpen then
+                    self:RequestFlush()
+                end
+            end)
+        else
+            self:RequestFlush()
+        end
+    end)
     self._bus:Subscribe("PLAYER_ENTERING_WORLD", self, function()
         if self._loginDone then
             return
@@ -208,7 +252,8 @@ end
 
 -- options: bus, buffer, openStore() -> store or nil, loadAddOn(name) -> loaded, reason, inCombat(),
 -- now(), setting(key) -> number or nil, addonName, after(seconds, fn) (optional),
--- startJob(name, fn) -> job (optional; a Scheduler job starter; without it the flush is synchronous).
+-- startJob(name, fn) -> job (optional; a Scheduler job starter; without it the flush is synchronous),
+-- clock() -> milliseconds and slow(label, ms) (optional; slow gets a load or store step of SLOW_MS or more).
 function LedgerLoader.New(options)
     for _, name in ipairs({ "bus", "buffer", "openStore", "loadAddOn", "inCombat", "now" }) do
         if options[name] == nil then
@@ -225,6 +270,11 @@ function LedgerLoader.New(options)
         _setting = options.setting or function() end,
         _after = options.after,
         _startJob = options.startJob,
+        _clock = type(options.clock) == "function" and options.clock or nil,
+        _slow = options.slow,
+        ownerName = "Flipside.LedgerLoader",
+        _mailOpen = false,
+        _mailWait = false,
         _compacted = false,
         _flushing = false,
         _addonName = options.addonName or "Flipside_Ledger",

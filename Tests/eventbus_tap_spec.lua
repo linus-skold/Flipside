@@ -62,6 +62,98 @@ describe("EventBus tap and error stack", function()
         assert.are.equal("stack text", stack)
     end)
 
+    describe("handler timing", function()
+        local now, slow
+
+        local function timedBus(options)
+            options = options or {}
+            options.clock = function()
+                return now
+            end
+            options.onSlow = function(event, name, ms)
+                slow[#slow + 1] = { event, name, ms }
+            end
+            return EventBus.New(options)
+        end
+
+        before_each(function()
+            now, slow = 0, {}
+        end)
+
+        it("reports a handler at the limit, with the event, the owner name and the time", function()
+            local bus = timedBus()
+            bus:Subscribe("E", "Owner.A", function()
+                now = now + 25
+            end)
+            bus:Subscribe("E", "Owner.B", function()
+                now = now + 24
+            end)
+            bus:Emit("E")
+            assert.are.same({ { "E", "Owner.A", 25 } }, slow)
+        end)
+
+        it("uses the slowMs option", function()
+            local bus = timedBus({ slowMs = 5 })
+            bus:Subscribe("E", "a", function()
+                now = now + 6
+            end)
+            bus:Emit("E")
+            assert.are.equal(1, #slow)
+        end)
+
+        it("names a table owner by its ownerName field", function()
+            local bus = timedBus()
+            local owner = { ownerName = "Flipside.Thing" }
+            bus:Subscribe("E", owner, function()
+                now = now + 30
+            end)
+            bus:Emit("E")
+            assert.are.equal("Flipside.Thing", slow[1][2])
+            assert.is_string(EventBus.OwnerName({}))
+        end)
+
+        it("reports a slow handler that fails, and the next handler still runs", function()
+            local bus = timedBus({ onError = function() end })
+            local ran = false
+            bus:Subscribe("E", "a", function()
+                now = now + 40
+                error("boom", 0)
+            end)
+            bus:Subscribe("E", "b", function()
+                ran = true
+            end)
+            bus:Emit("E")
+            assert.is_true(ran)
+            assert.are.equal(1, #slow)
+        end)
+
+        it("times nothing without a clock", function()
+            local bus = EventBus.New({ onSlow = function()
+                error("must not run")
+            end })
+            bus:Subscribe("E", "a", function() end)
+            assert.has_no.errors(function()
+                bus:Emit("E")
+            end)
+        end)
+
+        it("keeps going when onSlow raises an error", function()
+            local bus = timedBus()
+            bus.onSlow = function()
+                error("sink failed")
+            end
+            local ran = false
+            bus:Subscribe("E", "a", function()
+                now = now + 30
+            end)
+            bus:Subscribe("E", "b", function()
+                ran = true
+            end)
+            bus:Emit("E")
+            assert.is_true(ran)
+        end)
+    end)
+
     it("calls the next handler after an error and passes the arguments", function()
         local got
         local bus = EventBus.New({ onError = function() end })
